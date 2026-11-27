@@ -219,19 +219,72 @@ describe('DSH executor transport', () => {
       { taskId: 'task' },
       { signal: controller.signal }
     )
-    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+    const readSignal = fetchMock.mock.calls[0][1]?.signal
+    expect(readSignal).toBeInstanceOf(AbortSignal)
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).params).toEqual({
       taskId: 'task',
     })
+    controller.abort()
+    expect(readSignal?.aborted).toBe(true)
     for (const method of [
       'runtime.tasks.send',
       'runtime.tasks.search',
       'runtime.tasks.transcript.search',
     ]) {
       await requestDshExecutor(method, { taskId: 'task' }, { signal: controller.signal })
-      expect(fetchMock.mock.lastCall?.[1]?.signal).toBeUndefined()
+      expect(fetchMock.mock.lastCall?.[1]?.signal?.aborted).toBe(false)
     }
   })
+
+  test.each(['response_headers', 'response_body'])(
+    'aborts and releases the slot at %s',
+    async phase => {
+      const deadline = new AbortController()
+      const originalTimeout = AbortSignal.timeout.bind(AbortSignal)
+      const timeout = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockImplementation(ms => (ms === 125_000 ? deadline.signal : originalTimeout(ms)))
+      const dispatched = Promise.withResolvers<void>()
+      const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          const stall = () => {
+            dispatched.resolve()
+            return new Promise((_resolve, reject) => {
+              init.signal.addEventListener('abort', () => reject(init.signal.reason), {
+                once: true,
+              })
+            })
+          }
+          return phase === 'response_headers' ? stall() : { status: 200, json: stall }
+        })
+      )
+      try {
+        const request = requestDshExecutor('runtime.tasks.list')
+        const rejected = expect(request).rejects.toMatchObject({ code: 'transport_timeout' })
+        await dispatched.promise
+        deadline.abort()
+        await rejected
+        expect(warning.mock.calls.some(([line]) => line.includes(`"phase":"${phase}"`))).toBe(true)
+        await vi.waitFor(() =>
+          expect(
+            diagnostic.mock.calls.some(([line]) => line.includes('"stage":"background_released"'))
+          ).toBe(true)
+        )
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => new Response('{"ok":true,"result":[]}'))
+        )
+        await expect(requestDshExecutor('runtime.tasks.list')).resolves.toEqual([])
+      } finally {
+        timeout.mockRestore()
+        diagnostic.mockRestore()
+        warning.mockRestore()
+      }
+    }
+  )
 
   test('records fetch failure correlation without logging tool arguments', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -331,7 +384,7 @@ describe('DSH executor transport', () => {
     warning.mockRestore()
   })
 
-  test('delivers text deltas without waiting for animation frames', () => {
+  test('delivers a burst in order before flushing renderer microtasks', async () => {
     let onMessage: ((event: MessageEvent<string>) => void) | null = null
     vi.stubGlobal(
       'EventSource',
@@ -347,13 +400,22 @@ describe('DSH executor transport', () => {
     )
     const requestAnimationFrame = vi.fn()
     vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
-    const listener = vi.fn()
+    const time = vi.spyOn(performance, 'now').mockReturnValue(0)
+    const observed: string[] = []
+    const listener = vi.fn((event: { sequence: number }) => {
+      observed.push(String(event.sequence))
+      queueMicrotask(() => observed.push(`flushed:${event.sequence}`))
+    })
 
     const unsubscribe = subscribeDshExecutorEvents(listener)
     emitExecutorEvent(onMessage, eventEnvelope(1, 'response.output_text.delta', 'first', 0))
     emitExecutorEvent(onMessage, eventEnvelope(2, 'response.output_text.delta', 'second', 5))
 
-    expect(listener).toHaveBeenCalledTimes(2)
+    const lateListener = vi.fn()
+    const unsubscribeLate = subscribeDshExecutorEvents(lateListener)
+    await vi.waitFor(() => expect(observed).toHaveLength(4))
+    expect(observed).toEqual(['1', '2', 'flushed:1', 'flushed:2'])
+    expect(lateListener).not.toHaveBeenCalled()
     expect(listener).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -375,10 +437,12 @@ describe('DSH executor transport', () => {
     )
     expect(requestAnimationFrame).not.toHaveBeenCalled()
 
+    unsubscribeLate()
     unsubscribe()
+    time.mockRestore()
   })
 
-  test('shares one stream across subscribers and closes it after the last unsubscribe', () => {
+  test('shares one stream across subscribers and closes it after the last unsubscribe', async () => {
     const sources: FakeEventSource[] = []
     vi.stubGlobal(
       'EventSource',
@@ -403,6 +467,7 @@ describe('DSH executor transport', () => {
     expect(sources).toHaveLength(1)
     sources[0].onopen?.()
     emitExecutorEvent(sources[0].onmessage, eventEnvelope(1, 'response.created'))
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2))
     expect(failingListener).toHaveBeenCalledTimes(1)
     expect(listener).toHaveBeenCalledTimes(2)
     otherListeners.forEach(other => expect(other).toHaveBeenCalledTimes(1))
@@ -418,7 +483,7 @@ describe('DSH executor transport', () => {
     emitExecutorEvent(sources[1].onmessage, eventEnvelope(1, 'response.created'))
     expect(listener).toHaveBeenCalledTimes(2)
     emitExecutorEvent(sources[1].onmessage, eventEnvelope(2, 'response.completed'))
-    expect(listener).toHaveBeenCalledTimes(3)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(3))
 
     unsubscribeSecond()
     expect(sources[1].closed).toBe(true)
@@ -452,7 +517,7 @@ describe('DSH executor transport', () => {
     vi.useRealTimers()
   })
 
-  test('replaces a stale executor event stream after system resume', () => {
+  test('replaces a stale executor event stream after system resume', async () => {
     const sources: FakeEventSource[] = []
     vi.stubGlobal(
       'EventSource',
@@ -513,7 +578,8 @@ describe('DSH executor transport', () => {
       }),
     } as MessageEvent)
 
-    expect(listener).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2))
+    expect(listener.mock.calls.map(([event]) => event.payload.taskId)).toEqual(['task-1', 'task-2'])
     unsubscribe()
     expect(sources[1].closed).toBe(true)
   })
@@ -549,7 +615,7 @@ describe('DSH executor transport', () => {
     vi.useRealTimers()
   })
 
-  test('advances the cursor when one event listener throws', () => {
+  test('advances the cursor when one event listener throws', async () => {
     const sources: FakeEventSource[] = []
     vi.stubGlobal(
       'EventSource',
@@ -574,7 +640,7 @@ describe('DSH executor transport', () => {
     emitExecutorEvent(sources[0].onmessage, eventEnvelope(2, 'response.completed'))
     reconnectDshExecutorEvents()
 
-    expect(listener).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2))
     expect(sources[1].url).toBe('/wework/executor/v1/events?after=2&replay=1')
 
     unsubscribe()

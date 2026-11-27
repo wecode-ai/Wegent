@@ -38,6 +38,9 @@ async function withNativeGpuLaunch(disableGpuSandbox, verify) {
     const environment = {
       ...process.env,
       ...launch.env,
+      // GTK's host-side GLX probe can block in Mesa before app.ready on Xvfb.
+      // The fixture exercises Chromium's GPU child, which does not use GDK_GL.
+      GDK_GL: 'disable',
       WEWORK_E2E_GPU_SMOKE_ROOT: root,
       WEWORK_E2E_GPU_SMOKE_RESULT: resultPath,
       WEWORK_E2E_GPU_LAUNCHER_VALUE: argument.slice('--gpu-launcher='.length),
@@ -52,12 +55,19 @@ async function withNativeGpuLaunch(disableGpuSandbox, verify) {
         ...launch.arguments.filter(value => disableGpuSandbox || value !== '--disable-gpu-sandbox'),
       ],
     })
-    probe = spawnStartupGdbProbe(require('electron'), [...args, 'startup-gpu-smoke.mjs'], {
-      cwd: fixtureDirectory,
-      env: environment,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    probe = spawnStartupGdbProbe(
+      require('electron'),
+      [...args, 'startup-gpu-smoke.mjs'],
+      {
+        cwd: fixtureDirectory,
+        env: environment,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+      // The expected trap needs the crashing thread and exit marker. Dumping
+      // every thread can prevent GDB from reaching the marker before the deadline.
+      { allThreads: disableGpuSandbox }
+    )
     const ended = once(probe.child, 'exit')
     const closed = new Promise(resolve => probe.child.once('close', resolve))
     await inspectBeforeStart(

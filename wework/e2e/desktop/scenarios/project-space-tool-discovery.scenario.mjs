@@ -85,7 +85,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         {
           name: 'list_spaces',
           args: () => ({}),
-          verify: value => assert.ok(value.some(item => item.id === project.id)),
+          verify: value => {
+            assert.ok(value.items.some(item => item.id === project.id))
+            assert.equal(value.matched_total, value.items.length)
+            assert.equal(value.next_cursor, null)
+            assert.equal(value.coverage.complete, true)
+            assert.ok(value.coverage.sources.every(source => source.state === 'complete'))
+          },
         },
         {
           name: 'get_board_item',

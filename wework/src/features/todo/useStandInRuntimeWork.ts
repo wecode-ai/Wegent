@@ -1,9 +1,23 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RuntimeWorkListResponse } from '@/types/api'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import type { RuntimeWorkListResponse } from '@/types/api'
 
 type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
+
+export function standInProjectWorkspace(
+  project: RuntimeWorkListResponse['projects'][number],
+  deviceId: string
+) {
+  return project.deviceWorkspaces.find(
+    workspace =>
+      workspace.deviceId === deviceId &&
+      workspace.available &&
+      workspace.workspaceKind !== 'chat' &&
+      workspace.workspaceSource !== 'remote'
+  )
+}
 
 /** Keep environment reads and recovery independent of editable personal settings. */
 export function useStandInRuntimeWork(
@@ -11,40 +25,38 @@ export function useStandInRuntimeWork(
   deviceId: string | undefined,
   enabled = true
 ) {
-  const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{
-    api: RuntimeWorkApi
-    deviceId: string
-    work: RuntimeWorkListResponse | null
-    error: string | null
-  } | null>(null)
-  useEffect(() => {
-    if (!enabled || !api || !deviceId) return
-    let active = true
-    void api.listRuntimeWork({ deviceId }).then(
-      work => {
-        if (active) setResult({ api, deviceId, work, error: null })
-      },
-      cause => {
-        if (!active) return
-        reportStandInError('load_environment', cause, deviceId)
-        setResult(previous => ({
-          api,
-          deviceId,
-          work: previous?.api === api && previous.deviceId === deviceId ? previous.work : null,
-          error: getStandInErrorMessage(cause, 'load_environment_failed'),
-        }))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, deviceId, enabled, revision])
-  const current = result?.api === api && result?.deviceId === deviceId ? result : null
-  const retryRuntimeWork = useCallback(() => setRevision(value => value + 1), [])
+  const resource = useMemo(
+    () =>
+      api && deviceId
+        ? createAsyncResource(deviceId, () => api.listRuntimeWork({ deviceId }), {
+            failure: cause => reportStandInError('load_environment', cause, deviceId),
+          })
+        : null,
+    [api, deviceId]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!enabled || !resource) return () => {}
+      const unsubscribe = resource.subscribe(listener)
+      if (resource.getSnapshot().status === 'ready') void resource.reload()
+      return unsubscribe
+    },
+    [enabled, resource]
+  )
+  const snapshot = useSyncExternalStore(
+    subscribe,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const retryRuntimeWork = useCallback(() => {
+    if (enabled) void resource?.reload()
+  }, [enabled, resource])
   return {
-    runtimeWork: current?.work ?? null,
-    runtimeError: current?.error ?? null,
+    runtimeWork: snapshot.data ?? null,
+    runtimeError:
+      snapshot.error === undefined
+        ? null
+        : getStandInErrorMessage(snapshot.error, 'load_environment_failed'),
     retryRuntimeWork,
   }
 }

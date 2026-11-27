@@ -16,7 +16,7 @@
       "name": "wework-space",
       "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions.",
       "source": "./plugins/wework-space",
-      "version": "0.2.2"
+      "version": "0.3.0"
     },
     {
       "name": "smart-app-builder",
@@ -34,7 +34,7 @@
       "name": "wework-runtime",
       "description": "Wework host workflows loaded on demand.",
       "source": "./plugins/wework-runtime",
-      "version": "0.1.1"
+      "version": "0.1.3"
     }
   ]
 }

@@ -72,9 +72,7 @@
     "no_output": "This subagent has no messages to display"
   },
   "tool_activity": {
-    "reconnecting": "Connection interrupted. Reconnecting…",
     "rate_limit_wait": "Model rate limited. Waiting to retry…",
-    "chatgpt_network_unavailable": "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
     "open_proxy_settings": "Configure proxy",
     "summary_one": "Called {{count}} tool",
     "summary_other": "Called {{count}} tools",
@@ -129,7 +127,10 @@
     "quota_wait_unknown": "Usage limit reached. Checking the reset time to continue with the same model.",
     "cancel_automatic_recovery": "Cancel automatic recovery",
     "quota_wait_until": "Usage limit reached. Continuing with the same model in {{remaining}}.",
-    "quota_checking": "Checking usage availability to continue with the same model…"
+    "quota_checking": "Checking usage availability to continue with the same model…",
+    "server_overloaded_retry": "Server is busy, reconnecting…",
+    "retry_progress": "{{status}} ({{attempt}}/{{total}})",
+    "reconnecting": "Reconnecting…"
   },
   "assistant_status": {
     "working": "Working",
@@ -309,20 +310,24 @@
       },
       "model_service_connection_error": {
         "title": "Unable to connect to the model service",
-        "description": "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
-        "description_with_endpoint": "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry."
+        "description": "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry."
       },
       "network_error": {
         "title": "Network error: Please check your connection and try again",
         "description": "The connection was interrupted or the service is temporarily unreachable."
       },
       "timeout_error": {
-        "title": "Request timeout: Service response time exceeded",
-        "description": "The service did not respond in time. Try sending the message again later."
+        "title": "Timed out waiting for a response",
+        "description": "The request did not receive a response in time. Retry or switch models.",
+        "description_with_seconds": "No model or tool progress was received within {{seconds}} seconds. Retry or switch models."
       },
       "llm_error": {
         "title": "Model error: The model is temporarily unavailable",
         "description": "The model service is unavailable. Try again later or switch models."
+      },
+      "model_unavailable": {
+        "title": "Model unavailable",
+        "description": "The selected model is currently unavailable. Try again later or switch models."
       },
       "llm_unsupported": {
         "title": "Current model does not support this request",
@@ -373,6 +378,10 @@
         "title": "Message generation failed",
         "description": "The request could not be completed. Try again later, or view the error details.",
         "description_without_details": "The request could not be completed. Try again later."
+      },
+      "server_overloaded": {
+        "title": "Model service is busy",
+        "description": "The model service is overloaded. Retry later or switch models."
       }
     }
   }

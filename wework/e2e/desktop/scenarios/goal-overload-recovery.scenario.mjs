@@ -1,3 +1,7 @@
+import {
+  OVERLOAD_FIRST_RETRY_DELAY_MS,
+  assertOverloadRetryTiming,
+} from '../modules/overload-retry-timing.mjs'
 import assert from 'node:assert/strict'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -19,10 +23,10 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
-const FIRST_RETRY_DELAY_MS = 10_000
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
@@ -111,16 +115,27 @@ export function createDesktopScenario(options) {
           await createSingleRootLocalProject(control, workspace, `goal-overload-${action}`)
           await selectE2EModel(control, undefined, 'GPT-5.6 Luna', ACTIVE_WORKBENCH_SELECTOR)
           await control.command(
-            'click',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
+            'setExpanded',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`,
+            { value: 'true', visible: true, timeoutMs: options.uiTimeoutMs }
           )
-          await control.command('click', '[data-testid="set-goal-button"]')
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="add-context-menu"] [data-testid="set-goal-button"]',
+            { visible: true, timeoutMs: options.uiTimeoutMs }
+          )
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
-          // Admit the user mutation before recovery sees the failed native frame.
-          // UI commands must not race the native retry deadline.
-          if (!continuing) await existing.overloadTerminalGate.arm()
+          // Hold the real failed frame until both UI and RPC observe the stopped Goal.
+          // Neither the baseline read nor a user mutation may race native recovery.
+          await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-          if (!continuing) await existing.overloadTerminalGate.wait()
+          await waitForValue(
+            () => requests,
+            count => count > 0,
+            `The overloaded Goal did not reach its first model request for ${action}`,
+            options.modelResponseTimeoutMs
+          )
+          await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>
@@ -134,6 +149,7 @@ export function createDesktopScenario(options) {
           assert.equal(before.status, 'blocked')
           assert.equal(before.threadId, stopped.pane.goal.threadId)
           if (continuing) {
+            await existing.overloadTerminalGate.release()
             if (action === 'resume')
               await rpc('runtime.tasks.goal.set', { address, status: 'active' })
             await waitForWorkbenchDebugState(
@@ -180,7 +196,7 @@ export function createDesktopScenario(options) {
           if (!continuing) {
             // Observe beyond the native first retry delay in turn_recovery.rs to
             // prove a user mutation cannot be undone by the pending recovery.
-            await new Promise(resolve => setTimeout(resolve, FIRST_RETRY_DELAY_MS + 500))
+            await new Promise(resolve => setTimeout(resolve, OVERLOAD_FIRST_RETRY_DELAY_MS + 500))
             assert.equal(requests, 1, 'Recovery continued a Goal changed by the user')
             const goal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(goal?.status ?? null, action === 'clear' ? null : action)
@@ -192,6 +208,7 @@ export function createDesktopScenario(options) {
             await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { text: RECOVERED })
             const log = await readFile(join(options.resultDir, 'executor.log'), 'utf8')
             assert.ok(log.includes('codex overloaded turn recovery'))
+            assertOverloadRetryTiming(log)
             assert.equal((await rpc('runtime.tasks.goal.get', { address })).goal.status, 'complete')
           }
           await rpc('runtime.tasks.goal.clear', { address })

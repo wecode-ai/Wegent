@@ -29,7 +29,9 @@ impl GlobalCapabilityStore {
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, claude));
             self.ensure_state_path(&link, true)?;
-            if fs::read_link(&link).is_ok_and(|target| target == runtime) {
+            if fs::read_link(&link)
+                .is_ok_and(|target| shared_packages::same_entry(&target, &runtime))
+            {
                 reused.insert(link);
             } else if link.is_dir() && !link.is_symlink() {
                 candidates.insert(link);
@@ -38,7 +40,7 @@ impl GlobalCapabilityStore {
         if candidates.is_empty() {
             return Ok(reused);
         }
-        let template = RuntimeTemplate::read(source)?;
+        let template = RuntimeTemplate::read(source, self)?;
         // Ownership was validated before this probe. Unreadable or symlinked
         // contents still follow the existing whole-directory repair path.
         reused.extend(template.matching_paths(&candidates)?);

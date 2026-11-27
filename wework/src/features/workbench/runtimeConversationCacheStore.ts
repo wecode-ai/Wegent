@@ -4,6 +4,7 @@ import {
   evictConversationViewport,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
@@ -36,6 +37,86 @@ export interface RuntimeConversationMetadata {
 }
 
 export const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
+interface TranscriptAuthority {
+  scope: string | undefined
+  threadId: string | null
+  turns: Map<string, string>
+}
+const transcriptAuthorityByConversation = new Map<string, TranscriptAuthority>()
+const pendingTerminalTranscripts = new Map<string, { turnId: string; scope?: string }>()
+
+export function pendingTerminalTranscriptTurn(
+  address: RuntimeTaskAddress,
+  scope?: string
+): string | null {
+  const pending = pendingTerminalTranscripts.get(runtimeConversationKey(address))
+  return pending && pending.scope === scope ? pending.turnId : null
+}
+
+export function beginTerminalTranscriptRead(
+  address: RuntimeTaskAddress,
+  turnId: string,
+  scope?: string
+): () => void {
+  const pending = { turnId, scope }
+  const key = runtimeConversationKey(address)
+  pendingTerminalTranscripts.set(key, pending)
+  notifyRuntimeConversation(key)
+  return () => {
+    const currentKey = runtimeConversationKey(address)
+    if (pendingTerminalTranscripts.get(currentKey) !== pending) return
+    pendingTerminalTranscripts.delete(currentKey)
+    scheduleTerminalConversationEviction(currentKey)
+    notifyRuntimeConversation(currentKey)
+  }
+}
+
+/** Record only an accepted native hydration, never a live stream projection. */
+export function recordRuntimeTranscriptAuthority(
+  address: RuntimeTaskAddress,
+  turns: RuntimeConversationTurn[],
+  scope: string | undefined,
+  threadId: string | null
+): void {
+  const key = runtimeConversationKey(address)
+  if (!turnsByConversation.has(key) || (threadIdsByConversation.get(key) ?? null) !== threadId)
+    return
+  const currentTurns = turnsByConversation.get(key) ?? []
+  transcriptAuthorityByConversation.set(key, {
+    scope,
+    threadId,
+    turns: new Map(
+      turns.flatMap(turn => {
+        const current = currentTurns.find(candidate => candidate.id === turn.id)
+        return turn.id && !turn.contentTruncated && current?.status === turn.status
+          ? [[turn.id, turn.status]]
+          : []
+      })
+    ),
+  })
+}
+
+export function hasRuntimeTranscriptAuthority(
+  address: RuntimeTaskAddress,
+  turnId: string | null | undefined,
+  outcome: 'succeeded' | 'failed' | 'cancelled' | undefined,
+  scope?: string
+): boolean {
+  if (!turnId || !outcome) return false
+  const key = runtimeConversationKey(address)
+  const receipt = transcriptAuthorityByConversation.get(key)
+  const threadId = threadIdsByConversation.get(key) ?? null
+  if (
+    !receipt ||
+    receipt.scope !== scope ||
+    receipt.threadId !== threadId ||
+    (address.threadId && address.threadId !== threadId)
+  )
+    return false
+  const status = receipt.turns.get(turnId)
+  return outcome === 'succeeded' ? status === 'done' || status === 'completed' : status === outcome
+}
+
 export const threadIdsByConversation = new Map<string, string>()
 export const supersededTurnIdsByConversation = new Map<string, Set<string>>()
 export const projectedMessagesByConversation = new Map<
@@ -108,6 +189,8 @@ function canonicalRuntimeConversationDeviceId(deviceId: string): string {
 function conversationMaps(): Map<string, unknown>[] {
   return [
     turnsByConversation,
+    transcriptAuthorityByConversation,
+    pendingTerminalTranscripts,
     threadIdsByConversation,
     supersededTurnIdsByConversation,
     projectedMessagesByConversation,
@@ -135,11 +218,21 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   )
   if (replacedThread) {
     turnsByConversation.delete(previousKey)
+    transcriptAuthorityByConversation.delete(previousKey)
+    pendingTerminalTranscripts.delete(previousKey)
     hydrationByConversation.delete(previousKey)
     supersededTurnIdsByConversation.delete(previousKey)
     evictConversationViewport(previousKey)
   }
   moveEntry(threadIdsByConversation, previousKey, nextKey, (_, current) => current)
+  moveEntry(pendingTerminalTranscripts, previousKey, nextKey, (_, current) => current)
+  moveEntry(transcriptAuthorityByConversation, previousKey, nextKey, (previous, current) => ({
+    ...current,
+    turns:
+      previous.scope === current.scope
+        ? new Map([...previous.turns, ...current.turns])
+        : current.turns,
+  }))
   moveEntry(
     supersededTurnIdsByConversation,
     previousKey,
@@ -283,9 +376,16 @@ export function notifyRuntimeConversation(
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
   if (archivedConversationKeys.has(key)) return
+  if (turns.length === 0) transcriptAuthorityByConversation.delete(key)
+  const authority = transcriptAuthorityByConversation.get(key)
+  for (const turn of turns) {
+    if (turn.id && !['done', 'completed', 'failed', 'cancelled'].includes(turn.status))
+      authority?.turns.delete(turn.id)
+  }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
+    transcriptAuthorityByConversation.delete(evictedKey)
     cancelPendingStreamingNotification(evictedKey)
     cancelTerminalConversationEviction(evictedKey)
   })
@@ -341,6 +441,8 @@ export function evictRuntimeConversationKey(key: string): void {
   cancelPendingStreamingNotification(key)
   cancelTerminalConversationEviction(key)
   turnsByConversation.delete(key)
+  transcriptAuthorityByConversation.delete(key)
+  pendingTerminalTranscripts.delete(key)
   projectedMessagesByConversation.delete(key)
   metadataByConversation.delete(key)
   goalSnapshotVersionsByConversation.delete(key)
@@ -363,8 +465,24 @@ export function unmarkRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.delete(key)
 }
 
+function terminalConversationIdleTtlMs(): number {
+  const config = getDesktopE2ERuntimeConfig()
+  const configured = config.conversationCacheIdleTtlMs
+  return config.controlUrl &&
+    !config.disabled &&
+    typeof configured === 'number' &&
+    Number.isInteger(configured) &&
+    configured > 0
+    ? configured
+    : TERMINAL_CONVERSATION_IDLE_TTL_MS
+}
+
 export function getRuntimeConversationCacheStats() {
-  return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
+  return {
+    messageEntries: turnsByConversation.size,
+    idleTtlMs: terminalConversationIdleTtlMs(),
+    ...getConversationViewportCacheStats(),
+  }
 }
 
 export function clearRuntimeConversationCacheStore(): void {
@@ -395,7 +513,7 @@ export function scheduleTerminalConversationEviction(key: string): void {
     if (!canEvictTerminalConversation(key)) return
     evictRuntimeConversationKey(key)
     notifyRuntimeConversation(key)
-  }, TERMINAL_CONVERSATION_IDLE_TTL_MS)
+  }, terminalConversationIdleTtlMs())
   terminalConversationEvictionTimers.set(key, timer)
 }
 
@@ -405,6 +523,7 @@ function canEvictTerminalConversation(key: string): boolean {
     turns &&
     !retainingListenersByConversation.has(key) &&
     !hydrationByConversation.has(key) &&
+    !pendingTerminalTranscripts.has(key) &&
     (queuedMessagesByConversation.get(key)?.length ?? 0) === 0 &&
     !turns.some(turn => turn.status === 'pending' || turn.status === 'streaming')
   )

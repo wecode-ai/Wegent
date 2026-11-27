@@ -307,6 +307,7 @@ async fn rejected_cloud_creation_preserves_the_issue_reservation() {
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         }))),
         ..RuntimeWorkRpcHandler::new("mac", "unused")

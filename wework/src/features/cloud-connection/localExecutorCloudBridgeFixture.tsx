@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react'
-import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
+import { LocalExecutorCloudBridge } from './LocalExecutorCloudFixture'
 
 export function connectedCloudBridge(
   overrides: Partial<ComponentProps<typeof LocalExecutorCloudBridge>> = {}

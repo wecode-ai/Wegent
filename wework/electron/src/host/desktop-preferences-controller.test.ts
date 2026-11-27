@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   DesktopPreferencesController,
+  resolveAppshotsShortcut,
   resolvePopoutShortcut,
 } from './desktop-preferences-controller.js'
 
@@ -17,6 +18,7 @@ function fixture(initial: Record<string, unknown> = {}) {
   const effects = {
     isShuttingDown: vi.fn(() => false),
     configurePopoutShortcut: vi.fn(),
+    configureAppshotsShortcut: vi.fn(),
     setPerformanceRecordingEnabled: vi.fn<(_enabled: boolean) => Promise<void>>(
       async () => undefined
     ),
@@ -195,5 +197,27 @@ describe('DesktopPreferencesController', () => {
     expect(resolvePopoutShortcut({})).toBe('Alt+Shift+Space')
     expect(resolvePopoutShortcut({ popoutWindowShortcut: null })).toBeNull()
     expect(resolvePopoutShortcut({ popoutWindowShortcut: ' Ctrl+Space ' })).toBe('Ctrl+Space')
+    expect(resolveAppshotsShortcut({})).toBe('CommandOrControl+Shift+2')
+    expect(resolveAppshotsShortcut({ appshotsShortcut: null })).toBeNull()
+    expect(resolveAppshotsShortcut({ appshotsShortcut: ' Command+Shift+3 ' })).toBe(
+      'Command+Shift+3'
+    )
+  })
+
+  test('configures the Appshots shortcut before persistence and restores it on failure', async () => {
+    const { controller, store, effects } = fixture({ appshotsShortcut: 'Command+Shift+2' })
+    store.update.mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(controller.update({ appshotsShortcut: 'Command+Shift+3' })).rejects.toThrow(
+      'disk full'
+    )
+
+    expect(effects.configureAppshotsShortcut.mock.calls).toEqual([
+      ['Command+Shift+3'],
+      ['Command+Shift+2'],
+    ])
+    expect(effects.configureAppshotsShortcut.mock.invocationCallOrder[0]).toBeLessThan(
+      store.update.mock.invocationCallOrder[0]!
+    )
   })
 })

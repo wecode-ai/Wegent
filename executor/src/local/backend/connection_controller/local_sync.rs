@@ -14,7 +14,13 @@ mod recovery;
 mod scanning;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    path::Path,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
 
 struct LocalSyncSession<'a> {
     connection: &'a ConnectionConfig,
@@ -22,6 +28,48 @@ struct LocalSyncSession<'a> {
     capabilities: &'a Value,
     instance: &'a str,
     path: &'a Path,
+    progress: Option<&'a LocalSyncProgress>,
+}
+
+struct LocalSyncProgress([u8; 32]);
+
+impl LocalSyncProgress {
+    fn active() -> &'static Mutex<HashMap<[u8; 32], bool>> {
+        static PROGRESS: OnceLock<Mutex<HashMap<[u8; 32], bool>>> = OnceLock::new();
+        PROGRESS.get_or_init(Mutex::default)
+    }
+
+    fn key(connection: &ConnectionConfig, value: &Value) -> Option<[u8; 32]> {
+        let id = uuid::Uuid::parse_str(value.as_str()?).ok()?;
+        Some(
+            Sha256::new()
+                .chain_update(connection.backend_url.as_bytes())
+                .chain_update([0])
+                .chain_update(connection.auth_token.as_bytes())
+                .chain_update(id.as_bytes())
+                .finalize()
+                .into(),
+        )
+    }
+
+    fn start(key: [u8; 32]) -> Result<Self, AppIpcError> {
+        let mut active = Self::active().lock().unwrap();
+        if active.contains_key(&key) {
+            return Err(error("invalid_params"));
+        }
+        active.insert(key, false);
+        Ok(Self(key))
+    }
+
+    fn locally_applied(&self) {
+        Self::active().lock().unwrap().insert(self.0, true);
+    }
+}
+
+impl Drop for LocalSyncProgress {
+    fn drop(&mut self) {
+        Self::active().lock().unwrap().remove(&self.0);
+    }
 }
 
 // Account HTTP does not consume Socket routes or Runtime credentials.
@@ -31,6 +79,12 @@ fn same_account_connection(current: &ConnectionConfig, expected: &ConnectionConf
 
 fn error(code: &str) -> AppIpcError {
     AppIpcError::new(code, code)
+}
+fn is_plugin_contention(error: &AppIpcError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "plugin_write_busy" | "plugin_write_conflict" | "plugin_write_lease_lost"
+    )
 }
 fn persist(path: &Path, journal: &Value) -> Result<(), AppIpcError> {
     let bytes = serde_json::to_vec(journal).map_err(|_| error("plugin_local_journal_invalid"))?;
@@ -83,6 +137,7 @@ fn instance_id(root: &Path) -> Result<String, AppIpcError> {
         .map_err(|_| error("plugin_local_journal_unavailable"))?;
     file.lock_exclusive()
         .map_err(|_| error("plugin_local_journal_unavailable"))?;
+    let _lock = recovery::FileLock(file);
     let value = if path.exists() {
         load(&path)?
     } else {
@@ -276,7 +331,8 @@ async fn submit(
             return Ok(SubmitOutcome::Superseded);
         }
         let definitive = matches!(status.as_u16(), 400 | 403 | 404 | 422)
-            || (status.as_u16() == 409 && code == "INTENT_SUPERSEDED");
+            || (status.as_u16() == 409
+                && matches!(code, "INTENT_SUPERSEDED" | "PLUGIN_UPDATE_RELEASE_CHANGED"));
         if ack && rejected && definitive && value["detail"].is_string() {
             return Ok(SubmitOutcome::Rejected {
                 failure: error(code),
@@ -338,6 +394,32 @@ fn local_result(payload: &Value, result: Value) -> Value {
 }
 
 impl LocalBackendConnectionController {
+    async fn retry_plugin_contention<T, F, Fut>(
+        &self,
+        connection: &ConnectionConfig,
+        mut attempt: F,
+    ) -> Result<T, AppIpcError>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, AppIpcError>>,
+    {
+        for delay in [200, 500] {
+            match attempt().await {
+                Err(failure) if is_plugin_contention(&failure) => {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    let state = self.state.lock().await;
+                    if !state.profile.as_ref().is_some_and(|profile| {
+                        same_account_connection(&profile.connection, connection)
+                    }) {
+                        return Err(error("plugin_route_profile_mismatch"));
+                    }
+                }
+                outcome => return outcome,
+            }
+        }
+        attempt().await
+    }
+
     fn plugin_source_device_id(&self) -> String {
         if !self
             .connection_status
@@ -378,6 +460,18 @@ impl LocalBackendConnectionController {
                     .ok_or_else(|| error("plugin_local_sync_unsupported"))?,
             )
         };
+        let progress_key = LocalSyncProgress::key(&connection, &params["progressId"]);
+        if params["progressOnly"] == true {
+            let confirming = progress_key.and_then(|key| {
+                LocalSyncProgress::active()
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .copied()
+            });
+            return Ok(json!({"confirming": confirming == Some(true)}));
+        }
+        let progress = progress_key.map(LocalSyncProgress::start).transpose()?;
         std::fs::create_dir_all(root).map_err(|_| error("plugin_local_journal_unavailable"))?;
         // This short cross-process identity lease is independent of installer
         // execution. Waiting for it must not occupy a Tokio worker.
@@ -417,6 +511,8 @@ impl LocalBackendConnectionController {
                 || journal["reconcilePending"] == true;
             let mut capabilities = capabilities;
             capabilities["recoveryPending"] = json!(recovery);
+            capabilities["operationProgress"] = json!(true);
+            capabilities["recoveryOutcomes"] = json!(recovery::outcomes(&journal));
             capabilities["sourceDeviceId"] = json!(self.plugin_source_device_id());
             return Ok(capabilities);
         }
@@ -443,6 +539,7 @@ impl LocalBackendConnectionController {
                 capabilities: &capabilities,
                 instance: &instance,
                 path: &path,
+                progress: progress.as_ref(),
             },
             journal,
             &mut lease,
@@ -465,6 +562,7 @@ impl LocalBackendConnectionController {
             capabilities,
             instance,
             path,
+            progress,
         } = session;
         if journal["version"] != 1 {
             return Err(error("plugin_local_journal_invalid"));
@@ -482,7 +580,13 @@ impl LocalBackendConnectionController {
                 return Err(error("invalid_params"));
             }
             let intent_order = next_intent_order(&mut journal)?;
-            let request = json!({"intentOrder":intent_order,"action":action,"targetId":params["targetId"],"payload":params.get("payload").cloned().unwrap_or(json!({})),"operationId":uuid::Uuid::new_v4().to_string()});
+            let mut request = json!({"intentOrder":intent_order,"action":action,"targetId":params["targetId"],"payload":params.get("payload").cloned().unwrap_or(json!({})),"operationId":uuid::Uuid::new_v4().to_string()});
+            if let Some(progress_id) = params["progressId"]
+                .as_str()
+                .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            {
+                request["progressId"] = json!(progress_id.to_string());
+            }
             journal["pending"]
                 .as_array_mut()
                 .ok_or_else(|| error("plugin_local_journal_invalid"))?
@@ -502,13 +606,12 @@ impl LocalBackendConnectionController {
             recovery::record_submission_attempt(&mut journal, operation.unwrap());
             persist(path, &journal)?;
             drop(lease.take());
-            let outcome = submit(
-                connection,
-                instance,
-                request,
-                &self.plugin_source_device_id(),
-            )
-            .await;
+            let source_device = self.plugin_source_device_id();
+            let outcome = self
+                .retry_plugin_contention(connection, || {
+                    submit(connection, instance, request, &source_device)
+                })
+                .await;
             journal = self
                 .resume_local_sync_journal(connection, path, lease)
                 .await?;
@@ -516,6 +619,9 @@ impl LocalBackendConnectionController {
             persist(path, &journal)?;
             if !matches!(outcome, Ok(SubmitOutcome::Accepted)) {
                 return Err(match outcome {
+                    Err(failure) if is_plugin_contention(&failure) => {
+                        error("plugin_local_acceptance_unconfirmed")
+                    }
                     Err(failure) | Ok(SubmitOutcome::Rejected { failure, .. }) => failure,
                     Ok(SubmitOutcome::Superseded) => error("INTENT_SUPERSEDED"),
                     Ok(SubmitOutcome::Accepted) => unreachable!(),
@@ -592,7 +698,18 @@ impl LocalBackendConnectionController {
         let plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
         let source_device = self.plugin_source_device_id();
         drop(lease.take());
-        let snapshot = post(connection, "/api/plugins/local-sync", &plan_request).await?;
+        let snapshot = self
+            .retry_plugin_contention(connection, || {
+                post(connection, "/api/plugins/local-sync", &plan_request)
+            })
+            .await
+            .map_err(|failure| {
+                if operation.is_some() && is_plugin_contention(&failure) {
+                    error("plugin_local_acceptance_unconfirmed")
+                } else {
+                    failure
+                }
+            })?;
         journal = self
             .resume_local_sync_journal(connection, path, lease)
             .await?;
@@ -626,8 +743,11 @@ impl LocalBackendConnectionController {
                 && journal["confirmedDeviceRevision"]
                     != completion::identity(&source_device, &snapshot);
             if needs_confirmation {
+                journal["reconcilePending"] = json!(true);
+                persist(path, &journal)?;
                 drop(lease.take());
                 completion::confirm(
+                    self,
                     connection,
                     instance,
                     &source_device,
@@ -644,11 +764,12 @@ impl LocalBackendConnectionController {
                 }
                 journal["confirmedDeviceRevision"] =
                     completion::identity(&source_device, &snapshot);
+                journal["reconcilePending"] = json!(false);
                 persist(path, &journal)?;
             }
             // Device-state repair must also refresh the marketplace projection.
             return Ok(
-                json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":!needs_confirmation, "result":journal["lastResult"]}),
+                json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":!needs_confirmation, "result":journal["lastResult"], "recoveryOutcomes":recovery::outcomes(&journal)}),
             );
         }
         if !valid_snapshot(&snapshot)
@@ -688,8 +809,17 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
+            // Preserve actual application separately from the server receipt.
+            // A failed confirmation must leave recoverable, truthful evidence.
+            journal["lastResult"] = result.clone();
+            journal["confirmedDeviceRevision"] = Value::Null;
+            persist(path, &journal)?;
+            if let Some(progress) = progress {
+                progress.locally_applied();
+            }
             drop(lease.take());
             completion::confirm(
+                self,
                 connection,
                 instance,
                 &source_device,
@@ -722,11 +852,13 @@ impl LocalBackendConnectionController {
                     .unwrap()
                     .retain(|entry| entry["operationId"].as_str() != Some(operation));
             } else if !targeted {
-                journal["pending"].as_array_mut().unwrap().retain(|entry| {
-                    !entry["operationId"]
-                        .as_str()
-                        .is_some_and(|id| operation_ids.iter().any(|item| item == id))
-                });
+                recovery::retire_reconciled(
+                    &mut journal,
+                    &operation_ids,
+                    snapshot["currentOperationIds"]
+                        .as_array()
+                        .map(Vec::as_slice),
+                );
             }
             journal["reconcilePending"] = json!(
                 targeted || intervening || !journal["pending"].as_array().unwrap().is_empty()
@@ -764,7 +896,7 @@ impl LocalBackendConnectionController {
             persist(path, &journal)?;
         }
         Ok(
-            json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"operation":snapshot["operation"],"result":result}),
+            json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"operation":snapshot["operation"],"result":result,"pendingCount":journal["pending"].as_array().unwrap().len(),"recoveryOutcomes":recovery::outcomes(&journal)}),
         )
     }
 }

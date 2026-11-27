@@ -1,22 +1,27 @@
+import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { roleIncludesProject } from '@/api/personalStandIn'
 import { BetaBadge } from '@/components/common/BetaBadge'
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo } from '@/types/api'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
   WorkspaceStandInSettings,
 } from '@wegent/collaboration'
-import {
-  roleIncludesProject,
-  subscribePersonalStandIn,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInIcon } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createStandInPopoverSettingsResource } from './standInPopoverSettingsResource'
+import { createPortal } from 'react-dom'
+import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 
 /** Project entries select or create a personally owned stand-in for this project. */
 export function StandInPopover({
@@ -50,53 +55,55 @@ export function StandInPopover({
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
 }) {
   const { t } = useTranslation('common')
+  const cloud = useOptionalCloudConnection()
+  const connected = cloud.isConnected && !!cloud.user
   const [open, setOpen] = useState(embedded)
   const [savedDeviceId, setSavedDeviceId] = useState<string>()
   const editorDeviceId = initialDeviceId || savedDeviceId
   const [saving, setSaving] = useState(false)
   const editorRef = useRef<StandInSettingsHandle>(null)
-  const [settings, setSettings] = useState<PersonalStandInSettings | null>(null)
-  const [availableProjects, setAvailableProjects] = useState<CollaborationProject[]>([])
   const requestClose = () => {
-    if (!saving) editorRef.current?.requestClose()
+    if (!connected) {
+      setOpen(false)
+      onCancel?.()
+    } else if (!saving) editorRef.current?.requestClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(requestClose, open && !embedded)
-  useEffect(() => {
-    let active = true
-    let targetDeviceId = editorDeviceId
-    const unsubscribe = subscribePersonalStandIn(value => {
-      if (active && value.userId === userId && value.executionDeviceId === targetDeviceId)
-        setSettings(value)
-    })
-    void (async () => {
-      const identity = await services?.getLocalRuntimeSidebarIdentity?.()
-      if (!identity || !services?.standInApi || userId == null) return
-      targetDeviceId = editorDeviceId || identity.deviceId
-      const result = await services.standInApi.personalGet(userId, targetDeviceId)
-      if (active) setSettings(result)
-    })().catch(() => {
-      /* The settings page exposes load errors and recovery. */
-    })
-    return () => {
-      active = false
-      unsubscribe()
-    }
-  }, [services, userId, editorDeviceId])
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void api.projects
-      .list()
-      .then(rows => {
-        if (active) setAvailableProjects(rows)
-      })
-      .catch(() => {
-        /* Existing project data remains available while disconnected. */
-      })
-    return () => {
-      active = false
-    }
-  }, [api, open])
+  const dialogRef = useRef<HTMLElement>(null)
+  const settingsResource = useMemo(
+    () =>
+      services?.standInApi && userId != null
+        ? createStandInPopoverSettingsResource({
+            api: services.standInApi,
+            identify: services.getLocalRuntimeSidebarIdentity,
+            userId,
+            deviceId: editorDeviceId,
+          })
+        : null,
+    [services, userId, editorDeviceId]
+  )
+  const settingsSnapshot = useSyncExternalStore(
+    connected && settingsResource ? settingsResource.subscribe : subscribeIdleResource,
+    settingsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const settings = settingsSnapshot.data
+  const projectResource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-project-catalog', userId]),
+        () => api.projects.list(),
+        { refreshOnSubscribe: true }
+      ),
+    [api, userId]
+  )
+  const projectSnapshot = useSyncExternalStore(
+    connected && open && services?.standInApi && userId != null
+      ? projectResource.subscribe
+      : subscribeIdleResource,
+    projectResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const availableProjects = projectSnapshot.data ?? []
   if (!services?.standInApi || userId == null) return null
   const projectRef = {
     id: project.id,
@@ -112,7 +119,9 @@ export function StandInPopover({
       ])
     ).values(),
   ]
-  const editor = (
+  const editor = !connected ? (
+    <StandInCloudConnectionPrompt />
+  ) : (
     <StandInSettingsPage
       ref={editorRef}
       api={api}
@@ -149,7 +158,8 @@ export function StandInPopover({
   if (embedded) return editor
   return (
     <>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="stand-in-open"
         aria-label={t('standIn.title')}
@@ -168,7 +178,7 @@ export function StandInPopover({
             className="h-1.5 w-1.5 rounded-full bg-text-primary"
           />
         )}
-      </button>
+      </ControlButton>
       {open &&
         createPortal(
           <div
@@ -177,17 +187,21 @@ export function StandInPopover({
               if (event.target === event.currentTarget) requestClose()
             }}
           >
-            <section
-              ref={dialogRef}
-              tabIndex={-1}
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('standIn.title')}
-              data-testid="stand-in-dialog"
-              className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
+            <DialogSurface
+              onClose={requestClose}
+              active={open && !embedded}
+              render={
+                <section
+                  ref={dialogRef}
+                  tabIndex={-1}
+                  aria-label={t('standIn.title')}
+                  data-testid="stand-in-dialog"
+                  className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
+                />
+              }
             >
               {editor}
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}

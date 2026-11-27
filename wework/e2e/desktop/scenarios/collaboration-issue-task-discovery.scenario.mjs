@@ -34,6 +34,27 @@ const OTHER_APP_ID = `issue-other-app-${process.pid}`
 const COMPLETION = 'ISSUE_APP_RECORD_COMPLETE'
 const scoped = selector => `${CONTENT} ${selector}`
 
+async function measureComposerProjectSelector(control, mode) {
+  const panel = scoped(`[role="tabpanel"][aria-labelledby$="-${mode}-tab"]:not([inert])`)
+  const projectId = 'collaboration-issue-project-trigger'
+  const editorId = 'project-chat-composer-content'
+  const selector = `${panel} :is([data-testid="${projectId}"], [data-testid="${editorId}"])`
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', selector, { value: 'includeText' })
+  )
+  const project = metrics.find(item => item.testId === projectId)
+  const content = metrics.find(item => item.testId === editorId)
+  assert.ok(
+    project?.height > 0 && content?.height > 0,
+    `${mode}: composer controls must be visible`
+  )
+  assert.ok(
+    project.bottom <= content.top + 1,
+    `${mode}: project selector must sit above the editor`
+  )
+  return project.height
+}
+
 export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
@@ -122,6 +143,8 @@ export function createDesktopScenario({
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)
+    // This fixture responds through the Responses protocol, including in Issue composers.
+    await selectE2EModel(control, undefined, undefined, panel)
     // Mounting the composer does not imply its asynchronous model selection is ready.
     await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
       enabled: true,
@@ -174,7 +197,7 @@ export function createDesktopScenario({
     const pane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
     const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
     await control.command('waitFor', composer)
-    await control.command('click', `${pane} [data-testid="execution-mode-button"]`)
+    await control.command('clickWhenEnabled', `${pane} [data-testid="execution-mode-button"]`)
     await control.command(
       'clickWhenEnabled',
       '[data-testid="execution-mode-current-workspace-button"]'
@@ -248,7 +271,13 @@ export function createDesktopScenario({
     await openCollaborationIssueCreation(control, scoped)
     await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
     await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    const recordProjectHeight = await measureComposerProjectSelector(control, 'record')
     await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
+    assert.equal(
+      await measureComposerProjectSelector(control, 'task'),
+      recordProjectHeight,
+      'Record Issue and Create Task must use the same project selector height'
+    )
     const prompt = `Personal home start work recover ${Date.now()}`
     await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
       value: prompt,

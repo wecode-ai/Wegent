@@ -53,6 +53,18 @@ def main() -> None:
             sys.stdin.readline()
             connection.rollback()
             result = {"released": True}
+        elif operation == "transaction":
+            connection.autocommit(False)
+            result = []
+            with connection.cursor() as cursor:
+                for statement in request["statements"]:
+                    cursor.execute(statement["sql"], statement.get("params", []))
+                    result.append(
+                        cursor.fetchall()
+                        if cursor.description
+                        else {"affected": cursor.rowcount}
+                    )
+            connection.commit()
         else:
             with connection.cursor() as cursor:
                 cursor.execute(request["sql"], request.get("params", []))

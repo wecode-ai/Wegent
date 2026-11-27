@@ -1,3 +1,5 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   openStandInActivity,
   openStandInSettings,
@@ -186,6 +188,22 @@ export async function createDesktopScenario({
       )
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-role-name"]'),
+        `${PROJECT} 助理`,
+        'An account with no roles can start creating its first role from a project'
+      )
+      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('click', '[data-testid="stand-in-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER_ID
+      )
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('waitFor', '[data-testid="stand-in-project-summary"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-project-select"]'),
         'default'
@@ -559,8 +577,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(requests, 2, 'Polling or editing duplicated a completed assignment')
       for (const excluded of [old, other, unassigned]) {
         assert.equal(
@@ -600,8 +618,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(
         (
           await requestExecutor(
@@ -676,8 +694,8 @@ export async function createDesktopScenario({
         ])
       // Automatic intake selects one matching role in configured order.
       await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review'])
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(requests, 5, 'Each assignment must execute once through its selected assistant')
       assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
@@ -803,8 +821,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.deepEqual(
         { requests, ...tagRequests },
         beforeReorder,
@@ -934,11 +952,17 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       await openStandInMemory(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-add"]')
-      const scopes = await control.command('getText', '[data-testid="stand-in-memory-scope"]')
+      const scopeTrigger = '[data-testid="stand-in-memory-scope"]'
+      const scopeOptions = '[data-testid="stand-in-memory-scope-options"]'
+      await control.command('setExpanded', scopeTrigger, { value: 'true', visible: true })
+      await control.command('waitFor', scopeOptions, { visible: true })
+      const scopes = await control.command('getText', scopeOptions, { visible: true })
       assert.ok(scopes.includes(`${renamed}（与你聊天时）`), scopes)
       assert.ok(scopes.includes(`项目 · ${PROJECT}`), scopes)
       assert.ok(!scopes.includes('standIn.'), scopes)
       assert.ok(!scopes.includes(`项目 · ${project.id}`), scopes)
+      await control.command('press', scopeTrigger, { key: 'Escape' })
+      await control.command('waitFor', scopeOptions, { visible: false })
       await control.command('click', '[data-testid="stand-in-memory-cancel"]')
       await control.command('click', '[data-testid="stand-in-memory-close"]')
       await verifyProjectIntakeBoundary({

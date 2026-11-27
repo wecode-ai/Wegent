@@ -51,6 +51,7 @@ from app.services.device.runtime_rpc_service import (
     runtime_rpc_service,
 )
 from app.services.project_chat.execution_snapshot import reconcile_execution_snapshot
+from app.services.project_chat.message_provenance import shared_project_chat_message
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.context import set_request_context, set_user_context
 
@@ -421,7 +422,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             message = result["message"]
             await self.emit(
                 PROJECT_CHAT_CREATED_EVENT,
-                message,
+                shared_project_chat_message(message),
                 room=project_chat_room(request.project_id, request.task_id),
             )
         return {
@@ -745,7 +746,7 @@ async def emit_project_chat_message(
     task_id = message.get("taskId")
     await namespace.emit(
         PROJECT_CHAT_CREATED_EVENT,
-        message,
+        shared_project_chat_message(message),
         room=project_chat_room(project_id, str(task_id) if task_id else None),
     )
 

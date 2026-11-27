@@ -699,6 +699,16 @@ async fn export_bundled_catalog_command(
     mut command: Command,
     home: &Path,
 ) -> Result<Value, String> {
+    let binary = command
+        .as_std()
+        .get_program()
+        .to_string_lossy()
+        .into_owned();
+    let started = Instant::now();
+    log_executor_event(
+        "codex bundled catalog export started",
+        &[("binary", binary.clone())],
+    );
     let output = command
         .args(["debug", "models", "--bundled"])
         .env("CODEX_HOME", home)
@@ -707,8 +717,26 @@ async fn export_bundled_catalog_command(
         .output();
     let output = tokio::time::timeout(Duration::from_secs(10), output)
         .await
-        .map_err(|_| "Codex bundled catalog export timed out".to_owned())?
+        .map_err(|_| {
+            log_executor_event(
+                "codex bundled catalog export timed out",
+                &[
+                    ("binary", binary.clone()),
+                    ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                ],
+            );
+            format!("Codex bundled catalog export timed out: {binary}")
+        })?
         .map_err(|error| format!("Codex bundled catalog export failed: {error}"))?;
+    log_executor_event(
+        "codex bundled catalog export finished",
+        &[
+            ("binary", binary),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ("status", output.status.to_string()),
+            ("stdout_bytes", output.stdout.len().to_string()),
+        ],
+    );
     if !output.status.success() {
         return Err(format!(
             "Codex bundled catalog export failed: {}",

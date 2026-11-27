@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
@@ -117,9 +118,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await captureScreenshot(control, 'publication-02-private-conversation.png')
       await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, { value: DRAFT })
       await control.command('click', '[data-testid="project-coordinator-publish"]')
-      await control.command('waitFor', '[data-testid="project-coordinator-publication-target"]', {
-        text: issue.title,
-      })
+      const target = '[data-testid="project-coordinator-publication-target"]'
+      const targetOptions = '[data-testid="project-coordinator-publication-target-options"]'
+      await verifyProjectFieldFocus(control, 'project-coordinator-publication-content')
+      await control.command('clickWhenEnabled', target)
+      await control.command('waitFor', targetOptions, { text: issue.title })
       assert.equal(
         await control.command(
           'getValue',
@@ -128,16 +131,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         ''
       )
       assert.ok(
-        !(
-          await control.command('getText', '[data-testid="project-coordinator-publication-target"]')
-        ).includes('OTHER_PROJECT_MUST_NOT_BE_AN_OPTION')
+        !(await control.command('getText', targetOptions)).includes(
+          'OTHER_PROJECT_MUST_NOT_BE_AN_OPTION'
+        )
       )
       await captureScreenshot(control, 'publication-03-explicit-publication-entry.png')
       await control.command(
-        'select',
-        '[data-testid="project-coordinator-publication-target"]',
-        { value: issue.id }
+        'clickWhenEnabled',
+        `${targetOptions} [role="option"][data-value=${JSON.stringify(String(issue.id))}]`
       )
+      await control.command('waitFor', targetOptions, { visible: false })
+      assert.equal(await control.command('getValue', target), String(issue.id))
       await control.command('fill', '[data-testid="project-coordinator-publication-content"]', {
         value: PUBLIC,
       })

@@ -2,9 +2,13 @@
 // renderer. Run them alone so Chromium's network service stays stable on the
 // four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
 export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
   'release-package-startup',
+  // Native development approval starts a second complete Electron/Core runtime.
+  'security-boundaries',
   'collaboration-issue-task-discovery',
+  // Its strict latency budget must observe the product rather than four
+  // unrelated Electron workloads saturating the CI runner.
+  'runtime-load-performance',
   // Its partial-inventory guard must run through the real system-idle scheduler.
   // Parallel Electron workloads keep CPU pressure above the production limit.
   'plugin-uninstall-lost-response',
@@ -12,17 +16,37 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
 
 export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
 
+const LINUX_CORE_EXCLUSIVE_CHECKPOINTS = new Set([
+  LINUX_CORE_HISTORY_CHECKPOINT,
+  // Concurrent desktop sessions inflate these CPU samples on four-vCPU runners.
+  'idle-executor-requests',
+  'executor-stream-recovery',
+])
+
 export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   return (
     RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
-    (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
+    (linuxCore && LINUX_CORE_EXCLUSIVE_CHECKPOINTS.has(checkpoint))
   )
 }
 
-// Database and Backend startup in these fixtures can delay the 200ms Python
-// descriptor request used by Python setup and plugin development. Keep these
-// fixtures separate from both checkpoints on Linux Core.
-const PYTHON_RUNTIME_STARTUP_PEERS = ['collaboration-shared-core', 'collaboration-templates']
+// Backend startup and concurrent Electron sessions can delay the 200ms Python
+// descriptor request. Keep the workloads observed during descriptor timeouts
+// off the same runner as Python startup.
+const PYTHON_RUNTIME_STARTUP_PEERS = [
+  'collaboration-shared-core',
+  'collaboration-templates',
+  'collaboration-template-app-device-routing',
+  'claude-runtime',
+  'conversation-state',
+  'stand-in-sessions',
+  'stand-in-cli',
+  'quota-recovery',
+  'permission-modes',
+  'model-routing',
+  'human-interactions',
+  'runtime-task-queue',
+]
 
 export function linuxCoreCheckpointResources(checkpoint) {
   if (checkpoint === 'python-runtime' || checkpoint === 'plugin-development') {

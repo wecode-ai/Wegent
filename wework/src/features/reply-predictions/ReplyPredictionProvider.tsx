@@ -1,12 +1,4 @@
-import {
-  useContext,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
+import { useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   ComposerPredictionContext,
   ComposerPredictionPendingContext,
@@ -14,17 +6,44 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/workbenchContexts'
 import { RuntimeTaskLifecycleContext } from '@/features/workbench/runtimeTaskLifecycle/internalContext'
+import type { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   replyPredictionKey,
   replyPredictionService,
   runtimeReplyPredictionSource,
-  type ReplyPredictionResult,
 } from './replyPredictionService'
+import { ReplyPredictionFeedContext } from './replyPredictionFeedContext'
+import { reportReplyPredictionFeedError } from './replyPredictionFeed'
+import { createReplyPredictionViews } from './replyPredictionViews'
 
 const noSubscription = () => () => {}
 const emptySnapshot = () => null
+
+function createPredictionTaskReader(
+  store: RuntimeTaskLifecycleStore | null,
+  address: RuntimeTaskAddress | null | undefined
+) {
+  return {
+    subscribe(listener: () => void) {
+      try {
+        return address && store ? store.subscribeTask(address, listener) : noSubscription()
+      } catch (error) {
+        reportReplyPredictionFeedError(error)
+        return noSubscription()
+      }
+    },
+    getSnapshot() {
+      try {
+        return store?.getTask(address) ?? null
+      } catch (error) {
+        reportReplyPredictionFeedError(error)
+        return null
+      }
+    },
+  }
+}
 
 export function ReplyPredictionProvider({
   address,
@@ -41,53 +60,42 @@ export function ReplyPredictionProvider({
   const workbench = paneWorkbench ?? globalWorkbench
   const preferences = useAppPreferencesState()
   const store = useContext(RuntimeTaskLifecycleContext)
-  const snapshot = useSyncExternalStore(
-    store?.subscribe ?? noSubscription,
-    store?.getSnapshot ?? emptySnapshot
-  )
-  const lifecycle = snapshot && address ? store?.selectTask(snapshot, address) : null
   const enabled = preferences?.loaded && preferences.preferences.replyPredictionsEnabled
+  const taskReader = useMemo(
+    () => createPredictionTaskReader(enabled ? store : null, address),
+    [enabled, store, address]
+  )
+  const lifecycle = useSyncExternalStore(taskReader.subscribe, taskReader.getSnapshot)
   const api = enabled ? workbench?.services.replyPredictionApi : undefined
-  const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
-  useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
+  const service = useMemo(() => {
+    if (!api) return null
+    try {
+      return replyPredictionService(api)
+    } catch (error) {
+      reportReplyPredictionFeedError(error)
+      return null
+    }
+  }, [api])
   const target = runtimeReplyPredictionSource(address, lifecycle)
+  const feed = useContext(ReplyPredictionFeedContext)
+  const key = target ? replyPredictionKey(target) : ''
   const scope = target?.scope
-  const busy = target?.busy ?? false
-  const currentSource = useEffectEvent(() => target!)
-  const [result, setResult] = useState<{
-    key: string
-    prediction: ReplyPredictionResult | null
-  } | null>(null)
-  const resultKey = target ? replyPredictionKey(target) : ''
-  useEffect(() => {
-    if (!service || !scope) return
-    if (busy) {
-      service.invalidate(scope)
-      return
-    }
-    let disposed = false
-    const release = service.retain(scope)
-    void service
-      .request(currentSource())
-      .then(prediction => {
-        if (!disposed) setResult({ key: resultKey, prediction })
-      })
-      .catch(() => {
-        if (!disposed) setResult({ key: resultKey, prediction: null })
-      })
-    return () => {
-      disposed = true
-      release()
-    }
-  }, [service, scope, busy, resultKey])
+  const entry = useSyncExternalStore(feed?.subscribe ?? noSubscription, () => {
+    if (!feed || !scope) return undefined
+    const snapshot = feed.getSnapshot()
+    return snapshot.service === service ? snapshot.entries.get(scope) : undefined
+  })
+  const feedOwnsRequest = Boolean(entry && (entry.key !== key || entry.busy || entry.requested))
+  const [views] = useState(createReplyPredictionViews)
+  const view = views.resolve(feedOwnsRequest ? null : service, target)
+  const ownResult = useSyncExternalStore(
+    view?.subscribe ?? noSubscription,
+    view?.getSnapshot ?? emptySnapshot
+  )
+  const result = feedOwnsRequest ? (entry?.key === key ? entry : null) : ownResult
+  const busy = Boolean(target?.busy || (feedOwnsRequest && entry?.busy))
   const prediction =
-    !blocked &&
-    !target?.busy &&
-    enabled &&
-    result?.key === resultKey &&
-    result.prediction?.isCurrent()
-      ? result.prediction
-      : null
+    !blocked && !busy && enabled && result?.prediction?.isCurrent() ? result.prediction : null
   return (
     <ComposerPredictionContext.Provider
       value={
@@ -96,8 +104,8 @@ export function ReplyPredictionProvider({
               text: prediction.text,
               acceptLabel: t('workbench.reply_prediction_accept'),
               onAccept: () => {
-                prediction.onAccept()
-                setResult({ key: resultKey, prediction: null })
+                if (feedOwnsRequest && target) feed?.getSnapshot().accept(target.scope, key)
+                else view?.accept()
               },
             }
           : null
@@ -105,7 +113,7 @@ export function ReplyPredictionProvider({
     >
       <ComposerPredictionPendingContext.Provider
         value={
-          !blocked && !busy && enabled && scope && service?.isPending(scope)
+          !blocked && !busy && enabled && result?.pending
             ? t('workbench.reply_prediction_generating')
             : null
         }

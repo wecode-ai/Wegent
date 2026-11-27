@@ -15,7 +15,10 @@ import enHooks from './locales/en/hooks.json'
 import zhHooks from './locales/zh-CN/hooks.json'
 import enCollaborationExp from './locales/en/collaborationExp.json'
 import zhCollaborationExp from './locales/zh-CN/collaborationExp.json'
+import enStandInMessageCenter from './locales/en/standInMessageCenter.json'
+import zhStandInMessageCenter from './locales/zh-CN/standInMessageCenter.json'
 import { extensionI18nResources } from '@extensions/i18n'
+import { personalIssueMessages } from '@wegent/collaboration/platform'
 
 const extensionNamespaces = Array.from(
   new Set(Object.values(extensionI18nResources).flatMap(resources => Object.keys(resources ?? {})))
@@ -28,22 +31,32 @@ i18n
     resources: {
       en: {
         chat: enChat,
-        common: enCommon,
+        common: {
+          ...enCommon,
+          ...personalIssueMessages.en,
+          todo: { ...enCommon.todo, ...personalIssueMessages.en.todo },
+        },
         localRuntime: enLocalRuntime,
         sites: enSites,
         hooks: enHooks,
         modelConnections: enModelConnections,
         collaborationExp: enCollaborationExp,
+        standInMessageCenter: enStandInMessageCenter,
         ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
         chat: zhChat,
-        common: zhCommon,
+        common: {
+          ...zhCommon,
+          ...personalIssueMessages['zh-CN'],
+          todo: { ...zhCommon.todo, ...personalIssueMessages['zh-CN'].todo },
+        },
         localRuntime: zhLocalRuntime,
         sites: zhSites,
         hooks: zhHooks,
         modelConnections: zhModelConnections,
         collaborationExp: zhCollaborationExp,
+        standInMessageCenter: zhStandInMessageCenter,
         ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
@@ -59,6 +72,7 @@ i18n
       'hooks',
       'modelConnections',
       'collaborationExp',
+      'standInMessageCenter',
       ...extensionNamespaces,
     ],
     interpolation: { escapeValue: false },

@@ -1,11 +1,17 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
 import type { StandInExecutorApi, StandInOnboardingResult } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import {
   StandInOnboardingSetup,
@@ -22,19 +28,7 @@ const examples = [
 ] as const
 
 /** Loads account-scoped setup and keeps optional usage examples separate from activation. */
-export function StandInOnboarding({
-  api,
-  userId,
-  deviceId,
-  active = true,
-  bypass = false,
-  guideOpen = false,
-  onGuideClose,
-  onExampleSelect,
-  onClose,
-  children,
-  configuration,
-}: {
+type StandInOnboardingProps = {
   api: StandInExecutorApi
   userId: number
   deviceId: string
@@ -42,16 +36,71 @@ export function StandInOnboarding({
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
+  onOpenConversation(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
   configuration: StandInOnboardingConfiguration
   children: ReactNode
-}) {
+}
+
+export function StandInOnboarding(props: StandInOnboardingProps) {
+  const [owner, setOwner] = useState({ api: props.api, revision: 0 })
+  if (owner.api !== props.api) setOwner({ api: props.api, revision: owner.revision + 1 })
+  return (
+    <StandInOnboardingContent
+      key={JSON.stringify([owner.revision, props.userId, props.deviceId])}
+      {...props}
+    />
+  )
+}
+
+function StandInOnboardingContent({
+  api,
+  userId,
+  deviceId,
+  active = true,
+  bypass = false,
+  guideOpen = false,
+  onGuideClose,
+  onOpenConversation,
+  onExampleSelect,
+  onClose,
+  children,
+  configuration,
+}: StandInOnboardingProps) {
   const { t, i18n } = useTranslation('common')
   const scopeId = useId()
-  const [result, setResult] = useState<StandInOnboardingResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const createQuery = (language: string, initialData?: StandInOnboardingResult) => ({
+    language,
+    resource: createAsyncResource(
+      JSON.stringify([userId, deviceId, language]),
+      () => api.onboarding(userId, deviceId, language),
+      { refreshOnSubscribe: true, initialData }
+    ),
+  })
+  const [query, setQuery] = useState(() => createQuery(i18n.language))
+  if (query.language !== i18n.language) {
+    setQuery(createQuery(i18n.language, query.resource.getSnapshot().data))
+  }
+  const resource = query.resource
+  const observationKey = JSON.stringify([bypass, guideOpen])
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, observationKey),
+    [resource, observationKey]
+  )
+  const snapshot = useSyncExternalStore(
+    deviceId && active && (!bypass || guideOpen) ? subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const result = snapshot.data
+  const [completionError, setCompletionError] = useState<{ receipt: unknown; cause: unknown }>()
+  const error =
+    completionError && completionError.receipt === snapshot.data
+      ? getStandInErrorMessage(completionError.cause)
+      : snapshot.status === 'error' || snapshot.error !== undefined
+        ? getStandInErrorMessage(snapshot.error)
+        : null
   const [saving, setSaving] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [previousActive, setPreviousActive] = useState(active)
@@ -78,29 +127,11 @@ export function StandInOnboarding({
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(close, open)
-  useEffect(() => {
-    if (!deviceId || !active || (bypass && !guideOpen)) return
-    let current = true
-    void api.onboarding(userId, deviceId, i18n.language).then(
-      value => {
-        if (current) {
-          setResult(value)
-          setError(null)
-        }
-      },
-      cause => {
-        if (current) setError(getStandInErrorMessage(cause))
-      }
-    )
-    return () => {
-      current = false
-    }
-  }, [api, userId, deviceId, i18n.language, attempt, active, bypass, guideOpen])
-  const complete = async () => {
+  const dialogRef = useRef<HTMLElement>(null)
+  const complete = async (openConversation: boolean) => {
     if (saving) return false
     setSaving(true)
-    setError(null)
+    setCompletionError(undefined)
     try {
       const completed = await api.completeOnboarding(
         userId,
@@ -109,11 +140,13 @@ export function StandInOnboarding({
         '09:00',
         i18n.language
       )
-      setResult(completed)
+      if (!resource.hasSubscribers()) return false
+      if (openConversation) onOpenConversation()
+      resource.update(() => completed)
       onGuideClose?.()
       return true
     } catch (cause) {
-      setError(getStandInErrorMessage(cause))
+      setCompletionError({ receipt: resource.getSnapshot().data, cause })
       return false
     } finally {
       setSaving(false)
@@ -142,14 +175,18 @@ export function StandInOnboarding({
               if (event.target === event.currentTarget) close()
             }}
           >
-            <section
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={`${scopeId}-title`}
-              tabIndex={-1}
-              className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
-              data-testid="stand-in-onboarding"
+            <DialogSurface
+              onClose={close}
+              active={open}
+              render={
+                <section
+                  ref={dialogRef}
+                  aria-labelledby={`${scopeId}-title`}
+                  tabIndex={-1}
+                  className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
+                  data-testid="stand-in-onboarding"
+                />
+              }
             >
               <div className="flex w-full flex-col gap-5">
                 <div className="flex items-start justify-between gap-3">
@@ -187,9 +224,11 @@ export function StandInOnboarding({
                       <h3 id={`${scopeId}-examples`} className="text-sm font-medium">
                         {t('standIn.onboarding.examples_title')}
                       </h3>
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         {examples.map(({ id, icon: Icon }) => (
-                          <button
+                          <ControlButton
+                            variant="outline"
+                            size="sm"
                             type="button"
                             key={id}
                             data-testid={`stand-in-onboarding-example-${id}`}
@@ -199,13 +238,13 @@ export function StandInOnboarding({
                               onGuideClose?.()
                               onExampleSelect?.(t(`standIn.onboarding.examples.${id}.prompt`))
                             }}
-                            className="flex items-start gap-3 rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-45"
+                            className="flex min-w-0 items-start justify-start gap-3 whitespace-normal rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted disabled:opacity-45"
                           >
                             <Icon
                               aria-hidden="true"
                               className="mt-0.5 h-5 w-5 shrink-0 text-text-secondary"
                             />
-                            <div className="min-w-0 space-y-1">
+                            <div className="min-w-0 flex-1 space-y-1 break-words">
                               <h4 className="text-sm font-medium">
                                 {t(`standIn.onboarding.examples.${id}.title`)}
                               </h4>
@@ -213,7 +252,7 @@ export function StandInOnboarding({
                                 {t(`standIn.onboarding.examples.${id}.prompt`)}
                               </p>
                             </div>
-                          </button>
+                          </ControlButton>
                         ))}
                       </div>
                       <p className="text-xs leading-relaxed text-text-secondary">
@@ -232,13 +271,13 @@ export function StandInOnboarding({
                 {!result && error ? (
                   <Button
                     data-testid="stand-in-onboarding-retry"
-                    onClick={() => setAttempt(value => value + 1)}
+                    onClick={() => void resource.reload()}
                   >
                     {t('standIn.reload')}
                   </Button>
                 ) : null}
               </div>
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}

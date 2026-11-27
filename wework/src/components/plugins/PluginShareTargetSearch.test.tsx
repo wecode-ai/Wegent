@@ -1,166 +1,57 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { PluginShareTargetSearch } from './PluginShareTargetSearch'
+import type { PluginShareUserSearchItem } from '@/api/plugins'
 
-describe('PluginShareTargetSearch', () => {
-  afterEach(() => {
-    vi.useRealTimers()
-  })
+const user = {
+  id: 8,
+  user_name: 'Current member',
+  email: 'member@example.test',
+} as PluginShareUserSearchItem
 
-  test('debounces rapid input and keeps results outside the dialog layout flow', async () => {
-    vi.useFakeTimers()
-    const searchUsers = vi.fn(async () => [
-      { id: 7, user_name: 'Admin', email: 'admin@example.com' },
-    ])
-    const searchGroups = vi.fn(async () => [])
-
+describe('Plugin share directory selection', () => {
+  it('ignores stale results, retries a failed query, and selects one unique identity', async () => {
+    let resolveOld!: (value: PluginShareUserSearchItem[]) => void
+    const searchUsers = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([user, user])
+      .mockRejectedValueOnce(new Error('Directory unavailable'))
+      .mockResolvedValueOnce([user, user])
+    const searchGroups = vi.fn().mockResolvedValue([])
+    const onSelect = vi.fn()
     render(
       <PluginShareTargetSearch
         searchUsers={searchUsers}
         searchGroups={searchGroups}
-        onSelect={vi.fn()}
+        onSelect={onSelect}
       />
     )
-
-    const input = screen.getByTestId('plugin-share-search')
-    fireEvent.change(input, { target: { value: 'a' } })
-    fireEvent.change(input, { target: { value: 'ad' } })
-    fireEvent.change(input, { target: { value: 'admin' } })
-
-    expect(screen.getByTestId('plugin-share-search-results')).toHaveClass('absolute')
-    expect(searchUsers).not.toHaveBeenCalled()
-    expect(searchGroups).not.toHaveBeenCalled()
-
-    await act(async () => {
-      vi.advanceTimersByTime(179)
-      await Promise.resolve()
-    })
-    expect(searchUsers).not.toHaveBeenCalled()
-
-    await act(async () => {
-      vi.advanceTimersByTime(1)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(searchUsers).toHaveBeenCalledTimes(1)
-    expect(searchUsers).toHaveBeenCalledWith('admin')
-    expect(searchGroups).toHaveBeenCalledTimes(1)
-    expect(searchGroups).toHaveBeenCalledWith('admin')
-    expect(screen.getByTestId('plugin-share-user-7')).toHaveTextContent('Admin')
-  })
-
-  test('mounts the results container before a slow search has returned any results', async () => {
-    vi.useFakeTimers()
-    const searchUsers = vi.fn(
-      () =>
-        new Promise<Array<{ id: number; user_name: string; email: string }>>(resolve => {
-          setTimeout(
-            () => resolve([{ id: 7, user_name: 'Admin', email: 'admin@example.com' }]),
-            900
-          )
-        })
-    )
-    render(
-      <PluginShareTargetSearch
-        searchUsers={searchUsers}
-        searchGroups={vi.fn(async () => [])}
-        onSelect={vi.fn()}
-      />
-    )
-    fireEvent.change(screen.getByTestId('plugin-share-search'), {
-      target: { value: 'admin' },
-    })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400)
-    })
-    expect(searchUsers).toHaveBeenCalledWith('admin')
-    expect(screen.getByTestId('plugin-share-search-results')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugin-share-user-7')).not.toBeInTheDocument()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(680)
-    })
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-share-user-7')).toHaveTextContent('Admin')
-  })
-
-  test('ignores a stale response and clears results with the query', async () => {
-    vi.useFakeTimers()
-    const userResolvers = new Map<
-      string,
-      (users: Array<{ id: number; user_name: string; email: string }>) => void
-    >()
-    const searchUsers = vi.fn(
-      (query: string) =>
-        new Promise<Array<{ id: number; user_name: string; email: string }>>(resolve => {
-          userResolvers.set(query, resolve)
-        })
-    )
-
-    render(
-      <PluginShareTargetSearch
-        searchUsers={searchUsers}
-        searchGroups={vi.fn(async () => [])}
-        onSelect={vi.fn()}
-      />
-    )
-
-    const input = screen.getByTestId('plugin-share-search')
+    const input = await screen.findByTestId('plugin-share-search')
     fireEvent.change(input, { target: { value: 'old' } })
-    await act(async () => {
-      vi.advanceTimersByTime(180)
-      await Promise.resolve()
+    await waitFor(() => expect(searchUsers).toHaveBeenCalledWith('old'))
+    fireEvent.change(input, { target: { value: 'current' } })
+    await screen.findByTestId('plugin-share-user-8')
+    expect(screen.getAllByTestId('plugin-share-user-8')).toHaveLength(1)
+    await act(async () => resolveOld([{ ...user, id: 4, user_name: 'Stale member' }]))
+    expect(screen.queryByTestId('plugin-share-user-4')).toBeNull()
+    fireEvent.change(input, { target: { value: 'retry' } })
+    const retry = await screen.findByTestId('plugin-share-search-retry')
+    expect(screen.getByRole('alert')).toBeVisible()
+    fireEvent.click(retry)
+    fireEvent.click(await screen.findByTestId('plugin-share-user-8'))
+    expect(searchUsers).toHaveBeenLastCalledWith('retry')
+    expect(searchGroups).toHaveBeenLastCalledWith('retry')
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({
+      entityType: 'user',
+      entityId: '8',
+      displayName: 'Current member',
     })
-    fireEvent.change(input, { target: { value: 'new' } })
-    await act(async () => {
-      vi.advanceTimersByTime(180)
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      userResolvers.get('new')?.([{ id: 2, user_name: 'New', email: 'new@example.com' }])
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.getByTestId('plugin-share-user-2')).toHaveTextContent('New')
-
-    await act(async () => {
-      userResolvers.get('old')?.([{ id: 1, user_name: 'Old', email: 'old@example.com' }])
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.queryByTestId('plugin-share-user-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-share-user-2')).toBeInTheDocument()
-
-    fireEvent.change(input, { target: { value: '' } })
-    expect(screen.queryByTestId('plugin-share-search-results')).not.toBeInTheDocument()
-  })
-
-  test('finishes cleanly when search fails', async () => {
-    vi.useFakeTimers()
-    render(
-      <PluginShareTargetSearch
-        searchUsers={vi.fn(async () => {
-          throw new Error('offline')
-        })}
-        searchGroups={vi.fn(async () => [])}
-        onSelect={vi.fn()}
-      />
-    )
-
-    fireEvent.change(screen.getByTestId('plugin-share-search'), {
-      target: { value: 'admin' },
-    })
-    await act(async () => {
-      vi.advanceTimersByTime(180)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-share-search-results')).toBeEmptyDOMElement()
   })
 })

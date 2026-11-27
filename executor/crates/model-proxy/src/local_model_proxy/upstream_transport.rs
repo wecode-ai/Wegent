@@ -67,25 +67,44 @@ pub(super) fn proxy_client_builder(
 pub(super) async fn send_upstream_request_with_rate_limit_retry(
     client: &reqwest::Client,
     upstream: &LocalModelProxyUpstream,
+    gateway_credentials: Option<&GatewayCredentials>,
     request_url: &str,
     request_body: &[u8],
     incoming_headers: &HeaderMap,
     mut retry_wait: Option<retry_notifications::RetryWait>,
 ) -> Result<reqwest::Response, HttpError> {
     for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
-        let response = build_upstream_request(
+        let request = build_upstream_request(
             client,
             upstream,
             request_url,
             request_body,
             incoming_headers,
-        )
-        .send()
-        .await
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("Local model proxy request failed: {error:#}"),
-        })?;
+        );
+        let response = if let Some(credentials) = gateway_credentials {
+            let mut request = request
+                .timeout(Duration::from_secs(
+                    LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+                ))
+                .build()
+                .map_err(upstream_transport_error)?;
+            let mut authorization = HeaderValue::from_str(&format!(
+                "Bearer {}",
+                credentials.current_token(client).await?
+            ))
+            .map_err(|_| HttpError {
+                status: StatusCode::UNAUTHORIZED,
+                detail: "Invalid model gateway credential".to_owned(),
+            })?;
+            authorization.set_sensitive(true);
+            request
+                .headers_mut()
+                .insert(header::AUTHORIZATION, authorization);
+            client.execute(request).await
+        } else {
+            request.send().await
+        }
+        .map_err(upstream_transport_error)?;
         // Official subscription rate limits are durable quota events owned by
         // the Executor. Retrying them here hides the reset window and turns a
         // quota error into an immediate model continuation.
@@ -115,6 +134,13 @@ pub(super) async fn send_upstream_request_with_rate_limit_retry(
     unreachable!("rate limit retry loop always returns a response")
 }
 
+fn upstream_transport_error(error: reqwest::Error) -> HttpError {
+    HttpError {
+        status: StatusCode::BAD_GATEWAY,
+        detail: format!("Local model proxy request failed: {error:#}"),
+    }
+}
+
 pub(super) fn build_upstream_request(
     client: &reqwest::Client,
     upstream: &LocalModelProxyUpstream,
@@ -136,7 +162,15 @@ pub(super) fn build_upstream_request(
             .header("x-api-key", &upstream.api_key)
             .header("anthropic-version", "2023-06-01");
     }
-    if native_chatgpt_auth {
+    with_upstream_headers(request, upstream, incoming_headers)
+}
+
+pub(super) fn with_upstream_headers(
+    mut request: reqwest::RequestBuilder,
+    upstream: &LocalModelProxyUpstream,
+    incoming_headers: &HeaderMap,
+) -> reqwest::RequestBuilder {
+    if upstream.uses_native_chatgpt_auth() {
         for name in FORWARDED_OFFICIAL_AUTH_HEADERS {
             if let Some(value) = incoming_headers.get(name) {
                 request = request.header(name, value);

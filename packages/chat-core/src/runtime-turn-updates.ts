@@ -223,6 +223,7 @@ export function updateStartedTurn(
       completedAt: undefined,
       error: undefined,
       errorType: undefined,
+      errorInfo: undefined,
       stoppedNotice: undefined,
     });
   }
@@ -309,12 +310,15 @@ export function updateTurn(
   turns: RuntimeConversationTurn[],
   turnId: string | undefined,
   update: (turn: RuntimeConversationTurn) => RuntimeConversationTurn,
+  allowCancelled = false,
 ): RuntimeConversationTurn[] {
   if (!turnId) return turns;
   const index = turns.findIndex((turn) => turn.id === turnId);
   if (index < 0) return turns;
-  if (turns[index].status === "cancelled") return turns;
-  return replaceAt(turns, index, update(turns[index]));
+  const turn = turns[index];
+  if (turn.status === "cancelled" && !allowCancelled) return turns;
+  const updated = update(turn);
+  return turn === updated ? turns : replaceAt(turns, index, updated);
 }
 
 export function updateFailedTurn(

@@ -7,12 +7,12 @@ use super::*;
 // Build the selected future outside the dispatcher: debug builds otherwise reserve
 // stack temporaries for every branch even though only one route executes.
 #[inline(never)]
-pub(super) fn boxed_rpc<'a, F, Fut>(
+pub(super) fn boxed_rpc<'a, T, F, Fut>(
     operation: F,
-) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>>
+) -> Pin<Box<dyn Future<Output = Result<T, AppIpcError>> + Send + 'a>>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Value, AppIpcError>> + Send + 'a,
+    Fut: Future<Output = Result<T, AppIpcError>> + Send + 'a,
 {
     Box::pin(operation())
 }
@@ -62,6 +62,19 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.stand_in_onboarding_rpc(method, payload).await },
                 )
             }
+            "runtime.stand_in.share.definition" => {
+                boxed_rpc(move || async move { self.stand_in_share_definition(payload).await })
+            }
+            "runtime.stand_in.share.list"
+            | "runtime.stand_in.share.search_users"
+            | "runtime.stand_in.share.publish"
+            | "runtime.stand_in.share.direct"
+            | "runtime.stand_in.share.revoke" => {
+                boxed_rpc(move || async move { self.share_stand_in_cloud(method, payload).await })
+            }
+            "runtime.stand_in.share.copy" => {
+                boxed_rpc(move || async move { self.copy_stand_in_share(payload).await })
+            }
             "runtime.stand_in.personal.save" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, true).await },
@@ -96,6 +109,11 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
             }
+            "runtime.stand_in.memory.rework_report" => boxed_rpc(move || async move {
+                let user = super::runtime_owner::runtime_user(&payload)?;
+                let role = super::stand_in_tasks::required(&payload, "roleId")?;
+                self.role_rework_report(user, role, None).await
+            }),
             "runtime.stand_in.memory.save" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "save") })
             }
@@ -111,6 +129,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.proposal.get" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
+            "runtime.stand_in.learning.run" => {
+                boxed_rpc(move || async move { self.run_stand_in_learning(payload) })
+            }
             "runtime.stand_in.proposal.resolve" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }
@@ -122,6 +143,14 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.readiness" => boxed_rpc(move || async move {
+                let mut payload = payload;
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                payload["readiness"] = json!(true);
+                self.connection_call("check", Some(&provider), payload)
+                    .await
+            }),
             "runtime.connections.observations.sync" => {
                 boxed_rpc(
                     move || async move { self.sync_cloud_connection_subscription(payload).await },
@@ -215,11 +244,28 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.work.list" => {
                 boxed_rpc(move || async move { self.list_connection_stand_in_work(payload) })
             }
+            "runtime.stand_in.role_task.branches" => {
+                boxed_rpc(move || async move { self.stand_in_role_branches(&payload) })
+            }
+            "runtime.stand_in.role_task.cancel" => {
+                boxed_rpc(move || async move { self.request_role_cancellation(payload).await })
+            }
+            "runtime.stand_in.role_task.retry" => {
+                boxed_rpc(move || async move { self.request_role_retry(payload).await })
+            }
             "runtime.stand_in.work.messages" => {
                 boxed_rpc(move || async move { self.connection_stand_in_messages(payload) })
             }
             "runtime.stand_in.work.run" => {
                 boxed_rpc(move || async move { self.run_connection_stand_in_work(payload).await })
+            }
+            "runtime.stand_in.work.takeover" => {
+                boxed_rpc(move || async move { self.take_over_delegated_dingtalk_work(payload) })
+            }
+            "runtime.stand_in.work.verify_delivery" => {
+                boxed_rpc(
+                    move || async move { self.verify_delegated_dingtalk_delivery(payload).await },
+                )
             }
             "runtime.stand_in.work.adjust" => {
                 boxed_rpc(move || async move { self.adjust_connection_stand_in_work(payload) })
@@ -253,6 +299,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.get" => {
                 boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
+            "runtime.tasks.permissions.set" => {
+                boxed_rpc(move || async move { self.set_stand_in_task_permissions(payload).await })
             }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })
@@ -307,7 +356,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
-                boxed_rpc(move || async move { self.send_message(payload).await })
+                boxed_rpc(move || async move { self.send_message_from_owner(payload, true).await })
             }
             "runtime.tasks.interrupt_and_send" => {
                 boxed_rpc(move || async move { self.interrupt_and_send(payload).await })
@@ -315,9 +364,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => {
                 boxed_rpc(move || async move { self.rollback_task(payload).await })
             }
-            "runtime.tasks.guidance" => {
-                boxed_rpc(move || async move { self.send_guidance(payload).await })
-            }
+            "runtime.tasks.guidance" => boxed_rpc(move || async move {
+                self.send_guidance_with_context(payload, None, true).await
+            }),
             "runtime.tasks.compact" => {
                 boxed_rpc(move || async move { self.compact_task(payload).await })
             }
@@ -503,6 +552,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.plugin.install_local_first" => {
                 boxed_rpc(move || async move { self.install_local_plugin(payload).await })
             }
+            "runtime.codex.marketplace.check_updates" => {
+                boxed_rpc(move || async move { self.check_git_marketplace_versions(payload).await })
+            }
+            "runtime.codex.marketplace.list_configured" => {
+                boxed_rpc(move || async move { self.list_configured_marketplaces().await })
+            }
             "runtime.codex.plugin.sync_bundled" => {
                 boxed_rpc(move || async move { self.sync_bundled_plugin(payload).await })
             }
@@ -678,6 +733,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.workspace.search" => {
                 boxed_rpc(move || async move { self.search_workspace(payload).await })
+            }
+            "runtime.workspace.read" => {
+                boxed_rpc(move || async move { self.read_workspace(payload).await })
             }
             "runtime.sidebar.projects.reorder" => {
                 boxed_rpc(move || async move { self.reorder_sidebar_projects(payload).await })

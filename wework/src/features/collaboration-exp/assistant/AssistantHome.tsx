@@ -1,29 +1,31 @@
-import { useState } from 'react'
-import { ArrowRight, Check, Circle, CircleHelp, LoaderCircle } from 'lucide-react'
-import { issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
-import type { StandInRole } from '@/api/personalStandIn'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
+import { formatNotificationTime } from '@/features/notifications/notificationTime'
 import { StandInProposalCard } from '@/features/todo/StandInProposalCard'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { formatNotificationTime } from '@/features/notifications/notificationTime'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, Check, Circle, CircleHelp, LoaderCircle } from 'lucide-react'
+import { useState } from 'react'
 import {
-  selectAssistantSummary,
   selectAssistantDecisions,
+  selectAssistantSummary,
   selectTaskRows,
   type ExperiencePrivateConversation,
 } from '../model'
 import { AssistantComposer } from './AssistantComposer'
-import { AssistantTeam } from './AssistantTeam'
-import { RecentDiscussions } from './RecentDiscussions'
-import { useExperienceTeamState } from './useExperienceTeamState'
-import { TeamRelay } from './TeamRelay'
-import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
-import { selectAssistantConversations } from './assistantConversationIdentity'
-import type { AssistantHomePanel, AssistantHomeProps } from './types'
 import './AssistantExperience.css'
+import { AssistantTeam } from './AssistantTeam'
+import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
+import { RecentDiscussions } from './RecentDiscussions'
+import { TeamRelay } from './TeamRelay'
+import { selectAssistantConversations } from './assistantConversationIdentity'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
+import type { AssistantHomePanel, AssistantHomeProps } from './types'
+import { useExperienceTeamState } from './useExperienceTeamState'
 
 export function AssistantHome({
   active,
@@ -151,6 +153,72 @@ export function AssistantHome({
     })
     navigateTo(`/stand-in?${query}`)
   }
+  const registerAssistant = async (
+    roleId: string | undefined,
+    roleName: string,
+    project: { id: string; store: 'cloud' },
+    policy: ReturnType<typeof standInPolicy>
+  ) => {
+    const shared = services.sharedWorkspaceApi
+    if (!shared?.projects.saveAssistantRosterEntry) return false
+    const configuredRole = source.settings?.roles.find(role => role.id === roleId)
+    const endpoint = experienceAssistantEndpoint(
+      state.devices,
+      configuredRole?.executionDeviceId ?? source.settings?.executionDeviceId ?? source.deviceId,
+      {
+        ownerUserId: ownerId,
+        roleId: roleId ?? '@primary',
+        displayName: roleName,
+        capabilities: { attachments: true, cancel: true, trace: true },
+      }
+    )
+    if (!endpoint) {
+      setError(t('assistant.deviceUnavailable'))
+      return false
+    }
+    try {
+      const current = shared.projects.listAssistantRoster
+        ? await shared.projects.listAssistantRoster(project.id)
+        : []
+      const stale = current.filter(
+        entry =>
+          entry.userId === ownerId &&
+          entry.roleId === (roleId ?? '@primary') &&
+          entry.endpointRef !== endpoint.id &&
+          entry.enabled
+      )
+      for (const entry of stale) {
+        await shared.projects.saveAssistantRosterEntry(project.id, {
+          userId: entry.userId,
+          roleId: entry.roleId,
+          endpointRef: entry.endpointRef,
+          displayName: entry.displayName,
+          enabled: false,
+          capabilityTags: entry.capabilityTags,
+          autonomyPolicy: entry.autonomyPolicy,
+          availability: entry.availability,
+          version: entry.version,
+        })
+      }
+      const saved = current.find(entry => entry.endpointRef === endpoint.id)
+      await shared.projects.saveAssistantRosterEntry(project.id, {
+        userId: ownerId,
+        roleId: roleId ?? '@primary',
+        endpointRef: endpoint.id,
+        displayName: roleName,
+        enabled: true,
+        capabilityTags: configuredRole?.collaboration.tags ?? [],
+        autonomyPolicy: policy as unknown as Record<string, unknown>,
+        availability: endpoint.availability,
+        ...(saved ? { version: saved.version } : {}),
+      })
+      setError(null)
+      return true
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+      return false
+    }
+  }
   const deleteRole = async (role: StandInRole) => {
     if (
       !source.settings ||
@@ -161,6 +229,38 @@ export function AssistantHome({
     )
       return false
     try {
+      const shared = services.sharedWorkspaceApi
+      const entries = (
+        await Promise.all(
+          projects
+            .filter(({ project }) => project.project_store !== 'local')
+            .map(async ({ project }) => {
+              if (!shared?.projects.listAssistantRoster) return []
+              return (await shared.projects.listAssistantRoster(project.id)).filter(
+                candidate => candidate.userId === ownerId && candidate.roleId === role.id
+              )
+            })
+        )
+      ).flat()
+      const disability = await Promise.allSettled(
+        entries.map(async entry => {
+          if (!shared?.projects.saveAssistantRosterEntry)
+            throw new Error('Assistant roster update is unavailable')
+          await shared.projects.saveAssistantRosterEntry(entry.projectId, {
+            userId: entry.userId,
+            roleId: entry.roleId,
+            endpointRef: entry.endpointRef,
+            displayName: entry.displayName,
+            enabled: false,
+            capabilityTags: entry.capabilityTags,
+            autonomyPolicy: entry.autonomyPolicy,
+            availability: entry.availability,
+            version: entry.version,
+          })
+        })
+      )
+      const failed = disability.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
       await services.standInApi.personalSave(
         ownerId,
         { ...source.settings, roles: source.settings.roles.filter(item => item.id !== role.id) },
@@ -170,10 +270,12 @@ export function AssistantHome({
       setError(null)
       return true
     } catch (cause) {
+      source.refresh()
       setError(getStandInErrorMessage(cause))
       return false
     }
   }
+
   const resolveProposal = async (accept: boolean) => {
     if (
       !selectedProposal ||
@@ -268,7 +370,8 @@ export function AssistantHome({
           {(sourceError || error) && (
             <div role="alert" className="px-4 py-3 text-sm text-error">
               {error ?? sourceError}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="collaboration-exp-assistant-retry"
                 onClick={() => {
@@ -278,7 +381,7 @@ export function AssistantHome({
                 className="ml-2 min-h-11 underline md:min-h-8"
               >
                 {t('assistant.retry')}
-              </button>
+              </ControlButton>
             </div>
           )}
           {teamOpen && active && source.settings && (
@@ -287,6 +390,7 @@ export function AssistantHome({
               projects={projects}
               onConfigure={configure}
               onDelete={deleteRole}
+              onRegister={registerAssistant}
             />
           )}
           <section
@@ -299,7 +403,8 @@ export function AssistantHome({
                 <span>{decisions.length}</span>
               </h3>
               {decisions.length > 2 && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="assistant-text-button text-xs"
                   data-testid="collaboration-exp-assistant-all-decisions"
@@ -308,7 +413,7 @@ export function AssistantHome({
                 >
                   {t(allDecisions ? 'assistant.showLess' : 'assistant.allDecisions')}
                   <ArrowRight size={14} aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
             </div>
             <div className="assistant-decision-grid">
@@ -316,7 +421,8 @@ export function AssistantHome({
                 if (entry.kind === 'proposal') {
                   const decision = entry.proposal
                   return (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       key={decision.id}
                       data-testid={`collaboration-exp-assistant-proposal-${decision.id}`}
@@ -345,13 +451,14 @@ export function AssistantHome({
                           <ArrowRight size={15} aria-hidden="true" />
                         </span>
                       </span>
-                    </button>
+                    </ControlButton>
                   )
                 }
                 if (entry.kind === 'work') {
                   const item = entry.item
                   return (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       key={item.key}
                       data-testid={`collaboration-exp-assistant-pending-work-${item.key}`}
@@ -372,7 +479,7 @@ export function AssistantHome({
                           <ArrowRight size={15} aria-hidden="true" />
                         </span>
                       </span>
-                    </button>
+                    </ControlButton>
                   )
                 }
                 const task = entry.task
@@ -391,7 +498,8 @@ export function AssistantHome({
                     )?.question
                   : null
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     key={task.key}
                     data-testid={`collaboration-exp-assistant-pending-${task.key}`}
@@ -412,7 +520,7 @@ export function AssistantHome({
                         <ArrowRight size={15} aria-hidden="true" />
                       </span>
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>
@@ -439,7 +547,8 @@ export function AssistantHome({
             <div className="assistant-section-heading">
               <h3 className="text-sm font-semibold">{t('assistant.recentProgress')}</h3>
               {work.length > 6 && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="assistant-text-button text-xs"
                   data-testid="collaboration-exp-assistant-all-progress"
@@ -448,7 +557,7 @@ export function AssistantHome({
                 >
                   {t(allProgress ? 'assistant.showLess' : 'assistant.allProgress')}
                   <ArrowRight size={14} aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
             </div>
             <div className="assistant-recent-progress">
@@ -474,7 +583,8 @@ export function AssistantHome({
                 const validTime =
                   time && Number.isFinite(time.getTime()) && time.getTime() > 0 ? time : null
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     key={item.key}
                     data-testid={`collaboration-exp-assistant-work-${item.task.taskId}`}
@@ -500,7 +610,7 @@ export function AssistantHome({
                     <span className="assistant-progress-arrow">
                       <ArrowRight size={14} aria-hidden="true" />
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>

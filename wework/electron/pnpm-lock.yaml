@@ -24,8 +24,8 @@ importers:
         specifier: 4.8.3
         version: 4.8.3
       systeminformation:
-        specifier: 5.33.15
-        version: 5.33.15
+        specifier: 5.33.26
+        version: 5.33.26
       tar:
         specifier: 7.5.22
         version: 7.5.22
@@ -328,6 +328,7 @@ packages:
     resolution: {integrity: sha512-UXETYNXcDvC1ZI4f0N+CV7EIKWwzmsiXVLTgLElp0MRkyWv+/Nq1ZglpImmR96qnLdTLsaZ+T/O+GHhgbGItzw==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@trycua/cua-driver-linux-x64-gnu@0.52.13':
     resolution: {integrity: sha512-FCRuG/1kXLE8K/Vjxpub+5Vq+8xoNGZ4F7oJ5BYrJJoG+ff+238QX/zKIffhqAdqvRcsTgFLe21ltryQg/1zxw==}
@@ -479,6 +480,7 @@ packages:
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@4.0.0:
     resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
@@ -1173,12 +1175,14 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-linux-x64-gnu@1.33.0:
     resolution: {integrity: sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.33.0:
     resolution: {integrity: sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw==}
@@ -1598,8 +1602,8 @@ packages:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
 
-  systeminformation@5.33.15:
-    resolution: {integrity: sha512-s5RloL0F7xhN0ZjfHtLGnbf7EW74EI0N8NFL+1xR7Oxz9QA33obNZsl7lyfnJOhN04E/kGFPoJPlvY7TZ5fzmw==}
+  systeminformation@5.33.26:
+    resolution: {integrity: sha512-/AfmkcUh5/Zgul9vJgTzRqdyeeAkkZM857cXkN1CLzdj3gVvdij9EICcNcl3/nMGsr3A2uRvPmpCy2YX1A9uiQ==}
     engines: {node: '>=10.0.0'}
     os: [darwin, linux, win32, freebsd, openbsd, netbsd, sunos, android]
     hasBin: true
@@ -3481,7 +3485,7 @@ snapshots:
     dependencies:
       has-flag: 4.0.0
 
-  systeminformation@5.33.15: {}
+  systeminformation@5.33.26: {}
 
   tar-stream@3.2.0:
     dependencies:

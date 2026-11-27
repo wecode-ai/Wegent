@@ -30,6 +30,21 @@ function normalize(value: string): string {
   return value.trim().toLocaleLowerCase()
 }
 
+export function matchesIssueReference(
+  item: CloudLoopItem,
+  query: string,
+  projectKey = ''
+): boolean {
+  const reference = normalize(query)
+  return (
+    reference !== '' &&
+    (normalize(item.id) === reference ||
+      String(item.sequence_number) === reference ||
+      `#${item.sequence_number}` === reference ||
+      (projectKey !== '' && normalize(`${projectKey}-${item.sequence_number}`) === reference))
+  )
+}
+
 function textScore(item: CloudLoopItem, query: string, memberNames: Map<number, string>): number {
   if (!query) return 1
   const id = normalize(item.id)
@@ -40,7 +55,6 @@ function textScore(item: CloudLoopItem, query: string, memberNames: Map<number, 
   )
   const assignee = normalize(memberNames.get(item.assignee_user_id ?? 0) ?? '')
   const description = normalize(item.description)
-  if (id === query) return 100
   if (title === query) return 90
   if (title.startsWith(query)) return 80
   if (title.includes(query)) return 70
@@ -70,7 +84,8 @@ export function searchTasks(
   query: string,
   filters: TaskSearchFilters,
   members: CloudProjectMember[] = [],
-  now = new Date()
+  now = new Date(),
+  projectKey = ''
 ): TaskSearchResult[] {
   const normalizedQuery = normalize(query)
   const byId = new Map(items.map(item => [item.id, item]))
@@ -82,7 +97,12 @@ export function searchTasks(
   const today = now.toISOString().slice(0, 10)
 
   return items
-    .map(item => ({ item, score: textScore(item, normalizedQuery, memberNames) }))
+    .map(item => ({
+      item,
+      score: matchesIssueReference(item, normalizedQuery, projectKey)
+        ? 100
+        : textScore(item, normalizedQuery, memberNames),
+    }))
     .filter(({ item, score }) => {
       if (score === 0) return false
       if (filters.status && item.status !== filters.status) return false

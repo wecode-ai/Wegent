@@ -3,25 +3,55 @@
 
 use super::*;
 
+pub(super) fn consolidate_thread_config(config: &mut Map<String, Value>) {
+    let mut servers = config.remove("mcp_servers").unwrap_or_else(|| json!({}));
+    let mut keys = config
+        .keys()
+        .filter(|key| key.starts_with("mcp_servers."))
+        .cloned()
+        .collect::<Vec<_>>();
+    // Apply complete definitions before their field overrides, including env.
+    keys.sort();
+    for key in keys {
+        let path = toml_edit::Key::parse(&key).expect("generated MCP config key");
+        let value = config.remove(&key).expect("collected MCP config entry");
+        let mut table = &mut servers;
+        for segment in &path[1..path.len() - 1] {
+            table = table
+                .as_object_mut()
+                .expect("MCP config table")
+                .entry(segment.get().to_owned())
+                .or_insert_with(|| json!({}));
+        }
+        table
+            .as_object_mut()
+            .expect("MCP config table")
+            .insert(path.last().unwrap().get().to_owned(), value);
+    }
+    // One replacement is independent of native HashMap iteration order and
+    // removes services and grants omitted from the current execution.
+    config.insert("mcp_servers".to_owned(), servers);
+}
+
 pub(super) fn configure_task_mcp(
     request: &ExecutionRequest,
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
+    // Saved MCP definitions are validated and rebound through thread RPC.
+    // Prevent their unbound or malformed table from being loaded at child startup.
+    launch.config_overrides.push("mcp_servers={}".to_owned());
     if super::super::instance_home::request_home(request).is_none() {
-        let overrides = global_mcp_config_overrides(&mut launch.thread_config)?;
-        launch.config_overrides.extend(overrides);
+        launch.mcp_unavailable = configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch
         .config_overrides
-        .extend(computer_use_mcp_config_overrides());
-    for (overrides, environment) in [
-        cdp_browser_mcp_config_overrides(request)?,
-        managed_wework_mcp_config_overrides(request)?,
-        runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?,
-    ] {
-        launch.config_overrides.extend(overrides);
-        launch.env.extend(environment);
-    }
+        .extend(computer_use_mcp_config_overrides(&request.task_id));
+    let (overrides, environment) = cdp_browser_mcp_config_overrides(request)?;
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
+    configure_managed_wework_mcp(request, launch)?;
+    launch.mcp_unavailable |=
+        runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)
         && !external_work::applies(request)
     {
@@ -46,6 +76,16 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
         mut params: Map<String, Value>,
     ) -> Result<Value, String> {
+        // Thread resume owns the native writer lease. Concurrent resumes for the
+        // same thread must queue on the shared lifecycle gate instead of each
+        // retrying the native writer-busy error.
+        let thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .ok_or("thread/resume requires a thread ID")?
+            .to_owned();
+        let gate = self.thread_lifecycle_gate(&thread_id).await;
+        let _admission = gate.lock().await;
         ensure_codex_mcp_endpoints().await?;
         let mut launch = CodexLaunchConfig {
             thread_config: task_identity_thread_config(request),

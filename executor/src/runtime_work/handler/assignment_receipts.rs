@@ -105,7 +105,29 @@ impl RuntimeWorkRpcHandler {
         }
         binding["executionContext"]["origin"] = self.stand_in_issue_origin(config, issue, &binding);
         let issue_id = issue["id"].as_str().unwrap_or_default();
-        if binding["triggerCommentId"].is_string() {
+        if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let address =
+                self.personal_issue_assignment_address(&binding["executionContext"]["origin"])?;
+            let path = format!("/v1/personal-issues/{issue_id}/assistant-binding");
+            let response = self.runtime_request(reqwest::Method::POST, &path, Some(&json!({
+                "assignment":address,"role_id":config["id"],
+                "role_name":config["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
+            }))).await?;
+            if matches!(response.status().as_u16(), 403 | 404) {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Independent Issue assignment changed",
+                ));
+            }
+            let result =
+                Self::read_runtime_response(reqwest::Method::POST, &path, response).await?;
+            if result["claimed"] != true {
+                return Err(AppIpcError::new(
+                    "assignment_claimed",
+                    "Another assistant already owns this assignment",
+                ));
+            }
+        } else if binding["triggerCommentId"].is_string() {
             self.runtime_http(
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
@@ -140,7 +162,8 @@ impl RuntimeWorkRpcHandler {
                 binding["taskId"].as_str().unwrap(),
             )
             .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?;
-        if binding["triggerCommentId"].is_string()
+        if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT
+            || binding["triggerCommentId"].is_string()
             || (config["manual"] == true
                 && (issue["assignee_user_id"] != config["userId"]
                     || !binding["humanAssignmentId"].is_string()))
@@ -197,6 +220,7 @@ impl RuntimeWorkRpcHandler {
                 "projectId": project, "issueId": issue_id, "backendUrl": backend_url,
                 "assignmentId": super::stand_in::issue_assignment_event_id(binding)?, "userId": config["userId"],
                 "deviceId": device_id, "taskId": binding["taskId"],
+                "dispatch":{"state":"queued","reasonCode":"awaiting_runtime","observedAt":chrono::Utc::now(),"publicMessageId":null},
             }))
             .map_err(settings_error)?;
         self.log_stand_in_decision(config, issue, "receipt_queued", json!({"taskId":binding["taskId"],"issueAssignmentId":super::stand_in::issue_assignment_event_id(binding)?}));
@@ -213,6 +237,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn flush_assignment_receipts(&self) -> Result<(), AppIpcError> {
+        self.queue_assignment_runtime_states()?;
         self.flush_assignment_receipts_at(chrono::Utc::now()).await
     }
 
@@ -246,22 +271,13 @@ impl RuntimeWorkRpcHandler {
                 self.log_stand_in_receipt(&receipt, "backend_changed", json!({}));
                 continue;
             }
-            // Keep identity verification and the write on the same connection snapshot.
-            let identity =
-                Self::runtime_request_on(&connection, reqwest::Method::GET, "/users/me", None)
-                    .await;
-            let verified = match identity {
-                Ok(response) if response.status().is_success() => {
-                    response.json::<Value>().await.ok()
-                }
-                _ => None,
-            };
-            if verified.is_none() {
+            // Match the recipient against the same connection used for the write.
+            let Ok(owner) = Self::connected_runtime_user(&connection).await else {
                 self.log_stand_in_receipt(&receipt, "identity_verification_failed", json!({}));
                 defer_receipt(&store, &id, &receipt, now)?;
                 continue;
-            }
-            if verified.as_ref().map(|user| &user["id"]) != Some(&receipt["userId"]) {
+            };
+            if receipt["userId"].as_i64() != Some(owner) {
                 self.log_stand_in_receipt(&receipt, "account_changed", json!({}));
                 continue;
             }
@@ -271,7 +287,8 @@ impl RuntimeWorkRpcHandler {
                 receipt["assignmentId"].as_str().unwrap_or_default()
             );
             match Self::runtime_request_on(&connection, reqwest::Method::POST, &path, Some(&json!({
-                "kind":"stand_in_received", "device_id":receipt["deviceId"], "task_id":receipt["taskId"],
+                "kind":if receipt["dispatch"].is_object() {"stand_in_state"} else {"stand_in_received"},
+                "device_id":receipt["deviceId"], "task_id":receipt["taskId"], "dispatch":receipt["dispatch"],
             }))).await {
                 Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::CONFLICT => {
                     self.log_stand_in_receipt(&receipt, "completed", json!({"status":response.status().as_u16()}));
@@ -424,6 +441,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         handler.execute_stand_in_task(
@@ -520,32 +538,26 @@ mod tests {
         let change_connection = connection.clone();
         let writes = Arc::new(AtomicUsize::new(0));
         let count = writes.clone();
-        let router = Router::new()
-            .route(
-                "/api/users/me",
-                get(move || {
-                    change_connection
-                        .lock()
-                        .unwrap()
-                        .as_mut()
-                        .unwrap()
-                        .backend_url = "http://127.0.0.1:1".into();
-                    async { Json(json!({"id":7})) }
-                }),
-            )
-            .route(
-                "/api/v1/loop-items/issue/assignments/one/receipt",
-                post(move || {
-                    count.fetch_add(1, Ordering::SeqCst);
-                    async { axum::http::StatusCode::OK }
-                }),
-            );
+        let router = Router::new().route(
+            "/api/v1/loop-items/issue/assignments/one/receipt",
+            post(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                change_connection
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .authenticated_user_id = Some(8);
+                async { axum::http::StatusCode::OK }
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         *connection.lock().unwrap() = Some(ConnectionConfig {
             backend_url: url.clone(),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         });
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -579,6 +591,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url.clone(),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -626,53 +639,50 @@ mod tests {
 
     async fn verify_retry_after_restart(failure_status: u16) {
         let root = tempfile::tempdir().unwrap();
-        let user = Arc::new(AtomicUsize::new(8));
         let status = Arc::new(AtomicU16::new(failure_status));
         let writes = Arc::new(AtomicUsize::new(0));
-        let current_user = user.clone();
         let response_status = status.clone();
         let count = writes.clone();
-        let router = Router::new()
-            .route(
-                "/api/users/me",
-                get(move || {
-                    let id = current_user.load(Ordering::SeqCst);
-                    async move { Json(json!({"id": id})) }
-                }),
-            )
-            .route(
-                "/api/v1/loop-items/issue/assignments/one/receipt",
-                post(move || {
-                    count.fetch_add(1, Ordering::SeqCst);
-                    let code = response_status.load(Ordering::SeqCst);
-                    async move { axum::http::StatusCode::from_u16(code).unwrap() }
-                }),
-            );
+        let router = Router::new().route(
+            "/api/v1/loop-items/issue/assignments/one/receipt",
+            post(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                let code = response_status.load(Ordering::SeqCst);
+                async move { axum::http::StatusCode::from_u16(code).unwrap() }
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let make_handler = || {
+        let make_handler = |user| {
             let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
             handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
             handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
             handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
                 backend_url: url.clone(),
                 auth_token: "test".into(),
+                authenticated_user_id: Some(user),
                 ..Default::default()
             })));
             handler
         };
-        let handler = make_handler();
+        let handler = make_handler(8);
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         let receipt = json!({"assignmentId":"one","issueId":"issue","taskId":"task","userId":7,"deviceId":"mac","backendUrl":url});
         store.queue_assignment_receipt(&receipt).unwrap();
         handler.flush_assignment_receipts().await.unwrap();
         assert_eq!(writes.load(Ordering::SeqCst), 0);
-        user.store(7, Ordering::SeqCst);
+        handler
+            .backend_connection
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .authenticated_user_id = Some(7);
         handler.flush_assignment_receipts().await.unwrap();
         assert_eq!(store.pending_assignment_receipts().unwrap().len(), 1);
         drop(handler);
-        let restarted = make_handler();
+        let restarted = make_handler(7);
         status.store(200, Ordering::SeqCst);
         restarted.flush_assignment_receipts().await.unwrap();
         assert_eq!(

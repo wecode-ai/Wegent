@@ -237,7 +237,7 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
-test("Executor preparation overlaps the frontend build but consumes only a verified successful producer", () => {
+test("Platform E2E preparation overlaps builds and consumes successful same-run producers", () => {
   const parsed = spawnSync(
     "ruby",
     [
@@ -253,7 +253,6 @@ test("Executor preparation overlaps the frontend build but consumes only a verif
   const jobs = JSON.parse(parsed.stdout);
   const executor = jobs["executor-e2e-tests"];
   assert.deepEqual(executor.needs, [
-    "build-backend-rs-e2e-runtime",
     "build-executor-e2e-runtime",
     "prepare-platform-e2e-image",
   ]);
@@ -286,6 +285,34 @@ test("Executor preparation overlaps the frontend build but consumes only a verif
   ]) {
     assert(steps.indexOf(name) > steps.indexOf(download.name), name);
   }
+  const backend = jobs["build-backend-rs-e2e-runtime"];
+  for (const [consumer, firstUse] of [
+    [jobs["e2e-tests"], "Run attachment storage E2E on shared services"],
+    [executor, "Start backend server"],
+  ]) {
+    assert.ok(!consumer.needs.includes("build-backend-rs-e2e-runtime"));
+    const names = consumer.steps.map((step) => step.name);
+    const migration = names.indexOf("Run database migrations");
+    const backendDownload = names.indexOf("Download Backend Rust E2E runtime");
+    assert.ok(
+      migration >= 0 &&
+        migration < backendDownload &&
+        backendDownload < names.indexOf(firstUse),
+    );
+    const env = consumer.steps[backendDownload].env;
+    assert.equal(env.ACTIONS_ARTIFACT_JOB, backend.name);
+    assert.equal(
+      env.ACTIONS_ARTIFACT_HEAD_SHA,
+      download.env.ACTIONS_ARTIFACT_HEAD_SHA,
+    );
+    assert.equal(
+      Number(env.ACTIONS_ARTIFACT_WAIT_SECONDS),
+      backend["timeout-minutes"] * 60,
+    );
+  }
+  assert(
+    jobs["platform-e2e-summary"].needs.includes("build-backend-rs-e2e-runtime"),
+  );
   assert(jobs["platform-e2e-summary"].needs.includes("build-frontend-e2e"));
 });
 
@@ -384,7 +411,7 @@ fs.writeFileSync('.coverage', 'guard coverage')
   }
 });
 
-test("the existing macOS runner exports verified runtimes after its real checkpoints", () => {
+test("the macOS runner exports complete runtimes after checkpoints on complete builds", () => {
   const parsed = spawnSync(
     "ruby",
     [
@@ -403,7 +430,63 @@ test("the existing macOS runner exports verified runtimes after its real checkpo
     (step) => step.name === "Describe verified native macOS runtimes",
   );
   assert(describe);
-  assert.equal(describe.if, undefined);
+  assert.equal(
+    job.env.MACOS_COMPLETE_BUILD,
+    "${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all')) }}",
+  );
+  const build = job.steps.find(
+    (step) => step.uses === "./.github/actions/build-wework-macos-e2e",
+  );
+  assert.equal(
+    build.with["include-backend"],
+    "${{ env.MACOS_COMPLETE_BUILD }}",
+  );
+  const rendererGate = job.steps.find(
+    (step) => step.name === "Enforce renderer performance budgets",
+  );
+  assert(rendererGate);
+  assert.equal(
+    rendererGate.if,
+    "needs.changes.outputs.wework_desktop_renderer_profile == 'true'",
+  );
+  assert.equal(rendererGate.run, "node wework/scripts/profile-renderer.mjs --check");
+  assert.equal(rendererGate["continue-on-error"], undefined);
+  assert(job.steps.indexOf(build) < job.steps.indexOf(rendererGate));
+  const threadTiming = job.steps.find(
+    (step) =>
+      step.name === "Capture renderer thread timing after performance failure",
+  );
+  assert(threadTiming);
+  assert.equal(rendererGate.id, "renderer-profile");
+  assert.equal(
+    threadTiming.if,
+    "failure() && steps.renderer-profile.outcome == 'failure'",
+  );
+  assert.equal(threadTiming["continue-on-error"], true);
+  assert.equal(
+    threadTiming.env.WEWORK_E2E_RESULT_ROOT,
+    "${{ runner.temp }}/wework-renderer-capture",
+  );
+  assert.equal(
+    threadTiming.run,
+    "node wework/scripts/profile-renderer.mjs --capture --thread-timing",
+  );
+  assert(job.steps.indexOf(rendererGate) < job.steps.indexOf(threadTiming));
+  const uploadThreadTiming = job.steps.find(
+    (step) => step.name === "Upload renderer thread timing",
+  );
+  assert.equal(uploadThreadTiming.if, threadTiming.if);
+  assert(job.steps.indexOf(threadTiming) < job.steps.indexOf(uploadThreadTiming));
+  assert.equal(
+    uploadThreadTiming.with.path,
+    "${{ runner.temp }}/wework-renderer-capture/*/renderer-performance-timing.json",
+  );
+  const diagnostics = job.steps.find(
+    (step) => step.name === "Upload macOS Inspector failure evidence before cleanup",
+  );
+  assert.equal(diagnostics.if, "always() && failure()");
+  assert.match(diagnostics.with.path, /renderer-threshold-measurements\.json/);
+  assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);
   assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
   assert.equal(
@@ -413,6 +496,7 @@ test("the existing macOS runner exports verified runtimes after its real checkpo
   for (const name of [
     "Run Wework desktop memory E2E",
     "Run Wework desktop macOS Inspector E2E",
+    "Enforce renderer performance budgets",
   ])
     assert(
       job.steps.findIndex((step) => step.name === name) <
@@ -432,7 +516,7 @@ test("the existing macOS runner exports verified runtimes after its real checkpo
   ]) {
     const upload = job.steps.find((step) => step.name === name);
     assert(job.steps.indexOf(upload) > job.steps.indexOf(describe));
-    assert.equal(upload.if, undefined);
+    assert.equal(upload.if, describe.if);
     assert.equal(upload["continue-on-error"], undefined);
     assert.equal(upload.with.name, artifact);
     assert.equal(upload.with["if-no-files-found"], "error");
@@ -637,7 +721,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
     );
     assert.equal(
       pnpm.if,
-      "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+      "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')",
     );
     const install = steps.find(
       (step) =>
@@ -711,15 +795,36 @@ test("platform sharding uses eight runners and preserves every provider shard", 
   assert.equal(report.with["if-no-files-found"], "error");
   assert.equal(oauth["timeout-minutes"], 10);
   assert.equal(oauth.id, "dingtalk_oauth_e2e");
+  const executionNotifications = steps.find((step) =>
+    step.name === "Run subscription execution notification directives E2E"
+  );
+  const executionNotificationsReport = steps.find((step) =>
+    step.name === "Upload subscription execution notification directives E2E report"
+  );
+  const claudeSteps = ["Restore", "Install", "Verify"].map((phase) =>
+    steps.find((step) => step.name === `${phase} Claude Code CLI`)
+  );
+  assert.equal(matrix.include.filter((row) => row.subscriptionExecutionNotifications).length, 1);
   for (const row of matrix.include) {
     const enabled = (expression, outcome = "success") =>
       Boolean(
-        runInNewContext(expression, {
+        runInNewContext(expression.replace(
+          "steps.claude-code-cli-cache.outputs.cache-hit",
+          "steps.claudeCodeCliCacheHit"
+        ), {
           matrix: row,
-          steps: { dingtalk_oauth_e2e: { outcome } },
+          steps: {
+            dingtalk_oauth_e2e: { outcome },
+            claudeCodeCliCacheHit: "false",
+          },
           always: () => true,
         }),
       );
+    assert.equal(enabled(executionNotifications.if), Boolean(row.subscriptionExecutionNotifications));
+    assert.equal(enabled(executionNotificationsReport.if), Boolean(row.subscriptionExecutionNotifications));
+    for (const step of claudeSteps) {
+      assert.equal(enabled(step.if), row.shardIndex === 1 || Boolean(row.subscriptionExecutionNotifications));
+    }
     for (const step of [preparation, oauth])
       assert.equal(enabled(step.if), row.dingtalkOAuth);
     for (const outcome of ["success", "failure", "cancelled", "skipped", ""]) {

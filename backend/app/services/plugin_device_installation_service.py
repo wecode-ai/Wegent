@@ -27,16 +27,17 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
+from app.services.plugin_kind_revision import kind_revision
 from app.services.plugin_write_coordination import (
     acquire_plugin_write_lock,
     acquire_plugin_write_locks,
 )
-from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from app.services.plugin_write_operations import run_plugin_operation
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
-MYSQL_DEADLOCK_ERROR = 1213
 DEVICE_SYNC_WRITE_ATTEMPTS = 3
 
 
@@ -69,6 +70,8 @@ class PluginDeviceInstallationService:
             ]
         # Enumeration must not leave a request transaction open during the write.
         db.close()
+        if not device_ids:
+            return
         await run_plugin_operation(
             partial(
                 self._ensure_pending_for_devices,
@@ -77,7 +80,9 @@ class PluginDeviceInstallationService:
                 desired_release_id=desired_release_id,
                 device_ids=device_ids,
                 reset_failures=reset_failures,
-            )
+            ),
+            retry_busy=True,
+            retry_conflicts=True,
         )
 
     def _ensure_pending_for_devices(
@@ -91,7 +96,9 @@ class PluginDeviceInstallationService:
         reset_failures: bool,
     ) -> None:
         """Revalidate and materialize desired state inside one worker transaction."""
+        started = time.monotonic()
         acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
+        acquired = time.monotonic()
         installed = (
             db.query(Kind)
             .filter_by(
@@ -112,6 +119,7 @@ class PluginDeviceInstallationService:
             db.commit()
             return
         reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
+        reconciled = time.monotonic()
         seen_device_ids: set[str] = set()
         for submitted_device_id in device_ids:
             device_id = plugin_device_id(db, user_id, submitted_device_id)
@@ -142,7 +150,19 @@ class PluginDeviceInstallationService:
                 row.state = "pending"
                 row.error_code = ""
                 row.error_message = ""
+        prepared = time.monotonic()
         db.commit()
+        logger.info(
+            "plugin_sync.pending user_id=%s installed_id=%s targets=%s "
+            "wait_ms=%.0f reconcile_ms=%.0f prepare_ms=%.0f commit_ms=%.0f",
+            user_id,
+            installed_kind_id,
+            len(seen_device_ids),
+            (acquired - started) * 1000,
+            (reconciled - acquired) * 1000,
+            (prepared - reconciled) * 1000,
+            (time.monotonic() - prepared) * 1000,
+        )
 
     def mark_uninstalling(
         self, db: Session, *, user_id: int, installed_kind_id: int, commit: bool = True
@@ -210,6 +230,7 @@ class PluginDeviceInstallationService:
             )
         db.commit()
 
+    @trace_sync("plugin_sync.record_receipts", "backend.plugins")
     def record_sync_response(
         self,
         db: Session,
@@ -218,15 +239,43 @@ class PluginDeviceInstallationService:
         response: DeviceCapabilitySyncResponse,
         installed_ids: list[int] | None = None,
     ) -> None:
+        scopes = self._response_scopes(db, user_id, response, installed_ids)
+        # Device receipts are independent materializations. A blocked row must
+        # retain only its installation's lease, not every plugin in a snapshot.
+        for scope in ([item] for item in scopes) if scopes else [[]]:
+            self._record_sync_scope(db, user_id, response, scope)
+
+    def _record_sync_scope(
+        self,
+        db: Session,
+        user_id: int,
+        response: DeviceCapabilitySyncResponse,
+        installed_ids: list[int],
+    ) -> None:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
+                scopes = self._response_scopes(db, user_id, response, installed_ids)
+                acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
                 if any(
                     item.desired_plugin_snapshot is not None
                     for item in response.results
                 ):
+                    if scopes:
+                        # Acquire the installation rows before the account sync
+                        # fence so a blocked row cannot stall another plugin.
+                        (
+                            db.query(Kind.id)
+                            .filter(
+                                Kind.id.in_(scopes),
+                                Kind.user_id == user_id,
+                                Kind.kind == "InstalledPlugin",
+                                Kind.namespace == "default",
+                            )
+                            .order_by(Kind.id)
+                            .with_for_update()
+                            .all()
+                        )
                     lock_plugin_sync_state(db, user_id, merge=True)
-                scopes = self._response_scopes(db, user_id, response, installed_ids)
-                acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
                 reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
                 for device_result in response.results:
                     self._record_device_sync_result(
@@ -243,7 +292,7 @@ class PluginDeviceInstallationService:
                 retryable = (
                     isinstance(exc, PluginWriteError)
                     and exc.code == "plugin_write_conflict"
-                ) or (isinstance(exc, OperationalError) and _is_mysql_deadlock(exc))
+                ) or (isinstance(exc, OperationalError) and is_mysql_deadlock(exc))
                 if not retryable or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
                     raise
                 logger.warning(
@@ -316,6 +365,35 @@ class PluginDeviceInstallationService:
                 success=result.success, results=[result]
             ),
         )
+
+    def record_scoped_device_result(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        result: DeviceCapabilitySyncResult,
+        installed_id: int,
+        revision: int,
+        desired: bool,
+    ) -> None:
+        try:
+            acquire_plugin_write_lock(
+                db, user_id, installed_id=installed_id, blocking_timeout=0
+            )
+            installed = db.get(Kind, installed_id)
+            if (
+                installed is not None
+                and (desired or not installed.is_active)
+                and kind_revision(installed) == revision
+            ):
+                self._record_device_sync_result(
+                    db, user_id, result, installed_ids=[installed_id]
+                )
+            db.commit()
+        except OperationalError as error:
+            if not is_mysql_deadlock(error):
+                raise
+            raise PluginWriteError("plugin_write_conflict") from error
 
     def acknowledge_local_installs(
         self,
@@ -393,17 +471,15 @@ class PluginDeviceInstallationService:
                 self, db, user_id, result, installed_ids=installed_ids
             )
             return
-        installs = [
-            row
-            for row in self._desired_installs(db, user_id)
-            if row.id in installed_ids
-        ]
+        installs = self._desired_installs(db, user_id, installed_ids=installed_ids)
         if snapshot is not None:
             from app.services.device.plugin_sync_recording import (
                 current_legacy_plugin_ids,
             )
 
-            confirmed = current_legacy_plugin_ids(db, user_id, result)
+            confirmed = current_legacy_plugin_ids(
+                db, user_id, result, installed_ids=installed_ids
+            )
         else:
             confirmed = None
         desired_ids = {installed.id for installed in installs}
@@ -484,17 +560,15 @@ class PluginDeviceInstallationService:
         *,
         installed_ids: list[int] | None = None,
     ) -> None:
-        rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.user_id == user_id,
-                PluginDeviceInstallation.device_id == result.device_id,
-            )
-            .all()
+        rows = db.query(PluginDeviceInstallation).filter(
+            PluginDeviceInstallation.user_id == user_id,
+            PluginDeviceInstallation.device_id == result.device_id,
         )
+        if installed_ids is not None:
+            rows = rows.filter(
+                PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
+            )
         for row in rows:
-            if installed_ids is not None and row.installed_kind_id not in installed_ids:
-                continue
             if (
                 row.installed_kind_id in desired_ids
                 or row.installed_kind_id in reported_ids
@@ -579,25 +653,20 @@ class PluginDeviceInstallationService:
         circuit breaker opens. Manual retries reset that breaker.
         """
         scopes = [item.id for item in self._desired_installs(db, user_id)]
-        acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
-        reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
-        normalized_device_id = plugin_device_id(db, user_id, device_id)
-        if not normalized_device_id:
+        if not scopes:
             db.commit()
             return 0
-        changed = 0
-        for installed in self._desired_installs(db, user_id):
-            if installed.id not in scopes:
-                continue
-            changed += self._ensure_desired_install_pending(
+        # A blocked device row must not hold the lease for a different plugin.
+        return sum(
+            self.ensure_plugin_pending_for_device(
                 db,
                 user_id=user_id,
-                device_id=normalized_device_id,
-                installed=installed,
+                device_id=device_id,
+                installed_kind_id=installed_id,
                 manual_retry=manual_retry,
             )
-        db.commit()
-        return changed
+            for installed_id in scopes
+        )
 
     def ensure_plugin_pending_for_device(
         self,
@@ -609,25 +678,19 @@ class PluginDeviceInstallationService:
         manual_retry: bool = False,
     ) -> int:
         """Prepare one plugin device row without changing unrelated plugins."""
+        scope = [installed_kind_id]
         acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
-        reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
+        reconcile_plugin_device_rows(db, user_id, installed_ids=scope)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
-        installed = next(
-            (
-                item
-                for item in self._desired_installs(db, user_id)
-                if item.id == installed_kind_id
-            ),
-            None,
-        )
-        if not normalized_device_id or installed is None:
+        installs = self._desired_installs(db, user_id, installed_ids=scope)
+        if not normalized_device_id or not installs:
             db.commit()
             return 0
         changed = self._ensure_desired_install_pending(
             db,
             user_id=user_id,
             device_id=normalized_device_id,
-            installed=installed,
+            installed=installs[0],
             manual_retry=manual_retry,
         )
         db.commit()
@@ -755,16 +818,14 @@ class PluginDeviceInstallationService:
     ) -> list[int]:
         if not response.results:
             return []
-        owned = {
-            row.id
-            for row in db.query(Kind.id)
-            .filter_by(
-                user_id=user_id,
-                kind="InstalledPlugin",
-                namespace="default",
-            )
-            .all()
-        }
+        query = db.query(Kind.id).filter_by(
+            user_id=user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+        )
+        if installed_ids is not None:
+            query = query.filter(Kind.id.in_(installed_ids))
+        owned = {row.id for row in query.all()}
         if installed_ids is not None:
             return sorted(owned.intersection(installed_ids))
         selected: set[int] = set()
@@ -785,22 +846,18 @@ class PluginDeviceInstallationService:
             )
         return sorted(owned.intersection(selected))
 
-    def _desired_installs(self, db: Session, user_id: int) -> list[Kind]:
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "InstalledPlugin",
-                Kind.namespace == "default",
-                Kind.is_active,
-            )
-            .all()
+    def _desired_installs(
+        self, db: Session, user_id: int, *, installed_ids: list[int] | None = None
+    ) -> list[Kind]:
+        query = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "InstalledPlugin",
+            Kind.namespace == "default",
+            Kind.is_active,
         )
+        if installed_ids is not None:
+            query = query.filter(Kind.id.in_(installed_ids))
+        return query.all()
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()
-
-
-def _is_mysql_deadlock(error: OperationalError) -> bool:
-    original = error.orig
-    return bool(original.args and original.args[0] == MYSQL_DEADLOCK_ERROR)

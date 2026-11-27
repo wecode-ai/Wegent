@@ -144,7 +144,7 @@ describe("local executor request contract", () => {
     expect(result.bot).toEqual([{ id: 0, shell_type: "Codex" }]);
   });
 
-  it("keeps attachment metadata and only promotes trusted application context into the prompt", () => {
+  it("keeps attachment metadata and passes typed context separately from user input", () => {
     const skill = {
       name: "workspace-tools",
       namespace: "team",
@@ -179,8 +179,18 @@ describe("local executor request contract", () => {
         },
       ],
     });
-    expect(result.prompt).toContain("[project]\nTrusted project instructions");
-    expect(result.prompt).not.toContain("Untrusted document contents");
+    expect(result.prompt).toBe(input.message);
+    expect(result.additionalContext).toEqual({
+      project: { kind: "application", value: "Trusted project instructions" },
+      externalDocument: {
+        kind: "untrusted",
+        value: "Untrusted document contents",
+      },
+      dingtalkAITableProject: {
+        kind: "application",
+        value: "Use the configured table",
+      },
+    });
     expect(result.skill_names).toEqual(["workspace-tools", "dws"]);
     expect(result.preload_skills).toEqual([skill, skill, "dws"]);
     expect(result.attachments).toEqual([
@@ -193,5 +203,36 @@ describe("local executor request contract", () => {
         text_preview: "Input text",
       }),
     ]);
+  });
+  it.each([true, false])(
+    "keeps Codex input separate on newSession=%s",
+    (newSession) => {
+      const additionalContext = {
+        cloudCollaboration: {
+          kind: "application" as const,
+          value: "Current project reference",
+        },
+        selectedCode: { kind: "untrusted" as const, value: "Quoted source" },
+      };
+      const result = buildLocalRuntimeExecutionRequest({
+        ...input,
+        newSession,
+        additionalContext,
+      });
+      expect(result.prompt).toBe(input.message);
+      expect(result.additionalContext).toEqual(additionalContext);
+    },
+  );
+
+  it("preserves Claude-specific context delivery", () => {
+    const result = buildLocalRuntimeExecutionRequest({
+      ...input,
+      runtime: "claude_code",
+      additionalContext: {
+        project: { kind: "application", value: "Claude project reference" },
+      },
+    });
+    expect(result.prompt).toContain("[project]\nClaude project reference");
+    expect(String(result.prompt).endsWith(input.message)).toBe(true);
   });
 });

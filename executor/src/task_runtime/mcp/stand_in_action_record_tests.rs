@@ -8,6 +8,7 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
         "kind":"group","id":"group","name":"Group",
         "policy":{"automatic":false,"askBeforeAct":true}});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] = json!([source.clone()]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
@@ -45,7 +46,7 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
     };
     let exact = json!({"messageId":record,"text":"Reply"});
     for email in [false, true] {
-        let denied = reply_to_work(&runtime, &identity, &exact, email)
+        let denied = reply_to_work(&runtime, &identity, &exact, email, None)
             .await
             .unwrap_err();
         assert!(denied.contains("Automatic reply authorization was revoked"));
@@ -54,6 +55,7 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
             &identity,
             &json!({"messageId":"stable","text":"Reply"}),
             email,
+            None,
         )
         .await
         .unwrap_err();
@@ -72,7 +74,7 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
                 ..identity.clone()
             },
         ] {
-            assert!(reply_to_work(&runtime, &foreign, &exact, email)
+            assert!(reply_to_work(&runtime, &foreign, &exact, email, None)
                 .await
                 .is_err());
         }
@@ -87,9 +89,81 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
         .save_personal_stand_in(7, "mac", revoked)
         .unwrap();
     for email in [false, true] {
-        let denied = reply_to_work(&runtime, &identity, &exact, email)
+        let denied = reply_to_work(&runtime, &identity, &exact, email, None)
             .await
             .unwrap_err();
         assert!(denied.contains("Source connection was removed"));
     }
+}
+
+#[test]
+fn delivery_context_tracks_injected_and_retrieved_memory_for_its_own_turn() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".into(), json!({"type":"connection_work"}));
+    request.extra.insert(
+        "additionalContext".into(),
+        json!({
+            "wework.stand-in.memories":{"kind":"untrusted","value":"first memory"}
+        }),
+    );
+    assert!(DeliveryContext::from_request(&request).is_none());
+    request.extra.insert(
+        "standInDeliveryContext".into(),
+        json!({"roleDeviceId":"mac","ghostVersion":"ghost-1"}),
+    );
+    let first_witness = begin_stand_in_turn_witness(&mut request).unwrap();
+    let first = active_delivery(&request).unwrap();
+    assert!(first.versions().is_none());
+    bind_stand_in_turn_context(&request, "first");
+    let first_versions = first.versions().unwrap();
+    first
+        .clone()
+        .remember_page(&json!({"items":[{"id":"other","version":2,"content":"retrieved"}]}));
+    let with_retrieval = first.versions().unwrap();
+    assert_eq!(first_versions.0, with_retrieval.0);
+    assert_ne!(first_versions.1, with_retrieval.1);
+    first.remember_page(&json!({"items":[{"id":"other","version":2,"content":"retrieved"}]}));
+    assert_eq!(first.versions().unwrap(), with_retrieval);
+
+    let mut fresh_request = request.clone();
+    let _fresh_witness = begin_stand_in_turn_witness(&mut fresh_request).unwrap();
+    bind_stand_in_turn_context(&fresh_request, "fresh");
+    let fresh = active_delivery(&fresh_request).unwrap();
+    assert_eq!(fresh.versions().unwrap(), first_versions);
+    let mut later_request = request.clone();
+    later_request.extra.get_mut("additionalContext").unwrap()["wework.stand-in.memories"]
+        ["value"] = json!("edited memory");
+    later_request
+        .extra
+        .get_mut("standInDeliveryContext")
+        .unwrap()["ghostVersion"] = json!("ghost-2");
+    let _later_witness = begin_stand_in_turn_witness(&mut later_request).unwrap();
+    bind_stand_in_turn_context(&later_request, "later");
+    let later = active_delivery(&later_request).unwrap();
+    assert_ne!(later.versions().unwrap().0, first_versions.0);
+    assert_ne!(later.versions().unwrap().1, first_versions.1);
+    assert_eq!(first.versions().unwrap(), with_retrieval);
+
+    // Codex may reuse the worker and its MCP registration for a native Goal turn.
+    // The previous native completion can be projected after the continuation starts.
+    observe_stand_in_turn_boundary(&request, None);
+    observe_stand_in_turn_boundary(&request, Some("continuation"));
+    first.remember_page(&json!({"items":[{"id":"new","version":1,"content":"another turn"}]}));
+    assert!(first.versions().is_none());
+    assert!(stand_in_turn_versions(&request, "continuation").is_none());
+    assert_eq!(
+        stand_in_turn_versions(&request, "first"),
+        Some((with_retrieval.0.to_owned(), with_retrieval.1))
+    );
+    drop(first_witness);
+    assert!(stand_in_turn_versions(&request, "first").is_none());
+    assert!(first.versions().is_none());
+
+    // Claude retains the role/device for receipt scope but has no Codex admission witness.
+    request.extra.get_mut("standInDeliveryContext").unwrap()["ghostVersion"] = Value::Null;
+    let claude = DeliveryContext::from_request(&request).unwrap();
+    assert_eq!(claude.role_device, "mac");
+    assert!(claude.versions().is_none());
 }

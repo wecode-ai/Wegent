@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict'
+import { until } from './plugin-regression-fixture.mjs'
+
+// The editor exposes block text and persistence returns markdown.
+function descriptionText(value) {
+  return value
+    .replaceAll('\\_', '_')
+    .split(/\r?\n/)
+    .filter(line => line.trim())
+    .join('\n')
+}
 
 /** Preceding content reflow must refresh a question's overlay exemption. */
 export async function verifyIssueQuestionReflow(
   control,
-  { contentScope, question, originalDescription, captureScreenshot }
+  { contentScope, question, originalDescription, readDescription, captureScreenshot }
 ) {
   const scope = id => `${contentScope} [data-testid="${id}"]`
   const description = scope('cloud-todo-detail-description')
@@ -17,11 +27,27 @@ export async function verifyIssueQuestionReflow(
       })
     )
   async function saveDescription(value) {
+    const expected = descriptionText(value)
     await control.command('scrollIntoViewAsUser', scope('issue-description-edit'))
     await control.command('click', scope('issue-description-edit'))
-    await control.command('fill', description, { value })
+    await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
+    const existingText = await control.command('getText', description)
+    if (existingText) {
+      await control.command('selectText', description, { value: existingText })
+    }
+    await control.command('pasteText', description, { value })
+    await until(
+      () => control.command('getValue', description),
+      draft => descriptionText(draft) === expected,
+      'The Issue editor did not retain the complete pasted description'
+    )
     await control.command('clickWhenEnabled', scope('cloud-todo-save'))
     await control.command('waitFor', scope('issue-save-status'), { text: '已保存' })
+    await until(
+      readDescription,
+      saved => descriptionText(saved) === expected,
+      'The persisted Issue description did not match the editor draft'
+    )
   }
   await saveDescription(
     [

@@ -152,6 +152,7 @@ fn run() -> Value {
     object(
         json!({"id":string(),"automationId":string(),"scheduledFor":string(),"trigger":string(),
             "status":{"enum":["pending","running","succeeded","failed","skipped","needs_attention","cancelled"]},
+            "conversationMode":{"enum":["independent","continue_thread"]},
             "taskId":nullable(string()),"error":nullable(string()),"createdAt":string(),"updatedAt":string()}),
         &["id", "automationId", "status"],
     )
@@ -169,7 +170,10 @@ pub(super) fn capability(name: &str) -> Value {
         "list_connection_event_subscriptions" => {
             object(json!({"items":array(json!({"type":"object"}))}), &["items"])
         }
-        "subscribe_connection_events" | "cancel_connection_event_subscription" => {
+        "subscribe_connection_events" => {
+            object(json!({"subscription":{"type":"object"}}), &["subscription"])
+        }
+        "cancel_connection_event_subscription" => {
             object(json!({"subscription":{"type":"object"}}), &["subscription"])
         }
         "get_current_context" => object(
@@ -279,7 +283,7 @@ pub(super) fn discovery(name: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_work::automations::{AutomationRun, AutomationRunStatus};
+    use crate::runtime_work::automations::{AutomationRun, AutomationRunStatus, ConversationMode};
 
     #[test]
     fn run_contract_matches_serialized_business_states_and_null_runs() {
@@ -299,6 +303,7 @@ mod tests {
                 scheduled_for: now,
                 trigger: "manual".into(),
                 status,
+                conversation_mode: Some(ConversationMode::Independent),
                 task_id: None,
                 error: Some("Needs review".into()),
                 created_at: now,

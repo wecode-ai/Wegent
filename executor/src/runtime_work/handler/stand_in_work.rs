@@ -4,7 +4,12 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
 use crate::task_runtime::personal_stand_in::{
-    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+    is_primary_dingtalk, matches_delegation_account, requires_dingtalk_delegation, source_provider,
+    stand_in_collection_connection, stand_in_connection, stand_in_identities, DINGTALK_PROVIDER,
+};
+use crate::task_runtime::stand_in_projection::{
+    message_visible_to_account, project_visible_work, sanitize_task_summary, visible_messages,
+    VisibleWork,
 };
 use sha2::{Digest, Sha256};
 
@@ -22,29 +27,56 @@ impl RuntimeWorkRpcHandler {
         }
         let id = work["id"]
             .as_str()
-            .ok_or_else(|| AppIpcError::new("bad_request", "Work ID is missing"))?;
+            .ok_or_else(|| AppIpcError::new("bad_request", "Work ID is missing"))?
+            .to_owned();
         let gate = self.task_send_gate(&format!("dingtalk-dispatch:{id}"));
         let Ok(_guard) = gate.try_lock() else {
             return Ok(());
         };
-        let current = store.stand_in_work(user, id).map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let messages = store.stand_in_messages(user, &id).map_err(settings_error)?;
+        let Some(visible) = project_visible_work(&settings, work.clone(), messages) else {
+            return Ok(());
+        };
+        *work = visible.work;
+        if work["status"] != "sending" {
+            return Ok(());
+        }
+        let current = store.stand_in_work(user, &id).map_err(settings_error)?;
         if current["status"] != "sending" {
             *work = current;
             return Ok(());
         }
-        let ids = store
-            .stand_in_messages(user, id)
-            .map_err(settings_error)?
-            .iter()
+        if work["source"]["delegated"] == true {
+            for message in visible.messages {
+                if message["delegationResult"]["status"] == "submitting" {
+                    store
+                        .finish_delegated_submission(
+                            user,
+                            &id,
+                            message["recordId"].as_str().unwrap_or_default(),
+                            &json!({"status":"unknown","attemptId":message["delegationResult"]["attemptId"]}),
+                        )
+                        .map_err(settings_error)?;
+                }
+            }
+            *work = store.stand_in_work(user, &id).map_err(settings_error)?;
+            return Ok(());
+        }
+        let ids = visible
+            .messages
+            .into_iter()
             .filter(|message| message["dispatchStatus"] == "sending")
             .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
-        let client_id = dingtalk_client_id(id, &ids);
+        let client_id = dingtalk_client_id(&id, &ids);
         let receipt = self
             .command_journal
             .lock()
             .expect("command journal poisoned")
-            .get(&super::command_journal::key(id, &client_id))
+            .get(&super::command_journal::key(&id, &client_id))
             .filter(|command| {
                 command
                     .turn
@@ -64,17 +96,17 @@ impl RuntimeWorkRpcHandler {
             store
                 .update_stand_in_dispatch(
                     user,
-                    id,
+                    &id,
                     &ids,
                     status,
                     (status == "failed")
                         .then_some("Review the original task before retrying failed execution"),
                 )
                 .map_err(settings_error)?;
-            *work = store.stand_in_work(user, id).map_err(settings_error)?;
+            *work = store.stand_in_work(user, &id).map_err(settings_error)?;
             return Ok(());
         }
-        let accepted = self.local_task_link(id).is_some_and(|link| {
+        let accepted = self.local_task_link(&id).is_some_and(|link| {
             crate::runtime_work::runtime_handle_messages::user_message_presentations(&link)
                 .iter()
                 .any(|message| message["clientUserMessageId"] == client_id)
@@ -82,22 +114,22 @@ impl RuntimeWorkRpcHandler {
         if accepted {
             // Runtime already accepted this durable message. Never replay its effects.
             store
-                .update_stand_in_dispatch(user, id, &ids, "sent", None)
+                .update_stand_in_dispatch(user, &id, &ids, "sent", None)
                 .map_err(settings_error)?;
-            *work = store.stand_in_work(user, id).map_err(settings_error)?;
+            *work = store.stand_in_work(user, &id).map_err(settings_error)?;
         } else {
             // The dispatch gate excludes an in-flight sender. An older busy turn
             // cannot prove acceptance of this batch without its durable receipt.
             store
                 .update_stand_in_dispatch(
                     user,
-                    id,
+                    &id,
                     &ids,
                     "failed",
                     Some("Executor stopped before accepting this work. Start it again to retry."),
                 )
                 .map_err(settings_error)?;
-            *work = store.stand_in_work(user, id).map_err(settings_error)?;
+            *work = store.stand_in_work(user, &id).map_err(settings_error)?;
         }
         Ok(())
     }
@@ -112,10 +144,33 @@ impl RuntimeWorkRpcHandler {
         if origin["initiatedBy"] != "stand_in" {
             return Ok(());
         }
+        if origin["type"] == "stand_in_schedule" {
+            return Ok(());
+        }
         let Some(user) = origin["userId"].as_i64() else {
             return Ok(());
         };
         if origin["type"] == "stand_in_task" {
+            if origin["roleDelegation"].is_object() {
+                let role_id = origin["standInId"].as_str();
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                let settings = store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                if role_id.is_none()
+                    || !settings["lifecycle"]["status"].is_null()
+                    || !stand_in_identities(&settings)
+                        .iter()
+                        .any(|role| role["id"].as_str() == role_id && role["enabled"] == true)
+                {
+                    return Err(AppIpcError::new(
+                        "role_unavailable",
+                        "The delegated role is no longer enabled",
+                    ));
+                }
+                request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+            }
             if request
                 .extra
                 .get("standInDelegation")
@@ -215,6 +270,14 @@ impl RuntimeWorkRpcHandler {
         let messages = store
             .stand_in_messages(user, work_id)
             .map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let Some(messages) =
+            project_visible_work(&settings, work, messages).map(|work| work.messages)
+        else {
+            return Err(unavailable());
+        };
         let manual = request.extra.get("standInManualConfirmation") == Some(&Value::Bool(true));
         let mut confirm = manual;
         let mut seen = std::collections::HashSet::new();
@@ -237,6 +300,12 @@ impl RuntimeWorkRpcHandler {
             // The binding selects only records in this work; live settings, not
             // its captured source policy, determine the native reviewer.
             let source = stand_in_connection(role, &message["source"]).ok_or_else(unavailable)?;
+            if is_primary_dingtalk(role, source)
+                && (source["delegated"] == true
+                    || (!manual && requires_dingtalk_delegation(role, source)))
+            {
+                return Err(unavailable());
+            }
             if !manual && (role["enabled"] != true || source["policy"]["automatic"] != true) {
                 return Err(unavailable());
             }
@@ -250,32 +319,55 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
         let mut items = store
             .list_stand_in_work(user, payload["roleId"].as_str())
             .map_err(settings_error)?;
         for work in &mut items {
             self.reconcile_connection_dispatch(&store, user, work)?;
-            work["task"] = self
+        }
+        let mut visible_items: Vec<VisibleWork> = Vec::with_capacity(items.len());
+        for work in items {
+            let messages = store
+                .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+                .map_err(settings_error)?;
+            if let Some(visible) = project_visible_work(&settings, work, messages) {
+                visible_items.push(visible);
+            }
+        }
+        for visible in &mut visible_items {
+            visible.work["task"] = self
                 .store
-                .get_task_summary(work["taskId"].as_str().unwrap_or_default())
-                .map(local_task_json)
+                .get_task_summary(visible.work["taskId"].as_str().unwrap_or_default())
+                .map(|task| {
+                    sanitize_task_summary(
+                        local_task_json(task),
+                        &visible.work,
+                        visible.hidden_messages_removed,
+                    )
+                })
                 .unwrap_or(Value::Null);
         }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let identities = stand_in_identities(&settings);
         let errors = store
             .stand_in_source_errors(user)
             .map_err(settings_error)?
             .into_iter()
             .filter(|state| {
-                identities
-                    .iter()
-                    .any(|role| stand_in_collection_connection(role, &state["source"]).is_some())
+                identities.iter().any(|role| {
+                    (state["source"]["delegated"] != true || role["id"] == "@primary")
+                        && matches_delegation_account(&settings, &role["id"], &state["source"])
+                        && stand_in_collection_connection(role, &state["source"]).is_some()
+                })
             })
             .collect::<Vec<_>>();
-        Ok(json!({"items":items,"sourceErrors":errors,"deviceId":self.device_id}))
+        Ok(json!({
+            "items":visible_items.into_iter().map(|visible| visible.work).collect::<Vec<_>>(),
+            "sourceErrors":errors,
+            "deviceId":self.device_id
+        }))
     }
 
     pub(super) fn connection_stand_in_messages(
@@ -286,7 +378,19 @@ impl RuntimeWorkRpcHandler {
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        Ok(json!({"messages":store.stand_in_messages(user,&work).map_err(settings_error)?}))
+        validate_work_accounts(&store, user, &self.device_id, &work, None)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let work_value = store.stand_in_work(user, &work).map_err(settings_error)?;
+        let messages = visible_messages(
+            &settings,
+            &work_value["roleId"],
+            store
+                .stand_in_messages(user, &work)
+                .map_err(settings_error)?,
+        );
+        Ok(json!({"messages":messages}))
     }
 
     pub(super) async fn run_connection_stand_in_work(
@@ -360,6 +464,10 @@ impl RuntimeWorkRpcHandler {
         let messages = store
             .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
             .map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let messages = visible_messages(&settings, &work["roleId"], messages);
         let mut request: ExecutionRequest = serde_json::from_value(
             task.runtime_handle["executionRequest"].clone(),
         )
@@ -400,23 +508,39 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
         let _guard = gate.lock().await;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let messages = store
+            .stand_in_messages(user, work_id)
+            .map_err(settings_error)?;
+        let Some(visible) = project_visible_work(&settings, work, messages) else {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "This work has no source events visible to the current account",
+            ));
+        };
+        let work = visible.work;
+        if work["roleId"] == "@primary"
+            && source_provider(&work["source"]) == DINGTALK_PROVIDER
+            && work["source"]["delegated"] == true
+        {
+            return self
+                .dispatch_delegated_dingtalk(&store, user, &work, selected_records)
+                .await;
+        }
         if !manual && work["status"] == "failed" {
             return Err(AppIpcError::new(
                 "stand_in_dispatch_failed",
                 "Review failed work before retrying it",
             ));
         }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let role = stand_in_identities(&settings)
             .into_iter()
             .find(|role| role["id"] == work["roleId"])
             .ok_or_else(|| AppIpcError::new("role_removed", "Role no longer exists"))?;
-        let messages = store
-            .stand_in_messages(user, work_id)
-            .map_err(settings_error)?;
-        let pending = selected_pending_connection_messages(messages, manual, selected_records)?;
+        let pending =
+            selected_pending_connection_messages(visible.messages, manual, selected_records)?;
         let task_id = work["taskId"]
             .as_str()
             .ok_or_else(|| AppIpcError::new("bad_request", "Work task ID is missing"))?;
@@ -434,6 +558,12 @@ impl RuntimeWorkRpcHandler {
             let source = stand_in_connection(&role, &message["source"]).ok_or_else(|| {
                 AppIpcError::new("source_removed", "The source connection was removed")
             })?;
+            if !manual && requires_dingtalk_delegation(&role, source) {
+                return Err(AppIpcError::new(
+                    "stand_in_delegation_required",
+                    "Enable delegation for the selected DingTalk conversation",
+                ));
+            }
             if !manual && (role["enabled"] != true || source["policy"]["automatic"] != true) {
                 return Ok(json!({"pending":true}));
             }
@@ -504,7 +634,7 @@ impl RuntimeWorkRpcHandler {
             .update_stand_in_dispatch(user, work_id, &ids, "sending", None)
             .map_err(settings_error)?;
         let result = if self.local_task_link(task_id).is_some() {
-            self.send_message(payload.take()).await
+            self.send_message_from_event(payload.take()).await
         } else {
             self.create_task(payload.take()).await
         };
@@ -557,14 +687,8 @@ impl RuntimeWorkRpcHandler {
                 "Source is not connected",
             ));
         }
-        let mut state = store
-            .stand_in_source(user, source)
-            .map_err(settings_error)?;
-        if let Some(object) = state.as_object_mut() {
-            object.remove("error");
-        }
         store
-            .save_stand_in_source(user, source, &state)
+            .acknowledge_stand_in_source_error(user, source)
             .map_err(settings_error)?;
         Ok(json!({"success":true}))
     }
@@ -596,6 +720,8 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        validate_work_accounts(&store, user, &self.device_id, &work, target)?;
+        validate_message_accounts(&store, user, &self.device_id, &work, &ids)?;
         store
             .organize_stand_in_messages(user, &work, &ids, target)
             .map_err(settings_error)
@@ -620,10 +746,83 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        validate_work_accounts(&store, user, &self.device_id, &work, target)?;
+        validate_message_accounts(
+            &store,
+            user,
+            &self.device_id,
+            &work,
+            std::slice::from_ref(&message),
+        )?;
         store
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
     }
+}
+
+pub(super) fn validate_work_accounts(
+    store: &LocalTaskStore,
+    user: i64,
+    device: &str,
+    work: &str,
+    target: Option<&str>,
+) -> Result<(), AppIpcError> {
+    let settings = store
+        .personal_stand_in(user, device)
+        .map_err(settings_error)?;
+    for id in std::iter::once(work).chain(target) {
+        let work = store.stand_in_work(user, id).map_err(settings_error)?;
+        let messages = store
+            .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+            .map_err(settings_error)?;
+        let has_messages = !messages.is_empty();
+        if project_visible_work(&settings, work.clone(), messages).is_none() {
+            // Empty works remain valid organization targets after their messages move.
+            // Their stored source still has to match the active delegation account.
+            if has_messages
+                || !matches_delegation_account(&settings, &work["roleId"], &work["source"])
+            {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "This work has no source events visible to the current account",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_message_accounts(
+    store: &LocalTaskStore,
+    user: i64,
+    device: &str,
+    work: &str,
+    ids: &[String],
+) -> Result<(), AppIpcError> {
+    let settings = store
+        .personal_stand_in(user, device)
+        .map_err(settings_error)?;
+    let work = store.stand_in_work(user, work).map_err(settings_error)?;
+    let selected = ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    for message in store
+        .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+        .map_err(settings_error)?
+    {
+        if message["recordId"]
+            .as_str()
+            .is_some_and(|id| selected.contains(id))
+            && !message_visible_to_account(&settings, &work["roleId"], &message)
+        {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "This message belongs to a different DingTalk account",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn selected_pending_connection_messages(
@@ -655,7 +854,8 @@ fn selected_pending_connection_messages(
             ));
         }
     }
-    Ok(messages
+    let mut retry_limit_reached = false;
+    let pending = messages
         .into_iter()
         .filter(|message| {
             selected.as_ref().map_or(true, |ids| {
@@ -669,7 +869,23 @@ fn selected_pending_connection_messages(
                         Some("failed" | "needs_grouping")
                     )))
         })
-        .collect())
+        .filter(|message| {
+            let failures = LocalTaskStore::stand_in_dispatch_failure_count(
+                message,
+                message["dispatchStatus"] == "failed",
+            );
+            let exhausted = failures >= LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT;
+            retry_limit_reached |= exhausted;
+            !exhausted
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() && retry_limit_reached {
+        return Err(AppIpcError::new(
+            "stand_in_dispatch_retry_limit",
+            "This input has reached the stand-in dispatch failure limit",
+        ));
+    }
+    Ok(pending)
 }
 
 fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
@@ -690,6 +906,7 @@ fn connection_source_identity(source: &Value) -> Value {
 
 fn set_connection_message_presentation(payload: &mut Value, messages: &[Value]) {
     payload["restoreUserMessageContent"] = json!(true);
+    payload["source"] = json!({"source": "connection_work"});
     payload["message"] = json!(messages
         .iter()
         .map(|message| format!(
@@ -709,6 +926,166 @@ mod authorization_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegated_messages_remain_scoped_to_their_account_inside_a_shared_work() {
+        let settings = json!({
+            "primary": {"delegation": {"accountId": "account-new", "profile": "current"}}
+        });
+        let old_message = json!({
+            "recordId": "old-record",
+            "roleId": "@primary",
+            "text": "old-account content",
+            "source": {
+                "providerId": DINGTALK_PROVIDER,
+                "profile": "current",
+                "accountId": "account-old",
+                "kind": "direct",
+                "id": "peer",
+                "delegated": true
+            }
+        });
+        let email_message = json!({
+            "recordId": "mail-record",
+            "roleId": "@primary",
+            "text": "email content",
+            "source": {"providerId": "connection/email", "profile": "mailbox"}
+        });
+        let work = json!({
+            "title": "old-account content",
+            "roleId": "@primary",
+            "source": {"providerId": "connection/email", "profile": "mailbox"},
+            "latestMessage": old_message,
+            "messageCount": 2,
+            "status": "pending"
+        });
+
+        let visible = project_visible_work(
+            &settings,
+            work,
+            vec![old_message.clone(), email_message.clone()],
+        )
+        .unwrap();
+        assert_eq!(visible.messages, vec![email_message]);
+        assert_eq!(visible.work["latestMessage"]["recordId"], "mail-record");
+        assert_eq!(visible.work["messageCount"], 1);
+        assert_eq!(visible.work["title"], "email content");
+        assert!(!visible.work.to_string().contains("old-account"));
+
+        let hidden = json!({
+            "roleId": "@primary",
+            "source": {"providerId": "connection/email", "profile": "mailbox"}
+        });
+        assert!(project_visible_work(&settings, hidden, vec![old_message]).is_none());
+    }
+
+    #[test]
+    fn work_list_rebuilds_task_summary_from_visible_message_content() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &json!({
+                    "providerId":"connection/email",
+                    "profile":"mailbox",
+                    "kind":"mailbox",
+                    "id":"mailbox",
+                    "name":"Mailbox"
+                }),
+                &json!({
+                    "id":"mail-message",
+                    "text":"current mailbox content",
+                    "at":"2026-01-02T00:00:00Z"
+                }),
+                None,
+            )
+            .unwrap();
+        let task_id = work["taskId"].as_str().unwrap().to_owned();
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: task_id,
+            title: "old-account content".into(),
+            runtime_handle: json!({
+                "origin":{
+                    "type":"connection_work",
+                    "initiatedBy":"stand_in",
+                    "userId":7,
+                    "standInId":"@primary",
+                    "workId":work["id"],
+                    "askBeforeAct":true,
+                    "manual":true
+                },
+                "executionRequest":{"prompt":"old-account prompt"},
+                "executionState":{"activeText":"old-account answer"}
+            }),
+            ..Default::default()
+        });
+
+        let result = handler
+            .list_connection_stand_in_work(json!({"userId":7}))
+            .unwrap();
+        let task = &result["items"][0]["task"];
+        assert_eq!(task["title"], "current mailbox content");
+        assert_eq!(task["runtimeHandle"]["origin"]["workId"], work["id"]);
+        assert!(task["runtimeHandle"].get("executionRequest").is_none());
+        assert!(task.get("executionState").is_none());
+        assert!(!result.to_string().contains("old-account"));
+    }
+
+    #[test]
+    fn organization_allows_a_current_account_target_after_its_messages_move() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({
+            "providerId":"connection/email",
+            "profile":"mailbox",
+            "kind":"mailbox",
+            "id":"mailbox",
+            "name":"Mailbox"
+        });
+        let empty = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &source,
+                &json!({"id":"first","text":"First message"}),
+                None,
+            )
+            .unwrap();
+        let target = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &source,
+                &json!({"id":"second","text":"Second message"}),
+                None,
+            )
+            .unwrap();
+        let record_ids = store
+            .stand_in_messages(7, empty["id"].as_str().unwrap())
+            .unwrap()
+            .into_iter()
+            .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        store
+            .organize_stand_in_messages(
+                7,
+                empty["id"].as_str().unwrap(),
+                &record_ids,
+                target["id"].as_str(),
+            )
+            .unwrap();
+        assert!(store
+            .stand_in_messages(7, empty["id"].as_str().unwrap())
+            .unwrap()
+            .is_empty());
+
+        validate_work_accounts(&store, 7, "mac", empty["id"].as_str().unwrap(), None).unwrap();
+    }
 
     #[test]
     fn inbox_polling_uses_task_summaries_without_copying_conversation_history() {
@@ -765,6 +1142,7 @@ mod tests {
             json!({"recordId":"deferred","dispatchStatus":"pending"}),
             json!({"recordId":"ignored","dispatchStatus":"ignored"}),
             json!({"recordId":"sent","dispatchStatus":"sent"}),
+            json!({"recordId":"exhausted","dispatchStatus":"failed","dispatchFailureCount":3}),
         ];
         let selected = vec!["selected".into(), "sent".into()];
         let pending =
@@ -788,6 +1166,12 @@ mod tests {
         );
         let manual = selected_pending_connection_messages(messages.clone(), true, None).unwrap();
         assert_eq!(manual, messages[..2]);
+        assert_eq!(
+            selected_pending_connection_messages(messages, true, Some(&["exhausted".into()]))
+                .unwrap_err()
+                .code,
+            "stand_in_dispatch_retry_limit"
+        );
     }
 
     #[tokio::test]
@@ -797,6 +1181,9 @@ mod tests {
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         let work = store
             .ingest_stand_in_message(
                 7,
@@ -886,6 +1273,13 @@ mod tests {
             user_message_presentation(&payload).unwrap()["content"],
             payload["message"]
         );
+        let mut request = execution_request(&payload).unwrap();
+        apply_runtime_payload_metadata(&mut request, &payload);
+        let live_message = &request.extra["runtime_generated_user_message"];
+        assert_eq!(live_message["id"], "batch");
+        assert_eq!(live_message["message"], payload["message"]);
+        assert_eq!(live_message["source"], payload["source"]);
+        assert_eq!(request.prompt, "Internal orchestration");
         let mut transcript = vec![
             json!({"role":"user","clientUserMessageId":"batch","content":"Internal orchestration"}),
         ];

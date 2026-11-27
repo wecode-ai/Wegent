@@ -7,6 +7,7 @@ import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import {
+  chooseCollaborationOption,
   dragCollaborationIssueToColumn,
   enableLegacyBoardGrouping,
   showAllProjectIssues,
@@ -16,6 +17,102 @@ import {
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+projectTest(
+  'keeps the legacy milestone deep link through creation and refresh',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const title = `Web milestone ${crypto.randomUUID()}`
+    await page.goto(`${path}?view=milestones`)
+    await expect(page.getByTestId('milestones-page')).toBeVisible()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await page.getByTestId('milestone-create').click()
+    await page.getByTestId('milestone-title').fill(title)
+    const saved = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/cloud-projects/${projectId}/milestones`) &&
+        response.request().method() === 'POST'
+    )
+    await page.getByTestId('milestone-save').click()
+    const response = await saved
+    expect(response.ok()).toBe(true)
+    const milestone = (await response.json()) as { id: string }
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+    await page.reload()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+  }
+)
+
+projectTest(
+  'counts authoritative root completions and exposes the personal project breakdown',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Excluded child', parent_id: issueId, status: 'completed' },
+    })
+    const removed = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Deleted root', status: 'completed' },
+    })
+    await webApi(page, `/api/v1/loop-items/${removed.id}`, { method: 'DELETE' })
+    const backfillPath = `/api/v1/cloud-projects/${projectId}/assistant-participations/backfill`
+    for (const dryRun of [true, false, false]) {
+      const result = await webApi<{
+        dryRun: boolean
+        created: number
+        items: Array<{ issueId: string }>
+      }>(page, backfillPath, { method: 'POST', body: { dryRun } })
+      expect(result.dryRun).toBe(dryRun)
+      expect(result.created).toBe(0)
+      expect(result.items.some(item => item.issueId === removed.id)).toBe(false)
+    }
+    const issue = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed' },
+    })
+    type Metrics = {
+      definition_version: string
+      as_of: string
+      window: { start: string; end: string }
+      completion: { completed: number; denominator: number; unknown: number; per_member: number }
+      activity: { ai_active_seconds: number; ai_active_hours: number }
+    }
+    const metrics = await webApi<Metrics>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/collaboration-metrics`
+    )
+    expect(metrics.definition_version).toBe('collab-v2')
+    expect(metrics.completion).toMatchObject({
+      completed: 1,
+      denominator: 2,
+      unknown: 0,
+      per_member: 0.5,
+    })
+    expect(Date.parse(metrics.window.end) - Date.parse(metrics.window.start)).toBe(
+      7 * 24 * 3600 * 1000
+    )
+    expect(metrics.window.end).toBe(metrics.as_of)
+    expect(metrics.activity.ai_active_seconds).toBe(0)
+    expect(metrics.activity.ai_active_hours).toBe(0)
+    const personal = await webApi<{ projects: Array<{ project_id: string; completed: number }> }>(
+      page,
+      '/api/v1/collaboration-metrics/me'
+    )
+    expect(personal.projects.find(project => project.project_id === projectId)?.completed).toBe(1)
+    const completed = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: completed.version, status: 'pending' },
+    })
+    expect(
+      (await webApi<Metrics>(page, `/api/v1/cloud-projects/${projectId}/collaboration-metrics`))
+        .completion.completed
+    ).toBe(0)
+  }
+)
 
 projectTest(
   'rejects subtree archiving through an editable parent with a private descendant',
@@ -112,11 +209,16 @@ projectTest(
       .getByTestId('cloud-todo-column-inbox')
       .getByTestId(`cloud-todo-card-${created.id}`)
       .click()
-    await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
+    await chooseCollaborationOption(page, page.getByTestId('cloud-todo-detail-status'), {
+      value: 'in_progress',
+    })
     await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
       /项目授权|project-authorized/
     )
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+      'data-value',
+      'inbox'
+    )
   }
 )
 
@@ -846,11 +948,19 @@ projectTest(
       await page.getByTestId(`board-view-lane-value-${index}-create`).click()
     }
     await page.getByTestId('board-view-add-lane').click()
-    await page.getByTestId('board-view-lane-type-3').selectOption('status')
-    await page.getByTestId('board-view-lane-value-3').selectOption('pending')
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-type-3'), {
+      value: 'status',
+    })
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-value-3'), {
+      value: 'pending',
+    })
     await page.getByTestId('board-view-add-lane').click()
-    await page.getByTestId('board-view-lane-type-4').selectOption('status')
-    await page.getByTestId('board-view-lane-value-4').selectOption('in_progress')
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-type-4'), {
+      value: 'status',
+    })
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-value-4'), {
+      value: 'in_progress',
+    })
     await page.getByTestId('board-view-set-default').check()
     await page.getByTestId('board-view-save').click()
     await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
@@ -891,7 +1001,7 @@ projectTest(
     await page.getByTestId('board-view-lane-value-0').scrollIntoViewIfNeeded()
     for (const index of [0, 1]) {
       const field = page.getByTestId(`board-view-lane-value-${index}`)
-      const arrow = index === 0 ? field.locator('..').locator('svg') : field.locator('svg')
+      const arrow = field.locator('svg.lucide-chevron-down')
       const fieldBox = await field.boundingBox()
       const arrowBox = await arrow.boundingBox()
       expect(fieldBox).not.toBeNull()
@@ -977,7 +1087,11 @@ projectTest(
 test('removes My Work and Run Center from navigation and their former URLs', async ({ page }) => {
   await page.goto('/collaboration')
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-  await expect(page.getByTestId('collaboration-nav-inbox')).toBeVisible()
+  const assigned = page.getByTestId('collaboration-primary-issues-assigned')
+  await expect(assigned).toBeVisible()
+  await assigned.click()
+  await expect(page).toHaveURL(/\/collaboration\/assigned$/)
+  await expect(page.getByTestId('personal-issues-assigned')).toBeVisible()
   await expect(page.getByTestId('collaboration-nav-my-work')).toHaveCount(0)
   await expect(page.getByTestId('collaboration-nav-runs')).toHaveCount(0)
   for (const removed of ['my-work', 'runs']) {

@@ -1,22 +1,12 @@
+import { modelApplicationContextText } from './application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { selectMcpToolRequest, toolSearchResponseEvents } from './response-protocol.mjs'
 
 // Script only the model: discover and read the real native conversation capability.
 export function conversationReferenceReadEvents(request, callId) {
-  const strings = []
-  const collect = value => {
-    if (typeof value === 'string') strings.push(value)
-    else if (value && typeof value === 'object') Object.values(value).forEach(collect)
-  }
-  for (const message of request.input ?? []) {
-    if (message.role === 'user') collect(message.content)
-  }
-  const reference = strings.findLast(value => value.includes('[referencedConversations]'))
-  const id = reference
-    ?.split('[referencedConversations]')
-    .at(-1)
-    ?.match(/"conversation_id"\s*:\s*"(conv_[A-Za-z0-9_-]+)"/)?.[1]
+  const reference = modelApplicationContextText(request, 'referencedConversations')
+  const id = reference.match(/"conversation_id"\s*:\s*"(conv_[A-Za-z0-9_-]+)"/)?.[1]
   assert.ok(id, 'The submission must contain a native conversation reference')
   const selection = selectMcpToolRequest(
     request,

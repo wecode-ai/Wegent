@@ -16,6 +16,7 @@ export const MEMORY_HISTORY_FACT = '我长期使用中文做项目汇报。'
 const CONTENT = `MEMORY_LEARNING：${MEMORY_HISTORY_FACT}`
 const USER = 9001
 const SOURCE = `stand-in-chat-${USER}-primary`
+const NOTIFICATION_BELL = '[data-testid="wework-notifications-button"]'
 
 export function assertMemoryReviewModelSelection(task, model, options = {}) {
   const selection = task.runtimeHandle.modelSelection
@@ -206,6 +207,7 @@ export function createMemoryConsolidation({
       assert.equal(schedule.conversationMode, 'independent')
       assert.equal(schedule.notificationPolicy, 'attention_only')
       this.activate(model, options)
+      let blurred = false
       try {
         const started = await rpc('runtime.automations.run_now', { automationId: schedule.id })
         assert.ok(started.run?.id, 'Run now must return a real execution receipt')
@@ -243,6 +245,22 @@ export function createMemoryConsolidation({
         const stored = await rpc('runtime.tasks.get', { taskId: runningRun.taskId })
         assertMemoryReviewModelSelection(stored.task, model, options)
         await assertMemoryReviewHiddenFromSidebar(control, rpc, runningRun.taskId)
+        await control.command('blurMainWindow', 'body')
+        blurred = true
+        await until(
+          async () => JSON.parse(await control.command('getWindowFocusSnapshot', 'body')),
+          snapshot => snapshot.tracker?.focused === false,
+          'Memory review must finish with the workbench in the background',
+          uiTimeoutMs
+        )
+        const bellLabel = () =>
+          control.command('getAttribute', NOTIFICATION_BELL, { value: 'aria-label' })
+        const previousBellLabel = await bellLabel()
+        const workbenchState = async () =>
+          JSON.parse(
+            await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+          ).workbench
+        const previousUnreadCount = (await workbenchState()).lifecycleUnreadTaskCount
         releaseFinalResponse()
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: 'Memory consolidation evidence committed.',
@@ -262,6 +280,25 @@ export function createMemoryConsolidation({
         assert.equal(run.status, 'succeeded', JSON.stringify(run))
         assert.notEqual(run.taskId, SOURCE, 'Consolidation uses a separate conversation')
         await assertMemoryReviewHiddenFromSidebar(control, rpc, run.taskId)
+        const settled = await until(
+          workbenchState,
+          snapshot =>
+            snapshot?.currentRuntimeTask?.taskId === run.taskId &&
+            snapshot.activeLifecycle?.turn.outcome === 'succeeded' &&
+            snapshot.activeLifecycle.execution.phase === 'idle',
+          'The workbench must observe the completed memory review',
+          uiTimeoutMs
+        )
+        assert.equal(
+          settled.lifecycleUnreadTaskCount,
+          previousUnreadCount,
+          'Memory review completion must not add to the unread count'
+        )
+        assert.equal(
+          await bellLabel(),
+          previousBellLabel,
+          'Memory review must leave the bell quiet'
+        )
         assert.ok(committed)
         const memories = (await rpc('runtime.stand_in.memory.list', { userId: USER })).items
         assert.deepEqual(
@@ -271,6 +308,7 @@ export function createMemoryConsolidation({
       } finally {
         releaseFinalResponse?.()
         active = false
+        if (blurred) await control.command('focusMainWindow', 'body')
         await rpc('runtime.automations.toggle', { automationId: schedule.id, enabled: false })
       }
     },
@@ -281,7 +319,9 @@ async function assertMemoryReviewHiddenFromSidebar(control, rpc, taskId) {
   const stored = await rpc('runtime.tasks.get', { taskId })
   assert.equal(stored.task.runtimeHandle.origin.type, 'stand_in_schedule')
   assert.equal(stored.task.runtimeHandle.origin.memoryReview, true)
-  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const debug = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+  )
   assert.equal(
     debug.workbench?.currentRuntimeTask?.taskId,
     taskId,

@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, writeSync } from 'node:fs'
 import { redactLog, RotatingLog } from './rotating-log.js'
 import { startStartupWatchdog } from './startup-watchdog.js'
 
@@ -22,8 +22,27 @@ export function recordReleaseDiagnostic(
   details: Record<string, unknown>,
   synchronous = false
 ): void {
+  if (!process.env.WEWORK_E2E_CONTROL_URL) return
   const root = process.env.WEWORK_RELEASE_ROOT
-  if (!root || !process.env.WEWORK_E2E_CONTROL_URL) return
+  if (!root && event !== 'shutdown-step' && event !== 'application-quit') return
+  const message = JSON.stringify({
+    event,
+    releaseId: process.env.WEWORK_ACTIVE_RELEASE_ID,
+    ...details,
+  })
+  if (!root) {
+    const line = `[${event}] ${redactLog(message)}`
+    if (synchronous) {
+      try {
+        writeSync(1, `${line}\n`)
+      } catch (error) {
+        reportDiagnosticError(error)
+      }
+    } else {
+      console.info(line)
+    }
+    return
+  }
   const path = join(root, 'activation-diagnostics.log')
   if (event === 'startup-step' && details.step === 'core-dsh-start') {
     stopStartupWatchdog?.()
@@ -36,11 +55,6 @@ export function recordReleaseDiagnostic(
       }
     }
   }
-  const message = JSON.stringify({
-    event,
-    releaseId: process.env.WEWORK_ACTIVE_RELEASE_ID,
-    ...details,
-  })
   if (synchronous) {
     // Electron's native quit can stop the event loop before an async write starts.
     try {

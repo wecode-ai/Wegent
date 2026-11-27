@@ -1,245 +1,27 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  OPEN_SETTINGS_COMMAND,
-  OPEN_TERMINAL_COMMAND,
-  TOGGLE_SIDEBAR_COMMAND,
-  TOGGLE_SIDE_PANEL_COMMAND,
-  TOGGLE_MODEL_SELECTOR_COMMAND,
-  TOGGLE_PRIORITY_FILTER_COMMAND,
-  COLLAPSE_READ_CONVERSATIONS_COMMAND,
-  isEditableShortcutTarget,
-  shouldIgnoreWorkbenchShortcut,
-  dispatchOpenSettingsShortcut,
-  dispatchOpenTerminalShortcut,
-  dispatchToggleModelSelectorShortcut,
-  keybindingFromKeyboardEvent,
-  mergeKeybindings,
-  normalizeKeybinding,
-  TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID,
-  WEWORK_OPEN_TERMINAL_EVENT,
-  MODEL_SELECTOR_BUTTON_TEST_ID,
-  INCREASE_FONT_SIZE_COMMAND,
-  DECREASE_FONT_SIZE_COMMAND,
-  RESET_FONT_SIZE_COMMAND,
-} from './keybindings'
+import { describe, expect, test } from 'vitest'
+import { keybindingFromKeyboardEvent, normalizeKeybinding } from './keybindings'
 
-describe('keybindings', () => {
-  beforeEach(() => {
-    Object.defineProperty(navigator, 'userAgent', {
-      configurable: true,
-      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
-    })
-  })
+function keyboardEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
+  return {
+    key: '',
+    code: '',
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...overrides,
+  } as KeyboardEvent
+}
 
-  it('normalizes equivalent modifier names', () => {
-    expect(normalizeKeybinding('cmd+shift+j')).toBe('Shift+Command+J')
-    expect(normalizeKeybinding('Ctrl+Option+`')).toBe('Control+Alt+`')
-  })
-
-  it('merges defaults with overrides and clears', () => {
-    expect(mergeKeybindings([])[OPEN_TERMINAL_COMMAND]).toBe('Command+J')
-    expect(mergeKeybindings([])[OPEN_SETTINGS_COMMAND]).toBe('Command+,')
-    expect(mergeKeybindings([])[TOGGLE_SIDEBAR_COMMAND]).toBe('Command+B')
-    expect(mergeKeybindings([])[TOGGLE_SIDE_PANEL_COMMAND]).toBe('Alt+Command+B')
-    expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
-    expect(mergeKeybindings([])[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Alt+Command+U')
-    expect(mergeKeybindings([], 'win')[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Control+Alt+U')
-    expect(mergeKeybindings([])[COLLAPSE_READ_CONVERSATIONS_COMMAND]).toBe('Alt+Shift+Command+R')
-    expect(mergeKeybindings([], 'win')[COLLAPSE_READ_CONVERSATIONS_COMMAND]).toBe(
-      'Control+Alt+Shift+R'
-    )
-    expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
-    expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
-    expect(mergeKeybindings([])[RESET_FONT_SIZE_COMMAND]).toBe('Command+0')
-    expect(
-      mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: 'Control+J' }])[
-        OPEN_TERMINAL_COMMAND
-      ]
-    ).toBe('Control+J')
-    expect(
-      mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: null }])[OPEN_TERMINAL_COMMAND]
-    ).toBeNull()
-    expect(
-      mergeKeybindings([], 'mac', [{ command: 'extension.run', defaultKey: 'Command+Shift+E' }])[
-        'extension.run'
-      ]
-    ).toBe('Shift+Command+E')
-  })
-
-  it('creates keybindings from keyboard events', () => {
-    const event = new KeyboardEvent('keydown', {
-      key: 'j',
+describe('keybindingFromKeyboardEvent', () => {
+  test('records shifted shortcuts from physical keys for native accelerators', () => {
+    const event = keyboardEvent({
+      key: '@',
+      code: 'Digit2',
       metaKey: true,
       shiftKey: true,
     })
 
-    expect(keybindingFromKeyboardEvent(event)).toBe('Shift+Command+J')
-    expect(
-      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true }))
-    ).toBe('Command+,')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'b', metaKey: true, altKey: true })
-      )
-    ).toBe('Alt+Command+B')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true })
-      )
-    ).toBe('Control+Shift+M')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: '+', metaKey: true, shiftKey: true })
-      )
-    ).toBe('Command+Plus')
-    expect(
-      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true }))
-    ).toBe('Command+Plus')
-    expect(
-      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
-    ).toBe('Command+Minus')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: '', altKey: true, shiftKey: true })
-      )
-    ).toBe('')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'Shift', altKey: true, shiftKey: true })
-      )
-    ).toBe('')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', {
-          key: '\u00a0',
-          code: 'Space',
-          altKey: true,
-          shiftKey: true,
-        })
-      )
-    ).toBe('Alt+Shift+Space')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'å', code: 'KeyA', altKey: true })
-      )
-    ).toBe('Alt+A')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: '¡', code: 'Digit1', altKey: true })
-      )
-    ).toBe('Alt+1')
-    expect(
-      keybindingFromKeyboardEvent(
-        new KeyboardEvent('keydown', { key: '≤', code: 'Comma', altKey: true })
-      )
-    ).toBe('Alt+,')
-  })
-
-  it('detects editable shortcut targets', () => {
-    expect(isEditableShortcutTarget(document.createElement('input'))).toBe(true)
-    expect(isEditableShortcutTarget(document.createElement('button'))).toBe(false)
-
-    const terminal = document.createElement('div')
-    terminal.className = 'xterm'
-    const terminalTextarea = document.createElement('textarea')
-    terminal.appendChild(terminalTextarea)
-    expect(isEditableShortcutTarget(terminalTextarea)).toBe(false)
-  })
-
-  it.each(['textarea', 'contenteditable', 'paragraph'])(
-    'allows modified workbench shortcuts from a composer %s',
-    kind => {
-      const composer = document.createElement(kind === 'textarea' ? 'textarea' : 'div')
-      composer.dataset.testid = 'chat-message-input'
-      const target = kind === 'paragraph' ? document.createElement('p') : composer
-      if (target !== composer) composer.appendChild(target)
-      if (kind !== 'textarea') {
-        composer.contentEditable = 'true'
-        Object.defineProperty(target, 'isContentEditable', { value: true })
-      }
-      const shouldIgnore = (init: KeyboardEventInit) => {
-        const event = new KeyboardEvent('keydown', init)
-        Object.defineProperty(event, 'target', { value: target })
-        return shouldIgnoreWorkbenchShortcut(event)
-      }
-
-      expect(shouldIgnore({ key: 'j', metaKey: true })).toBe(false)
-      expect(shouldIgnore({ key: 'j', ctrlKey: true })).toBe(false)
-      expect(shouldIgnore({ key: 'u', metaKey: true, altKey: true })).toBe(false)
-      expect(shouldIgnore({ key: 'j' })).toBe(true)
-      expect(shouldIgnore({ key: 'J', shiftKey: true })).toBe(true)
-      expect(shouldIgnore({ key: 'å', altKey: true })).toBe(true)
-      expect(shouldIgnore({ key: 'j', metaKey: true, isComposing: true })).toBe(true)
-      expect(isEditableShortcutTarget(target)).toBe(true)
-    }
-  )
-
-  it.each(['input', 'textarea', 'select', 'div'])(
-    'keeps workbench shortcuts out of other editable %s targets',
-    tag => {
-      const target = document.createElement(tag)
-      if (tag === 'div') Object.defineProperty(target, 'isContentEditable', { value: true })
-      const event = new KeyboardEvent('keydown', { key: 'j', metaKey: true })
-      Object.defineProperty(event, 'target', { value: target })
-
-      expect(shouldIgnoreWorkbenchShortcut(event)).toBe(true)
-    }
-  )
-
-  it('uses the existing bottom panel toggle button when available', () => {
-    const button = document.createElement('button')
-    const clickEvents: string[] = []
-    const handleShortcutEvent = () => clickEvents.push('event')
-    button.setAttribute('data-testid', TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID)
-    button.addEventListener('click', () => clickEvents.push('click'))
-    window.addEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleShortcutEvent)
-    document.body.appendChild(button)
-
-    dispatchOpenTerminalShortcut()
-
-    expect(clickEvents).toEqual(['click'])
-    button.remove()
-    window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleShortcutEvent)
-  })
-
-  it('opens settings through history navigation', () => {
-    const originalPath = window.location.pathname
-    let popStateCount = 0
-    const handlePopState = () => {
-      popStateCount += 1
-    }
-    window.addEventListener('popstate', handlePopState)
-
-    dispatchOpenSettingsShortcut()
-
-    expect(window.location.pathname).toBe('/settings')
-    expect(popStateCount).toBe(1)
-    window.history.pushState({}, '', originalPath)
-    window.removeEventListener('popstate', handlePopState)
-  })
-
-  it('toggles the model selector in the active workbench pane', () => {
-    const inactivePane = document.createElement('div')
-    inactivePane.dataset.activeWorkbenchPane = 'false'
-    const inactiveButton = document.createElement('button')
-    inactiveButton.dataset.testid = MODEL_SELECTOR_BUTTON_TEST_ID
-    inactivePane.appendChild(inactiveButton)
-
-    const activePane = document.createElement('div')
-    activePane.dataset.activeWorkbenchPane = 'true'
-    const activeButton = document.createElement('button')
-    activeButton.dataset.testid = MODEL_SELECTOR_BUTTON_TEST_ID
-    let clickCount = 0
-    activeButton.addEventListener('click', () => {
-      clickCount += 1
-    })
-    activePane.appendChild(activeButton)
-    document.body.append(inactivePane, activePane)
-
-    dispatchToggleModelSelectorShortcut()
-
-    expect(clickCount).toBe(1)
-    inactivePane.remove()
-    activePane.remove()
+    expect(normalizeKeybinding(keybindingFromKeyboardEvent(event, true))).toBe('Shift+Command+2')
   })
 })

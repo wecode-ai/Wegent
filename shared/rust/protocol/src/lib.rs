@@ -6,11 +6,14 @@
 //!
 //! [`dispatch::ExecutionRequest`] is the fully resolved producer projection;
 //! [`ExecutionRequest`] is the tolerant consumer projection with opaque metadata.
-//! Consumer helpers only transform in-memory data. Its `agent_home_runtime_task_id`
-//! is trusted local metadata and is never populated by deserialization.
+//! Consumer helpers only transform in-memory data. Trusted local metadata such as
+//! `agent_home_runtime_task_id` and `stand_in_task_permissions` is never populated
+//! by deserialization.
 
 #![forbid(unsafe_code)]
 
+pub mod assistant_share;
+pub mod chat_errors;
 pub mod collaboration;
 pub mod connection_events;
 pub mod connector;
@@ -20,8 +23,13 @@ mod openai;
 mod status;
 pub mod workday_calendar;
 
-pub use execution::{AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE};
-pub use openai::{OpenAIResponsesRequest, ProtocolError};
+pub use execution::{
+    AgentKind, ExecutionRequest, KnowledgeBaseScope, StandInCommandApproval, StandInPermissionMode,
+    StandInTaskPermissions, FULL_KB_TOOL_ACCESS_MODE,
+};
+pub use openai::{
+    map_request_model, OpenAIResponsesRequest, ProtocolError, LEGACY_SESSION_FALLBACK,
+};
 pub use status::TaskStatus;
 
 pub const CODEX_FILES_MENTIONED_HEADER: &str = "# Files mentioned by the user:";

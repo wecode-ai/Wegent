@@ -1,18 +1,26 @@
-import { useEffect, useId, useState } from 'react'
-import { FolderOpen, Loader2 } from 'lucide-react'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import { gitRepositoryDomain } from '@/lib/git-access'
+import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
+import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
+import type { AsyncResourceSnapshot } from '@wegent/chat-core/async-resource'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   GitAccountConfigurationButton,
   GitAccountConfigurationProvider,
 } from '@wegent/collaboration/controls'
-import { createCollaborationTranslator } from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
-import { gitRepositoryDomain } from '@/lib/git-access'
-import { openExternalUrl } from '@/lib/external-links'
-import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
-import { DeviceFolderPicker } from './DeviceFolderPicker'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FolderOpen, Loader2 } from 'lucide-react'
+import { useId, useMemo, useState, useSyncExternalStore } from 'react'
 import { joinPath } from './device-folder-path'
+import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { useGitCloneProject } from './useGitCloneProject'
 
 interface Props {
@@ -56,46 +64,58 @@ export function StandaloneGitProjectForm({
     deviceId: string
     message: string
   } | null>(null)
-  const error = validationError?.deviceId === deviceId ? validationError.message : null
-  const setError = (message: string | null) =>
+  const [dismissedHomeError, setDismissedHomeError] =
+    useState<AsyncResourceSnapshot<string> | null>(null)
+  const setError = (message: string | null) => {
     setValidationError(message === null ? null : { deviceId, message })
+    if (message === null) setDismissedHomeError(homeSnapshot)
+  }
   const { operation, deviceRecovery, submitting, canConfigure, submit, reset } = useGitCloneProject(
     {
       device,
       clone: onCloneGitRepository,
       open: onOpenStandaloneWorkspace,
       refreshDevices: onRefreshDevices,
+      onSubmittingChange,
     }
   )
   const parentPath =
     directory.deviceId === deviceId || deviceRecovery || !device ? directory.path : ''
   const setParentPath = (path: string) => setDirectory({ deviceId, path })
-  useEffect(() => {
-    onSubmittingChange(submitting)
-  }, [onSubmittingChange, submitting])
-  useEffect(() => {
-    let cancelled = false
-    if (!deviceId) return
-    onGetDeviceHomeDirectory(deviceId)
-      .then(path => {
-        if (!cancelled)
-          setDirectory(current =>
-            current.path && (current.deviceId === deviceId || deviceRecovery)
-              ? { deviceId, path: current.path }
-              : { deviceId, path }
-          )
-      })
-      .catch(error => {
-        if (!cancelled)
-          setValidationError({
-            deviceId,
-            message: error instanceof Error ? error.message : String(error),
-          })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId, deviceRecovery, onGetDeviceHomeDirectory])
+  const home = useMemo(
+    () =>
+      createAsyncResource(
+        deviceId,
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          return onGetDeviceHomeDirectory(deviceId)
+        },
+        {
+          success(path) {
+            setDirectory(current =>
+              current.path && (current.deviceId === deviceId || deviceRecovery)
+                ? { deviceId, path: current.path }
+                : { deviceId, path }
+            )
+          },
+        }
+      ),
+    [deviceId, deviceRecovery, onGetDeviceHomeDirectory]
+  )
+  const homeSnapshot = useSyncExternalStore(
+    deviceId ? home.subscribe : subscribeIdleResource,
+    home.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const error =
+    validationError?.deviceId === deviceId
+      ? validationError.message
+      : homeSnapshot.status === 'error' && homeSnapshot !== dismissedHomeError
+        ? homeSnapshot.error instanceof Error
+          ? homeSnapshot.error.message
+          : String(homeSnapshot.error)
+        : null
 
   const repositoryName = getGitRepositoryName(url)
   const domain = gitRepositoryDomain(url)
@@ -191,7 +211,7 @@ export function StandaloneGitProjectForm({
             </GitAccountConfigurationProvider>
           </div>
         </div>
-        <input
+        <ControlInput
           id={gitUrlId}
           data-testid="remote-project-git-url-input"
           value={url}
@@ -199,7 +219,7 @@ export function StandaloneGitProjectForm({
           disabled={submitting}
           onChange={event => updateInput(() => setUrl(event.target.value))}
           placeholder="https://github.com/owner/repository.git"
-          className="mt-2 h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+          className="mt-2 h-11 w-full rounded-[10px] disabled:opacity-60 sm:h-10"
         />
       </div>
       <label className="mt-4 block">
@@ -207,15 +227,17 @@ export function StandaloneGitProjectForm({
           {t('workbench.remote_project_git_parent')}
         </span>
         <span className="mt-2 flex gap-2">
-          <input
+          <ControlInput
             id="remote-project-git-parent-input"
             data-testid="remote-project-git-parent-input"
             value={parentPath}
             disabled={submitting}
             onChange={event => updateInput(() => setParentPath(event.target.value))}
-            className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+            className="h-11 min-w-0 flex-1 rounded-[10px] font-mono disabled:opacity-60 sm:h-10"
           />
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="remote-project-git-parent-browse"
             disabled={submitting || !device}
@@ -224,7 +246,7 @@ export function StandaloneGitProjectForm({
           >
             <FolderOpen className="h-4 w-4" />
             {t('workbench.remote_project_git_parent_browse')}
-          </button>
+          </ControlButton>
         </span>
       </label>
       {repositoryName && parentPath.trim() && (
@@ -235,7 +257,8 @@ export function StandaloneGitProjectForm({
           {joinPath(parentPath.trim(), repositoryName)}
         </p>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="remote-project-git-advanced-toggle"
         disabled={submitting}
@@ -247,17 +270,17 @@ export function StandaloneGitProjectForm({
             ? 'workbench.remote_project_git_advanced_hide'
             : 'workbench.remote_project_git_advanced_show'
         )}
-      </button>
+      </ControlButton>
       {advancedOpen && (
         <label className="mt-2 block">
           <span className="sr-only">{t('workbench.remote_project_git_branch')}</span>
-          <input
+          <ControlInput
             data-testid="remote-project-git-branch-input"
             value={branch}
             disabled={submitting}
             onChange={event => updateInput(() => setBranch(event.target.value))}
             placeholder={t('workbench.remote_project_git_branch_placeholder')}
-            className="h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+            className="h-11 w-full rounded-[10px] disabled:opacity-60 sm:h-10"
           />
         </label>
       )}
@@ -275,7 +298,8 @@ export function StandaloneGitProjectForm({
         <div className="mt-2 text-sm text-text-secondary">
           <p>{t('workbench.remote_project_device_unavailable')}</p>
           {onReselectDevice && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="remote-project-git-reselect-device"
               disabled={submitting}
@@ -283,7 +307,7 @@ export function StandaloneGitProjectForm({
               className="min-h-11 text-sm hover:text-text-primary sm:min-h-8"
             >
               {t('workbench.reselect_device')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}
@@ -320,7 +344,8 @@ export function StandaloneGitProjectForm({
             )}
           </span>
         )}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="remote-project-git-cancel"
           disabled={submitting}
@@ -328,8 +353,10 @@ export function StandaloneGitProjectForm({
           className="h-11 rounded-[10px] px-4 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50 sm:h-9"
         >
           {t('workbench.cancel')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           data-testid="remote-project-git-submit"
           disabled={
@@ -354,7 +381,7 @@ export function StandaloneGitProjectForm({
                 ? 'workbench.retry'
                 : 'workbench.remote_project_git_submit'
           )}
-        </button>
+        </ControlButton>
       </div>
     </div>
   )

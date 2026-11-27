@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from 'react'
+import { createAgent } from '@ui-sdk/react/agent'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,8 +20,6 @@ const messages = {
   cancel: 'Cancel',
 }
 
-const originalDialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototype)
-
 function deferred() {
   let resolve!: () => void
   const promise = new Promise<void>(done => {
@@ -35,20 +34,6 @@ describe('WorkspaceCreateDialog', () => {
   const onClose = vi.fn()
 
   beforeEach(() => {
-    Object.defineProperties(HTMLDialogElement.prototype, {
-      showModal: {
-        configurable: true,
-        value(this: HTMLDialogElement) {
-          this.open = true
-        },
-      },
-      close: {
-        configurable: true,
-        value(this: HTMLDialogElement) {
-          this.open = false
-        },
-      },
-    })
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.append(container)
@@ -59,11 +44,6 @@ describe('WorkspaceCreateDialog', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
-    for (const method of ['showModal', 'close']) {
-      const original = originalDialogMethods[method]
-      if (original) Object.defineProperty(HTMLDialogElement.prototype, method, original)
-      else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
-    }
   })
 
   function byTestId<T extends HTMLElement = HTMLButtonElement>(id: string): T {
@@ -87,7 +67,22 @@ describe('WorkspaceCreateDialog', () => {
   }
 
   async function change(id: string, value: string) {
-    const input = byTestId<HTMLInputElement | HTMLSelectElement>(id)
+    const input = byTestId<HTMLInputElement>(id)
+    if (input.getAttribute('role') === 'combobox') {
+      await act(async () => input.click())
+      const result = await createAgent().act({
+        steps: [
+          {
+            ref: input.getAttribute('aria-label')!,
+            action: 'setValue',
+            args: [value === 'engineering' ? 'Engineering' : 'Personal'],
+          },
+        ],
+      })
+      await act(async () => {})
+      expect(result.ok, result.error?.message).toBe(true)
+      return
+    }
     await act(async () => {
       Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')!.set!.call(
         input,
@@ -121,8 +116,10 @@ describe('WorkspaceCreateDialog', () => {
     expect(byTestId<HTMLInputElement>('collaboration-workspace-name-input').disabled).toBe(true)
     await click('collaboration-workspace-create-confirm')
     await click('collaboration-workspace-create-cancel')
-    const cancel = new Event('cancel', { cancelable: true })
-    await act(async () => container.querySelector('dialog')!.dispatchEvent(cancel))
+    const cancel = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    await act(async () =>
+      container.querySelector<HTMLElement>('[role="dialog"]')!.dispatchEvent(cancel)
+    )
     expect(cancel.defaultPrevented).toBe(true)
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
       name: 'New space',
@@ -136,20 +133,24 @@ describe('WorkspaceCreateDialog', () => {
     expect(byTestId('collaboration-workspace-create-confirm').disabled).toBe(false)
   })
 
-  it('opens a native modal, focuses its name field and restores the opener on close', async () => {
+  it('opens an SDK modal, focuses its name field and restores the opener on close', async () => {
     const opener = document.createElement('button')
     document.body.append(opener)
     opener.focus()
     try {
       await render(vi.fn().mockResolvedValue(undefined))
-      const dialog = container.querySelector('dialog')!
-      expect(dialog.open).toBe(true)
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+      expect(dialog.getAttribute('aria-modal')).toBe('true')
       expect(document.activeElement).toBe(byTestId('collaboration-workspace-name-input'))
-      await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true })))
+      await act(async () =>
+        dialog.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      )
       expect(onClose).toHaveBeenCalledOnce()
 
       await act(async () => root.render(null))
-      expect(dialog.open).toBe(false)
+      expect(dialog.isConnected).toBe(false)
       expect(document.activeElement).toBe(opener)
     } finally {
       opener.remove()
@@ -188,7 +189,7 @@ describe('WorkspaceCreateDialog', () => {
       expect(byTestId<HTMLInputElement>('collaboration-workspace-name-input').value).toBe(
         'Retry space'
       )
-      expect(byTestId<HTMLSelectElement>('collaboration-workspace-owner-select').value).toBe(
+      expect(byTestId('collaboration-workspace-owner-select').getAttribute('data-value')).toBe(
         'engineering'
       )
       expect(byTestId('collaboration-workspace-create-confirm').disabled).toBe(false)

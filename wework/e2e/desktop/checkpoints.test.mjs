@@ -14,9 +14,7 @@ import {
   upgradeVerificationCheckpoint,
 } from './upgrade-suite.mjs'
 
-test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
-  assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
-  assert.equal(DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway'), 'plugin-account-auth-dws')
+test('remaining hosted checkpoints resolve to distinct registered CI owners', () => {
   for (const [checkpoint, host] of DESKTOP_CHECKPOINT_CI_HOSTS) {
     assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint), checkpoint)
     assert.ok(DESKTOP_CHECKPOINTS.includes(host), host)
@@ -48,7 +46,11 @@ test('source diagnostics use the shared package runner without certifying upgrad
   }
 })
 
-test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {
+test('the CI profile checkpoint includes shared layout and model catalog regressions', () => {
+  assert.equal(
+    DESKTOP_CHECKPOINT_CI_HOSTS.get('stand-in-shared-settings'),
+    'stand-in-profile-settings'
+  )
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
     'stand-in-model-catalog',
@@ -76,9 +78,8 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
   )
 })
 
-test('the CI notification checkpoint preserves navigation and covers Issue read synchronization', () => {
+test('the CI notification checkpoint retains Issue read synchronization', () => {
   assert.deepEqual(expandDesktopCheckpoints(['collaboration-issue-comment-notification']), [
-    'collaboration-issue-comment-notification-navigation',
     'issue-notification-read',
   ])
 })

@@ -1,19 +1,20 @@
-import * as Popover from '@radix-ui/react-popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight, Folder, MessageCircle, Pin, Settings } from 'lucide-react'
 import { useState } from 'react'
-import { isImeComposingEvent } from '@wegent/chat-core/ime'
+
 import { TextInputDialog } from '@/components/common/TextInputDialog'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import {
   getLocalRuntimeStateDeviceId,
   getRuntimeProjectSidebarStateKey,
 } from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
-import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import type { RuntimeProjectWork, RuntimeTaskAddress } from '@/types/api'
-import { getRuntimeSidebarTaskItems, shortenSidebarHomePath } from './runtimeTaskSidebarHelpers'
 import { ConversationProjectEditor } from './ConversationProjectEditor'
+import { getRuntimeSidebarTaskItems, shortenSidebarHomePath } from './runtimeTaskSidebarHelpers'
 
 export function ConversationHeaderTitle({
   title,
@@ -27,7 +28,7 @@ export function ConversationHeaderTitle({
   projectWork?: RuntimeProjectWork
 }) {
   const { t } = useTranslation('common')
-  const { state, renameRuntimeTask, setRuntimeProjectPinned } = useWorkbench()
+  const { state, renameRuntimeTask, setRuntimeProjectPinned } = useWorkbenchPaneContext()
   const [renaming, setRenaming] = useState(false)
   const [pinning, setPinning] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -108,31 +109,28 @@ export function ConversationHeaderTitle({
   return (
     <div className="electron-titlebar-interactive-region pointer-events-auto flex min-w-0 max-w-full items-center gap-1">
       {(project || workspacePath) && (
-        <Popover.Root open={projectOpen} onOpenChange={setProjectOpen}>
-          <Popover.Trigger asChild>
-            <button
-              type="button"
-              data-testid="conversation-project-button"
-              aria-label={t('workbench.conversation_project_details')}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
-            >
-              <Folder className="h-4 w-4" />
-            </button>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content
+        <Popover open={projectOpen} onOpenChange={setProjectOpen}>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                data-testid="conversation-project-button"
+                aria-label={t('workbench.conversation_project_details')}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-muted data-[open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
+              />
+            }
+          >
+            <Folder className="h-4 w-4" />
+          </PopoverTrigger>
+          <>
+            <PopoverContent
               data-testid="conversation-project-popover"
               aria-label={projectLabel}
               align="start"
               sideOffset={6}
               collisionPadding={8}
-              onEscapeKeyDown={event => {
-                if (isImeComposingEvent(event)) event.preventDefault()
-              }}
-              onCloseAutoFocus={event => {
-                if (editingProject) event.preventDefault()
-              }}
-              className="electron-titlebar-interactive-region z-popover max-h-[var(--radix-popover-content-available-height)] w-[336px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/60 bg-popover p-2 text-base text-text-primary shadow-sm outline-none"
+              finalFocus={editingProject ? 'none' : 'trigger'}
+              className="electron-titlebar-interactive-region z-popover max-h-[var(--available-height)] w-[336px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/60 bg-popover p-2 text-base text-text-primary shadow-sm outline-none"
             >
               <div className="flex h-7 min-w-0 items-center gap-2 px-1">
                 <Folder className="h-4 w-4 shrink-0" />
@@ -140,7 +138,8 @@ export function ConversationHeaderTitle({
                   {projectLabel}
                 </span>
                 {project && (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="conversation-project-pin"
                     disabled={pinning}
@@ -152,7 +151,7 @@ export function ConversationHeaderTitle({
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
                   >
                     <Pin className={cn('h-4 w-4 rotate-45', project.pinned && 'fill-current')} />
-                  </button>
+                  </ControlButton>
                 )}
               </div>
               {taskCount !== null && (
@@ -167,7 +166,8 @@ export function ConversationHeaderTitle({
               {roots.length > 0 && (
                 <div className="my-1 border-t border-border/60 pt-1">
                   {roots.map(path => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={path}
                       type="button"
                       data-testid="conversation-project-root"
@@ -188,13 +188,14 @@ export function ConversationHeaderTitle({
                           className="h-4 w-4 shrink-0 text-text-muted opacity-0 group-hover/root:opacity-100 group-focus-visible/root:opacity-100"
                         />
                       )}
-                    </button>
+                    </ControlButton>
                   ))}
                 </div>
               )}
               {projectWork && (
                 <div className="mt-1 border-t border-border/60 pt-1">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="conversation-project-edit"
                     onClick={() => {
@@ -205,7 +206,7 @@ export function ConversationHeaderTitle({
                   >
                     <Settings className="h-4 w-4 shrink-0 text-text-muted" />
                     <span>{t('workbench.edit_project')}</span>
-                  </button>
+                  </ControlButton>
                 </div>
               )}
               {actionError && (
@@ -213,11 +214,12 @@ export function ConversationHeaderTitle({
                   {actionError}
                 </p>
               )}
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
+            </PopoverContent>
+          </>
+        </Popover>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="conversation-rename-button"
         aria-label={t('workbench.rename_chat')}
@@ -228,7 +230,7 @@ export function ConversationHeaderTitle({
         className="h-7 min-w-0 truncate rounded-md px-1 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
       >
         {displayTitle}
-      </button>
+      </ControlButton>
       <TextInputDialog
         open={renaming}
         title={t('workbench.rename_chat')}

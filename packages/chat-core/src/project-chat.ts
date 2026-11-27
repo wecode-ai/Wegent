@@ -8,7 +8,6 @@ const SEND_EVENT = 'wework:project_chat:message:send'
 const CREATED_EVENT = 'wework:project_chat:message:created'
 const AGENT_START_EVENT = 'wework:project_chat:agent:start'
 const AGENT_FAILED_EVENT = 'wework:project_chat:agent:failed'
-const WEGENT_CONTINUE_EVENT = 'wework:project_chat:wegent:continue'
 const AGENT_CHUNK_EVENT = 'wework:project_chat:agent:chunk'
 const LOOP_ITEM_CHANGED_EVENT = 'wework:loop_item:changed'
 const ACK_TIMEOUT_MS = 15_000
@@ -20,6 +19,13 @@ export interface ProjectChatMention {
 }
 
 export interface ProjectChatMessage {
+  actorUserId?: string | null
+  actorDisplayName?: string | null
+  generationSource?: 'human' | 'ai' | 'system'
+  publicationSource?: 'human' | 'ai' | 'system'
+  confirmationState?: 'pending' | 'not_required' | 'authorized' | 'unknown'
+  traceRef?: string | null
+  traceState?: 'available' | 'restricted' | 'history-unavailable'
   sequenceNumber: number
   messageId: string
   clientMessageId?: string | null
@@ -39,6 +45,28 @@ export interface ProjectChatMessage {
   updatedAt: string
 }
 
+function runtimeSequence(message: ProjectChatMessage): bigint {
+  const sequence = message.metadata.runtime_event_sequence
+  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence)
+    ? BigInt(sequence)
+    : BigInt(0)
+}
+
+export function acceptsProjectChatMessage(
+  previous: ProjectChatMessage,
+  incoming: ProjectChatMessage,
+  isDelta = false,
+): boolean {
+  const previousSequence = runtimeSequence(previous)
+  const incomingSequence = runtimeSequence(incoming)
+  if (previousSequence !== incomingSequence)
+    return previousSequence < incomingSequence
+  return (
+    (!isDelta || incomingSequence === BigInt(0)) &&
+    previous.updatedAt <= incoming.updatedAt
+  )
+}
+
 export interface ProjectChatSubscription {
   messages: ProjectChatMessage[]
   latestSequence: number
@@ -53,6 +81,13 @@ export interface LoopItemChangedEvent {
 }
 
 export interface ProjectChatClient {
+  publishAssistantMessage?: (input: {
+    projectId: string
+    taskId: string
+    clientMessageId: string
+    text: string
+    source: { deviceId: string; taskId: string }
+  }) => Promise<ProjectChatMessage>
   reconcileExecutionSnapshot?: (
     snapshot: RuntimeExecutionSnapshot,
   ) => Promise<ProjectChatMessage[]>
@@ -71,6 +106,7 @@ export interface ProjectChatClient {
     mentions?: ProjectChatMention[]
     replyToMessageId?: string | null
     model?: string | null
+    assistantSource?: { deviceId: string; taskId: string }
     /** Bound local code project chosen by the user for this comment's run. */
     localProjectId?: number | null
   }) => Promise<ProjectChatMessage>
@@ -169,6 +205,10 @@ export function createProjectChatClient(
     logger: console,
   })
   const subscriptionLeases = new Map<string, number>()
+  const leaveUnusedRoom = (projectId: string, taskId?: string) => {
+    if (!subscriptionLeases.has(JSON.stringify([projectId, taskId ?? null])))
+      client.socket.emit(UNSUBSCRIBE_EVENT, { projectId, taskId })
+  }
 
   const acquireSubscriptionLease = (projectId: string, taskId?: string) => {
     const key = JSON.stringify([projectId, taskId ?? null])
@@ -183,7 +223,7 @@ export function createProjectChatClient(
         return
       }
       subscriptionLeases.delete(key)
-      client.socket.emit(UNSUBSCRIBE_EVENT, { projectId, taskId })
+      leaveUnusedRoom(projectId, taskId)
     }
   }
 
@@ -192,7 +232,9 @@ export function createProjectChatClient(
       return emitWithAck<ProjectChatMessage[]>(
         client,
         'wework:project_chat:execution:snapshot',
-        { ...snapshot },
+        {
+          ...snapshot,
+        },
       )
     },
     async subscribe(projectId, taskId, afterSequence, onMessage, onChunk) {
@@ -202,17 +244,133 @@ export function createProjectChatClient(
         taskId,
       )
       let subscribed = false
+      let active = true
+      const revisions = new Map<string, number>()
+      const latestMessages = new Map<string, ProjectChatMessage>()
+      const resolvedSources = new Map<
+        string,
+        Pick<
+          ProjectChatMessage,
+          'traceRef' | 'traceState' | 'runtimeAddress' | 'metadata'
+        >
+      >()
+      const sourceReads = new Map<string, Promise<void>>()
+      const resolveSource = (message: ProjectChatMessage, revision: number) => {
+        if (!message.traceRef || message.traceState !== 'restricted') return
+        // Resolve this viewer's exact persisted source; the first message's
+        // sequence zero cursor otherwise selects the newest history page.
+        const read = emitWithAck<ProjectChatSubscription>(
+          client,
+          SUBSCRIBE_EVENT,
+          {
+            projectId,
+            taskId,
+            messageId: message.messageId,
+            afterSequence: message.sequenceNumber - 1,
+            limit: 1,
+          },
+        )
+          .then((snapshot) => {
+            if (!active) {
+              leaveUnusedRoom(projectId, taskId)
+              return
+            }
+            const superseded = (revisions.get(message.messageId) ?? 0) !== revision
+            const resolved = snapshot.messages.find(
+              (row) =>
+                row.messageId === message.messageId &&
+                row.projectId === projectId &&
+                (row.taskId ?? undefined) === taskId,
+            )
+            console.debug('[Project chat source] Exact message read', {
+              messageId: message.messageId,
+              matched: Boolean(resolved),
+              superseded,
+              traceMatches: resolved?.traceRef === message.traceRef,
+              traceState: resolved?.traceState,
+              hasRuntimeAddress: Boolean(resolved?.runtimeAddress),
+            })
+            if (superseded) return
+            const latest = latestMessages.get(message.messageId)
+            if (resolved && latest && latest.traceRef === message.traceRef) {
+              // Restore the authorized title without replacing live stream metadata.
+              const source = {
+                traceRef: resolved.traceRef,
+                traceState: resolved.traceState,
+                runtimeAddress: resolved.runtimeAddress,
+                metadata:
+                  typeof resolved.metadata.workflow_task_title === 'string'
+                    ? {
+                        workflow_task_title:
+                          resolved.metadata.workflow_task_title,
+                      }
+                    : {},
+              }
+              resolvedSources.set(message.messageId, source)
+              onMessage({
+                ...latest,
+                ...source,
+                metadata: { ...source.metadata, ...latest.metadata },
+              })
+            }
+          })
+          .catch((error) => {
+            if (active)
+              console.warn(
+                '[Wework] Failed to resolve project chat source',
+                error,
+              )
+          })
+          .finally(() => {
+            if (sourceReads.get(message.messageId) === read)
+              sourceReads.delete(message.messageId)
+          })
+        sourceReads.set(message.messageId, read)
+      }
+      const inScope = (message: ProjectChatMessage) =>
+        message.projectId === projectId &&
+        (message.taskId ?? undefined) === taskId
       const handler = (message: ProjectChatMessage) => {
-        if (message.projectId !== projectId) return
-        if (taskId && message.taskId !== taskId) return
-        if (!taskId && message.taskId) return
+        if (!inScope(message)) return
+        const previous = latestMessages.get(message.messageId)
+        if (previous && !acceptsProjectChatMessage(previous, message)) return
+        const revision = (revisions.get(message.messageId) ?? 0) + 1
+        revisions.set(message.messageId, revision)
+        resolvedSources.delete(message.messageId)
+        latestMessages.set(message.messageId, message)
         onMessage(message)
+        resolveSource(message, revision)
       }
       const chunkHandler = (message: ProjectChatMessage) => {
-        if (message.projectId !== projectId) return
-        if (taskId && message.taskId !== taskId) return
-        if (!taskId && message.taskId) return
-        onChunk?.(message)
+        if (!inScope(message)) return
+        const source = resolvedSources.get(message.messageId)
+        const latest =
+          source && source.traceRef === message.traceRef
+            ? {
+                ...message,
+                ...source,
+                metadata: { ...source.metadata, ...message.metadata },
+              }
+            : message
+        const previous = latestMessages.get(message.messageId)
+        const isDelta = message.metadata.contentMode !== 'snapshot'
+        if (previous && !acceptsProjectChatMessage(previous, message, isDelta))
+          return
+        latestMessages.set(message.messageId, {
+          ...latest,
+          content: isDelta
+            ? `${previous?.content ?? ''}${latest.content}`
+            : latest.content,
+        })
+        onChunk?.(latest)
+        // Streaming can be the first event carrying a Runtime binding. One
+        // lookup per source avoids issuing a database read for every token.
+        if (
+          message.traceRef &&
+          source?.traceRef !== message.traceRef &&
+          !sourceReads.has(message.messageId)
+        )
+          resolveSource(message, revisions.get(message.messageId) ?? 0)
       }
       const reconnectHandler = () => {
         if (!subscribed) return
@@ -221,9 +379,7 @@ export function createProjectChatClient(
           taskId,
           afterSequence: 0,
         })
-          .then((snapshot) =>
-            snapshot.messages.forEach((message) => onMessage(message)),
-          )
+          .then((snapshot) => snapshot.messages.forEach(handler))
           .catch((error) => {
             console.warn(
               '[Wework] Failed to refresh project chat after reconnect',
@@ -245,9 +401,15 @@ export function createProjectChatClient(
           },
         )
         subscribed = true
+        for (const message of snapshot.messages) {
+          const previous = latestMessages.get(message.messageId)
+          if (!previous || acceptsProjectChatMessage(previous, message))
+            latestMessages.set(message.messageId, message)
+        }
         return {
           snapshot,
           unsubscribe: () => {
+            active = false
             client.socket.off(CREATED_EVENT, handler)
             client.socket.off(AGENT_CHUNK_EVENT, chunkHandler)
             client.socket.off('connect', reconnectHandler)
@@ -255,6 +417,7 @@ export function createProjectChatClient(
           },
         }
       } catch (error) {
+        active = false
         client.socket.off(CREATED_EVENT, handler)
         client.socket.off(AGENT_CHUNK_EVENT, chunkHandler)
         client.socket.off('connect', reconnectHandler)
@@ -262,7 +425,11 @@ export function createProjectChatClient(
         throw error
       }
     },
-    send(input) {
+    async send(input) {
+      if (input.assistantSource)
+        throw new Error(
+          'Assistant publication provenance requires the activity transport',
+        )
       return emitWithAck<ProjectChatMessage>(client, SEND_EVENT, {
         projectId: input.projectId,
         taskId: input.taskId,
@@ -316,12 +483,19 @@ export function createProjectChatClient(
         )
       }
     },
-    continueWegentTask(input) {
-      return emitWithAck<ProjectChatMessage>(
+    async continueWegentTask(input) {
+      const messages = await emitWithAck<ProjectChatMessage[]>(
         client,
-        WEGENT_CONTINUE_EVENT,
+        'wework:project_chat:comment:execute',
         input,
+        90_000,
       )
+      const message = messages.find(
+        (message) => message.agentId === input.agentId,
+      )
+      if (!message)
+        throw new Error('The saved comment did not start an agent response')
+      return message
     },
     async subscribeLoopItemChanges(onChange) {
       const handler = (event: LoopItemChangedEvent) => {
@@ -362,17 +536,20 @@ async function emitWithAck<T>(
 ): Promise<T> {
   await client.ensureConnected()
   return new Promise<T>((resolve, reject) => {
-    const timeout = window.setTimeout(
+    const timeout = globalThis.setTimeout(
       () => reject(new Error(`${event} timed out`)),
       timeoutMs,
     )
     client.socket.emit(event, payload, (ack: SocketAck<T> | undefined) => {
-      window.clearTimeout(timeout)
+      globalThis.clearTimeout(timeout)
       if (!ack || ack.ok === false || ack.error) {
         reject(
           Object.assign(
             new Error(ack?.error?.message || 'Project chat request failed'),
-            { detail: ack?.error?.detail, code: ack?.error?.code },
+            {
+              detail: ack?.error?.detail,
+              code: ack?.error?.code,
+            },
           ),
         )
         return

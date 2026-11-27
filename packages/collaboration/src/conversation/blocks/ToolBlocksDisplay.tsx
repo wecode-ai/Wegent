@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, memo, useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import { useToolInteractionServices } from '../ToolInteractionServices'
 import {
@@ -13,6 +13,7 @@ import {
   isSettledRequestUserInputBlock,
 } from '@wegent/chat-core/runtime-user-input'
 import { ToolBlockItem } from './ToolBlockItem'
+import { runtimeRetryStatus } from './runtimeRetryStatus'
 import type { FileEditDurationsByBlock } from './ToolFileChanges'
 import {
   RequestUserInputCard,
@@ -87,7 +88,7 @@ interface ToolBlocksDisplayProps {
   onOpenSubagent?: (block: SubagentBlock) => void
 }
 
-export function ToolBlocksDisplay({
+export const ToolBlocksDisplay = memo(function ToolBlocksDisplay({
   blocks,
   fileEditDurationsBySourceBlock,
   isStreaming,
@@ -109,11 +110,34 @@ export function ToolBlocksDisplay({
   onOpenSubagent,
 }: ToolBlocksDisplayProps) {
   const { t } = useConversationTranslation()
+  const activityLabels = useMemo(
+    () => ({
+      command: t('tool_activity.command'),
+      file: t('tool_activity.file'),
+      search: t('tool_activity.search'),
+      edit: t('tool_activity.edit'),
+      other: t('tool_activity.other'),
+    }),
+    [t]
+  )
   const renderUserInput =
     useToolInteractionServices().renderRequestUserInput ?? renderDefaultUserInput
-  const rateLimitWaiting = blocks.some(isRuntimeRateLimitWaitBlock)
-  const retryWaiting = blocks.some(isRuntimeRetryWaitBlock)
-  const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
+  const { retryBlock, hasRunningBlock } = useMemo(
+    () => ({
+      retryBlock:
+        blocks.find(isRuntimeRateLimitWaitBlock) ??
+        blocks.find(
+          block =>
+            isRuntimeRetryWaitBlock(block) &&
+            block.type === 'tool' &&
+            block.toolInput?.retry_reason === 'overload'
+        ) ??
+        blocks.find(isRuntimeRetryWaitBlock),
+      hasRunningBlock: blocks.some(block => block.status !== 'done' && block.status !== 'error'),
+    }),
+    [blocks]
+  )
+  const retryWaiting = Boolean(retryBlock)
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
   const groupExpansionKeys = useMemo(
@@ -295,10 +319,9 @@ export function ToolBlocksDisplay({
     activityStats.search === 0 &&
     activityStats.other === 0
   const toolCallCount = countProcessingToolCalls(activityStats)
-  const summaryTitle = rateLimitWaiting
-    ? t('tool_activity.rate_limit_wait')
-    : retryWaiting
-      ? t('tool_activity.retrying')
+  const summaryTitle =
+    retryBlock?.type === 'tool'
+      ? runtimeRetryStatus(retryBlock, t)
       : hasToolActivity
         ? hasOnlyEditActivity
           ? t('tool_activity.edit_summary', { count: activityStats.edit })
@@ -401,13 +424,7 @@ export function ToolBlocksDisplay({
           onToggle={toggleSummary}
           title={summaryTitle}
           announceTitle={retryWaiting}
-          labels={{
-            command: t('tool_activity.command'),
-            file: t('tool_activity.file'),
-            search: t('tool_activity.search'),
-            edit: t('tool_activity.edit'),
-            other: t('tool_activity.other'),
-          }}
+          labels={activityLabels}
         />
       ) : null}
       <CollapsibleProcessingContent expanded={expanded}>
@@ -434,4 +451,4 @@ export function ToolBlocksDisplay({
     </>
   )
   return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
-}
+})

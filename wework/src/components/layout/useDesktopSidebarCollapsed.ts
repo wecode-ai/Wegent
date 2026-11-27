@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'wework.desktop.sidebar.collapsed'
 const SIDEBAR_COLLAPSED_EVENT = 'wework:desktop-sidebar-collapsed-change'
@@ -28,29 +29,37 @@ function storeSidebarCollapsed(collapsed: boolean) {
   )
 }
 
-export function useDesktopSidebarCollapsed() {
-  const [sidebarCollapsed, setSidebarCollapsedState] = useState(readStoredSidebarCollapsed)
-
-  useEffect(() => {
-    const syncCollapsedState = () => setSidebarCollapsedState(readStoredSidebarCollapsed())
-    window.addEventListener('storage', syncCollapsedState)
-    window.addEventListener(SIDEBAR_COLLAPSED_EVENT, syncCollapsedState)
-
-    return () => {
-      window.removeEventListener('storage', syncCollapsedState)
-      window.removeEventListener(SIDEBAR_COLLAPSED_EVENT, syncCollapsedState)
+let snapshot = false
+const listeners = new Set<() => void>()
+const publish = (value: boolean) => {
+  snapshot = value
+  listeners.forEach(listener => listener())
+}
+const readSnapshot = () => (listeners.size ? snapshot : readStoredSidebarCollapsed())
+const handleStorage = () => publish(readStoredSidebarCollapsed())
+const handleChange = (event: Event) => {
+  const collapsed = (event as CustomEvent<{ collapsed?: boolean }>).detail?.collapsed
+  publish(typeof collapsed === 'boolean' ? collapsed : readStoredSidebarCollapsed())
+}
+const subscribe = (listener: () => void) => {
+  listeners.add(listener)
+  if (listeners.size === 1) {
+    snapshot = readStoredSidebarCollapsed()
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener(SIDEBAR_COLLAPSED_EVENT, handleChange)
+  }
+  return () => {
+    listeners.delete(listener)
+    if (!listeners.size) {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener(SIDEBAR_COLLAPSED_EVENT, handleChange)
     }
-  }, [])
-
-  const setSidebarCollapsed = (nextCollapsed: boolean) => {
-    setSidebarCollapsedState(nextCollapsed)
-    storeSidebarCollapsed(nextCollapsed)
   }
+}
 
-  return {
-    sidebarCollapsed,
-    setSidebarCollapsed,
-  }
+export function useDesktopSidebarCollapsed() {
+  const sidebarCollapsed = useSyncExternalStore(subscribe, readSnapshot, () => false)
+  return { sidebarCollapsed, setSidebarCollapsed: storeSidebarCollapsed }
 }
 
 export function requestDesktopSidebarToggle(): boolean {
@@ -62,13 +71,8 @@ export function requestDesktopSidebarToggle(): boolean {
 }
 
 export function useDesktopSidebarToggleRequest(onToggleSidebar: () => void) {
-  useEffect(() => {
-    const handleToggleRequest = (event: Event) => {
-      event.preventDefault()
-      onToggleSidebar()
-    }
-
-    window.addEventListener(SIDEBAR_TOGGLE_REQUEST_EVENT, handleToggleRequest)
-    return () => window.removeEventListener(SIDEBAR_TOGGLE_REQUEST_EVENT, handleToggleRequest)
-  }, [onToggleSidebar])
+  useDOMEvent('window', SIDEBAR_TOGGLE_REQUEST_EVENT, event => {
+    event.preventDefault()
+    onToggleSidebar()
+  })
 }

@@ -45,11 +45,11 @@ fn refresh_while_registration_is_uncertain_survives_restart_and_is_submitted_aft
         let restarted=RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
         *restarted.backend_connection.lock().unwrap()=Some(connection);
         restarted.poll_conversation_connection_events(true).await.unwrap();
-        let pending=workbench_control::journal::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
+        let pending=event_store::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(pending["cloud_refresh_pending"],true,"A lost refresh acknowledgement must retain the retry intent");
         restarted.poll_conversation_connection_events(true).await.unwrap();
         restarted.poll_conversation_connection_events(true).await.unwrap();
-        let record=workbench_control::journal::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
+        let record=event_store::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(record["status"],"armed"); assert_eq!(record["cloud_refresh_pending"],false); assert_eq!(record["refresh_pending"],true);
         assert_eq!(calls.lock().unwrap().iter().map(|call|call["action"].as_str().unwrap()).collect::<Vec<_>>(),vec!["attach","attach","refresh","refresh"]);
         assert!(restarted.command_journal.lock().unwrap().is_empty());
@@ -99,7 +99,7 @@ fn desktop_refresh_reuses_collection_and_queues_cloud_refresh_without_model_work
                 record["cloud_subscription"] = json!({"id":"cloud-subscription","owner_id":7});
             }
             handler.save_event_subscription(&id,&record).unwrap();
-            workbench_control::journal::transact(&handler.event_subscription_path(),|state| {
+            event_store::transact(&handler.event_subscription_path(),|state| {
                 state["observations"]["observed"] = json!({"source":source,"checkpoint":{"cursor":4},"sequence":0,"events":[]});
                 if task=="gap-task" { state["observations"]["observed"]["sequence"] = json!(3); state["observations"]["observed"]["events"] = json!([{"sequence":3,"key":"old","event":{"id":"old","at":"2026-11-15T00:00:01Z"}}]); }
                 Ok(())
@@ -152,11 +152,104 @@ fn desktop_cancellation_is_exact_durable_and_does_not_resume_goals_or_models() {
         assert_eq!(link.goal_execution_status.as_deref(), Some("waitingForEvent"));
         assert!(handler.command_journal.lock().unwrap().is_empty());
         let restarted = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
-        workbench_control::journal::transact(&restarted.event_subscription_path(), |state| {
-            assert!(state["operations"].as_object().unwrap().values().all(|record| record["status"] == "cancelled"));
+        event_store::transact(&restarted.event_subscription_path(), |state| {
+            for status in ["preparing", "armed", "pending", "resuming_goal", "error", "needs_attention"] {
+                let id = restarted.subscription_id("task", status);
+                assert_eq!(state["operations"][&id]["status"], "cancelled");
+            }
             Ok(())
         }).unwrap();
     });
+}
+
+#[test]
+fn desktop_cancellation_uses_current_connection_for_cloud_bound_task() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _home = EnvGuard::home(root.path().to_str().unwrap());
+            let app = axum::Router::new().route(
+                "/api/v1/runtime-tasks/cloud-context",
+                axum::routing::get(
+                    |uri: axum::http::Uri, headers: axum::http::HeaderMap| async move {
+                        assert_eq!(
+                            uri.query(),
+                            Some("device_id=control-test-device&task_id=task")
+                        );
+                        match headers[axum::http::header::AUTHORIZATION].to_str().unwrap() {
+                            "Bearer denied-session" => {
+                                (axum::http::StatusCode::FORBIDDEN, axum::Json(json!({})))
+                            }
+                            "Bearer current-session" => (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({"task_id":"task"})),
+                            ),
+                            _ => panic!("Unexpected authorization for cloud task"),
+                        }
+                    },
+                ),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let _backend = EnvGuard::set(
+                "WEGENT_BACKEND_URL",
+                &format!("http://{address}/stale-environment"),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let mut link = seed(&handler, "task");
+            link.runtime_handle["cloudProjectId"] = json!("project");
+            link.runtime_handle["executionRequest"]["backend_url"] =
+                json!(format!("http://{address}/stale-backend"));
+            handler.store.upsert_task(link);
+            let id = handler.subscription_id("task", "watch");
+            let record = json!({"task_id":"task","device_id":"control-test-device",
+                "subscription_key":"watch","status":"armed","source":{"name":"PR"}});
+            handler.save_event_subscription(&id, &record).unwrap();
+            let ipc = crate::local::app_ipc::AppIpcServer::new()
+                .with_runtime_work_handler(handler.clone());
+            let command =
+                json!({"command_key":"connection_subscription_cancel","args":["task","watch"]});
+
+            let disconnected = ipc
+                .dispatch("device.execute_command", command.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(disconnected.code, "cloud_unavailable");
+            let mut connection = ConnectionConfig {
+                backend_url: format!("http://{address}"),
+                auth_token: "denied-session".into(),
+                ..Default::default()
+            };
+            *handler.backend_connection.lock().unwrap() = Some(connection.clone());
+            let denied = ipc
+                .dispatch("device.execute_command", command.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(denied.code, "permission_denied");
+            event_store::read(
+                &handler.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| {
+                    assert_eq!(state["operations"][&id]["status"], "armed");
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+            connection.auth_token = "current-session".into();
+            *handler.backend_connection.lock().unwrap() = Some(connection);
+            let receipt = ipc
+                .dispatch("device.execute_command", command)
+                .await
+                .unwrap();
+            assert_eq!(receipt["stdout"]["subscription"]["status"], "cancelled");
+            server.abort();
+        });
 }
 
 #[test]

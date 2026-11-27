@@ -15,6 +15,8 @@ while IFS= read -r line; do
     printf '{"id":%s,"result":{}}\n' "$id"
     exit 0
   fi
+  [ ! -f "$directory/$method.defer" ] || continue
+  while [ -f "$directory/$method.hold" ]; do sleep 0.01; done
   error_file="$directory/$method.error-once.json"
   if [ -f "$error_file" ]; then
     printf '{"id":%s,"error":' "$id"

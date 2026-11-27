@@ -1,16 +1,27 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
-import { useState } from 'react'
-import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import { standInState } from '@/features/notifications/standInNotifications'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
-import { StandInWorkMessages } from './StandInWorkMessages'
+import {
+  delegationReceipt,
+  delegationResultLabel,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
-import { useStandInWorkOrganization } from './useStandInWorkOrganization'
+import { standInState } from '@/features/notifications/standInNotifications'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { StandInDelegationReceipt } from './StandInDelegationReceipt'
+import { StandInWorkMessages } from './StandInWorkMessages'
+import { createStandInWorkSelectionSource } from './standInWorkSelectionSource'
 import { inboxRuntimeItem } from './useStandInInbox'
+import { useStandInWorkOrganization } from './useStandInWorkOrganization'
 
 type WorkFilter = 'all' | 'running' | 'completed'
 
@@ -40,7 +51,17 @@ export function StandInWorkList({
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
   const [filter, setFilter] = useState<WorkFilter>('all')
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [selection] = useState(createStandInWorkSelectionSource)
+  const subscribeSelection = useCallback(
+    (listener: () => void) => selection.subscribe({ items, inbox, active }, listener),
+    [selection, items, inbox, active]
+  )
+  const selectedKey = useSyncExternalStore(
+    subscribeSelection,
+    selection.getSnapshot,
+    selection.getSnapshot
+  )
+  const setSelectedKey = selection.select
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null)
@@ -55,45 +76,63 @@ export function StandInWorkList({
   })
   const selected = items.find(item => item.key === selectedKey)
   const selectedState = selected && standInState(selected)
-  const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
-  const selectedOrigin = selected?.task.runtimeHandle?.origin as
-    | { standInId?: string | null }
-    | undefined
-  const identity =
-    (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
-  useStandInOpened('work', identity, active && !!selected, selected?.key)
+  const workByTask = useMemo(() => new Map(inbox.map(work => [work.taskId, work])), [inbox])
+  const selectedWork = selected && workByTask.get(selected.task.taskId)
+  const selectedResult = selectedWork?.delegationResult
+  const selectedRecordId = selectedResult?.recordId
+  const takenOver = selectedWork?.takenOverAt || selectedResult?.takenOver
+  const canTakeOver =
+    selectedWork?.source.delegated &&
+    selectedWork.messageCount > 0 &&
+    !takenOver &&
+    selectedResult?.action !== 'skip' &&
+    !delegationReceipt(selectedResult)
   const needsRestore = selected?.task.status === 'archived'
   const needsStart =
     !needsRestore &&
     selectedWork &&
+    !selectedWork.source.delegated &&
     selectedState?.status !== 'waiting' &&
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     if (item.task.status === 'archived') return t('workbench.settings_category_archived')
-    const work = inbox.find(value => value.taskId === item.task.taskId)
-    return work && work.status !== 'sent'
-      ? t(`standIn.workspace.inbox_${work.status}`)
-      : t(`standIn.personal.activity_${standInState(item).status}`)
+    const work = workByTask.get(item.task.taskId)
+    return t(
+      delegationResultLabel(work?.delegationResult) ??
+        (work?.takenOverAt
+          ? 'standIn.dingtalk_delegation.result_taken_over'
+          : work && work.status !== 'sent'
+            ? `standIn.workspace.inbox_${work.status}`
+            : `standIn.personal.activity_${standInState(item).status}`)
+    )
   }
   const filterStatus = (item: RuntimeTaskReminderItem) => {
-    const work = inbox.find(value => value.taskId === item.task.taskId)
+    const work = workByTask.get(item.task.taskId)
+    const result = work?.delegationResult
+    if (
+      result?.action === 'reply' &&
+      !delegationReceipt(result) &&
+      result.status !== 'submitting'
+    ) {
+      return result.status === 'failed' ? 'failed' : 'waiting'
+    }
     return work && ['pending', 'needs_grouping'].includes(work.status)
       ? 'waiting'
       : standInState(item).status
   }
-  const available = items.filter(
-    item => !inbox.some(work => work.taskId === item.task.taskId && work.messageCount === 0)
-  )
-  const history = items.filter(item =>
-    inbox.some(work => work.taskId === item.task.taskId && work.messageCount === 0 && !!work.task)
-  )
+  const available = items.filter(item => workByTask.get(item.task.taskId)?.messageCount !== 0)
+  const history = items.filter(item => {
+    const work = workByTask.get(item.task.taskId)
+    return work?.messageCount === 0 && !!work.task
+  })
   const visible = available.filter(item => filter === 'all' || filterStatus(item) === filter)
   return (
     <div className="flex min-h-0 flex-1" data-testid="stand-in-activity">
       <div className="min-w-0 flex-1 overflow-y-auto p-5">
         <nav aria-label={t('standIn.workspace.work_filters')} className="mb-4 flex flex-wrap gap-1">
           {(['all', 'running', 'completed'] as const).map(value => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={value}
               type="button"
               data-testid={`stand-in-filter-${value}`}
@@ -102,7 +141,7 @@ export function StandInWorkList({
               className={`min-h-11 md:min-h-8 rounded-md px-3 text-sm ${filter === value ? 'bg-muted font-medium' : 'text-text-muted hover:bg-muted'}`}
             >
               {t(`standIn.workspace.filter_${value}`)}
-            </button>
+            </ControlButton>
           ))}
         </nav>
         {organization.choosing && (
@@ -118,14 +157,15 @@ export function StandInWorkList({
                   : 'standIn.workspace.choose_merge_target'
               )}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-organize-cancel"
               onClick={organization.cancel}
               className="min-h-11 md:min-h-9 rounded-md px-2 hover:bg-background"
             >
               {t('standIn.cancel')}
-            </button>
+            </ControlButton>
           </div>
         )}
         {organization.undo && (
@@ -139,7 +179,8 @@ export function StandInWorkList({
                 count: organization.undo.ids.length,
               })}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               disabled={organization.busy}
               data-testid="stand-in-organization-undo"
@@ -147,7 +188,7 @@ export function StandInWorkList({
               className="min-h-11 md:min-h-9 rounded-md px-2 font-medium hover:bg-background"
             >
               {t('standIn.workspace.undo_organization')}
-            </button>
+            </ControlButton>
           </div>
         )}
         {organization.error && (
@@ -167,7 +208,7 @@ export function StandInWorkList({
         <div className="space-y-2" data-testid="stand-in-activity-project">
           {visible.map(item => {
             const status = standInState(item)
-            const work = inbox.find(work => work.taskId === item.task.taskId)
+            const work = workByTask.get(item.task.taskId)
             const canOrganize =
               !!api &&
               userId !== undefined &&
@@ -182,7 +223,8 @@ export function StandInWorkList({
               organization.drag.workId !== work.id &&
               organization.drag.roleId === work.roleId
             return (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={item.key}
                 type="button"
                 data-testid={`stand-in-activity-task-${item.task.taskId}`}
@@ -258,41 +300,52 @@ export function StandInWorkList({
                     </span>
                   )}
                 </span>
-                <span className="text-sm text-text-secondary">{statusLabel(item)}</span>
+                <span className="text-right text-sm text-text-secondary">
+                  {statusLabel(item)}
+                  {(work?.takenOverAt || work?.delegationResult?.takenOver) &&
+                    delegationResultLabel(work?.delegationResult) && (
+                      <span className="block text-xs">
+                        {t('standIn.dingtalk_delegation.result_taken_over')}
+                      </span>
+                    )}
+                </span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-              </button>
+              </ControlButton>
             )
           })}
         </div>
         {!!history.length && (
-          <details
+          <CollapsibleRoot
             className="mt-5 border-t border-border pt-3"
             data-testid="stand-in-organized-history"
           >
-            <summary
+            <CollapsibleTrigger
               className="min-h-11 cursor-pointer py-2 text-sm text-text-muted md:min-h-8 md:py-1"
               data-testid="stand-in-organized-history-toggle"
             >
               {t('standIn.workspace.organized_history')}
-            </summary>
-            <div className="mt-2 space-y-1">
-              {history.map(item => (
-                <button
-                  key={item.key}
-                  type="button"
-                  data-testid={`stand-in-activity-task-${item.task.taskId}`}
-                  onClick={() => {
-                    setSelectedKey(item.key)
-                    setError(null)
-                  }}
-                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm hover:bg-muted md:min-h-9"
-                >
-                  <span className="min-w-0 truncate">{item.task.title}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                </button>
-              ))}
-            </div>
-          </details>
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="mt-2 space-y-1">
+                {history.map(item => (
+                  <ControlButton
+                    variant="unstyled"
+                    key={item.key}
+                    type="button"
+                    data-testid={`stand-in-activity-task-${item.task.taskId}`}
+                    onClick={() => {
+                      setSelectedKey(item.key)
+                      setError(null)
+                    }}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm hover:bg-muted md:min-h-9"
+                  >
+                    <span className="min-w-0 truncate">{item.task.title}</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                  </ControlButton>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         )}
         {((organization.drag?.messageIds && organization.drag.canSplit !== false) ||
           (!organization.drag &&
@@ -329,7 +382,8 @@ export function StandInWorkList({
         >
           <header className="flex items-start gap-3">
             <h2 className="min-w-0 flex-1 font-medium">{selected.task.title}</h2>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-preview-close"
               aria-label={t('standIn.close')}
@@ -337,7 +391,7 @@ export function StandInWorkList({
               className="flex h-11 w-11 md:h-8 md:w-8 items-center justify-center rounded-md hover:bg-muted"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </header>
           <p className="mt-3 text-xs text-text-muted">{selected.projectName}</p>
           <p className="mt-5 whitespace-pre-wrap text-sm" data-testid="stand-in-preview-summary">
@@ -346,15 +400,73 @@ export function StandInWorkList({
               t('standIn.workspace.preview_no_summary')}
           </p>
           <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          {takenOver && delegationResultLabel(selectedResult) && (
+            <p className="text-sm text-text-secondary">
+              {t('standIn.dingtalk_delegation.result_taken_over')}
+            </p>
+          )}
+          {selectedWork?.delegationResult?.reason && (
+            <p
+              className="mt-2 whitespace-pre-wrap break-words text-sm"
+              data-testid="stand-in-delegation-result-reason"
+            >
+              {selectedWork.delegationResult.reason}
+            </p>
+          )}
+          {selectedWork && selectedResult && (
+            <StandInDelegationReceipt
+              key={selectedRecordId ?? selectedWork.id}
+              result={selectedResult}
+              onVerify={
+                api && userId !== undefined && deviceId && selectedRecordId
+                  ? async () => {
+                      await api.verifyWorkDelivery(
+                        userId,
+                        deviceId,
+                        selectedWork.id,
+                        selectedRecordId
+                      )
+                      onRefresh?.()
+                    }
+                  : undefined
+              }
+            />
+          )}
           {selectedWork && selectedWork.messageCount > 0 && api && (
             <div className="mt-4 flex flex-wrap gap-2">
+              {canTakeOver && !needsRestore && userId !== undefined && deviceId && (
+                <ControlButton
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  data-testid="stand-in-delegation-takeover"
+                  disabled={busy}
+                  className="min-h-11 md:min-h-9"
+                  onClick={async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await api.takeOverWork(userId, deviceId, selectedWork.id)
+                      onRefresh?.()
+                    } catch (cause) {
+                      setError(getStandInErrorMessage(cause))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  {t('standIn.dingtalk_delegation.take_over_work')}
+                </ControlButton>
+              )}
               {inbox.some(
                 work =>
                   work.id !== selectedWork.id &&
                   work.roleId === selectedWork.roleId &&
                   work.messageCount > 0
               ) && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="stand-in-work-merge"
                   disabled={
@@ -374,10 +486,12 @@ export function StandInWorkList({
                 >
                   <Layers className="h-4 w-4" />
                   {t('standIn.workspace.merge_work')}
-                </button>
+                </ControlButton>
               )}
               {selectedWork.messageCount > 1 && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="stand-in-work-split"
                   onClick={() => setExpandedWorkId(selectedWork.id)}
@@ -385,12 +499,14 @@ export function StandInWorkList({
                 >
                   <Split className="h-4 w-4" />
                   {t('standIn.workspace.split_work')}
-                </button>
+                </ControlButton>
               )}
             </div>
           )}
           {selectedState.status === 'waiting' && interactions && (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="stand-in-work-open-pending"
               className="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-text-primary px-3 py-2 text-sm text-background md:min-h-9"
@@ -404,7 +520,7 @@ export function StandInWorkList({
               }}
             >
               {t('interactions.title')}
-            </button>
+            </ControlButton>
           )}
           {selectedWork && api && userId !== undefined && deviceId && (
             <StandInWorkMessages
@@ -431,6 +547,7 @@ export function StandInWorkList({
                 organization.setChoosing(true)
               }}
               onOrganize={value => organization.organize(value)}
+              onRefresh={onRefresh}
             />
           )}
           {error && (
@@ -438,82 +555,89 @@ export function StandInWorkList({
               {error}
             </p>
           )}
-          <div className="mt-auto pt-6">
-            <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
-            <button
-              type="button"
-              data-testid="stand-in-preview-open"
-              disabled={
-                busy ||
-                (needsRestore
-                  ? !onRestoreTask
-                  : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
-                (!!needsStart && !api)
-              }
-              onClick={async () => {
-                try {
-                  setBusy(true)
-                  setError(null)
-                  if (needsRestore) {
-                    await onRestoreTask?.(selected.address)
-                    onRefresh?.()
-                    return
-                  }
-                  const address =
-                    needsStart && api && userId !== undefined && deviceId
-                      ? await api.runWork(userId, deviceId, selectedWork.id)
-                      : selected.address
-                  onRefresh?.()
-                  await onOpenTask?.(address)
-                } catch (cause) {
-                  setError(getStandInErrorMessage(cause))
-                } finally {
-                  setBusy(false)
+          {(!selectedWork?.source.delegated || selectedWork.task) && (
+            <div className="mt-auto pt-6">
+              <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
+              <ControlButton
+                variant="primary"
+                size="sm"
+                type="button"
+                data-testid="stand-in-preview-open"
+                disabled={
+                  busy ||
+                  (needsRestore
+                    ? !onRestoreTask
+                    : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
+                  (!!needsStart && !api)
                 }
-              }}
-              className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
-            >
-              {t(
-                needsRestore
-                  ? 'workbench.archived_unarchive'
-                  : needsStart
-                    ? 'standIn.workspace.start_work'
-                    : 'standIn.workspace.open_work'
-              )}
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
-            {selectedWork?.task &&
-              ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
-              selectedState.status !== 'running' &&
-              selectedState.status !== 'waiting' &&
-              selectedState.status !== 'completed' &&
-              api &&
-              userId !== undefined &&
-              deviceId && (
-                <button
-                  type="button"
-                  data-testid="stand-in-preview-confirm-once"
-                  disabled={busy}
-                  className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
-                  onClick={async () => {
-                    try {
-                      setBusy(true)
-                      const address = await api.runWork(userId, deviceId, selectedWork.id, {
-                        confirmThisRun: true,
-                      })
+                onClick={async () => {
+                  try {
+                    setBusy(true)
+                    setError(null)
+                    if (needsRestore) {
+                      await onRestoreTask?.(selected.address)
                       onRefresh?.()
-                      await onOpenTask?.(address)
-                    } catch (cause) {
-                      setError(getStandInErrorMessage(cause))
-                    } finally {
-                      setBusy(false)
+                      return
                     }
-                  }}
-                >
-                  {t('standIn.authorization.confirm_once')}
-                </button>
-              )}
-          </div>
+                    const address =
+                      needsStart && api && userId !== undefined && deviceId
+                        ? await api.runWork(userId, deviceId, selectedWork.id)
+                        : selected.address
+                    onRefresh?.()
+                    await onOpenTask?.(address)
+                  } catch (cause) {
+                    setError(getStandInErrorMessage(cause))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+              >
+                {t(
+                  needsRestore
+                    ? 'workbench.archived_unarchive'
+                    : needsStart
+                      ? 'standIn.workspace.start_work'
+                      : 'standIn.workspace.open_work'
+                )}
+                <ArrowUpRight className="h-4 w-4" />
+              </ControlButton>
+              {selectedWork?.task &&
+                !selectedWork.source.delegated &&
+                ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
+                selectedState.status !== 'running' &&
+                selectedState.status !== 'waiting' &&
+                selectedState.status !== 'completed' &&
+                api &&
+                userId !== undefined &&
+                deviceId && (
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    data-testid="stand-in-preview-confirm-once"
+                    disabled={busy}
+                    className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
+                    onClick={async () => {
+                      try {
+                        setBusy(true)
+                        const address = await api.runWork(userId, deviceId, selectedWork.id, {
+                          confirmThisRun: true,
+                        })
+                        onRefresh?.()
+                        await onOpenTask?.(address)
+                      } catch (cause) {
+                        setError(getStandInErrorMessage(cause))
+                      } finally {
+                        setBusy(false)
+                      }
+                    }}
+                  >
+                    {t('standIn.authorization.confirm_once')}
+                  </ControlButton>
+                )}
+            </div>
+          )}
         </aside>
       )}
     </div>

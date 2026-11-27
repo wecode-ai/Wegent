@@ -25,6 +25,7 @@ export interface ModelSubGroup<T extends GroupableModel = GroupableModel> {
 }
 
 export interface ModelCascadeGroup<T extends GroupableModel = GroupableModel> {
+  configuredName: string | null
   name: string
   count: number
   subGroups: ModelSubGroup<T>[]
@@ -77,10 +78,10 @@ export function buildModelCascadeGroups<T extends GroupableModel>(
   models: T[],
   labels: GroupingLabels
 ): ModelCascadeGroup<T>[] {
-  const primaryGroups = new Map<string, Map<string, T[]>>()
+  const primaryGroups = new Map<string | null, Map<string, T[]>>()
 
   for (const model of models) {
-    const primaryName = normalizeGroupValue(model.modelGroup, labels.ungroupedLabel)
+    const primaryName = model.modelGroup?.trim() || null
     const secondaryName = normalizeGroupValue(model.modelSubGroup, labels.uncategorizedLabel)
     const secondaryGroups = primaryGroups.get(primaryName) ?? new Map<string, T[]>()
     const groupModels = secondaryGroups.get(secondaryName) ?? []
@@ -91,8 +92,8 @@ export function buildModelCascadeGroups<T extends GroupableModel>(
   }
 
   return Array.from(primaryGroups.entries())
-    .sort(([a], [b]) => compareGroupName(a, b, labels.ungroupedLabel))
-    .map(([name, secondaryGroups]) => {
+    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)))
+    .map(([configuredName, secondaryGroups]) => {
       const subGroups = Array.from(secondaryGroups.entries())
         .sort(([a], [b]) => compareGroupName(a, b, labels.uncategorizedLabel))
         .map(([subGroupName, groupModels]) => {
@@ -108,7 +109,8 @@ export function buildModelCascadeGroups<T extends GroupableModel>(
         })
 
       return {
-        name,
+        configuredName,
+        name: configuredName ?? labels.ungroupedLabel,
         count: subGroups.reduce((total, subGroup) => total + subGroup.count, 0),
         subGroups,
       }

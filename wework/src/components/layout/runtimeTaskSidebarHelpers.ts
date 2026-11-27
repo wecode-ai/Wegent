@@ -21,6 +21,14 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.recencyAt ?? task.updatedAt ?? task.createdAt ?? undefined
 }
 
+export function getRuntimeTaskActivityTime(task: RuntimeTaskSummary): number {
+  const value = getRuntimeTaskTime(task)
+  if (value === undefined) return 0
+  const numeric = typeof value === 'number' ? value : Number(value)
+  const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
 export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
   return task.status?.trim().toLowerCase() === 'queued'
 }
@@ -155,10 +163,11 @@ export function getVisibleRuntimeSidebarTaskItems(
       isAlwaysVisibleTask?.(item) ||
       isRuntimeTaskQueued(item.task)
   )
+  const visibleTaskIds = new Set(visibleUnpinnedItems.map(item => item.task.taskId))
   for (const item of alwaysVisibleItems) {
-    if (!visibleUnpinnedItems.some(visibleItem => visibleItem.task.taskId === item.task.taskId)) {
-      visibleUnpinnedItems.push(item)
-    }
+    if (visibleTaskIds.has(item.task.taskId)) continue
+    visibleTaskIds.add(item.task.taskId)
+    visibleUnpinnedItems.push(item)
   }
   return [...pinnedItems, ...visibleUnpinnedItems]
 }
@@ -210,7 +219,6 @@ export function getRuntimeTaskAddress(
     taskId: task.taskId,
     ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-    ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }

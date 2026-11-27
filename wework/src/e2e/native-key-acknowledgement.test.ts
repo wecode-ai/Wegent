@@ -96,3 +96,36 @@ test('acknowledges native input retargeted through a shadow host', async () => {
   })
   expect(vi.getTimerCount()).toBe(0)
 })
+
+test.each(['native-first', 'host-first'])(
+  'distinguishes host acknowledgement from trusted event delivery (%s)',
+  async order => {
+    vi.useFakeTimers()
+    const target = document.createElement('textarea')
+    let listener: ((event: KeyboardEvent) => void) | undefined
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+      if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+    })
+    let sent!: () => void
+    const sending = new Promise<void>(resolve => {
+      sent = resolve
+    })
+    const observe = vi.fn()
+    const completed = vi.fn()
+    const result = sendNativeKeyAndWait(target, 'press', () => sending, observe).then(completed)
+    const firstStage = order === 'native-first' ? 'native-event' : 'host-acknowledged'
+    if (order === 'native-first') listener?.(nativeEvent(target))
+    else sent()
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+    expect(observe.mock.calls).toEqual([[firstStage]])
+    expect(completed).not.toHaveBeenCalled()
+    if (order === 'native-first') sent()
+    else listener?.(nativeEvent(target))
+    await result
+    expect(observe.mock.calls).toEqual([
+      [firstStage],
+      [order === 'native-first' ? 'host-acknowledged' : 'native-event'],
+    ])
+    expect(completed).toHaveBeenCalledOnce()
+  }
+)

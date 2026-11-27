@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
+import { ServerResponse } from 'node:http'
 import test from 'node:test'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { runInNewContext } from 'node:vm'
+import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitation-model.mjs'
-import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
+import { mcpToolRequestEvents, readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -34,6 +36,57 @@ test('rejects malformed zstd instead of returning an empty request', async () =>
   const request = Readable.from([Buffer.from('invalid compressed request')])
   request.headers = { 'content-encoding': 'zstd' }
   await assert.rejects(readRequestBody(request))
+})
+
+test('rejects a same-named MCP tool outside the installed plugin in every catalog mode', () => {
+  const pluginDisplayName = 'Wework python-stdio-probe'
+  const step = {
+    toolName: 'report_python',
+    directToolName: 'mcp__python_stdio_probe__report_python',
+    argumentsValue: {},
+    searchCallId: 'search-python',
+    toolCallId: 'call-python',
+    pluginDisplayName,
+  }
+  const declaration = description => ({ type: 'function', name: step.toolName, description })
+  const namespace = description => ({
+    type: 'namespace',
+    name: 'python_stdio_probe',
+    tools: [declaration(description)],
+  })
+  const searchOutput = tool => [
+    { type: 'tool_search_call_output', call_id: step.searchCallId, tools: [tool] },
+  ]
+  const requests = [
+    description => ({
+      tools: [{ ...declaration(description), name: step.directToolName }],
+    }),
+    description => ({ tools: [namespace(description)] }),
+    description => ({
+      tools: [{ type: 'tool_search' }],
+      input: searchOutput(namespace(description)),
+    }),
+    description => ({
+      tools: [{ type: 'custom', name: 'exec' }],
+      input: searchOutput({
+        name: step.directToolName,
+        description: `exec tool declaration:\n${description}`,
+      }),
+    }),
+  ]
+  for (const request of requests) {
+    assert.throws(
+      () => mcpToolRequestEvents(request('Report plugin Python'), step),
+      /did not retain plugin provenance/
+    )
+    assert.equal(
+      mcpToolRequestEvents(
+        request(`Report plugin Python (from plugin \`${pluginDisplayName}\`)`),
+        step
+      ).mode,
+      'direct'
+    )
+  }
 })
 
 test('waits for a yielded MCP elicitation cell and uses its cancellation result', () => {
@@ -158,11 +211,54 @@ for (const [surface, createScenario] of [
         assert.equal(call.name, 'exec_command')
         command = JSON.parse(call.arguments)
       }
-      assert.equal(command.cmd, `touch '${workspacePath}/stand-in-approved.txt'`)
+      const createFile = `touch '${workspacePath}/stand-in-approved.txt'`
+      const expectedCommand =
+        surface === 'action'
+          ? `${createFile} && rm '${workspacePath}/stand-in-firm.tmp'`
+          : createFile
+      assert.equal(command.cmd, expectedCommand)
       assert.equal(command.workdir, workspacePath)
       assert.equal(command.sandbox_permissions, 'require_escalated')
       assert.equal(command.justification, '确认后创建隔离测试工作区中的验证文件。')
       assert.equal(scenario.diagnostics().failedShellRequest, null)
+      if (surface === 'action' && mode === 'code_mode') {
+        const readEvents = async () => {
+          const followUp = Readable.from([JSON.stringify(body)])
+          followUp.method = 'POST'
+          followUp.headers = {}
+          await scenario.handleHttp(followUp, response, new URL('http://localhost/v1/responses'))
+          return output
+            .split('\n')
+            .filter(line => line.startsWith('data: {'))
+            .map(line => JSON.parse(line.slice(6)))
+        }
+        body.tools = [{ type: 'function', name: 'functions__wait' }]
+        body.input.push(
+          { type: 'message', role: 'user', content: 'STAND_IN_CONFIRMATION_FOLLOWUP' },
+          {
+            type: 'function_call_output',
+            call_id: call.call_id,
+            output: 'Script running with cell ID 1\nWall time 2.1 seconds\nOutput:\n',
+          }
+        )
+        const wait = (await readEvents()).find(
+          event => event.type === 'response.output_item.done'
+        ).item
+        assert.equal(wait.name, 'functions__wait')
+        assert.deepEqual(JSON.parse(wait.arguments), { cell_id: '1', yield_time_ms: 1000 })
+        const result = {
+          type: 'function_call_output',
+          call_id: wait.call_id,
+          output: 'Script completed\nOutput:\nProcess exited with code 1\n',
+        }
+        body.input.push(result)
+        await assert.rejects(readEvents, /Process exited with code 1/)
+        result.output = 'Script completed\nOutput:\nProcess exited with code 0\n'
+        const completed = (await readEvents()).find(
+          event => event.type === 'response.output_item.done'
+        )
+        assert.match(completed.item.content[0].text, /已按你的单次确认完成操作/)
+      }
     })
   }
 }
@@ -207,4 +303,25 @@ test('keeps unsupported confirmation tools fatal and captures their complete sch
     { type: 'additional_tools', role: null, tools: additionalTools },
   ])
   assert.ok(!JSON.stringify(diagnostic).includes('test-only-header'))
+})
+
+test('retains failed scenario model requests without recording authorization headers', async () => {
+  const failure = new Error('Scenario assertion failed')
+  const body = { input: [{ role: 'user', content: 'historical-plugin-fixture' }] }
+  const server = new DesktopE2EServer('/workspace', '/workspace', {
+    async handleHttp() {
+      throw failure
+    },
+  })
+  server.url = 'http://localhost'
+  const request = Readable.from([JSON.stringify(body)])
+  request.method = 'POST'
+  request.url = '/v1/responses'
+  request.headers = { authorization: 'Bearer synthetic-sensitive-header' }
+  await assert.rejects(
+    server.handle(request, new ServerResponse(request)),
+    error => error === failure
+  )
+  assert.deepEqual(server.modelRequests, [{ body, scenario: server.scenario, failed: true }])
+  assert.equal(JSON.stringify(server.modelRequests).includes('synthetic-sensitive-header'), false)
 })

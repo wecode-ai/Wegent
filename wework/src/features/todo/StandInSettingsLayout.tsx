@@ -1,6 +1,50 @@
-import type { ReactNode } from 'react'
-import { ArrowLeft, ChevronRight, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeft, ChevronRight, X } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useId } from 'react'
+
+export function StandInSettingsPanel({
+  testId,
+  contentTestId,
+  onClose,
+  active,
+  suspended,
+  embedded = false,
+  calendarOpen,
+  children,
+}: {
+  testId: string
+  contentTestId?: string
+  onClose(): void
+  active?: boolean
+  suspended?: boolean
+  embedded?: boolean
+  calendarOpen: boolean
+  children: ReactNode
+}) {
+  return (
+    <DialogSurface
+      onClose={onClose}
+      active={active}
+      suspended={suspended}
+      render={
+        <section
+          className={`min-h-0 px-5 text-base text-text-primary ${embedded ? '' : 'h-full'} ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          data-testid={testId}
+        />
+      }
+    >
+      <div
+        className={`flex w-full flex-col ${calendarOpen ? 'h-full min-h-0' : 'min-h-full'}`}
+        data-testid={contentTestId}
+      >
+        {children}
+      </div>
+    </DialogSurface>
+  )
+}
 
 export function StandInSettingsError({
   error,
@@ -15,7 +59,8 @@ export function StandInSettingsError({
     <div role="alert" className="text-sm text-error">
       <p>{error}</p>
       {retry && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={retry.testId}
           disabled={retry.disabled}
@@ -23,7 +68,7 @@ export function StandInSettingsError({
           className="mt-1 min-h-11 min-w-11 underline md:min-h-8"
         >
           {t('standIn.reload')}
-        </button>
+        </ControlButton>
       )}
     </div>
   )
@@ -35,7 +80,6 @@ export function StandInSettingsHeader({
   disabled,
   back,
   close,
-  actions,
   path,
 }: {
   title: ReactNode
@@ -43,14 +87,14 @@ export function StandInSettingsHeader({
   disabled: boolean
   back?: { testId: string; onClick(): void }
   close?: { testId: string; onClick(): void }
-  actions?: ReactNode
   path?: Array<{ label: string; testId: string; onClick?: () => void }>
 }) {
   const { t } = useTranslation('common')
   return (
     <header className="sticky top-0 z-10 mb-5 flex shrink-0 items-start gap-3 border-b border-border bg-background py-4">
       {back && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={back.testId}
           disabled={disabled}
@@ -59,7 +103,7 @@ export function StandInSettingsHeader({
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
         >
           <ArrowLeft className="h-4 w-4" />
-        </button>
+        </ControlButton>
       )}
       <div className="min-w-0 flex-1">
         {path && path.length > 1 && (
@@ -72,7 +116,8 @@ export function StandInSettingsHeader({
               <span key={entry.testId} className="inline-flex items-center gap-1">
                 {index > 0 && <ChevronRight aria-hidden="true" className="h-3 w-3" />}
                 {entry.onClick ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={entry.testId}
                     disabled={disabled}
@@ -80,9 +125,15 @@ export function StandInSettingsHeader({
                     className="min-h-11 min-w-11 rounded px-1 hover:bg-muted hover:text-text-primary md:min-h-8 md:min-w-0"
                   >
                     {entry.label}
-                  </button>
+                  </ControlButton>
                 ) : (
-                  <span data-testid={entry.testId} aria-current="page">
+                  <span
+                    data-testid={entry.testId}
+                    aria-current="page"
+                    role="heading"
+                    aria-level={2}
+                    className="font-medium text-text-primary"
+                  >
                     {entry.label}
                   </span>
                 )}
@@ -95,9 +146,9 @@ export function StandInSettingsHeader({
         )}
         {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
-      {actions}
       {close && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={close.testId}
           disabled={disabled}
@@ -106,7 +157,7 @@ export function StandInSettingsHeader({
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
         >
           <X className="h-4 w-4" />
-        </button>
+        </ControlButton>
       )}
     </header>
   )
@@ -138,11 +189,15 @@ export function StandInSettingsActions({
     <footer className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border bg-background py-4">
       {children}
       {leading && (
-        <div data-testid={`${prefix}-footer-leading`} className="mr-auto flex items-center">
+        <div
+          data-testid={`${prefix}-footer-leading`}
+          className="mr-auto flex max-w-full flex-wrap items-center gap-2"
+        >
           {leading}
         </div>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`${prefix}-cancel`}
         disabled={disabled}
@@ -150,8 +205,10 @@ export function StandInSettingsActions({
         className="min-h-11 rounded-lg px-3 text-sm hover:bg-muted md:min-h-9"
       >
         {t('standIn.cancel')}
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid={`${prefix}-save`}
         aria-busy={busy || undefined}
@@ -160,7 +217,7 @@ export function StandInSettingsActions({
         className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-9"
       >
         {saveLabel ?? t('standIn.save')}
-      </button>
+      </ControlButton>
     </footer>
   )
 }
@@ -171,32 +228,83 @@ export function StandInSettingsEntry({
   onClick,
   label,
   description,
+  summary,
+  footer,
+  grouped = false,
 }: {
   testId: string
   disabled: boolean
   onClick(): void
   label: string
   description?: string
+  summary?: ReactNode
+  footer?: ReactNode
+  grouped?: boolean
 }) {
-  const { t } = useTranslation('common')
+  const labelId = useId()
+  const descriptionId = useId()
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
-    >
-      <span className="flex-1">
-        <span className="block font-medium">{label}</span>
-        {description && (
-          <span className="mt-1 block text-sm text-text-secondary">{description}</span>
-        )}
-      </span>
-      <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-sm">
-        {t('standIn.personal.manage')}
-      </span>
-      <ChevronRight className="h-4 w-4" />
-    </button>
+    <div className={grouped ? undefined : 'rounded-lg border border-border'}>
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onClick}
+        aria-labelledby={labelId}
+        aria-describedby={description || summary ? descriptionId : undefined}
+        className="flex min-h-11 w-full items-center gap-3 rounded-lg p-3 text-left text-sm hover:bg-muted"
+      >
+        <span className="min-w-0 flex-1 whitespace-normal break-words">
+          <span id={labelId} className="block font-medium">
+            {label}
+          </span>
+          {(description || summary) && (
+            <span id={descriptionId} className="mt-1 block text-sm text-text-secondary">
+              {description && <span className="block">{description}</span>}
+              {summary}
+            </span>
+          )}
+        </span>
+        <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+      </ControlButton>
+      {footer && <div className="mx-3 border-t border-border py-1">{footer}</div>}
+    </div>
+  )
+}
+
+export type StandInSettingsShortcut = {
+  id: 'im' | 'revision' | 'memory'
+  testId: string
+  containerTestId?: string
+  label: string
+  description?: string
+} & ({ content: ReactNode; onClick?: never } | { content?: never; onClick(): void })
+
+export function StandInSettingsShortcuts({
+  shortcuts,
+  disabled,
+  onOpen,
+}: {
+  shortcuts?: StandInSettingsShortcut[]
+  disabled: boolean
+  onOpen(id: StandInSettingsShortcut['id']): void
+}) {
+  const entries = shortcuts?.filter(shortcut => shortcut.id !== 'revision')
+  if (!entries?.length) return null
+  return (
+    <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
+      {entries.map(({ id, testId, containerTestId, label, description, onClick }) => (
+        <div key={id} data-testid={containerTestId}>
+          <StandInSettingsEntry
+            testId={testId}
+            label={label}
+            description={description}
+            disabled={disabled}
+            onClick={onClick ?? (() => onOpen(id))}
+          />
+        </div>
+      ))}
+    </section>
   )
 }

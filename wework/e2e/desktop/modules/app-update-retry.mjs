@@ -50,14 +50,14 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
   await control.command('navigate', 'body', { value: '/settings/about' })
   const autoUpdate = '[data-testid="about-auto-update-switch"]'
   await control.command('waitFor', autoUpdate)
-  if ((await control.command('getAttribute', autoUpdate, { value: 'data-state' })) === 'checked')
+  if ((await control.command('getAttribute', autoUpdate, { value: 'aria-checked' })) === 'true')
     await control.command('click', autoUpdate)
-  await control.command('waitFor', `${autoUpdate}[data-state="unchecked"]`)
+  await control.command('waitFor', `${autoUpdate}[aria-checked="false"]`)
   const beta = '[data-testid="about-beta-update-switch"]'
-  assert.equal(await control.command('getAttribute', beta, { value: 'data-state' }), 'unchecked')
+  assert.equal(await control.command('getAttribute', beta, { value: 'aria-checked' }), 'false')
   advertise(true)
   await control.command('click', beta)
-  await control.command('waitFor', `${beta}[data-state="checked"]`)
+  await control.command('waitFor', `${beta}[aria-checked="true"]`)
   const button = '[data-testid="about-check-update-button"]'
   await control.command('waitFor', '[data-testid="about-update-status"]', {
     text: policy.releases[1].version,
@@ -70,6 +70,13 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
     /Release download failed: HTTP 503/
   )
   await control.command('navigate', 'body', { value: '/' })
+  const sidebar = '[data-testid="desktop-sidebar"]'
+  await control.command('waitFor', `${sidebar}[aria-hidden]`)
+  if ((await control.command('getAttribute', sidebar, { value: 'aria-hidden' })) === 'true') {
+    await control.command('clickWhenEnabled', '[data-testid="expand-sidebar-button"]', {
+      visible: true,
+    })
+  }
   await control.command('clickWhenEnabled', '[data-testid="settings-button"]', { visible: true })
   await control.command('clickWhenEnabled', '[data-testid="app-update-error-details-button"]')
   const dialog = '[data-testid="app-update-error-dialog"]'
@@ -109,6 +116,7 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
     [manifestPath, '/unavailable-release.tar.gz'],
     'The error dialog retry must refresh the catalog and perform the advertised download'
   )
+  await control.command('clickWhenEnabled', '[data-testid="settings-button"]', { visible: true })
   await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]', { visible: true })
   await control.command('waitFor', button, { visible: true, enabled: true })
   const requestCount = requests.length

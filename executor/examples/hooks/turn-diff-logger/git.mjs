@@ -26,13 +26,20 @@ async function bounded(stream, truncate = false) {
     .replace(/[\r\n]+$/, '')
 }
 
-export async function git(cwd, args, { index, output, input, hooks } = {}) {
+function spawnGit(cwd, args, { index, input, hooks } = {}) {
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_'))
   )
-  const child = spawn(
+  return spawn(
     'git',
-    ['-c', 'core.fsmonitor=false', ...(hooks ? ['-c', `core.hooksPath=${hooks}`] : []), ...args],
+    [
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.longpaths=true',
+      ...(hooks ? ['-c', `core.hooksPath=${hooks}`] : []),
+      ...args,
+    ],
     {
       cwd,
       env: { ...environment, ...(index ? { GIT_INDEX_FILE: index } : {}) },
@@ -40,10 +47,44 @@ export async function git(cwd, args, { index, output, input, hooks } = {}) {
       windowsHide: true,
     }
   )
-  const exited = new Promise((resolve, reject) => {
+}
+
+function exitStatus(child) {
+  return new Promise((resolve, reject) => {
     child.once('error', reject)
     child.once('close', (code, signal) => resolve({ code, signal }))
   })
+}
+
+function checkExit(result, args, stderr) {
+  if (result.code === 0) return
+  const error = new Error(`git ${args[0]} failed (${result.code ?? result.signal}): ${stderr}`)
+  error.gitExitCode = result.code
+  throw error
+}
+
+export async function* gitStream(cwd, args, options = {}) {
+  const child = spawnGit(cwd, args, options)
+  const completed = Promise.all([
+    exitStatus(child),
+    bounded(child.stderr, true),
+    options.input == null ? undefined : pipeline(Readable.from([options.input]), child.stdin),
+  ])
+  // Attach immediately: a caller can pause this generator while sending HTTP.
+  completed.catch(() => {})
+  try {
+    for await (const bytes of child.stdout) yield bytes
+    const [result, stderr] = await completed
+    checkExit(result, args, stderr)
+  } finally {
+    child.kill('SIGKILL')
+    await completed.catch(() => {})
+  }
+}
+
+export async function git(cwd, args, { index, output, input, hooks } = {}) {
+  const child = spawnGit(cwd, args, { index, input, hooks })
+  const exited = exitStatus(child)
   try {
     const [stdout, stderr, result] = await Promise.all([
       output
@@ -60,11 +101,7 @@ export async function git(cwd, args, { index, output, input, hooks } = {}) {
       exited,
       input == null ? undefined : pipeline(Readable.from([input]), child.stdin),
     ])
-    if (result.code !== 0) {
-      const error = new Error(`git ${args[0]} failed (${result.code ?? result.signal}): ${stderr}`)
-      error.gitExitCode = result.code
-      throw error
-    }
+    checkExit(result, args, stderr)
     return stdout
   } catch (error) {
     child.kill('SIGKILL')
@@ -120,7 +157,9 @@ export async function snapshot(workspace, directory, hooks) {
 export async function remoteUrl(workspace, hooks) {
   let value
   try {
-    value = await git(workspace, ['config', '--get', 'remote.origin.url'], { hooks })
+    value = await git(workspace, ['config', '--get', 'remote.origin.url'], {
+      hooks,
+    })
   } catch (error) {
     if (error.gitExitCode === 1) return null
     throw error

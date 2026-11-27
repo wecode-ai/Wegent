@@ -3,11 +3,12 @@ import { delimiter } from 'node:path'
 import { commandOutputAsync, fetchJson, join, repoDir } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
-import { openStandInDetails } from './stand-in-profile-navigation.mjs'
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
-import { verifyNarrowImMenu } from './stand-in-im-menu-layout.mjs'
+import { verifyNarrowImChannels } from './stand-in-im-channel-layout.mjs'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 
 /** Reuse the real Backend/Redis/Executor; only the external IM input is synthetic. */
 export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot }) {
@@ -59,27 +60,26 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal(binding.status, 'active')
       assert.equal(binding.target.userId, userId)
       assert.equal(binding.target.deviceId, initial.executionDeviceId)
-      await openStandInDetails(control)
-      await captureScreenshot(control, 'im-stand-in-00-channel-popover.png')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
+      await captureScreenshot(control, 'im-stand-in-00-channel-settings.png')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-profile-panel"]'),
-        '0',
-        'IM channels must open directly from the identity popover'
+        '1',
+        'IM channels must open from Manage stand-in'
       )
-      assert.equal(
-        await control.command('getElementCount', '[data-testid="stand-in-im-channel-telegram"]'),
-        '0',
-        'Unavailable channels belong in the add menu'
-      )
-      await verifyNarrowImMenu(control)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
+      await verifyNarrowImChannels(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const closeConnections = async () => {
         await control.command('focusMainWindow')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-im-dialog-close"]')
         await control.command('waitFor', '[data-testid="stand-in-im-channel-telegram"]:focus')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-details-open"]')
-        await control.command('waitFor', '[data-testid="stand-in-details-popover"]', {
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-profile-close"], [data-testid="stand-in-close"]'
+        )
+        await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
           visible: false,
         })
       }
@@ -107,8 +107,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('nativePress', '[data-testid="stand-in-im-dialog-close"]', {
         key: 'Escape',
       })
-      await control.command('waitFor', '[data-testid="stand-in-im-add-channels"]:focus')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
+      await control.command('waitFor', '[data-testid="stand-in-im-channel-telegram"]:focus')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await control.command('waitFor', connections, { text: '还没有已登记的 Telegram 私聊' })
       keys = (await fixture({ operation: 'seed', count: 1 })).keys
@@ -116,6 +115,10 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('clickWhenEnabled', refresh)
       await control.command('waitFor', `${panel} ${first}`)
       await waitForPrimaryConnections(1)
+      assert.equal(await control.command('getAttribute', first, { value: 'aria-pressed' }), 'true')
+      await verifyProjectFieldFocus(control, `stand-in-im-connect-${keys[0]}`, {
+        nextButtonPattern: /^stand-in-im-submit$/,
+      })
       await captureScreenshot(control, 'im-stand-in-00-single-conversation.png')
       await control.command('nativePress', '[data-testid="stand-in-im-mode-help"]', { key: 'Tab' })
       await control.command('waitFor', '[data-testid="stand-in-im-dialog-close"]:focus')
@@ -149,7 +152,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await captureScreenshot(control, 'im-stand-in-02-primary-connected.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-submit"]')
       await control.command('waitFor', '[data-testid="stand-in-im-channel-telegram"]:focus')
-      await captureScreenshot(control, 'im-stand-in-02-connected-channel-popover.png')
+      await captureScreenshot(control, 'im-stand-in-02-connected-channel-settings.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const primaryMessage = '请记住：我希望日报先列重点，再列待确认事项。'
       const sent = await fixture({
@@ -197,7 +200,8 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await reloadMainWindow(control, 'The IM binding story must reconnect after reload')
       await control.command('waitFor', '[data-testid="stand-in-primary-open"]')
       await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${roleId}"]`)
-      await openStandInDetails(control)
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const rolePanel = panel
       await control.command('waitFor', `${rolePanel} ${first}`)
@@ -271,7 +275,8 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         ),
         'Rebinding must preserve the primary history without copying role input into it'
       )
-      await openStandInDetails(control)
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await control.command('waitFor', `${panel} ${first}`)
       assert.ok(
@@ -331,8 +336,9 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       }
       await closeConnections()
       await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
-      await openStandInDetails(control)
-      await captureScreenshot(control, 'im-stand-in-10-channel-popover-dark.png')
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
+      await captureScreenshot(control, 'im-stand-in-10-channel-settings-dark.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await waitForPrimaryConnections(2)
       await captureScreenshot(control, 'im-stand-in-10-channel-dialog-dark.png')

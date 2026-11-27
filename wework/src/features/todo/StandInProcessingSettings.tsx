@@ -1,10 +1,11 @@
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
+import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown } from 'lucide-react'
+import { useId, useState } from 'react'
 import { StandInImmediateSwitch } from './StandInImmediateSwitch'
 import { StandInReplyAuthorization } from './StandInReplyAuthorization'
-import { ChevronDown } from 'lucide-react'
-import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
-import { useId, useState } from 'react'
 
 export function StandInProcessingSettings({
   rows,
@@ -32,7 +33,9 @@ export function StandInProcessingSettings({
       className="mt-4 border-t border-border pt-4"
       data-testid="stand-in-processing-settings"
     >
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid="stand-in-processing-settings-toggle"
         aria-expanded={expanded}
@@ -67,7 +70,7 @@ export function StandInProcessingSettings({
           aria-hidden="true"
           className="h-4 w-4 shrink-0 text-text-secondary transition-transform group-aria-expanded:rotate-180"
         />
-      </button>
+      </ControlButton>
       <div id={contentId} hidden={!expanded}>
         {expanded &&
           rows.map(row => (
@@ -93,7 +96,7 @@ export function StandInProcessingSettings({
                     : 'standIn.workspace.session_strategy'
                 )}
                 description={t(`standIn.workspace.session_${sessionScope}_description`)}
-                control={
+                children={
                   sessionScope === 'source' ? (
                     <SettingsSwitch
                       data-testid={`${row.testId}-session-strategy`}
@@ -110,6 +113,21 @@ export function StandInProcessingSettings({
                   ) : undefined
                 }
               />
+              {sessionScope === 'schedule' && (
+                <SettingsRow
+                  className="px-0"
+                  label={t('standIn.workspace.schedule_ask_before_act')}
+                  description={t('standIn.workspace.schedule_ask_before_act_help')}
+                >
+                  <SettingsSwitch
+                    data-testid={`${row.testId}-ask-before-act`}
+                    aria-label={t('standIn.workspace.schedule_ask_before_act')}
+                    disabled={disabled}
+                    checked={row.policy.askBeforeAct}
+                    onCheckedChange={askBeforeAct => row.onChange({ ...row.policy, askBeforeAct })}
+                  />
+                </SettingsRow>
+              )}
               {row.outbound && (
                 <StandInReplyAuthorization
                   name={row.name}

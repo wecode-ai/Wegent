@@ -1,10 +1,15 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { act, cleanup, render as renderView, screen, waitFor } from '@testing-library/react'
+import { createContext, createRef, useContext, useImperativeHandle, useState } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
-import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import {
+  useWorkspaceTabs,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
-import { WeworkSchemeBridge } from './WeworkSchemeBridge'
+import { createWeworkSchemeService } from './weworkSchemeService'
+import i18n from '@/i18n'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkInteractionScheme } from './scheme'
 import {
@@ -14,8 +19,50 @@ import {
 
 vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime: () => false }))
 
+interface TabReadPort {
+  tabs: WorkspaceTabsContextValue
+  connection: CloudConnectionContextValue | null
+}
+const ReadPortContext = createContext<ReturnType<typeof createRef<TabReadPort>> | null>(null)
+const releaseSchemes = new Set<() => void>()
+
+/** Commit the real tab UI first, then arrange its native navigation owner. */
+function render(ui: Parameters<typeof renderView>[0]) {
+  const read = createRef<TabReadPort>()
+  const view = renderView(<ReadPortContext.Provider value={read}>{ui}</ReadPortContext.Provider>)
+  const service = createWeworkSchemeService()
+  const observe = () => {
+    if (!read.current) throw new Error('Workspace tabs did not commit their read port')
+    const { tabs, connection } = read.current
+    service.observe({
+      tabs: {
+        ...tabs,
+        selectTab: (...args) => {
+          tabs.selectTab(...args)
+          observe()
+        },
+        openTab: (...args) => {
+          const tab = tabs.openTab(...args)
+          observe()
+          return tab
+        },
+      },
+      connection,
+      experiment: { enabled: false, loaded: true },
+      t: i18n.getFixedT(null, 'common'),
+    })
+  }
+  observe()
+  releaseSchemes.add(() => service.disconnect())
+  return view
+}
+
 function TabsProbe() {
-  const { tabs, activeTab } = useWorkspaceTabs()
+  const value = useWorkspaceTabs()
+  const connection = useContext(CloudConnectionContext)
+  const read = useContext(ReadPortContext)
+  useImperativeHandle(read, () => ({ tabs: value, connection }), [value, connection])
+  const { tabs, activeTab } = value
   return (
     <>
       <span data-testid="tab-count">{tabs.length}</span>
@@ -30,12 +77,9 @@ function Harness({ tabs }: { tabs: WorkspaceTab[] }) {
     pathname: window.location.pathname,
     search: window.location.search,
   }))
-  useEffect(() => {
-    const updateLocation = () =>
-      setLocation({ pathname: window.location.pathname, search: window.location.search })
-    window.addEventListener('popstate', updateLocation)
-    return () => window.removeEventListener('popstate', updateLocation)
-  }, [])
+  useWindowEvent('popstate', () =>
+    setLocation({ pathname: window.location.pathname, search: window.location.search })
+  )
   return (
     <WorkspaceTabsProvider
       {...location}
@@ -50,7 +94,6 @@ function Harness({ tabs }: { tabs: WorkspaceTab[] }) {
       fixedTabs={tabs}
       restoreSessionTabs={false}
     >
-      <WeworkSchemeBridge />
       <TabsProbe />
     </WorkspaceTabsProvider>
   )
@@ -60,7 +103,12 @@ beforeEach(() => {
   localStorage.clear()
   window.history.replaceState({}, '', '/todo')
 })
-afterEach(cleanup)
+afterEach(() => {
+  for (const release of releaseSchemes) release()
+  releaseSchemes.clear()
+  vi.unstubAllGlobals()
+  cleanup()
+})
 
 test('interaction deep links reuse a restored pending-route tab when the canonical tab points elsewhere', () => {
   render(
@@ -175,4 +223,83 @@ test('creates one task tab when absent and reuses it for subsequent notification
   expect(screen.getByTestId('active-route')).toHaveTextContent(
     '/runtime-tasks?deviceId=device-1&taskId=second-task'
   )
+})
+
+test.each([true, false])(
+  'an old shared Issue link respects project access (access: %s)',
+  async allowed => {
+    const fetchIssue = vi.fn(async (url: string) => {
+      if (!url.endsWith('/v1/loop-items/share-12-test')) throw new Error(url)
+      return allowed
+        ? Response.json({ id: 'share-12-test', cloud_project_id: '12', can_view_detail: true })
+        : Response.json({ detail: 'Issue not found' }, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchIssue)
+    render(
+      <CloudConnectionContext.Provider
+        value={
+          {
+            isConnected: true,
+            token: 'test-token',
+            apiBaseUrl: 'https://backend.example.test/api',
+          } as CloudConnectionContextValue
+        }
+      >
+        <Harness
+          tabs={[
+            { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+          ]}
+        />
+      </CloudConnectionContext.Provider>
+    )
+    act(() => {
+      openWeworkScheme('wework://personal-issues/share-12-test')
+    })
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search)
+      expect(params.get('projectId')).toBe(allowed ? '12' : null)
+      expect(params.get('itemId')).toBe(allowed ? 'share-12-test' : null)
+      expect(params.get('personalIssueId')).toBe(allowed ? null : 'share-12-test')
+    })
+    expect(fetchIssue).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('a delayed shared Issue lookup cannot replace a newer conversation link', async () => {
+  let finishLookup!: (response: Response) => void
+  const lookup = new Promise<Response>(resolve => {
+    finishLookup = resolve
+  })
+  const fetchIssue = vi.fn(() => lookup)
+  vi.stubGlobal('fetch', fetchIssue)
+  render(
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          token: 'test-token',
+          apiBaseUrl: 'https://backend.example.test/api',
+        } as CloudConnectionContextValue
+      }
+    >
+      <Harness
+        tabs={[
+          { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        ]}
+      />
+    </CloudConnectionContext.Provider>
+  )
+
+  act(() => {
+    openWeworkScheme('wework://personal-issues/share-12-test')
+  })
+  expect(fetchIssue).toHaveBeenCalledTimes(1)
+  act(() => {
+    openWeworkScheme('wework://tasks/device-1/newer-task')
+  })
+  await act(async () => {
+    finishLookup(Response.json({ id: 'share-12-test' }))
+  })
+
+  expect(screen.getByTestId('active-route')).toHaveTextContent('taskId=newer-task')
 })

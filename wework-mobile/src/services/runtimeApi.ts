@@ -124,7 +124,8 @@ export class RuntimeApi {
     private config: RuntimeSessionConfig | null,
     private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile,
     getAccessToken: (() => string) | undefined = undefined,
-    private readonly runtime?: Pick<RuntimeStream, 'executeCommand' | 'request'>,
+    private readonly runtime?: Pick<RuntimeStream, 'executeCommand' | 'request'> &
+      Partial<Pick<RuntimeStream, 'isAppDevice'>>,
     private readonly local?: LocalRuntimeApi
   ) {
     this.getAccessToken = getAccessToken ?? (() => this.config?.accessToken ?? '')
@@ -259,9 +260,14 @@ export class RuntimeApi {
     }
   }
 
-  async listWorkspaceDirectory(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+  async listWorkspaceDirectory(
+    deviceId: string,
+    path: string,
+    root = path,
+    taskId?: string
+  ): Promise<WorkspaceTreeResponse> {
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-    const response = await this.executeDeviceCommand(deviceId, {
+    const response = await this.readWorkspaceCommand(deviceId, root, taskId, {
       commandKey: 'workspace_tree',
       path: normalizedPath,
       timeoutSeconds: 15,
@@ -271,8 +277,13 @@ export class RuntimeApi {
     return normalizeWorkspaceTree(response.stdout, normalizedPath)
   }
 
-  getWorkspaceGitBranch(deviceId: string, path: string, signal?: AbortSignal): Promise<string> {
-    return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal })
+  getWorkspaceGitBranch(
+    deviceId: string,
+    path: string,
+    signal?: AbortSignal,
+    taskId?: string
+  ): Promise<string> {
+    return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal, taskId })
   }
 
   listWorkspaceGitBranches(deviceId: string, path: string): Promise<string[]> {
@@ -286,11 +297,13 @@ export class RuntimeApi {
     deviceId: string,
     path: string,
     selection: WorkspaceGitSelection,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    taskId?: string
   ): Promise<string> {
     const command = workspaceGitDiffCommand(selection)
     return this.readWorkspaceGitCommand(deviceId, path, command.commandKey, {
       signal,
+      taskId,
       timeoutSeconds: 30,
       maxOutputBytes: 5 * 1024 * 1024,
     })
@@ -302,6 +315,7 @@ export class RuntimeApi {
     commandKey: string,
     options: {
       signal?: AbortSignal
+      taskId?: string
       timeoutSeconds?: number
       maxOutputBytes?: number
     } = {}
@@ -310,16 +324,24 @@ export class RuntimeApi {
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
     if (!this.runtime) throw new Error('Runtime command connection is unavailable')
-    const response = await this.runtime.executeCommand(
-      deviceId,
-      {
-        command_key: commandKey,
-        path: normalizedPath,
-        timeout_seconds: options.timeoutSeconds ?? 10,
-        max_output_bytes: options.maxOutputBytes ?? 4096,
-      },
-      options.signal
-    )
+    const response = this.runtime.isAppDevice?.(deviceId)
+      ? await this.readWorkspaceCommand(deviceId, normalizedPath, options.taskId, {
+          commandKey,
+          path: normalizedPath,
+          timeoutSeconds: options.timeoutSeconds ?? 10,
+          maxOutputBytes: options.maxOutputBytes ?? 4096,
+          signal: options.signal,
+        })
+      : await this.runtime.executeCommand(
+          deviceId,
+          {
+            command_key: commandKey,
+            path: normalizedPath,
+            timeout_seconds: options.timeoutSeconds ?? 10,
+            max_output_bytes: options.maxOutputBytes ?? 4096,
+          },
+          options.signal
+        )
     throwIfAborted(options.signal)
     return workspaceGitCommandOutput(response, commandKey)
   }
@@ -327,23 +349,33 @@ export class RuntimeApi {
   async isWorkspaceGitRepository(
     deviceId: string,
     path: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    taskId?: string
   ): Promise<boolean> {
     throwIfAborted(signal)
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
     if (!this.runtime) throw new Error('Runtime command connection is unavailable')
-    const response = await this.runtime.executeCommand(
-      deviceId,
-      {
-        command_key: 'git_is_worktree',
-        path: normalizedPath,
-        args: [normalizedPath],
-        timeout_seconds: 10,
-        max_output_bytes: 4096,
-      },
-      signal
-    )
+    const response = this.runtime.isAppDevice?.(deviceId)
+      ? await this.readWorkspaceCommand(deviceId, normalizedPath, taskId, {
+          commandKey: 'git_is_worktree',
+          path: normalizedPath,
+          args: [normalizedPath],
+          timeoutSeconds: 10,
+          maxOutputBytes: 4096,
+          signal,
+        })
+      : await this.runtime.executeCommand(
+          deviceId,
+          {
+            command_key: 'git_is_worktree',
+            path: normalizedPath,
+            args: [normalizedPath],
+            timeout_seconds: 10,
+            max_output_bytes: 4096,
+          },
+          signal
+        )
     throwIfAborted(signal)
     if (response.stdout_truncated) throw new Error('Git repository probe was truncated')
     // PC uses this command's success + true output as its repository capability probe.
@@ -353,16 +385,22 @@ export class RuntimeApi {
   async readWorkspaceTextFile(
     deviceId: string,
     filePath: string,
-    _workspaceRoot?: string
+    workspaceRoot?: string,
+    taskId?: string
   ): Promise<WorkspaceTextFileResponse> {
     const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-    const response = await this.executeDeviceCommand(deviceId, {
-      commandKey: 'workspace_read_text_file',
-      path: parentPath,
-      args: [fileName],
-      timeoutSeconds: 15,
-      maxOutputBytes: 2 * 1024 * 1024,
-    })
+    const response = await this.readWorkspaceCommand(
+      deviceId,
+      workspaceRoot ?? parentPath,
+      taskId,
+      {
+        commandKey: 'workspace_read_text_file',
+        path: parentPath,
+        args: [fileName],
+        timeoutSeconds: 15,
+        maxOutputBytes: 2 * 1024 * 1024,
+      }
+    )
     assertDeviceCommandSucceeded(response, '无法读取设备文件')
     return normalizeWorkspaceTextFile(response.stdout, filePath)
   }
@@ -371,19 +409,25 @@ export class RuntimeApi {
     deviceId: string,
     filePath: string,
     offset: number,
-    _workspaceRoot?: string
+    workspaceRoot?: string,
+    taskId?: string
   ): Promise<WorkspaceFileChunkResponse> {
     if (!Number.isSafeInteger(offset) || offset < 0) {
       throw new Error('文件偏移量必须是非负整数')
     }
     const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-    const response = await this.executeDeviceCommand(deviceId, {
-      commandKey: 'workspace_read_file_chunk',
-      path: parentPath,
-      args: [fileName, String(offset)],
-      timeoutSeconds: 30,
-      maxOutputBytes: 2 * 1024 * 1024,
-    })
+    const response = await this.readWorkspaceCommand(
+      deviceId,
+      workspaceRoot ?? parentPath,
+      taskId,
+      {
+        commandKey: 'workspace_read_file_chunk',
+        path: parentPath,
+        args: [fileName, String(offset)],
+        timeoutSeconds: 30,
+        maxOutputBytes: 2 * 1024 * 1024,
+      }
+    )
     assertDeviceCommandSucceeded(response, '无法读取设备文件')
     return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
   }
@@ -392,26 +436,36 @@ export class RuntimeApi {
     deviceId: string,
     root: string,
     query: string,
-    cancellationToken?: string
+    cancellationToken?: string,
+    taskId?: string
   ): Promise<RuntimeWorkspaceSearchResponse> {
     const response = this.local?.runtime.ownsDevice(deviceId)
       ? await this.local.runtime.request<RuntimeWorkspaceSearchResponse>(
           'runtime.workspace.search',
           { deviceId, root, query, cancellationToken }
         )
-      : await this.request<RuntimeWorkspaceSearchResponse>('/runtime-work/workspace/search', {
-          method: 'POST',
-          body: JSON.stringify({ deviceId, root, query, cancellationToken }),
-        })
+      : this.runtime?.isAppDevice?.(deviceId)
+        ? await this.runtime.request<RuntimeWorkspaceSearchResponse>(
+            'runtime.workspace.read',
+            { root, path: root, commandKey: 'search', query, cancellationToken, taskId },
+            deviceId
+          )
+        : await this.request<RuntimeWorkspaceSearchResponse>('/runtime-work/workspace/search', {
+            method: 'POST',
+            body: JSON.stringify({ deviceId, root, query, cancellationToken }),
+          })
     if (!isWorkspaceSearchResponse(response)) throw new Error('设备返回了无效的文件搜索结果')
     return response
   }
 
-  readFileChangesDiff(summary: TurnFileChangesSummary | undefined): Promise<string> {
+  readFileChangesDiff(
+    summary: TurnFileChangesSummary | undefined,
+    taskId?: string
+  ): Promise<string> {
     return loadRuntimeFileChangesDiff(
       {
         executeCommand: (deviceId, input) =>
-          this.executeDeviceCommand(deviceId, {
+          this.readWorkspaceCommand(deviceId, input.path, taskId, {
             commandKey: input.command_key,
             path: input.path,
             args: input.args,
@@ -855,6 +909,35 @@ export class RuntimeApi {
       throw new Error('设备返回了无效的命令响应')
     }
     return response
+  }
+
+  private async readWorkspaceCommand(
+    deviceId: string,
+    root: string,
+    taskId: string | undefined,
+    input: {
+      commandKey: string
+      path: string
+      args?: string[]
+      timeoutSeconds: number
+      maxOutputBytes: number
+      signal?: AbortSignal
+    }
+  ): Promise<RuntimeDeviceCommandResponse> {
+    if (!this.runtime?.isAppDevice?.(deviceId)) return this.executeDeviceCommand(deviceId, input)
+    return this.runtime.request<RuntimeDeviceCommandResponse>(
+      'runtime.workspace.read',
+      {
+        root,
+        path: input.path,
+        commandKey: input.commandKey,
+        ...(taskId ? { taskId } : {}),
+        ...(input.args ? { args: input.args } : {}),
+      },
+      deviceId,
+      input.timeoutSeconds * 1000 + 10_000,
+      { signal: input.signal, relayTimeoutSeconds: input.timeoutSeconds }
+    )
   }
 }
 

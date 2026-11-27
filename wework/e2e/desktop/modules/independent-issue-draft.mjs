@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict'
+import { until } from './plugin-regression-fixture.mjs'
 import { waitForAttribute } from './workspace-flows.mjs'
 
 const testId = id => `[data-testid="${id}"]`
+
+export async function verifyIssueCreationColumns(control) {
+  const metric = async id => JSON.parse(await control.command('getElementMetrics', testId(id)))[0]
+  const people = await metric('independent-issue-search-people')
+  const title = await metric('independent-issue-title')
+  const todo = await metric('independent-issue-description')
+  assert.ok(
+    people.right < todo.left && title.bottom < todo.top,
+    'A wide creation dialog must show participants beside the issue content'
+  )
+}
 
 async function setIssueTestLanguage(control, language) {
   await control.command('clickWhenEnabled', testId('settings-button'))
@@ -39,20 +51,25 @@ export async function verifyEnglishLinkedIssueLayout(
     const metric = async selector =>
       JSON.parse(await control.command('getElementMetrics', selector))[0]
     const scroll = await metric(testId('independent-issue-editor-scroll'))
+    const people = await metric(testId('independent-issue-search-people'))
+    const todo = await metric(testId('independent-issue-description'))
+    assert.ok(people.bottom <= todo.top, 'A narrow creation dialog must stack both columns')
     assert.equal(
       await control.command('getText', testId('issue-project-selected-name')),
       project.name
     )
+    const picker = await control.command('getText', testId('independent-issue-project'))
+    assert.ok(!picker.includes(project.project_key), 'Hide the project key in the closed picker')
     assert.equal(
-      await control.command('getText', testId('issue-project-selected-key')),
-      project.project_key
+      await control.command('getText', testId('issue-project-scope')),
+      'Follows project access rules'
     )
-    const key = await metric(testId('issue-project-selected-key'))
+    const scope = await metric(testId('issue-project-scope'))
     assert.ok(
-      key.scrollWidth <= key.clientWidth + 1 &&
-        key.visibleIntersection?.width >= key.width - 1 &&
-        key.visibleIntersection?.height >= key.height - 1,
-      'The selected project key must remain fully readable in the closed narrow-window picker'
+      scope.scrollWidth <= scope.clientWidth + 1 &&
+        scope.visibleIntersection?.width >= scope.width - 1 &&
+        scope.visibleIntersection?.height >= scope.height - 1,
+      'The short permission text must remain fully readable in the closed narrow-window picker'
     )
     assert.ok(
       scroll.scrollWidth <= scroll.clientWidth + 1,
@@ -84,6 +101,12 @@ export async function verifyEnglishLinkedIssueLayout(
   await setIssueTestLanguage(control, 'zh-CN')
 }
 
+/** Send a real Electron key event to the Issue control without switching app focus. */
+export async function pressFocusedIssueKey(control, selector, key) {
+  await control.command('focus', selector)
+  await control.command('pressWindowKey', selector, { key })
+}
+
 /** Exercise the shared searchable property picker with real keyboard input. */
 export async function chooseIssueProperty(control, id, value, query = '') {
   await control.command('clickWhenEnabled', testId(id))
@@ -93,10 +116,18 @@ export async function chooseIssueProperty(control, id, value, query = '') {
   await control.command('fill', search, { value: query })
   const optionId = `${id}-option-${value || 'empty'}`
   await control.command('waitFor', testId(optionId), { visible: true })
-  await control.command('nativePress', search, { key: 'ArrowDown' })
-  assert.equal(await control.command('getActiveElementTestId', 'body'), optionId)
-  await control.command('nativePress', testId(optionId), { key: 'Enter' })
+  await pressFocusedIssueKey(control, search, 'ArrowDown')
+  const option = testId(optionId)
+  const activeDescendant = await control.command('getAttribute', search, {
+    value: 'aria-activedescendant',
+  })
+  const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+  assert.ok(activeDescendant, 'ArrowDown must highlight a real option')
+  assert.equal(activeDescendant, optionDomId, 'ArrowDown must highlight the requested option')
+  assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  await pressFocusedIssueKey(control, search, 'Enter')
   await control.command('waitFor', testId(`${id}-menu`), { visible: false })
+  assert.equal(await control.command('getAttribute', testId(id), { value: 'data-value' }), value)
   await control.command('waitFor', `${testId(id)}:focus`, { visible: true })
 }
 
@@ -106,11 +137,12 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
   await reopen()
   await control.command('fill', testId('independent-issue-title'), { value: title })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const row = (await request('/api/v1/personal-issues?scope=created')).items.find(
     item => item.title === title
   )
   assert.ok(row)
+  await control.command('clickWhenEnabled', testId('independent-issue-actions'))
   await control.command('clickWhenEnabled', testId('independent-issue-edit'))
   await control.command('fill', testId('independent-issue-description'), {
     value: 'Local unsaved draft',
@@ -141,7 +173,8 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
   )
   await control.command('clickWhenEnabled', testId('independent-issue-reload'))
   await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
+  await control.command('clickWhenEnabled', testId('independent-issue-actions'))
   await control.command('clickWhenEnabled', testId('independent-issue-edit'))
   assert.equal(
     await control.command('getValue', testId('independent-issue-description')),
@@ -151,7 +184,7 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
     value: 'Explicitly revised after reload',
   })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const resolved = await request(`/api/v1/personal-issues/${row.id}`)
   assert.equal(resolved.description, 'Explicitly revised after reload')
   assert.ok(resolved.version > concurrent.version)
@@ -170,7 +203,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   const trigger = testId('issue-environment-picker-trigger')
   const picker = testId('issue-environment-picker')
   const prefix = 'collaboration-project-execution-environment'
-  await control.command('clickWhenEnabled', trigger)
+  await pressFocusedIssueKey(control, picker, 'Escape')
   await control.command('waitFor', picker, { visible: false })
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 390, height: 844 }),
@@ -215,7 +248,10 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
         'Every visible device action must have a 44px touch target'
       )
     }
-    await control.command('nativePress', preparation, { key: 'Escape' })
+    await pressFocusedIssueKey(control, preparation, 'Escape')
+    await control.command('waitFor', preparation, { visible: false })
+    await control.command('waitFor', picker, { visible: true })
+    await pressFocusedIssueKey(control, picker, 'Escape')
     await control.command('waitFor', picker, { visible: false })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })
@@ -225,7 +261,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   await control.command('waitFor', picker, { visible: true })
 }
 
-/** Recover a real partial save after the selected project is archived elsewhere. */
+/** Recover an unsaved draft after the selected project is archived elsewhere. */
 export async function verifyIssueAssociationRecovery(control, { request, reopen }) {
   const title = `Association recovery ${process.pid}`
   const project = await request(
@@ -250,27 +286,27 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
     204
   )
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-association-pending'), {
+  await control.command('waitFor', `${testId('independent-issue-dialog')} [role="alert"]`, {
     visible: true,
   })
   const saved = (await request('/api/v1/personal-issues?scope=created')).items.filter(
     row => row.title === title
   )
-  assert.equal(saved.length, 1, 'A failed association must retain exactly one saved Issue')
-  await chooseIssueProperty(control, 'independent-issue-project', '')
+  assert.equal(saved.length, 0, 'A failed project creation must roll back the Issue')
+  const projectPicker = testId('independent-issue-project')
+  await control.command('clickWhenEnabled', projectPicker)
+  await control.command('clickWhenEnabled', testId('independent-issue-project-option-empty'))
+  assert.equal(await control.command('getAttribute', projectPicker, { value: 'data-value' }), '')
   await control.command('fill', testId('independent-issue-title'), { value: `${title} recovered` })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
-  const recovered = await request(`/api/v1/personal-issues/${saved[0].id}`)
-  assert.equal(recovered.title, `${title} recovered`)
-  assert.ok(recovered.version > saved[0].version, 'Recovery must update the saved version')
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const remaining = (await request('/api/v1/personal-issues?scope=created')).items.filter(row =>
     row.title.startsWith(title)
   )
   assert.deepEqual(
-    remaining.map(row => row.id),
-    [saved[0].id],
-    'Recovery must not create a duplicate'
+    remaining.map(row => row.title),
+    [`${title} recovered`],
+    'Retrying the retained draft must create exactly one Issue'
   )
   await control.command('clickWhenEnabled', testId('independent-issue-close'))
   await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
@@ -302,28 +338,23 @@ export async function verifyIndependentIssueDraft(
       initial.top >= 0 && initial.bottom <= initial.viewportHeight,
       'Actions must remain inside a short viewport'
     )
-    await control.command('clickWhenEnabled', testId('issue-participant-add'))
+    await control.command('fill', testId('independent-issue-search-people'), {
+      value: 'draft search',
+    })
     await control.command('waitFor', testId('independent-issue-search-people'), { visible: true })
     const expanded = await metrics('independent-issue-editor-actions')
     assert.ok(
       Math.abs(expanded.top - initial.top) <= 1,
       'Participant selection must not move the footer'
     )
-    await control.command('nativePress', testId('independent-issue-search-people'), {
-      key: 'Enter',
-    })
+    await pressFocusedIssueKey(control, testId('independent-issue-search-people'), 'Enter')
     const submitted = JSON.parse(
-      await control.command('sampleElementPresence', testId('independent-issue-edit'), {
+      await control.command('sampleElementPresence', testId('independent-issue-actions'), {
         value: '300',
       })
     )
     assert.equal(submitted.observed, false, 'Search Enter must not create an Issue')
-    await control.command('nativePress', testId('independent-issue-search-people'), {
-      key: 'Escape',
-    })
-    await control.command('waitFor', testId('issue-participant-picker'), { visible: false })
-    assert.equal(await control.command('getValue', testId('independent-issue-title')), title)
-    await control.command('nativePress', testId('independent-issue-title'), { key: 'Escape' })
+    await pressFocusedIssueKey(control, testId('independent-issue-search-people'), 'Escape')
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command(
       'clickWhenEnabled',
@@ -346,11 +377,12 @@ export async function verifyIndependentIssueDraft(
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
     await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
-    await control.command('waitFor', `${opener}:focus`, { visible: true })
-    assert.equal(
-      await control.command('getActiveElementTestId', 'body'),
-      'collaboration-primary-create-issue',
-      'Discarding the draft must return keyboard focus to the opener'
+    // The document can restore its active element while the native window is in the background.
+    await until(
+      () => control.command('getActiveElementTestId', 'body'),
+      activeId => activeId === 'collaboration-primary-create-issue',
+      `Discarding the draft must return keyboard focus to ${opener}`,
+      5_000
     )
     const after = await request('/api/v1/personal-issues?scope=created')
     assert.deepEqual(

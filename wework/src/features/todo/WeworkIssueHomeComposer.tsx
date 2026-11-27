@@ -1,11 +1,15 @@
+import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  ComposerProjectSelector,
+  PROJECT_CHAT_WORK_BAR_CLASS,
+  type ComposerInputHandle,
+} from '@wegent/collaboration/composer'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { IssueHomeModeTabs, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
+import { AtSign, Cloud, Hash, Laptop } from 'lucide-react'
 import { useId, useImperativeHandle, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
-import { ChevronDown, Laptop, Cloud, Check, AtSign, Hash } from 'lucide-react'
-import type { ComposerInputHandle } from '@wegent/collaboration/composer'
-import { useTranslation } from '@/hooks/useTranslation'
-import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
-import { AnchorPopover } from './AnchorPopover'
-import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 
 /** The Tasks-tab input with Issue persistence supplied by the collaboration host. */
 export function WeworkIssueHomeComposer({
@@ -20,7 +24,6 @@ export function WeworkIssueHomeComposer({
   const disabled = props.disabled || taskPending
   const [taskMode, setTaskMode] = useState(false)
   const [taskOpened, setTaskOpened] = useState(false)
-  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
   const input = useRef<ComposerInputHandle>(null)
   const [taskInput, setTaskInput] = useState<ComposerInputHandle | null>(null)
   const getActiveInput = () => (taskMode ? taskInput : input.current)
@@ -50,10 +53,6 @@ export function WeworkIssueHomeComposer({
     input.current?.insertReference(text)
     input.current?.focus()
   }
-  const closePicker = () => {
-    anchor?.focus()
-    setAnchor(null)
-  }
   const handleDraftChange = (draft: string) => {
     flushSync(() => props.onDraftChange?.(draft))
   }
@@ -62,26 +61,30 @@ export function WeworkIssueHomeComposer({
       data-testid="collaboration-issue-project-bar"
       className="flex min-w-0 max-w-full items-center"
     >
-      <button
-        type="button"
-        data-testid="collaboration-issue-project-trigger"
+      <ComposerProjectSelector
+        value={props.projectId}
         disabled={disabled}
-        aria-expanded={Boolean(anchor)}
-        aria-haspopup="dialog"
-        aria-label={
-          selectedProject
-            ? `${t('personalHome.collaborationProject')}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
-            : t('personalHome.collaborationProject')
-        }
-        onClick={event => setAnchor(event.currentTarget)}
-        className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md px-2 text-sm text-text-secondary transition-colors hover:bg-text-primary/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-7"
-      >
-        <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-        <span className="min-w-0 truncate">
-          {t('personalHome.collaborationProject')} · {selectedProject?.name}
-        </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-      </button>
+        label={t('personalHome.collaborationProject')}
+        testId="collaboration-issue-project-trigger"
+        menuTestId="collaboration-issue-project-picker"
+        icon={<ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />}
+        options={props.projects.map(project => ({
+          value: project.id,
+          label: project.name,
+          description: projectLocation(project),
+          icon:
+            project.project_store === 'local' ? (
+              <Laptop aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
+            ) : (
+              <Cloud aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
+            ),
+          testId: 'collaboration-issue-project-' + project.id,
+        }))}
+        onChange={id => {
+          props.onChange(getActiveInput()?.getValue() ?? props.value)
+          props.onSelectProject(id)
+        }}
+      />
     </div>
   )
   return (
@@ -90,53 +93,19 @@ export function WeworkIssueHomeComposer({
       className="flex min-h-0 min-w-0 w-full max-w-full flex-col gap-3"
     >
       <div className="flex w-full min-w-0 flex-col gap-3">
-        <div
-          role="tablist"
-          aria-label={t('issue_creation.entry_mode')}
-          className="flex items-center gap-5"
-          onKeyDown={event => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-            const tabs = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')
-            )
-            const index = tabs.indexOf(event.target as HTMLButtonElement)
-            if (index < 0) return
-            event.preventDefault()
-            const target =
-              event.key === 'Home'
-                ? tabs[0]
-                : event.key === 'End'
-                  ? tabs.at(-1)
-                  : tabs[
-                      (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-                    ]
-            target?.click()
-            target?.focus()
+        <IssueHomeModeTabs
+          id={composerId}
+          taskMode={taskMode}
+          taskAvailable={Boolean(renderTaskComposer)}
+          disabled={disabled}
+          translate={t}
+          onChange={mode => {
+            if (taskMode === mode) return
+            props.onChange(getActiveInput()?.getValue() ?? props.value)
+            if (mode) setTaskOpened(true)
+            setTaskMode(mode)
           }}
-        >
-          {[false, ...(renderTaskComposer ? [true] : [])].map(mode => (
-            <button
-              key={String(mode)}
-              type="button"
-              role="tab"
-              id={`${composerId}-${mode ? 'task' : 'record'}-tab`}
-              aria-controls={`${composerId}-${mode ? 'task' : 'record'}-panel`}
-              aria-selected={taskMode === mode}
-              tabIndex={taskMode === mode ? 0 : -1}
-              data-testid={mode ? 'personal-home-new-issue' : 'personal-home-record-mode'}
-              disabled={disabled}
-              onClick={() => {
-                if (taskMode === mode) return
-                props.onChange(getActiveInput()?.getValue() ?? props.value)
-                if (mode) setTaskOpened(true)
-                setTaskMode(mode)
-              }}
-              className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
-            >
-              {t(mode ? 'issue_creation.create_task' : 'issue_creation.record_mode')}
-            </button>
-          ))}
-        </div>
+        />
         {props.environmentNotice}
         <div
           id={`${composerId}-record-panel`}
@@ -168,9 +137,17 @@ export function WeworkIssueHomeComposer({
             showProjectWorkBar={false}
             showWorkspaceMenu={false}
             showExecutionTools={false}
-            toolbarLeadingContext={
-              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+            projectWorkBar={
+              <div
+                className={
+                  'flex w-full min-w-0 flex-wrap items-center gap-2 ' + PROJECT_CHAT_WORK_BAR_CLASS
+                }
+              >
                 {projectControl}
+              </div>
+            }
+            toolbarLeadingContext={
+              <>
                 {(
                   [
                     { symbol: '@', Icon: AtSign, label: 'mention_member' },
@@ -180,7 +157,8 @@ export function WeworkIssueHomeComposer({
                   symbol === '@' && props.ownerControl ? (
                     <span key={label}>{props.ownerControl}</span>
                   ) : (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={label}
                       type="button"
                       data-testid={`collaboration-issue-${label}`}
@@ -191,10 +169,10 @@ export function WeworkIssueHomeComposer({
                       className="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:opacity-50 md:h-7 md:w-7"
                     >
                       <Icon className="h-4 w-4" aria-hidden="true" />
-                    </button>
+                    </ControlButton>
                   )
                 )}
-              </div>
+              </>
             }
             externalMentionCandidates={props.members}
             mentionScope="external"
@@ -239,44 +217,6 @@ export function WeworkIssueHomeComposer({
             },
           })}
         </div>
-      )}
-      {anchor && (
-        <AnchorPopover
-          anchor={anchor}
-          title={t('personalHome.collaborationProject')}
-          testId="collaboration-issue-project-picker"
-          onClose={closePicker}
-        >
-          {props.projects.map(project => {
-            const Icon = project.project_store === 'local' ? Laptop : Cloud
-            return (
-              <button
-                key={project.id}
-                type="button"
-                data-testid={`collaboration-issue-project-${project.id}`}
-                disabled={disabled}
-                aria-pressed={project.id === props.projectId}
-                className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-base text-text-primary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
-                onClick={() => {
-                  props.onChange(getActiveInput()?.getValue() ?? props.value)
-                  props.onSelectProject(project.id)
-                  closePicker()
-                }}
-              >
-                <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{project.name}</span>
-                  <span className="block truncate text-xs text-text-secondary">
-                    {projectLocation(project)}
-                  </span>
-                </span>
-                {project.id === props.projectId && (
-                  <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
-                )}
-              </button>
-            )
-          })}
-        </AnchorPopover>
       )}
     </section>
   )

@@ -89,7 +89,22 @@
     "background": "背景与目标",
     "unknownTime": "时间不可用",
     "unknownSource": "来源未知",
+    "traceRestricted": "私人来源不可查看",
+    "assistantSources": "助理参与来源",
+    "openAssistantSource": "打开原私人工作区",
+    "participation": {
+      "unverified": "来源可打开",
+      "restricted": "来源仅参与者可查看",
+      "history-unavailable": "历史来源不可用"
+    },
     "system": "系统",
+    "unknownMember": "未知成员（历史数据）",
+    "provenance": {
+      "humanPublished": "人工生成 · 人工发布",
+      "aiPending": "AI 生成 · 待确认",
+      "aiHumanPublished": "AI 生成 · 人工发布",
+      "aiPublished": "AI 生成 · AI 发布"
+    },
     "statusChanged": "状态：{{from}} → {{to}}",
     "handoff": "{{action}}：{{target}}",
     "handoffActions": {
@@ -163,7 +178,12 @@
     "continueDiscussion": "继续讨论"
   },
   "assistant": {
-    "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认助理团当前状态。",
+    "availability": {
+      "online": "在线",
+      "offline": "离线",
+      "unknown": "未知"
+    },
+    "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认各助理的当前状态。",
     "snapshot": {
       "title": "当前工作",
       "countSummary": "当前工作：{{waiting}} 件待决，{{running}} 件推进中，{{completed}} 件已完成。",
@@ -184,18 +204,18 @@
     "recentProgress": "最近进展",
     "noProgress": "暂无助理工作进展。",
     "progressLoading": "正在加载助理工作进展。",
-    "team": "助理团",
+    "team": "你的助理",
     "manage": "配置",
     "defaultAssistant": "默认助理",
     "defaultProtected": "默认助理始终保留，不能删除或暂停。",
-    "specialist": "专业助理",
+    "unnamedAssistant": "未命名助理",
     "noProjectScope": "尚未选择项目范围",
     "configureRole": "配置{{name}}",
     "deleteRole": "删除{{name}}",
-    "deleteRoleTitle": "删除专业助理？",
+    "deleteRoleTitle": "删除助理？",
     "deleteRoleDescription": "删除{{name}}后，已有讨论和执行历史会保留。默认助理继续按项目已配置的范围承接工作。",
     "cancel": "取消",
-    "delete": "删除角色",
+    "delete": "删除助理",
     "loading": "正在加载助理…",
     "retry": "重试",
     "conversationUnavailable": "当前账号的助理工作中尚无法确认这场私人讨论，请刷新工作列表后重试。",
@@ -210,7 +230,7 @@
       "failed": "失败",
       "cancelled": "已取消"
     },
-    "manageTeam": "管理助理团",
+    "manageTeam": "管理助理",
     "eyebrow": "与你一起推进",
     "headline": "助理已经准备好了，等你看看",
     "liveSummary": "{{waiting}} 件事等待确认，{{running}} 件正在推进。你可以直接接手，也可以在下方交代新想法。",
@@ -220,18 +240,19 @@
     "automatic": "自动分工",
     "chooseRole": "发给哪位助理",
     "privateScope": "私人讨论 · 仅你可见",
-    "pageTitle": "我的助理团"
+    "pageTitle": "我的助理"
   },
   "teamRelay": {
     "title": "助理正在接力",
-    "statusSummary": "助理团：{{members}}",
+    "statusSummary": "助理：{{members}}",
     "memberCountSummary": "{{name}}：{{state}}。{{waiting}} 件待确认，{{running}} 件推进中，{{completed}} 件已完成。",
     "memberStatusSummary": "{{name}}：{{state}}。",
     "memberLabel": "{{name}} · {{state}} · 管理助理",
     "allMembers": "查看全部 {{count}} 位助理",
     "paused": "已暂停",
-    "unavailable": "助理团信息尚不可用。",
+    "unavailable": "暂时无法读取助理列表。",
     "managementUnavailable": "助理配置尚不可用，请重试加载后再管理。",
+    "deviceUnavailable": "配置的执行设备当前不可用，请刷新设备后重试。",
     "state": {
       "waiting": "待确认",
       "running": "推进中",
@@ -258,6 +279,13 @@
     "summary": "交付摘要",
     "summaryPlaceholder": "一句话说明要解决什么、交付什么。",
     "defaults": "项目、负责人和日期都有默认值；创建后随时能在任务详情中修改。",
+    "assistantRoster": "将范围内的任务分配给你的项目助理",
+    "riskLevel": "执行风险",
+    "risk": {
+      "high": "高风险 · 操作前确认",
+      "low": "低风险 · 可按策略自动执行"
+    },
+    "registerInProject": "登记到 {{project}}",
     "cancel": "取消",
     "submit": "创建并打开任务",
     "search": "搜索选项",

@@ -74,6 +74,15 @@ describe('selectDesktopControlOption', () => {
     )
   })
 
+  test('captures the mounted options when an opted-in selection is missing', () => {
+    const select = createSelect()
+    select.options[1].disabled = true
+
+    expect(() => selectDesktopControlOption(select, 'missing', 'value', true)).toThrow(
+      'Unable to find select option by value "missing"; select={"selectedValue":"","selectedLabel":"None","options":[{"value":"","label":"None","disabled":false},{"value":"local:project-space-id","label":"Task Follow-up Board","disabled":true}]}'
+    )
+  })
+
   test('updates React controlled state before a following save click', async () => {
     const container = document.createElement('div')
     document.body.append(container)
@@ -112,6 +121,273 @@ describe('selectDesktopControlOption', () => {
 
     expect(select!.value).toBe('team:88001')
     expect(savedValues).toEqual(['team:88001'])
+    await act(async () => {
+      selectDesktopControlOption(select!, '')
+    })
+    expect(await selectDesktopControlChoice(select!, 'team:88001')).toBe('Board Review Agent')
+    await act(async () => {
+      save!.click()
+    })
+    expect(savedValues).toEqual(['team:88001', 'team:88001'])
     await act(async () => root.unmount())
   })
+})
+
+import '../../../packages/collaboration/src/test/setup'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ui-sdk/react/select'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import * as SelectParts from '@wegent/collaboration/controls/SelectParts'
+import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { desktopControlSelectionValue, selectDesktopControlChoice } from './desktop-control-select'
+
+async function sdkFixture(
+  kind: 'select' | 'combobox' | 'cancel' | 'reject' | 'raw',
+  disabled = false,
+  disabledOption = false
+) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const saved: string[] = []
+  function Form() {
+    const [value, setValue] = useState('first')
+    const common = {
+      value,
+      onChange: kind === 'reject' ? () => {} : setValue,
+      testId: 'sdk-choice',
+      accessibleLabel: 'Project',
+      options: [
+        { value: 'first', label: 'First project' },
+        { value: 'second', label: 'Second project', disabled: disabledOption },
+      ],
+      disabled,
+    }
+    return (
+      <>
+        {kind === 'cancel' || kind === 'raw' ? (
+          <Select
+            value={value}
+            onValueChange={(next, details) => {
+              if (kind === 'cancel') details.cancel()
+              else if (next !== null) setValue(next)
+            }}
+          >
+            <SelectTrigger data-testid="sdk-choice" aria-label="Project">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent keepMounted>
+              <SelectItem value="first">First project</SelectItem>
+              <SelectItem value="second">Second project</SelectItem>
+              <SelectItem value="" data-value="">
+                Unassigned
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        ) : kind === 'combobox' ? (
+          <SearchableSelect
+            {...common}
+            searchPlaceholder="Search projects"
+            emptyLabel="No projects"
+          />
+        ) : (
+          <SelectField {...common} />
+        )}
+        <output>{value}</output>
+        <button data-testid="sdk-save" onClick={() => saved.push(value)}>
+          Save
+        </button>
+      </>
+    )
+  }
+  await act(async () => root.render(<Form />))
+  return {
+    container,
+    root,
+    saved,
+    element: container.querySelector<HTMLElement>('[data-testid="sdk-choice"]')!,
+  }
+}
+
+for (const kind of ['select', 'combobox', 'raw'] as const) {
+  test.each(['value', 'label'] as const)(
+    `selects a real SDK ${kind} by %s and saves committed owner state`,
+    async mode => {
+      const fixture = await sdkFixture(kind)
+      try {
+        expect(await desktopControlSelectionValue(fixture.element)).toBe('first')
+        expect(
+          await selectDesktopControlChoice(
+            fixture.element,
+            mode === 'value' ? 'second' : 'Second project',
+            mode
+          )
+        ).toBe('Second project')
+        await act(async () =>
+          fixture.container.querySelector<HTMLButtonElement>('[data-testid="sdk-save"]')!.click()
+        )
+        expect(await desktopControlSelectionValue(fixture.element)).toBe('second')
+        expect(fixture.saved).toEqual(['second'])
+        expect(fixture.container.querySelector('output')!.textContent).toBe('second')
+      } finally {
+        await act(async () => fixture.root.unmount())
+        fixture.container.remove()
+      }
+    }
+  )
+}
+
+test('selects a cloud device by ID from the lazy grouped project picker', async () => {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const cloudDeviceId = 'wework-e2e-cloud-device'
+  const dockerDeviceId = 'wework-e2e-remote-docker-device'
+  let completeDeviceLoad!: () => void
+  const devicesLoaded = new Promise<void>(resolve => {
+    completeDeviceLoad = resolve
+  })
+  function DevicePicker() {
+    const [value, setValue] = useState(dockerDeviceId)
+    const [loaded, setLoaded] = useState(false)
+    return (
+      <SelectParts.SelectRoot
+        value={value}
+        onValueChange={next => next !== null && setValue(next)}
+        onOpenChange={open => {
+          if (open) void devicesLoaded.then(() => setLoaded(true))
+        }}
+      >
+        <SelectParts.SelectTrigger data-testid="standalone-remote-device-select" />
+        <SelectParts.SelectContent>
+          <SelectParts.SelectGroup>
+            <SelectParts.SelectGroupLabel>云设备</SelectParts.SelectGroupLabel>
+            {loaded && (
+              <SelectParts.SelectItem value={cloudDeviceId}>
+                云设备 · Wework E2E Cloud Device · 127.0.0.1
+              </SelectParts.SelectItem>
+            )}
+          </SelectParts.SelectGroup>
+          <SelectParts.SelectGroup>
+            <SelectParts.SelectGroupLabel>远程 Docker 设备</SelectParts.SelectGroupLabel>
+            <SelectParts.SelectItem value={dockerDeviceId}>
+              远程 Docker 设备 · Wework E2E Remote Docker Device · 127.0.0.1
+            </SelectParts.SelectItem>
+          </SelectParts.SelectGroup>
+        </SelectParts.SelectContent>
+      </SelectParts.SelectRoot>
+    )
+  }
+  try {
+    await act(async () => root.render(<DevicePicker />))
+    const trigger = container.querySelector<HTMLElement>(
+      '[data-testid="standalone-remote-device-select"]'
+    )!
+    const selection = selectDesktopControlChoice(trigger, cloudDeviceId).catch((error: unknown) =>
+      String(error)
+    )
+    // Keep the requested device pending past the agent's opening frames.
+    const loaded = new Promise<void>(resolve => {
+      const waitForOpen = () => {
+        if (trigger.getAttribute('aria-expanded') !== 'true') {
+          requestAnimationFrame(waitForOpen)
+          return
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }
+      requestAnimationFrame(waitForOpen)
+    })
+    await loaded
+    await act(async () => completeDeviceLoad())
+    expect(await selection).toBe('云设备 · Wework E2E Cloud Device · 127.0.0.1')
+    expect(await desktopControlSelectionValue(trigger)).toBe(cloudDeviceId)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
+
+test('clears an SDK selection when the list offers an empty value', async () => {
+  const fixture = await sdkFixture('raw')
+  try {
+    expect(await selectDesktopControlChoice(fixture.element, '')).toBe('Unassigned')
+    expect(await desktopControlSelectionValue(fixture.element)).toBe('')
+    expect(fixture.container.querySelector('output')?.textContent).toBe('')
+  } finally {
+    await act(async () => fixture.root.unmount())
+    fixture.container.remove()
+  }
+})
+
+test('retains requested option diagnostics through unified selection', async () => {
+  const native = createSelect()
+  await expect(selectDesktopControlChoice(native, 'missing', 'value', 1000, true)).rejects.toThrow(
+    'selectedLabel":"None"'
+  )
+  native.remove()
+
+  const fixture = await sdkFixture('select')
+  try {
+    await act(async () => {
+      await expect(
+        selectDesktopControlChoice(fixture.element, 'missing', 'value', 1000, true)
+      ).rejects.toThrow('"label":"First project"')
+    })
+  } finally {
+    await act(async () => fixture.root.unmount())
+    fixture.container.remove()
+  }
+})
+
+for (const kind of ['cancel', 'reject'] as const) {
+  test(`rejects SDK success when the business owner ${kind}s selection`, async () => {
+    const fixture = await sdkFixture(kind)
+    try {
+      await expect(
+        selectDesktopControlChoice(fixture.element, 'second', 'value', 30)
+      ).rejects.toThrow('Selection was not accepted')
+      await act(async () =>
+        fixture.container.querySelector<HTMLButtonElement>('[data-testid="sdk-save"]')!.click()
+      )
+      expect(await desktopControlSelectionValue(fixture.element)).toBe('first')
+      expect(fixture.saved).toEqual(['first'])
+    } finally {
+      await act(async () => fixture.root.unmount())
+      fixture.container.remove()
+    }
+  })
+}
+
+test.each([true, false])(
+  'rejects SDK disabled or missing choices without changing state (disabled=%s)',
+  async disabled => {
+    const fixture = await sdkFixture('select', disabled)
+    try {
+      await expect(
+        selectDesktopControlChoice(fixture.element, disabled ? 'second' : 'missing')
+      ).rejects.toThrow(disabled ? 'disabled' : 'Unable to find select option')
+      expect(fixture.container.querySelector('output')!.textContent).toBe('first')
+    } finally {
+      await act(async () => fixture.root.unmount())
+      fixture.container.remove()
+    }
+  }
+)
+
+test('rejects a disabled native option before dispatching a change', () => {
+  const select = createSelect()
+  select.options[1].disabled = true
+  expect(() => selectDesktopControlOption(select, 'local:project-space-id')).toThrow('disabled')
+  expect(select.value).toBe('')
+  select.remove()
+})
+
+test('rejects an SDK disabled option without accepting owner state', async () => {
+  const fixture = await sdkFixture('select', false, true)
+  try {
+    await expect(selectDesktopControlChoice(fixture.element, 'second')).rejects.toThrow()
+    expect(fixture.container.querySelector('output')!.textContent).toBe('first')
+  } finally {
+    await act(async () => fixture.root.unmount())
+    fixture.container.remove()
+  }
 })

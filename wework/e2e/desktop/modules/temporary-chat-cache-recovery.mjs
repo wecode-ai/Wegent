@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const CACHE_IDLE_TTL_MS = 300_000
+const DEFAULT_CACHE_IDLE_TTL_MS = 300_000
 
 async function readCachedMessages(control, address) {
   return JSON.parse(
@@ -72,15 +72,15 @@ async function waitForPanelUnmount(control, selector, timeoutMs) {
   assert.fail('Switching main tasks kept the temporary chat panel mounted')
 }
 
-async function waitForRealCacheEviction(control, address, startedAt, timeoutMs) {
+async function waitForRealCacheEviction(control, address, startedAt, timeoutMs, cacheIdleTtlMs) {
   let nextProgressAt = 30_000
-  while (performance.now() - startedAt < CACHE_IDLE_TTL_MS + timeoutMs) {
+  while (performance.now() - startedAt < cacheIdleTtlMs + timeoutMs) {
     const messages = await readCachedMessages(control, address)
     const elapsedMs = performance.now() - startedAt
     if (messages.length === 0) {
       assert.ok(
-        elapsedMs >= CACHE_IDLE_TTL_MS,
-        'The temporary chat cache expired before five minutes'
+        elapsedMs >= cacheIdleTtlMs,
+        `The temporary chat cache expired before its configured ${cacheIdleTtlMs}ms TTL`
       )
       return { elapsedMs, observedAt: new Date().toISOString(), messages }
     }
@@ -92,7 +92,9 @@ async function waitForRealCacheEviction(control, address, startedAt, timeoutMs) 
     }
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
-  assert.fail('The unmounted temporary chat cache did not expire after its real five-minute TTL')
+  assert.fail(
+    `The unmounted temporary chat cache did not expire after its real ${cacheIdleTtlMs}ms TTL`
+  )
 }
 
 export async function verifyTemporaryChatCacheRecovery(control, options) {
@@ -107,7 +109,29 @@ export async function verifyTemporaryChatCacheRecovery(control, options) {
   } = options
   assert.ok(address?.deviceId && address.taskId, 'Cache recovery requires the side task address')
   assert.ok(expectedMessages.length > 0, 'Cache recovery requires completed side messages')
-  const evidence = { address, expectedMessages, startedAt: new Date().toISOString() }
+  const cacheIdleTtlMs = Number(
+    process.env.WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS ?? DEFAULT_CACHE_IDLE_TTL_MS
+  )
+  assert.ok(
+    Number.isInteger(cacheIdleTtlMs) && cacheIdleTtlMs > 0,
+    'Invalid cache TTL configuration'
+  )
+  const policy = JSON.parse(
+    await control.command('performanceSnapshot', 'body', {
+      value: JSON.stringify({ collectMemory: false }),
+    })
+  )
+  assert.equal(
+    policy.runtimeConversationCache?.idleTtlMs,
+    cacheIdleTtlMs,
+    'The real renderer did not apply the configured cache TTL'
+  )
+  const evidence = {
+    address,
+    expectedMessages,
+    cacheIdleTtlMs,
+    startedAt: new Date().toISOString(),
+  }
   try {
     evidence.before = await assertTemporaryChatMessages(control, options)
     const startedAt = performance.now()
@@ -120,7 +144,13 @@ export async function verifyTemporaryChatCacheRecovery(control, options) {
       expectedMessages,
       'Unmounting the temporary chat cleared its cache before the idle TTL'
     )
-    evidence.eviction = await waitForRealCacheEviction(control, address, startedAt, uiTimeoutMs)
+    evidence.eviction = await waitForRealCacheEviction(
+      control,
+      address,
+      startedAt,
+      uiTimeoutMs,
+      cacheIdleTtlMs
+    )
     await control.command('click', `[data-testid=${JSON.stringify(sourceTaskRow)}]`)
     await control.command('waitFor', sideChatSelector, {
       text: expectedMessages.at(-1).content.trim(),

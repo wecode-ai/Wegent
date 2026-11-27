@@ -1,4 +1,5 @@
 import type { RuntimeConversationClient } from "@wegent/chat-core";
+import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -110,6 +111,33 @@ export interface WorkspaceIssueListFilters {
   executionState?: string;
 }
 
+export interface AssistantParticipationReference {
+  kind: string;
+  id: string;
+}
+
+export interface AssistantParticipation {
+  id: string;
+  projectId: string;
+  issueId: string;
+  ownerUserId: number;
+  ownerDisplayName: string | null;
+  roleId: string;
+  endpointRef: string;
+  conversationId: string | null;
+  source: AssistantParticipationReference;
+  workroomRef: AssistantParticipationReference | null;
+  traceRef: string | null;
+  historyState: "unverified" | "restricted" | "history-unavailable";
+  auditSource: string;
+}
+
+export interface AssistantParticipationWorkroom {
+  participation: AssistantParticipation;
+  runtimeAddress: RuntimeTaskAddress | null;
+  backendTask?: { taskId: number; executionUrl: string } | null;
+}
+
 export interface WorkspaceIssuePageInput {
   status: string;
   parentId: string | null;
@@ -181,6 +209,7 @@ export interface WorkspaceIssueUpdateInput {
   assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
+  notifyAssignee?: boolean;
   startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
@@ -268,6 +297,63 @@ export interface CollaborationGroupCreateInput {
 
 export interface CollaborationGroupUpdateInput extends Partial<CollaborationGroupCreateInput> {
   version: number;
+}
+
+export interface ProjectAssistantRosterEntry {
+  id: string;
+  projectId: string;
+  userId: number;
+  userName: string;
+  roleId: string;
+  endpointRef: string;
+  endpointKind: "local_wework" | "cloud_device" | "wegent_agent";
+  displayName: string;
+  enabled: boolean;
+  capabilityTags: string[];
+  autonomyPolicy: Record<string, unknown>;
+  availability: "online" | "offline" | "unknown";
+  version: number;
+}
+
+export interface ProjectAssistantRosterInput {
+  userId: number;
+  roleId: string;
+  endpointRef: string;
+  displayName: string;
+  enabled: boolean;
+  capabilityTags?: string[];
+  autonomyPolicy?: Record<string, unknown>;
+  availability?: "online" | "offline" | "unknown";
+  version?: number;
+}
+
+export interface ProjectAssistantDispatchInput {
+  intentId: string;
+  goal: string;
+  riskLevel: "low" | "medium" | "high";
+  description?: string;
+  dueAt?: string;
+  managerUserId?: number;
+  confirmationState: "confirmed";
+  assignments: Array<{
+    rosterEntryId?: string;
+    userId: number;
+    brief: string;
+  }>;
+}
+
+export interface ProjectAssistantDispatchResult {
+  dispatchId: string;
+  intentId: string;
+  rootIssueId: string;
+  managerUserId: number;
+  children: Array<{
+    issueId: string;
+    userId: number;
+    rosterEntryId: string;
+    status: string;
+  }>;
+  replayed: boolean;
 }
 
 export interface WorkspaceExecutionEnvironmentCreateInput {
@@ -445,7 +531,9 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
-  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  executionPolicy?:
+    | import("../agent-form/runnerRouting").AgentExecutionPolicy
+    | null;
   modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
@@ -495,6 +583,26 @@ export interface SharedWorkspaceProjectsApi {
     input: CollaborationGroupUpdateInput,
   ): Promise<import("../types").CollaborationGroup>;
   removeCollaborationGroup?(projectId: string, groupId: string): Promise<void>;
+  listAssistantRoster?(
+    projectId: string,
+  ): Promise<ProjectAssistantRosterEntry[]>;
+  saveAssistantRosterEntry?(
+    projectId: string,
+    input: ProjectAssistantRosterInput,
+  ): Promise<ProjectAssistantRosterEntry>;
+  createAssistantDispatch?(
+    projectId: string,
+    input: ProjectAssistantDispatchInput,
+  ): Promise<ProjectAssistantDispatchResult>;
+  backfillAssistantParticipations?(
+    projectId: string,
+    input?: { dryRun?: boolean },
+  ): Promise<{
+    dryRun: boolean;
+    created: number;
+    existing: number;
+    items: AssistantParticipation[];
+  }>;
 }
 
 export interface SharedWorkspaceMyWorkApi {
@@ -565,6 +673,22 @@ export interface SharedWorkspaceIssuesApi {
     activitySequence?: number,
     contentRevision?: number,
   ): Promise<CollaborationIssue>;
+  listAssistantParticipations?(
+    issueId: string,
+  ): Promise<AssistantParticipation[]>;
+  readAssistantParticipation?(
+    issueId: string,
+    participationId: string,
+  ): Promise<AssistantParticipationWorkroom>;
+  backfillAssistantParticipations?(
+    issueId: string,
+    input?: { dryRun?: boolean },
+  ): Promise<{
+    dryRun: boolean;
+    created: number;
+    existing: number;
+    items: AssistantParticipation[];
+  }>;
 }
 
 export interface SharedWorkspaceCommentsApi {
@@ -572,7 +696,20 @@ export interface SharedWorkspaceCommentsApi {
   create(
     issueId: string,
     body: string,
-    options?: { clientMessageId?: string },
+    options?: {
+      clientMessageId?: string;
+      projectId?: string;
+      assistantSource?: { deviceId: string; taskId: string };
+    },
+  ): Promise<CollaborationComment>;
+  createAssistantPublication?(
+    issueId: string,
+    body: string,
+    options: {
+      clientMessageId: string;
+      projectId: string;
+      assistantSource: { deviceId: string; taskId: string };
+    },
   ): Promise<CollaborationComment>;
 }
 
@@ -994,7 +1131,6 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
 
 export interface WorkspaceStandInWorkspace {
   projectKey: string;
-  workspacePath: string;
   executionMode: "current_workspace" | "git_worktree";
   branch?: string | null;
 }
@@ -1014,6 +1150,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  metrics?: import("../metrics/types").CollaborationMetricsApi;
   milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(

@@ -9,6 +9,16 @@ use crate::runtime_work::{
 };
 
 use crate::runtime_work::lifecycle::*;
+use wegent_protocol::chat_errors::error_info;
+
+fn clear_preparation_failure(link: &mut RuntimeTaskLink) {
+    if let Some(handle) = link.runtime_handle.as_object_mut() {
+        if handle.remove("startupFailure").is_some() {
+            handle.remove("lastError");
+            handle.remove("lastErrorCode");
+        }
+    }
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn native_task_holds_capacity(&self, task_id: &str) -> bool {
@@ -94,6 +104,7 @@ impl RuntimeWorkRpcHandler {
             state.request_turn_id = Some(turn_id.to_owned());
             state.revision = next_runtime_event_sequence().to_string();
             state.updated_at = now_ms();
+            clear_preparation_failure(link);
             project_native_execution(link, &state);
             changed = true;
         });
@@ -419,6 +430,9 @@ impl RuntimeWorkRpcHandler {
                     .get("error")
                     .and_then(|error| string_field(error, "message")),
             };
+            if started {
+                clear_preparation_failure(link);
+            }
             project_native_execution(link, &state);
             changed = true;
         });
@@ -451,7 +465,10 @@ impl RuntimeWorkRpcHandler {
                 "response.completed"
             }
             ExecutionOutcome::Failed { message } => {
-                data["error"] = json!({"message": message});
+                let failure_info = error_info(result.error_type.as_deref(), Some(&message));
+                data["type"] = failure_info["code"].clone();
+                data["error"] = json!({"message": message, "code": failure_info["code"]});
+                data["error_info"] = failure_info;
                 "response.failed"
             }
             ExecutionOutcome::Cancelled { message } => {

@@ -1,4 +1,3 @@
-import { readNativeMcpCallId, readNativeCommandCallId } from './native-tool-call-id.mjs'
 import {
   captureMemorySample,
   captureTotalMemorySample,
@@ -13,8 +12,6 @@ import {
   CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
   CONCURRENT_MEMORY_TASK_COUNT,
   DEFAULT_STEP_TIMEOUT_MS,
-  LOCAL_MARKDOWN_IMAGE_FILENAME,
-  LOCAL_MARKDOWN_IMAGE_PROMPT,
   MEMORY_COMPLETION_TEXT,
   MEMORY_MAX_BASELINE_SAMPLES,
   MEMORY_MAX_PEAK_GROWTH_KIB,
@@ -28,28 +25,17 @@ import {
   MEMORY_PROMPT,
   MEMORY_SAMPLE_INTERVAL_MS,
   MEMORY_SAMPLE_WINDOW_SIZE,
-  MODEL_REQUEST_TIMEOUT_MS,
-  TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-  TOOL_BLOCK_ORDER_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
   resultDir,
-  rm,
-  selectE2EModel,
   sendPromptUntilScenarioRequest,
-  withTimeout,
   writeFile,
 } from './shared.mjs'
-import { tmpdir } from 'node:os'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MEMORY_RESPONSE_TIMEOUT_MS = 30_000
-const ONE_PIXEL_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  'base64'
-)
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -117,197 +103,6 @@ async function ensureToggleExpanded(control, selector) {
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-}
-
-async function verifyToolBlockChronologicalOrder({ composerSelector, control }) {
-  control.setScenario('tool_block_order')
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await selectE2EModel(control)
-  await sendPromptUntilScenarioRequest(
-    control,
-    composerSelector,
-    TOOL_BLOCK_ORDER_PROMPT,
-    'tool_block_order'
-  )
-
-  await withTimeout(
-    control.guard(control.toolBlockNodeOutputObserved),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The Node REPL output did not return to the real model request'
-  )
-  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
-    .currentRuntimeTask
-  const nodeReplCallId = await readNativeMcpCallId(
-    control,
-    address,
-    'node_repl',
-    'js',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-  const nodeReplSelector = `[data-processing-block-id="${nodeReplCallId}"]`
-  await control.command('waitFor', nodeReplSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await verifyExpandedToolDetail(control, {
-    selector: nodeReplSelector,
-    detailText: 'node_repl.js',
-    inputText: "nodeRepl.write({ status: 'ready', value: 42 })",
-    outputText: "{ status: 'executed', result: 84 }",
-    screenshotName: 'tool-block-details-02-node-repl-expanded.png',
-  })
-  control.releaseToolBlockNode()
-
-  await withTimeout(
-    control.guard(control.toolBlockGenericOutputObserved),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The generic MCP output did not return to the real model request'
-  )
-  const genericMcpCallId = await readNativeMcpCallId(
-    control,
-    address,
-    'github__issues',
-    'get_issue_details',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-  const genericMcpSelector = `[data-processing-block-id="${genericMcpCallId}"]`
-  await control.command('waitFor', genericMcpSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await verifyExpandedToolDetail(control, {
-    selector: genericMcpSelector,
-    detailText: 'github__issues.get_issue_details',
-    inputText: '"issue_number": 123',
-    outputText: '"title": "Tool detail verification"',
-    screenshotName: 'tool-block-details-03-generic-mcp-expanded.png',
-  })
-  control.releaseToolBlockGeneric()
-
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await ensureToggleExpanded(control, '[data-testid="final-processing-toggle"]')
-  await ensureToggleExpanded(control, '[data-testid="processing-summary-toggle"]')
-
-  const earlierCallId = await readNativeCommandCallId(
-    control,
-    address,
-    'earlier-created-tool',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-  const laterCallId = await readNativeCommandCallId(
-    control,
-    address,
-    'later-created-tool',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-  const earlierSelector = `[data-processing-block-id="${earlierCallId}"]`
-  const laterSelector = `[data-processing-block-id="${laterCallId}"]`
-  await control.command('waitFor', earlierSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', laterSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', nodeReplSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', genericMcpSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const [earlierMetrics] = JSON.parse(await control.command('getElementMetrics', earlierSelector))
-  const [nodeReplMetrics] = JSON.parse(await control.command('getElementMetrics', nodeReplSelector))
-  const [genericMcpMetrics] = JSON.parse(
-    await control.command('getElementMetrics', genericMcpSelector)
-  )
-  const [laterMetrics] = JSON.parse(await control.command('getElementMetrics', laterSelector))
-  assert.ok(
-    earlierMetrics.top < nodeReplMetrics.top &&
-      nodeReplMetrics.top < genericMcpMetrics.top &&
-      genericMcpMetrics.top < laterMetrics.top,
-    `Tool activities were not chronological (${earlierMetrics.top}, ${nodeReplMetrics.top}, ${genericMcpMetrics.top}, ${laterMetrics.top})`
-  )
-  await control.command('scrollIntoView', earlierSelector)
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-order-01-chronological.png',
-    '[data-testid="final-processing-timeline"]'
-  )
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-order-04-later-command.png',
-    laterSelector
-  )
-}
-
-async function verifyLocalMarkdownImage({ composerSelector, control }) {
-  const imagePath = join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)
-  await writeFile(imagePath, ONE_PIXEL_PNG)
-  try {
-    control.setScenario('local_markdown_image')
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', composerSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control)
-    await sendPromptUntilScenarioRequest(
-      control,
-      composerSelector,
-      LOCAL_MARKDOWN_IMAGE_PROMPT,
-      'local_markdown_image'
-    )
-    const imageSelector = '[data-testid="assistant-markdown-image"]'
-    await waitForAttributeValue(
-      control,
-      imageSelector,
-      'src',
-      value => typeof value === 'string' && value.startsWith('blob:'),
-      'The local Markdown image did not render through a Blob URL',
-      MODEL_REQUEST_TIMEOUT_MS
-    )
-    assert.equal(
-      Number(
-        await control.command('getElementCount', '[data-testid="assistant-markdown-image-error"]')
-      ),
-      0,
-      'The local Markdown image rendered an error placeholder'
-    )
-  } finally {
-    await rm(imagePath, { force: true })
-  }
-}
-
-async function waitForAttributeValue(control, selector, name, predicate, message, timeoutMs) {
-  const startedAt = Date.now()
-  let latest = null
-  let lookupError = null
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      latest = await control.command('getAttribute', selector, { value: name })
-      lookupError = null
-    } catch (error) {
-      if (!String(error).includes('Unable to find selector')) throw error
-      lookupError = error
-    }
-    if (predicate(latest)) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${message}: ${lookupError ? String(lookupError) : JSON.stringify(latest)}`)
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -656,8 +451,6 @@ export {
   ensureTaskRowVisible,
   verifyExpandedToolDetail,
   ensureToggleExpanded,
-  verifyToolBlockChronologicalOrder,
-  verifyLocalMarkdownImage,
   waitForBlankConversation,
   verifyConcurrentTaskMemory,
   verifyMemoryGrowth,

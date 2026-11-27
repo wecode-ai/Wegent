@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react'
-import { Loader2, Trash2 } from 'lucide-react'
 import type { Site } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Trash2 } from 'lucide-react'
+import { useRef } from 'react'
 
 interface DeleteSiteDialogProps {
   site: Site
@@ -19,19 +21,7 @@ export function DeleteSiteDialog({
   onConfirm,
 }: DeleteSiteDialogProps) {
   const { t } = useTranslation('sites')
-  const cancelButtonRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    cancelButtonRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !loading) onCancel()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [loading, onCancel])
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   return (
     <div
@@ -40,14 +30,22 @@ export function DeleteSiteDialog({
         if (!loading && event.target === event.currentTarget) onCancel()
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="site-delete-dialog-title"
-        aria-describedby="site-delete-dialog-description"
-        data-testid="site-delete-dialog"
-        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={() => {
+          if (!loading) onCancel()
+        }}
+        initialFocus={'[data-testid="site-delete-cancel-button"]'}
+        render={
+          <div
+            ref={dialogRef}
+            tabIndex={-1}
+            aria-labelledby="site-delete-dialog-title"
+            aria-describedby="site-delete-dialog-description"
+            data-testid="site-delete-dialog"
+            className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-500">
@@ -77,8 +75,8 @@ export function DeleteSiteDialog({
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button
-            ref={cancelButtonRef}
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="site-delete-cancel-button"
             onClick={onCancel}
@@ -86,8 +84,10 @@ export function DeleteSiteDialog({
             className="h-8 rounded-md px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="destructive"
+            size="sm"
             type="button"
             data-testid="site-delete-confirm-button"
             onClick={onConfirm}
@@ -96,9 +96,9 @@ export function DeleteSiteDialog({
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
             {loading ? t('deleting', '删除中') : t('confirm_delete', '删除')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

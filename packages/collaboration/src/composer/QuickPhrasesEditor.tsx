@@ -1,7 +1,13 @@
-import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
-import type { CollaborationTranslate } from '../i18n'
+import { DeleteIconButton } from '../controls/DeleteIconButton'
+import { DialogSurface } from '../controls/DialogSurface'
 import type { QuickPhrase, QuickPhraseMode } from '@wegent/chat-core/composer-quick-phrases'
+import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus } from 'lucide-react'
+import { useState } from 'react'
+import { Radio, RadioGroup } from '../controls/RadioGroup'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 
 export type QuickPhraseChangeAction = 'create' | 'update' | 'delete' | 'move'
 
@@ -28,6 +34,7 @@ export function QuickPhrasesEditor({
   testIdPrefix = '',
 }: QuickPhrasesEditorProps) {
   const [editing, setEditing] = useState<QuickPhrase | null>(null)
+  const [deleting, setDeleting] = useState<QuickPhrase | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [validationError, setValidationError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -61,7 +68,11 @@ export function QuickPhrasesEditor({
       setValidationError(t('workbench.quick_phrase_required', '标题和内容不能为空'))
       return
     }
-    const normalized = { ...editing, title: editing.title.trim(), content: editing.content.trim() }
+    const normalized = {
+      ...editing,
+      title: editing.title.trim(),
+      content: editing.content.trim(),
+    }
     const exists = phrases.some(item => item.id === editing.id)
     const saved = await change(
       exists
@@ -74,7 +85,7 @@ export function QuickPhrasesEditor({
 
   return (
     <>
-      {validationError && !editing && (
+      {validationError && !editing && !deleting && (
         <div
           role="alert"
           className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
@@ -82,7 +93,9 @@ export function QuickPhrasesEditor({
           {validationError}
         </div>
       )}
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={testId('add-quick-phrase-button')}
         disabled={disabled}
@@ -94,7 +107,7 @@ export function QuickPhrasesEditor({
       >
         <Plus className="h-4 w-4" />
         {t('workbench.quick_phrase_add', '新增快捷短语')}
-      </button>
+      </ControlButton>
       <div className="space-y-1">
         {phrases.map((phrase, index) => (
           <div
@@ -126,7 +139,8 @@ export function QuickPhrasesEditor({
                   ? t('workbench.quick_phrase_mode_plan', '计划')
                   : t('workbench.quick_phrase_mode_goal', '目标模式')}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={testId(`quick-phrase-move-up-${phrase.id}`)}
               onClick={() => move(index, -1)}
@@ -135,8 +149,9 @@ export function QuickPhrasesEditor({
               aria-label={t('workbench.move_up', '上移')}
             >
               <ArrowUp className="h-4 w-4" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={testId(`quick-phrase-move-down-${phrase.id}`)}
               onClick={() => move(index, 1)}
@@ -145,8 +160,9 @@ export function QuickPhrasesEditor({
               aria-label={t('workbench.move_down', '下移')}
             >
               <ArrowDown className="h-4 w-4" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={testId(`quick-phrase-edit-${phrase.id}`)}
               onClick={() => {
@@ -158,38 +174,89 @@ export function QuickPhrasesEditor({
               aria-label={t('workbench.edit', '编辑')}
             >
               <Pencil className="h-4 w-4" />
-            </button>
-            <button
+            </ControlButton>
+            <DeleteIconButton
               type="button"
               data-testid={testId(`quick-phrase-delete-${phrase.id}`)}
               onClick={() => {
-                if (
-                  window.confirm(t('workbench.quick_phrase_delete_confirm', '删除这条快捷短语？'))
-                ) {
-                  void change(
-                    phrases.filter(item => item.id !== phrase.id),
-                    'delete'
-                  )
-                }
+                setValidationError('')
+                setDeleting(phrase)
               }}
               disabled={disabled}
-              className="h-8 w-8 max-md:h-11 max-md:w-11 rounded-lg p-2 text-destructive hover:bg-destructive/10 disabled:opacity-30"
               aria-label={t('workbench.delete', '删除')}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            />
           </div>
         ))}
       </div>
+      {deleting && (
+        <DialogSurface
+          kind="alertdialog"
+          onClose={() => {
+            if (!disabled) {
+              setValidationError('')
+              setDeleting(null)
+            }
+          }}
+          render={
+            <div
+              className="fixed inset-0 z-modal flex items-center justify-center bg-black/15 p-4"
+              aria-label={t('workbench.quick_phrase_delete_confirm', '删除这条快捷短语？')}
+            />
+          }
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg">
+            <h2 className="heading-sm">
+              {t('workbench.quick_phrase_delete_confirm', '删除这条快捷短语？')}
+            </h2>
+            <p className="mt-3 break-words text-sm">{deleting.title}</p>
+            {validationError && (
+              <p role="alert" className="mt-3 text-sm text-destructive">
+                {validationError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <ControlButton
+                variant="ghost"
+                size="sm"
+                type="button"
+                data-testid={testId('quick-phrase-delete-cancel')}
+                disabled={disabled}
+                onClick={() => {
+                  setValidationError('')
+                  setDeleting(null)
+                }}
+              >
+                {t('common.cancel', '取消')}
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
+                type="button"
+                data-testid={testId('quick-phrase-delete-confirm')}
+                disabled={disabled}
+                onClick={async () => {
+                  const deleted = await change(
+                    phrases.filter(item => item.id !== deleting.id),
+                    'delete'
+                  )
+                  if (deleted) setDeleting(null)
+                }}
+              >
+                {t('workbench.delete', '删除')}
+              </ControlButton>
+            </div>
+          </div>
+        </DialogSurface>
+      )}
       {editing && (
-        <div
-          className="fixed inset-0 z-modal flex items-center justify-center bg-black/15 p-4"
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={event => {
-            if (event.key !== 'Escape') return
-            event.preventDefault()
-            event.stopPropagation()
+        <DialogSurface
+          render={
+            <div
+              className="fixed inset-0 z-modal flex items-center justify-center bg-black/15 p-4"
+              aria-label={t('workbench.quick_phrase_edit', '编辑快捷短语')}
+            />
+          }
+          onClose={() => {
             if (!disabled) {
               setValidationError('')
               setEditing(null)
@@ -205,18 +272,18 @@ export function QuickPhrasesEditor({
             )}
             <label className="mt-4 block text-sm">
               {t('workbench.quick_phrase_title', '标题')}
-              <input
+              <ControlInput
                 autoFocus
                 disabled={disabled}
                 data-testid={testId('quick-phrase-title-input')}
                 value={editing.title}
                 onChange={event => setEditing({ ...editing, title: event.target.value })}
-                className="mt-1 h-10 max-md:min-h-11 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-blue-500"
+                className="mt-1 h-10 max-md:min-h-11 w-full keyboard:focus:border-blue-500"
               />
             </label>
             <label className="mt-3 block text-sm">
               {t('workbench.quick_phrase_content', '内容')}
-              <textarea
+              <ControlTextarea
                 disabled={disabled}
                 data-testid={testId('quick-phrase-content-input')}
                 value={editing.content}
@@ -227,18 +294,26 @@ export function QuickPhrasesEditor({
             </label>
             <fieldset className="mt-3">
               <legend className="text-sm">{t('workbench.quick_phrase_mode', '使用模式')}</legend>
-              <div className="mt-2 flex gap-4">
+              <RadioGroup
+                value={editing.mode}
+                name="quick-phrase-mode"
+                aria-label={t('workbench.quick_phrase_mode', '使用模式')}
+                onValueChange={next => {
+                  if (editing && ['normal', 'plan', 'goal'].includes(next ?? ''))
+                    setEditing({ ...editing, mode: next as QuickPhraseMode })
+                }}
+                render={<div />}
+                className="mt-2 flex gap-4"
+              >
                 {(['normal', 'plan', 'goal'] as QuickPhraseMode[]).map(mode => (
                   <label
                     key={mode}
                     className="flex items-center gap-1.5 text-sm max-md:min-h-11 max-md:min-w-11"
                   >
-                    <input
+                    <Radio
+                      value={mode}
                       disabled={disabled}
-                      type="radio"
                       data-testid={testId(`quick-phrase-mode-${mode}`)}
-                      checked={editing.mode === mode}
-                      onChange={() => setEditing({ ...editing, mode })}
                     />
                     {mode === 'normal'
                       ? t('workbench.quick_phrase_mode_normal', '普通')
@@ -247,10 +322,11 @@ export function QuickPhrasesEditor({
                         : t('workbench.quick_phrase_mode_goal', '目标模式')}
                   </label>
                 ))}
-              </div>
+              </RadioGroup>
             </fieldset>
             <div className="mt-5 flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={testId('quick-phrase-cancel-button')}
                 disabled={disabled}
@@ -261,8 +337,10 @@ export function QuickPhrasesEditor({
                 className="h-8 max-md:min-h-11 max-md:min-w-11 rounded-lg px-3 text-sm hover:bg-muted"
               >
                 {t('common.cancel', '取消')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid={testId('quick-phrase-save-button')}
                 disabled={disabled}
@@ -270,10 +348,10 @@ export function QuickPhrasesEditor({
                 className="h-8 max-md:min-h-11 max-md:min-w-11 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
               >
                 {t('common.save', '保存')}
-              </button>
+              </ControlButton>
             </div>
           </div>
-        </div>
+        </DialogSurface>
       )}
     </>
   )

@@ -8,7 +8,12 @@
  * Single source of truth for task messages, runtime state, and recovery.
  */
 
-import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '../api-types'
+import type {
+  ChatErrorInfo,
+  TaskDetail,
+  TaskDetailSubtask,
+  TaskStatus as ApiTaskStatus,
+} from '../api-types'
 import type { MessageBlock } from '../message-blocks'
 import {
   reduceChatCancelledEvent,
@@ -383,8 +388,21 @@ export class TaskStateMachine {
   /**
    * Handle chat:error event
    */
-  handleChatError(subtaskId: number, error: string, messageId?: number, errorType?: string): void {
-    this.dispatch({ type: 'CHAT_ERROR', subtaskId, error, messageId, errorType })
+  handleChatError(
+    subtaskId: number,
+    error: string,
+    messageId?: number,
+    errorType?: string,
+    errorInfo?: ChatErrorInfo
+  ): void {
+    this.dispatch({
+      type: 'CHAT_ERROR',
+      subtaskId,
+      error,
+      messageId,
+      errorType,
+      errorInfo,
+    })
   }
 
   /**

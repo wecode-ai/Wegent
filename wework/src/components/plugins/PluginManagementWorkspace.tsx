@@ -1,79 +1,50 @@
-import { toInstalledPluginItem } from './installedPluginPresentation'
-import {
-  beginPluginSettingsRequest,
-  ExpiredPluginSettingsRequest,
-  restorePluginComponentState,
-  type PluginSettingsUpdate,
-} from '@/features/plugins/pluginSettingsRequest'
-import {
-  updatePluginInventoryInstallation,
-  hasLoadedPluginInventory,
-  refreshInstalledPluginInventory,
-  commitPluginInventoryInstallation,
-} from '@/features/plugins/pluginInventory'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { getRuntimeConfig } from '@/config/runtime'
+import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
-import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { trackPluginEvent as track } from '@/telemetry/businessEvents'
-import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
-import { observeOperation } from '@/telemetry/observeOperation'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
-import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
-import {
-  getPluginMarketplaceCache,
-  capturePluginMarketplaceScope,
-  pluginMarketplaceCacheKey,
-  removePluginMarketplaceInstallation,
-  sameInstalledPlugins,
-  sameMarketplaceItems,
-  subscribePluginMarketplaceCache,
-} from '@/features/plugins/pluginMarketplaceCache'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
-import { navigateTo } from '@/lib/navigation'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
-import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
+import { createLocalFirstPluginApi } from '@/features/plugins/pluginLocalSync'
+import { pluginMarketplaceCacheKey } from '@/features/plugins/pluginMarketplaceCache'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
+import { queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import type { InstalledPlugin } from '@/types/api'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ReactNode } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
+import { isWegentManagedStorePlugin, linkedCloudPluginId } from './installedPluginMerge'
+import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
+import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
+import type { InstalledPluginItem } from './PluginManagementRows'
+import { InstalledPluginRow } from './PluginManagementRows'
 import {
-  isCloudManagedInstalledPlugin,
-  isWegentManagedStorePlugin,
-  linkedCloudInstalledPluginId,
-  linkedCloudPluginId,
-} from './installedPluginMerge'
-import {
-  pluginUninstallScope,
-  pluginUninstallWarningDetails,
-  uninstallPluginIdentities,
-  type PluginUninstallScope,
-} from './pluginUninstall'
-import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
-import { PluginDetailView } from './PluginDetailView'
-import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+  createPluginManagementSource,
+  findGitMarketplaceVersionHint,
+  resolvePublishedPluginUpdate,
+  type PluginManagementTab,
+} from './pluginManagementSource'
+import { PluginMarketplaceManagement } from './PluginMarketplaceManagement'
+import { PluginOperationNotice } from './PluginOperationNotice'
 import { resolvePluginOwnerActions } from './pluginOwnerActions'
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
   marketplaceItemOwnsLocalCreatedPackage,
-  resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
-import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
-import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
-import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
-import { getRuntimeConfig } from '@/config/runtime'
-import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
-import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
-import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 
 function tryPluginInChat(plugin: InstalledPlugin) {
   queuePluginTrial(plugin, { openInNewChat: true })
@@ -87,8 +58,6 @@ interface PluginManagementWorkspaceProps {
   cloudToken?: string | null
   onCreateWeworkPlugin?: () => Promise<void>
 }
-
-type PluginManagementTab = 'codex' | 'core-dsh'
 
 export function PluginManagementWorkspace(props: PluginManagementWorkspaceProps) {
   const cacheKey = pluginMarketplaceCacheKey(
@@ -107,13 +76,7 @@ function PluginManagementWorkspaceContent({
   onCreateWeworkPlugin,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
-  const mounted = useRef(false)
-  useLayoutEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
+
   const runtime = getRuntimeConfig()
   const resolvedCloudApiBaseUrl = cloudApiBaseUrl || runtime.apiBaseUrl
   const marketplaceCacheKeyValue = useMemo(
@@ -121,32 +84,8 @@ function PluginManagementWorkspaceContent({
     [cloudToken, resolvedCloudApiBaseUrl]
   )
   const knownDeviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
-  const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-  const initialCache = knownDeviceId && cached?.deviceId !== knownDeviceId ? null : cached
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    return (initialCache?.installedPlugins ?? []).map(toInstalledPluginItem)
-  })
-  const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>(() => {
-    return initialCache?.marketplaceItems ?? []
-  })
-  const [isLoadingPlugins, setIsLoadingPlugins] = useState(() => {
-    return !hasLoadedPluginInventory(initialCache)
-  })
-  const [currentDeviceId, setCurrentDeviceId] = useState(
-    () => knownDeviceId || initialCache?.deviceId || ''
-  )
-  const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
-  const [pendingUninstall, setPendingUninstall] = useState<{
-    id: string | number
-    name: string
-    scope: PluginUninstallScope
-  } | null>(null)
-  const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
-    () => new Set()
-  )
-  const [pluginOperationNotice, setPluginOperationNotice] =
-    useState<PluginOperationNoticeState | null>(null)
-  const [activeTab, setActiveTab] = useState<PluginManagementTab>('codex')
+  const cloudAvailable = Boolean(cloudToken === undefined ? getToken() : cloudToken)
+
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
@@ -154,342 +93,98 @@ function PluginManagementWorkspaceContent({
       apiBaseUrl: resolvedCloudApiBaseUrl,
       token: cloudToken === undefined ? getToken() : cloudToken,
     }
-    return createLocalDevicePluginApi(
-      createPluginApi(
-        createHttpClient({
-          baseUrl: profile.apiBaseUrl,
-          getToken: () => profile.token,
-          ...(cloudToken === undefined ? {} : { redirectOnUnauthorized: false }),
-        }),
-        resolvedCloudApiBaseUrl
-      ),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
+    const api = createPluginApi(
+      createHttpClient({
+        baseUrl: profile.apiBaseUrl,
+        getToken: () => profile.token,
+        ...(cloudToken === undefined ? {} : { redirectOnUnauthorized: false }),
+      }),
+      resolvedCloudApiBaseUrl
     )
+    const deviceApi = createLocalDevicePluginApi(api, deviceId =>
+      resolveLocalPluginDeviceRouteId(deviceId, profile)
+    )
+    return {
+      ...deviceApi,
+      updatePublishedRelease: createLocalFirstPluginApi(api, deviceApi, profile)
+        .updateInstalledPlugin,
+    }
   }, [cloudToken, resolvedCloudApiBaseUrl])
 
-  const selectTab = (tab: PluginManagementTab) => {
-    setActiveTab(tab)
-    document.getElementById(`plugin-management-${tab}-tab`)?.focus()
-  }
-
-  useEffect(() => {
-    return subscribePluginMarketplaceCache(snapshot => {
-      if (
-        !snapshot ||
-        snapshot.cacheKey !== marketplaceCacheKeyValue ||
-        (knownDeviceId && snapshot.deviceId !== knownDeviceId)
-      )
-        return
-      setInstalledPlugins(previous =>
-        sameInstalledPlugins(previous, snapshot.installedPlugins.map(toInstalledPluginItem))
-          ? previous
-          : snapshot.installedPlugins.map(toInstalledPluginItem)
-      )
-      setMarketplaceItems(previous =>
-        sameMarketplaceItems(previous, snapshot.marketplaceItems)
-          ? previous
-          : snapshot.marketplaceItems
-      )
-      if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
-      if (hasLoadedPluginInventory(snapshot)) setIsLoadingPlugins(false)
-    })
-  }, [marketplaceCacheKeyValue, knownDeviceId])
-
-  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
-    if (!showCoreDshTab) return
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-    event.preventDefault()
-    selectTab(tab === 'codex' ? 'core-dsh' : 'codex')
-  }
-
-  useEffect(() => {
-    let current = true
-    void refreshInstalledPluginInventory({
-      cacheKey: marketplaceCacheKeyValue,
-      deviceId: knownDeviceId,
-      readLocal: () => localPluginApi.listInstalledPlugins(),
-      readCloud: deviceId => cloudPluginApi.listInstalledPlugins(deviceId),
-      isCurrent: () =>
-        current && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId),
-    })
-      .catch(error => {
-        if (!current) return
-        setPluginOperationNotice({
-          id: 'inventory-load-failed',
-          kind: 'error',
-          message: getErrorMessage(error, t('workbench.plugins_load_failed', '加载插件失败')),
-        })
-      })
-      .finally(() => {
-        if (current) setIsLoadingPlugins(false)
-      })
-
-    return () => {
-      current = false
-    }
-  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, knownDeviceId, t])
+  const workspaceSource = useMemo(
+    () =>
+      createPluginManagementSource({
+        cacheKey: marketplaceCacheKeyValue,
+        knownDeviceId,
+        localPluginApi,
+        cloudPluginApi,
+        cloudAvailable,
+      }),
+    [marketplaceCacheKeyValue, knownDeviceId, localPluginApi, cloudPluginApi, cloudAvailable]
+  )
+  const observation = useMemo(() => workspaceSource.observe(t), [workspaceSource, t])
+  const {
+    installedPlugins,
+    marketplaceItems,
+    publishedMarketplaceItems,
+    isLoadingPlugins,
+    pendingUninstall,
+    uninstallingPluginIds,
+    pluginOperationNotice,
+    activeTab,
+    updatingPluginId,
+    currentDeviceId,
+    checkingMarketplaces,
+    gitMarketplaceVersions,
+  } = useSyncExternalStore(
+    observation.subscribe,
+    workspaceSource.getSnapshot,
+    workspaceSource.getSnapshot
+  )
+  const {
+    setPendingUninstall,
+    setPluginOperationNotice,
+    setActiveTab,
+    toggleInstalledPlugin,
+    requestUninstallPlugin,
+    confirmUninstallPlugin,
+    copyMarketplacePlugin,
+    preparePublishedPluginUpdate,
+    updatePublishedPlugin,
+    checkGitMarketplace,
+    reconcileGitMarketplaceSources,
+    removeConfiguredMarketplaceFromInventory,
+    refresh,
+  } = workspaceSource
+  const [pendingUpdate, setPendingUpdate] = useState<{
+    id: string | number
+    name: string
+    releaseId: number
+    expectedCurrentReleaseId: number
+    version: string
+  } | null>(null)
+  const tabs = [
+    {
+      id: 'codex',
+      label: t('workbench.plugins_wework_surface', 'Codex 插件'),
+      testId: 'plugin-management-surface-wework',
+    },
+    {
+      id: 'core-dsh',
+      label: t('workbench.plugins_core_dsh_surface', 'Wework 插件'),
+      testId: 'plugin-management-surface-core-dsh',
+    },
+    {
+      id: 'marketplaces',
+      label: t('workbench.plugins_marketplace_sources'),
+      testId: 'plugin-management-surface-marketplaces',
+    },
+  ] satisfies { id: PluginManagementTab; label: string; testId: string }[]
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
     [marketplaceItems]
   )
-  const selectedPlugin = useMemo(
-    () =>
-      selectedPluginId === null
-        ? null
-        : (installedPlugins.find(plugin => String(plugin.id) === String(selectedPluginId)) ?? null),
-    [installedPlugins, selectedPluginId]
-  )
-
-  const beginSettingsUpdate = (id: string | number, request: PluginSettingsUpdate) => {
-    const scopeIsCurrent = capturePluginMarketplaceScope(marketplaceCacheKeyValue, currentDeviceId)
-    return beginPluginSettingsRequest(
-      JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
-      id,
-      request,
-      () =>
-        scopeIsCurrent() && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId)
-    )
-  }
-
-  const updateInstalledPlugin = (
-    id: string | number,
-    request: { enabled?: boolean; componentStates?: Record<string, boolean> },
-    operation: ReturnType<typeof beginSettingsUpdate>
-  ) => {
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
-    const requestPromise = isCloudManagedInstalledPlugin(plugin.raw)
-      ? cloudPluginApi.updateInstalledPlugin(id, request, currentDeviceId || undefined)
-      : localPluginApi.updateInstalledPlugin(id, request)
-    return requestPromise.then(updated => {
-      if (operation.isCurrent())
-        updatePluginInventoryInstallation(
-          marketplaceCacheKeyValue,
-          id,
-          updated,
-          operation.currentUpdate()
-        )
-    })
-  }
-
-  const toggleInstalledPlugin = (id: string | number) => {
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    if (!plugin) return
-    setInstalledPlugins(previous =>
-      previous.map(item =>
-        String(item.id) === String(id) ? { ...item, enabled: !item.enabled } : item
-      )
-    )
-    const request = { enabled: !plugin.enabled }
-    const operation = beginSettingsUpdate(id, request)
-    void updateInstalledPlugin(id, request, operation)
-      .then(() => {
-        if (!operation.isCurrent()) return
-        notifyLocalPluginSkillsChanged()
-        track('plugin_enabled_changed', {
-          enabled: !plugin.enabled,
-          scope: 'plugin',
-          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
-          ...installedPluginTelemetryIdentity(plugin.raw),
-        })
-      })
-      .catch(error => {
-        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
-        setInstalledPlugins(previous =>
-          previous.map(item =>
-            String(item.id) === String(id) ? { ...item, enabled: plugin.enabled } : item
-          )
-        )
-        track('operation_failed', { operation: 'plugin_toggle' })
-      })
-      .finally(operation.finish)
-  }
-
-  const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    if (!plugin) return
-    const previousStates = plugin.raw.spec.componentStates || {}
-    setInstalledPlugins(previous =>
-      previous.map(item =>
-        String(item.id) === String(id)
-          ? {
-              ...item,
-              raw: {
-                ...item.raw,
-                spec: {
-                  ...item.raw.spec,
-                  componentStates: { ...previousStates, [componentKey]: enabled },
-                },
-              },
-            }
-          : item
-      )
-    )
-    const request = { componentStates: { [componentKey]: enabled } }
-    const operation = beginSettingsUpdate(id, request)
-    void updateInstalledPlugin(id, request, operation)
-      .then(() => {
-        if (!operation.isCurrent()) return
-        track('plugin_enabled_changed', {
-          enabled,
-          scope: 'component',
-          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
-          ...installedPluginTelemetryIdentity(plugin.raw),
-        })
-      })
-      .catch(error => {
-        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
-        setInstalledPlugins(previous =>
-          previous.map(item =>
-            String(item.id) === String(id)
-              ? {
-                  ...item,
-                  raw: {
-                    ...item.raw,
-                    spec: {
-                      ...item.raw.spec,
-                      componentStates: restorePluginComponentState(
-                        item.raw.spec.componentStates,
-                        previousStates,
-                        componentKey
-                      ),
-                    },
-                  },
-                }
-              : item
-          )
-        )
-        track('operation_failed', { operation: 'plugin_toggle' })
-      })
-      .finally(operation.finish)
-  }
-
-  const requestUninstallPlugin = (id: string | number, name: string) => {
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    setPendingUninstall({ id, name, scope: pluginUninstallScope(plugin?.raw ?? null) })
-  }
-
-  const confirmUninstallPlugin = () => {
-    if (!pendingUninstall) return
-    const { id, name } = pendingUninstall
-    setPendingUninstall(null)
-    setUninstallingPluginIds(previous => new Set(previous).add(id))
-    uninstallInstalledPlugin(id, name)
-  }
-
-  const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
-    const isCurrent = () => mounted.current
-    if (!isCurrent()) return
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    if (!plugin) {
-      setUninstallingPluginIds(previous => {
-        const next = new Set(previous)
-        next.delete(id)
-        return next
-      })
-      setPluginOperationNotice({
-        id: `uninstall-error-${id}`,
-        kind: 'error',
-        message: t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试'),
-      })
-      return
-    }
-    void uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
-      readLocalInstalled: () =>
-        localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
-      readCloudInstalled: () => cloudPluginApi.readInstalledPluginsForUninstall(),
-      isCurrent,
-      logoutLocal: () => logoutLocalConnectorsForPlugin(plugin.raw),
-      uninstallCloud: (pluginId, deviceId) =>
-        cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
-      uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
-    })
-      .then(outcome => {
-        if (!isCurrent()) return
-        const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
-        removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
-          installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
-          marketplaceItemIds: [
-            marketplaceItem?.id,
-            marketplaceItem?.remotePluginId,
-            plugin.raw.spec.pluginId,
-            linkedCloudPluginId(plugin.raw),
-          ],
-          marketplaceId:
-            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
-            installedPluginMarketplaceId(plugin.raw),
-          pluginKeys: [
-            plugin.raw.spec.source.pluginKey,
-            typeof plugin.raw.metadata.name === 'string' ? plugin.raw.metadata.name : null,
-            pluginName,
-          ],
-        })
-        setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-        notifyLocalPluginSkillsChanged()
-        const warningDetails = pluginUninstallWarningDetails(outcome)
-        setPluginOperationNotice({
-          id: `uninstalled-${id}`,
-          kind: warningDetails ? 'error' : 'success',
-          message: warningDetails
-            ? t(
-                'workbench.plugins_uninstall_partial',
-                '{{name}} 已从本机卸载，但部分清理失败：{{details}}',
-                {
-                  name: pluginName,
-                  details: warningDetails,
-                  defaultValue: `${pluginName} 已从本机卸载，但部分清理失败：${warningDetails}`,
-                }
-              )
-            : t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
-                name: pluginName,
-                defaultValue: `${pluginName} 已卸载`,
-              }),
-        })
-        if (warningDetails) {
-          track('operation_failed', { operation: 'plugin_uninstall' })
-        }
-        track('plugin_uninstalled', {
-          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
-          ...installedPluginTelemetryIdentity(plugin.raw),
-        })
-      })
-      .catch((error: unknown) => {
-        if (!isCurrent()) return
-        const rawErrorMessage = getErrorMessage(
-          error,
-          t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
-        )
-        console.error('[Wework plugins] uninstall plugin failed', {
-          pluginId: id,
-          error: rawErrorMessage,
-        })
-        setPluginOperationNotice({
-          id: `uninstall-error-${id}`,
-          kind: 'error',
-          message: humanizeMarketplaceUninstallError(rawErrorMessage, t),
-        })
-        track('operation_failed', { operation: 'plugin_uninstall' })
-      })
-      .finally(() => {
-        if (!isCurrent()) return
-        setUninstallingPluginIds(previous => {
-          const next = new Set(previous)
-          next.delete(id)
-          return next
-        })
-      })
-  }
-
-  useEffect(() => {
-    if (pluginOperationNotice?.kind !== 'success') return
-    const noticeId = pluginOperationNotice.id
-    const timeoutId = window.setTimeout(() => {
-      setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
-    }, 4_000)
-    return () => window.clearTimeout(timeoutId)
-  }, [pluginOperationNotice])
-
   const createdPluginSlug = (plugin: InstalledPluginItem) =>
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
@@ -511,41 +206,15 @@ function PluginManagementWorkspaceContent({
       (typeof plugin.raw.spec.pluginId === 'number'
         ? marketplaceById.get(String(plugin.raw.spec.pluginId))
         : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
-    if (marketplaceItem && !marketplaceItemOwnsLocalCreatedPackage(marketplaceItem)) {
-      navigateTo(
-        buildPluginDetailRoute({
-          pluginName: marketplaceItem.name || plugin.raw.spec.source.pluginKey,
-          marketplaceName:
-            marketplaceItemMarketplaceId(marketplaceItem) ||
-            installedPluginMarketplaceId(plugin.raw) ||
-            INTERNAL_DEVICE_MARKETPLACE_ID,
-        })
-      )
-      return
-    }
-    const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        plugin.raw.spec.source.pluginKey,
-        createdPluginSlug(plugin),
-        plugin.name,
-      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
-    if (packableCreated?.origin === 'created') {
-      setSelectedPluginId(packableCreated.id)
-      return
-    }
-    if (marketplaceItem || isCloudManagedInstalledPlugin(plugin.raw)) {
-      navigateTo(
-        buildPluginDetailRoute({
-          pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
-          marketplaceName:
-            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
-            installedPluginMarketplaceId(plugin.raw) ||
-            INTERNAL_DEVICE_MARKETPLACE_ID,
-        })
-      )
-      return
-    }
-    setSelectedPluginId(plugin.id)
+    navigateTo(
+      buildPluginDetailRoute({
+        pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
+        marketplaceName:
+          (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+          installedPluginMarketplaceId(plugin.raw) ||
+          INTERNAL_DEVICE_MARKETPLACE_ID,
+      })
+    )
   }
 
   const openOwnerPublicationDetail = (plugin: InstalledPluginItem) => {
@@ -578,111 +247,12 @@ function PluginManagementWorkspaceContent({
     )
   }
 
-  const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
-    const installed = await observeOperation('plugin.copy', async () => {
-      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
-      return localPluginApi.importMarketplaceCopy(descriptor)
-    })
-    const item = toInstalledPluginItem(installed)
-    commitPluginInventoryInstallation(marketplaceCacheKeyValue, currentDeviceId, installed)
-    notifyLocalPluginSkillsChanged()
-    setSelectedPluginId(item.id)
-  }
-
   const pluginOperationNoticeOverlay = pluginOperationNotice ? (
     <PluginOperationNotice
       notice={pluginOperationNotice}
       onDismiss={() => setPluginOperationNotice(null)}
     />
   ) : null
-
-  if (selectedPlugin) {
-    const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
-    const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
-    const associatedListing =
-      ownedMarketplace ?? findMarketplaceItemForInstalled(selectedPlugin, marketplaceItems) ?? null
-    const packableCreated =
-      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
-        ? null
-        : (findPackableCreatedPlugin(installedPlugins, [
-            selectedPlugin.raw.spec.source.pluginKey,
-            createdPluginSlug(selectedPlugin),
-            selectedPlugin.name,
-            ownedMarketplace?.name,
-            ownedMarketplace?.displayName,
-          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
-    const ownerActions = resolvePluginOwnerActions({
-      isLocalCreated: Boolean(packableCreated),
-      ownedListing: associatedListing,
-    })
-    const continueEditingKey = resolveContinueEditingPluginKey({
-      packableCreated,
-      currentPlugin: selectedPlugin,
-      ownedListingName: ownedMarketplace?.name,
-      listing: associatedListing,
-    })
-    const submissionStatus =
-      typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
-        ? (selectedPlugin.raw.spec.sourcePayload.submissionStatus as
-            | 'uploading'
-            | 'scanning'
-            | 'pending'
-            | 'approved'
-            | 'rejected'
-            | 'cancelled')
-        : null
-    const submissionReviewNote =
-      typeof selectedPlugin.raw.spec.sourcePayload?.submissionReviewNote === 'string'
-        ? selectedPlugin.raw.spec.sourcePayload.submissionReviewNote
-        : null
-    const openOwnerShare = () => openOwnerPublicationDetail(selectedPlugin)
-    return (
-      <>
-        <PluginDetailView
-          plugin={selectedPlugin}
-          backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
-          usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
-          primaryActionLabel={
-            isUninstalling
-              ? t('workbench.plugins_uninstalling', '正在卸载')
-              : t('workbench.plugins_try_now', '立即试用')
-          }
-          primaryActionDisabled={isUninstalling}
-          showUninstall={!isUninstalling}
-          accessRole={associatedListing?.accessRole}
-          pluginVisibility={associatedListing?.visibility ?? null}
-          shareRecipient={associatedListing?.accessRole === 'recipient'}
-          shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
-          shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
-          manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
-          onManageAccess={ownerActions.canManageAccess ? openOwnerShare : undefined}
-          submissionStatus={submissionStatus}
-          submissionReviewNote={submissionReviewNote}
-          onBack={() => setSelectedPluginId(null)}
-          editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
-          onEditAction={
-            continueEditingKey
-              ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
-              : undefined
-          }
-          onToggle={() => tryPluginInChat(selectedPlugin.raw)}
-          onComponentToggle={(componentKey, enabled) =>
-            togglePluginComponent(selectedPlugin.id, componentKey, enabled)
-          }
-          onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
-        />
-        {pluginOperationNoticeOverlay}
-        {pendingUninstall && (
-          <UninstallPluginDialog
-            pluginName={pendingUninstall.name}
-            scope={pendingUninstall.scope}
-            onCancel={() => setPendingUninstall(null)}
-            onConfirm={confirmUninstallPlugin}
-          />
-        )}
-      </>
-    )
-  }
 
   return (
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
@@ -695,14 +265,15 @@ function PluginManagementWorkspaceContent({
         left={
           <>
             {topBarLeftActions}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="plugin-management-back-button"
               className="plugin-route-back-button"
               onClick={() => navigateTo('/plugins')}
             >
               ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
-            </button>
+            </ControlButton>
           </>
         }
       />
@@ -726,57 +297,43 @@ function PluginManagementWorkspaceContent({
           </div>
         </header>
         {showCoreDshTab ? (
-          <div
-            className="mb-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
-            role="tablist"
-            aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
-            data-testid="plugin-management-surface-tabs"
+          <TabsRoot
+            value={activeTab}
+            activation="automatic"
+            loop
+            onValueChange={next => {
+              if (next) setActiveTab(next)
+            }}
+            render={<div className="contents" />}
           >
-            <button
-              type="button"
-              id="plugin-management-codex-tab"
-              role="tab"
-              aria-selected={activeTab === 'codex'}
-              aria-controls="plugin-management-codex-panel"
-              tabIndex={activeTab === 'codex' ? 0 : -1}
-              data-testid="plugin-management-surface-wework"
-              onClick={() => setActiveTab('codex')}
-              onKeyDown={event => handleTabKeyDown(event, 'codex')}
-              className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                activeTab === 'codex'
-                  ? 'text-text-primary'
-                  : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
+            <TabsList
+              className="mb-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
+              aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
+              data-testid="plugin-management-surface-tabs"
             >
-              {t('workbench.plugins_wework_surface', 'Codex 插件')}
-              {activeTab === 'codex' ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-            <button
-              type="button"
-              id="plugin-management-core-dsh-tab"
-              role="tab"
-              aria-selected={activeTab === 'core-dsh'}
-              aria-controls="plugin-management-core-dsh-panel"
-              tabIndex={activeTab === 'core-dsh' ? 0 : -1}
-              data-testid="plugin-management-surface-core-dsh"
-              onClick={() => setActiveTab('core-dsh')}
-              onKeyDown={event => handleTabKeyDown(event, 'core-dsh')}
-              className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                activeTab === 'core-dsh'
-                  ? 'text-text-primary'
-                  : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
-            >
-              {t('workbench.plugins_core_dsh_surface', 'Wework 插件')}
-              {activeTab === 'core-dsh' ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-          </div>
+              {tabs.map(tab => (
+                <TabsTab
+                  key={tab.id}
+                  value={tab.id}
+                  type="button"
+                  id={`plugin-management-${tab.id}-tab`}
+                  aria-controls={`plugin-management-${tab.id}-panel`}
+                  data-testid={tab.testId}
+                  className={[
+                    'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                    activeTab === tab.id
+                      ? 'text-text-primary'
+                      : 'text-text-muted hover:text-text-secondary',
+                  ].join(' ')}
+                >
+                  {tab.label}
+                  {activeTab === tab.id && (
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+                  )}
+                </TabsTab>
+              ))}
+            </TabsList>
+          </TabsRoot>
         ) : null}
         {showCoreDshTab && activeTab === 'core-dsh' ? (
           <div
@@ -788,6 +345,16 @@ function PluginManagementWorkspaceContent({
             <CoreDshPluginManagementSection onCreatePlugin={onCreateWeworkPlugin} />
           </div>
         ) : null}
+        {showCoreDshTab && activeTab === 'marketplaces' && (
+          <PluginMarketplaceManagement
+            api={localPluginApi}
+            checkingMarketplaces={checkingMarketplaces}
+            onCheck={checkGitMarketplace}
+            onSourcesLoaded={reconcileGitMarketplaceSources}
+            onRemoved={removeConfiguredMarketplaceFromInventory}
+            onReconcile={() => void refresh()}
+          />
+        )}
         {!showCoreDshTab || activeTab === 'codex' ? (
           <div
             id={showCoreDshTab ? 'plugin-management-codex-panel' : undefined}
@@ -810,6 +377,14 @@ function PluginManagementWorkspaceContent({
                     : undefined
                   const listing =
                     marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+                  const update = resolvePublishedPluginUpdate(
+                    plugin,
+                    findMarketplaceItemForInstalled(plugin, publishedMarketplaceItems)
+                  )
+                  const versionHint = findGitMarketplaceVersionHint(
+                    plugin.raw,
+                    gitMarketplaceVersions
+                  )
                   const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
                   const packableCreated =
                     listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
@@ -833,6 +408,26 @@ function PluginManagementWorkspaceContent({
                       <InstalledPluginRow
                         plugin={plugin}
                         marketplaceItem={marketplaceItem}
+                        availableUpdate={update ?? versionHint ?? undefined}
+                        updating={updatingPluginId === plugin.id}
+                        updateDisabled={updatingPluginId !== null || !currentDeviceId}
+                        onUpdate={
+                          update
+                            ? async () => {
+                                const expectedCurrentReleaseId = await preparePublishedPluginUpdate(
+                                  update.id
+                                )
+                                if (expectedCurrentReleaseId === null) return
+                                setPendingUpdate({
+                                  id: plugin.id,
+                                  name: plugin.name,
+                                  releaseId: update.releaseId,
+                                  expectedCurrentReleaseId,
+                                  version: update.version,
+                                })
+                              }
+                            : undefined
+                        }
                         onOpen={() => openInstalledPluginDetail(plugin)}
                         onTry={() => tryPluginInChat(plugin.raw)}
                         onPublish={
@@ -849,7 +444,10 @@ function PluginManagementWorkspaceContent({
                         shareLabel={t('workbench.plugins_manage_access', '管理权限')}
                         onCopy={
                           marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
-                            ? () => void copyMarketplacePlugin(marketplaceItem)
+                            ? async () => {
+                                const copied = await copyMarketplacePlugin(marketplaceItem)
+                                if (copied) openInstalledPluginDetail(copied)
+                              }
                             : undefined
                         }
                         onToggle={() => toggleInstalledPlugin(plugin.id)}
@@ -874,20 +472,43 @@ function PluginManagementWorkspaceContent({
                     '安装后的插件会集中显示在这里。'
                   )}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="plugin-management-browse-marketplace-button"
                   className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                   onClick={() => navigateTo('/plugins')}
                 >
                   {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
-                </button>
+                </ControlButton>
               </div>
             )}
           </div>
         ) : null}
       </div>
       {pluginOperationNoticeOverlay}
+      {pendingUpdate && (
+        <ConfirmDialog
+          open
+          title={t('workbench.plugins_update_title_named', { name: pendingUpdate.name })}
+          description={t('workbench.plugins_update_confirm')}
+          cancelLabel={t('common.cancel', '取消')}
+          confirmLabel={t('workbench.plugins_update_target_version', {
+            version: pendingUpdate.version.replace(/^v/i, ''),
+          })}
+          confirmTestId="plugin-management-update-confirm"
+          dialogTestId="plugin-management-update-dialog"
+          onClose={() => setPendingUpdate(null)}
+          onConfirm={() => {
+            setPendingUpdate(null)
+            void updatePublishedPlugin(
+              pendingUpdate.id,
+              pendingUpdate.releaseId,
+              pendingUpdate.expectedCurrentReleaseId
+            )
+          }}
+        />
+      )}
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}

@@ -1,21 +1,17 @@
-import { ArrowUpCircle, Folder, FolderPlus, Loader2, RotateCcw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
-import { useTranslation } from '@/hooks/useTranslation'
-import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
-import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
+import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   canUseForProjectCreation,
-  isCloudDevice,
   isClaudeCodeDevice,
+  isCloudDevice,
   isDeviceBelowWeWorkVersion,
+  WEWORK_MIN_EXECUTOR_VERSION,
 } from '@/lib/device-capabilities'
+import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -29,12 +25,15 @@ import type {
   ProjectWithTasks,
 } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import {
-  DeviceFolderPicker,
-  type DeviceFolderPickerMode,
-  type DeviceFolderPickerResult,
-} from './DeviceFolderPicker'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpCircle, Folder, FolderPlus, Loader2, RotateCcw, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { basename } from './device-folder-path'
+import type { DeviceFolderPickerMode, DeviceFolderPickerResult } from './DeviceFolderPicker'
+import { DeviceFolderPicker } from './DeviceFolderPicker'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 type ProjectWorkspaceKind = 'worktree' | 'workspace'
@@ -202,8 +201,17 @@ function ProjectCreateDialogContent({
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const isEditing = Boolean(project)
   const incomingProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
-  const [deviceSnapshot, setDeviceSnapshot] = useState<DeviceInfo[]>(incomingProjectDevices)
-  const allProjectDevices = deviceSnapshot
+  const [deviceSnapshot, setDeviceSnapshot] = useState({
+    source: incomingProjectDevices,
+    items: incomingProjectDevices,
+  })
+  if (incomingProjectDevices.length > 0 && deviceSnapshot.source !== incomingProjectDevices) {
+    setDeviceSnapshot({
+      source: incomingProjectDevices,
+      items: mergeDialogDevices(deviceSnapshot.items, incomingProjectDevices),
+    })
+  }
+  const allProjectDevices = deviceSnapshot.items
   const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
   const [activeDeviceId, setActiveDeviceId] = useState(() =>
     getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
@@ -216,19 +224,6 @@ function ProjectCreateDialogContent({
   const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (incomingProjectDevices.length === 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setDeviceSnapshot(current => mergeDialogDevices(current, incomingProjectDevices))
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [incomingProjectDevices])
 
   const getDeviceFolder = (deviceId: string) => {
     const draft = folderDrafts[deviceId]
@@ -267,9 +262,7 @@ function ProjectCreateDialogContent({
       )
   const isMobileSheet = presentation === 'mobileSheet'
 
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!submitting) onClose()
-  }, !cloudRestarts?.isConfirming)
+  const dialogRef = useRef<HTMLFormElement>(null)
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
@@ -421,7 +414,9 @@ function ProjectCreateDialogContent({
             </p>
           </div>
           {isEditing && folderPath && (
-            <button
+            <ControlButton
+              variant="destructive"
+              size="sm"
               type="button"
               data-testid="project-device-unlink-button"
               disabled={submitting}
@@ -429,7 +424,7 @@ function ProjectCreateDialogContent({
               className="h-8 shrink-0 rounded-md border border-destructive/25 px-2 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50 wework:border-red-500/25 wework:text-red-500 wework:hover:bg-red-500/10"
             >
               {t('workbench.project_unlink_device_folder', '解除关联')}
-            </button>
+            </ControlButton>
           )}
         </div>
 
@@ -465,7 +460,8 @@ function ProjectCreateDialogContent({
                 </p>
               </div>
               {canRepairDevice && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${isCloud ? 'restart' : 'upgrade'}-project-device-${activeDevice.device_id}`}
                   disabled={submitting || repairing}
@@ -488,7 +484,7 @@ function ProjectCreateDialogContent({
                     : repairing
                       ? (upgradeState?.message ?? t('workbench.device_status_checking', '检查中'))
                       : t('workbench.device_status_upgrade_action', '升级')}
-                </button>
+                </ControlButton>
               )}
             </div>
           </div>
@@ -503,7 +499,8 @@ function ProjectCreateDialogContent({
                 ['workspace', t('workbench.project_workspace_kind_workspace', '普通地址')],
               ] as [ProjectWorkspaceKind, string][]
             ).map(([value, label]) => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={value}
                 type="button"
                 data-testid={`project-workspace-kind-${value}`}
@@ -517,13 +514,15 @@ function ProjectCreateDialogContent({
                 ].join(' ')}
               >
                 {label}
-              </button>
+              </ControlButton>
             ))}
           </div>
         )}
 
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="project-folder-select-button"
             disabled={submitting || !canUseDevice}
@@ -532,8 +531,10 @@ function ProjectCreateDialogContent({
           >
             <Folder className="h-4 w-4" />
             {t('workbench.project_folder_select_existing', '选择已有')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="project-folder-create-button"
             disabled={submitting || !canUseDevice}
@@ -542,7 +543,7 @@ function ProjectCreateDialogContent({
           >
             <FolderPlus className="h-4 w-4" />
             {t('workbench.project_folder_create_new', '新建')}
-          </button>
+          </ControlButton>
         </div>
 
         {folderPickerState?.deviceId === activeDevice.device_id && pickerDevice && (
@@ -590,20 +591,26 @@ function ProjectCreateDialogContent({
           : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4'
       }
     >
-      <DialogForm
-        data-testid="project-create-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        ref={dialogRef}
-        onSubmit={event => {
-          event.preventDefault()
-          void handleSubmit()
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
         }}
-        className={
-          isMobileSheet
-            ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-border border-b-0 bg-popover p-5 pb-[max(24px,env(safe-area-inset-bottom))] text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-            : 'max-h-[88vh] w-full max-w-[680px] overflow-y-auto rounded-lg border border-border bg-popover p-6 text-text-primary shadow-2xl'
+        active={!cloudRestarts?.isConfirming}
+        render={
+          <DialogForm
+            data-testid="project-create-dialog"
+            aria-label={title}
+            ref={dialogRef}
+            onSubmit={event => {
+              event.preventDefault()
+              void handleSubmit()
+            }}
+            className={
+              isMobileSheet
+                ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-border border-b-0 bg-popover p-5 pb-[max(24px,env(safe-area-inset-bottom))] text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                : 'max-h-[88vh] w-full max-w-[680px] overflow-y-auto rounded-lg border border-border bg-popover p-6 text-text-primary shadow-2xl'
+            }
+          />
         }
       >
         <div className="flex items-start justify-between gap-4">
@@ -611,7 +618,8 @@ function ProjectCreateDialogContent({
             <h2 className="text-base font-semibold text-text-primary">{title}</h2>
             <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="close-project-create-dialog-button"
             onClick={() => {
@@ -622,7 +630,7 @@ function ProjectCreateDialogContent({
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
@@ -647,7 +655,7 @@ function ProjectCreateDialogContent({
             <span className="text-sm font-semibold text-text-primary">
               {t('workbench.project_name', '项目名称')}
             </span>
-            <input
+            <ControlInput
               data-testid="project-name-input"
               value={projectName}
               disabled={submitting}
@@ -655,18 +663,18 @@ function ProjectCreateDialogContent({
                 setProjectName(event.target.value)
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60"
+              className="mt-2 h-10 w-full disabled:opacity-60"
             />
           </label>
         ) : primaryDraft ? (
           <div className="mt-5 rounded-lg border border-border bg-muted px-3 py-2">
             {renamingInline ? (
-              <input
+              <ControlInput
                 data-testid="project-name-input"
                 value={projectName}
                 disabled={submitting}
                 onChange={event => setProjectName(event.target.value)}
-                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20"
+                className="h-9 w-full"
               />
             ) : (
               <div className="flex items-center justify-between gap-3">
@@ -679,14 +687,15 @@ function ProjectCreateDialogContent({
                     name: finalProjectName,
                   })}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-rename-inline-button"
                   onClick={() => setRenamingInline(true)}
                   className="h-8 shrink-0 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10"
                 >
                   {t('workbench.rename_project', '重命名项目')}
-                </button>
+                </ControlButton>
               </div>
             )}
           </div>
@@ -700,7 +709,8 @@ function ProjectCreateDialogContent({
                 const linked = isDeviceLinked(device.device_id)
                 const selectable = canSelectDeviceTab(device)
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     key={device.device_id}
                     type="button"
                     data-testid={`project-device-tab-${device.device_id}`}
@@ -718,7 +728,7 @@ function ProjectCreateDialogContent({
                     <span className="ml-2 text-xs opacity-75">
                       {getDeviceTabStatus(device, linked)}
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>
@@ -745,7 +755,9 @@ function ProjectCreateDialogContent({
         )}
 
         <div className="mt-7 flex justify-end gap-3">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="cancel-project-create-button"
             disabled={submitting}
@@ -753,8 +765,10 @@ function ProjectCreateDialogContent({
             className="h-10 rounded-md border border-border px-4 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="submit"
             data-testid="create-project-button"
             disabled={!canSubmit || submitting}
@@ -765,9 +779,9 @@ function ProjectCreateDialogContent({
               <Loader2 data-testid="project-submit-spinner" className="h-4 w-4 animate-spin" />
             )}
             {isEditing ? t('workbench.save', '保存') : t('workbench.create_project', '创建项目')}
-          </button>
+          </ControlButton>
         </div>
-      </DialogForm>
+      </DialogSurface>
     </div>,
     document.body
   )

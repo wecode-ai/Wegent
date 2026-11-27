@@ -13,13 +13,14 @@ sidebar_position: 10
 
 Open the read-only window with the native desktop menu **Help → Developer tools → Process Explorer**.
 
-| Action                | Steps and limits                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Filter and groups     | Search by name, PID or launch details; expand/collapse owner groups to locate windows, executors or plugin processes                  |
-| Resources and refresh | Inspect CPU, memory and uptime. Sampling is periodic; Refresh reads again. Totals sum listed Wework processes, not the whole computer |
-| Details and copy      | Select a process to inspect/copy launch details; check private directories/arguments before sharing                                   |
-| Columns and pinning   | Drag header edges to resize, double-click to reset; toggle always-on-top                                                              |
-| Errors/degradation    | Inspect unavailable-information reasons and refresh; partial data does not imply the app stopped                                      |
+| Action                | Steps and limits                                                                                                                                                                                                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filter and groups     | Search by name, PID or launch details; expand/collapse owner groups to locate windows, executors or plugin processes                                                                                                                                                                    |
+| Resources and refresh | Inspect CPU, memory and uptime. Samples every second while the window is visible, pauses while the window is not visible (minimized, and on macOS also fully covered) and reads once on return; Refresh reads again. Totals sum listed running Wework processes, not the whole computer |
+| Exited processes      | Exited processes fade to grey and stay for 5 seconds under their parent with uptime frozen at exit; they are excluded from totals                                                                                                                                                       |
+| Details and copy      | Select a process to inspect/copy launch details; check private directories/arguments before sharing                                                                                                                                                                                     |
+| Columns and pinning   | Drag header edges to resize, double-click to reset; toggle always-on-top                                                                                                                                                                                                                |
+| Errors/degradation    | Inspect unavailable-information reasons and refresh; partial data does not imply the app stopped                                                                                                                                                                                        |
 
 This window does not terminate processes. Inspection differs from pausing tasks, quitting the app or clearing user data.
 
@@ -60,6 +61,19 @@ If the application still cannot open, inspect `wework-main.log`, `runtime-launch
 maintenance warnings. Data migration failures, missing runtime files, and storage permission errors
 still need repair; clearing user data must not hide them. Animation, screenshot, and window geometry
 errors affect presentation and must not prevent a loaded main window from appearing.
+
+## The main window opens while the task list is still loading
+
+The task list can load while worktrees and queued tasks recover. Wework can show the first available
+local list and apply later results in the background. To diagnose a long wait, compare
+`main-window-show` and `renderer-startup-ready` with source `task-list` in `wework-main.log`.
+When `model-loading.log` contains `runtime.inventory.slow`, it reports the time spent reading the
+Executor identity, requesting the list, and verifying the identity again.
+
+At startup, Wework limits concurrent forwarding of pending assignment notifications to leave local
+connections available for foreground requests such as the task list. If identity verification is
+slow, compare request dispatch and response times in `executor-transport.log` from the same period
+to identify local request queueing.
 
 ## Conversation export remains on packaging
 
@@ -117,6 +131,8 @@ If MCP tools failed to start or their connection was interrupted, sending anothe
 
 The `codex MCP startup status` log records the process generation, conversation, server, startup status, and redacted error. `codex MCP startup recovery` records the servers that triggered recovery. Preserve these records if the problem persists.
 
+MCP tool approvals have their own deadline. The tool execution timeout starts after approval, when the tool is called. At the approval deadline, the local executor sends a cancellation to Codex even if the current turn did not receive the request. Use the request and turn IDs in the `codex native MCP elicitation expired` log to identify the cancellation.
+
 ### Unable to connect to the model service
 
 When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.
@@ -139,6 +155,10 @@ localStorage.setItem("wework:debug-runtime", "1");
 - Re-select the folder on an online device for a remote project.
 - For Git authentication errors, verify the token and repository permissions.
 - Check the repository URL, default branch, device network, and proxy for clone failures.
+
+### PR or MR status may be stale
+
+Find `UI observation lease lost` in the execution device's Executor logs. Search for a known PR or MR using `change_request_number`, then use `observer_id` to match any `UI observation lease stopped` entry for the same lease. The `reason` field distinguishes expiry, an explicit stop, a missing record, and cloud rejection. If the lease record is missing, the log may have no PR or MR number.
 
 ## Reviews and browser
 
@@ -163,7 +183,9 @@ Every request has a `requestId`. In the desktop client, this value is sent to th
 
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My Stand-in, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
+If Wework displays a page error or startup error screen, select **Copy debug info** to copy the current error and any available stack traces to the clipboard. Save this information before refreshing, then review it before pasting it into a problem report. If copying fails, select the button again to retry.
+
+Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My assistants, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
 Optional information behaves as follows:
 

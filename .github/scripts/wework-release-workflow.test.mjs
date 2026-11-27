@@ -333,7 +333,7 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
   assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
   assert.equal(
     jobs["verify-upgrades"]["timeout-minutes"],
-    "${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 30 || 15 }}",
+    "${{ (matrix.platform == 'macos' && 20) || (matrix.platform == 'windows' && matrix.arch == 'arm64' && 30) || 15 }}",
   );
   assert.equal(jobs.build["timeout-minutes"], 90);
   const step = jobs["verify-upgrades"].steps.find(

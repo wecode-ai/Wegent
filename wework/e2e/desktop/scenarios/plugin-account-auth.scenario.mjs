@@ -19,6 +19,7 @@ import {
 } from '../modules/shell-command-response.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyPluginNativeAuth } from '../modules/plugin-native-auth.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
   inspectManagedPython,
@@ -26,7 +27,6 @@ import {
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
 import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
-import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -72,7 +72,7 @@ async function waitForValue(read, accept, timeoutMs, message) {
     if (accept(value)) return value
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(message)
+  throw new Error(typeof message === 'function' ? message() : message)
 }
 
 export async function createDesktopScenario({
@@ -114,6 +114,7 @@ export async function createDesktopScenario({
     await mkdir(join(dwsSourceRoot, name), { recursive: true })
   }
   let cloud
+  let nativeProxy
   let restartDesktopApp
   let command
   let businessWorkspace
@@ -195,8 +196,19 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     requiresNativeCloudAuthorization: checkpoint === 'plugin-account-auth-password',
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
-    prepareApp: context => githubProtocol?.prepareApp(context),
-    cleanup: () => githubProtocol?.cleanup(),
+    async prepareCloud({ backendUrl }) {
+      if (checkpoint === 'plugin-account-auth-password') {
+        nativeProxy = await new TransportFaultProxy(backendUrl).start()
+      }
+    },
+    async prepareApp(context) {
+      if (nativeProxy) context.appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = nativeProxy.url
+      await githubProtocol?.prepareApp(context)
+    },
+    async cleanup() {
+      await githubProtocol?.cleanup()
+      await nativeProxy?.stop()
+    },
     codexConfigToml: githubConfig,
     appEnvironment: {
       ...(checkpoint === 'plugin-account-auth-password'
@@ -268,7 +280,7 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
-      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+      if (checkpoint === 'plugin-account-auth-dws') {
         await verifyResponsesApiGateway(control, cloud, {
           checkpoint,
           resultDir,
@@ -403,7 +415,7 @@ export async function createDesktopScenario({
             await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
               text: 'git.three.example',
             })
-            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+            await control.command('select', '[data-testid="plugin-connector-source-select"]', {
               value: 'oauth',
             })
             await control.command('click', '[data-testid="plugin-connector-source-continue"]')
@@ -536,7 +548,7 @@ export async function createDesktopScenario({
             )
             await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
-            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+            await control.command('select', '[data-testid="plugin-connector-source-select"]', {
               value: 'mail',
             })
             await waitForValue(
@@ -877,6 +889,7 @@ export async function createDesktopScenario({
         await verifyPluginNativeAuth({
           cloud,
           control,
+          proxy: nativeProxy,
           executorHome,
           homePath,
           sourceAuth,

@@ -12,6 +12,8 @@ vi.mock('@/api/local/runtimeAuthStatus', () => ({
   getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
 }))
 
+vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,
@@ -19,6 +21,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: async () => ({ deviceId: mocks.deviceId }),
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getInitializedBundledPluginMarketplace: () => null,
   requestLocalExecutor: async (method: string, params: { method?: string }) => {

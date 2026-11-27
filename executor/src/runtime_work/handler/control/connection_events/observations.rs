@@ -1,8 +1,9 @@
 //! One durable collector per exact provider/account/resource, with independent consumers.
 use super::*;
+use futures_util::{stream, StreamExt};
 use wegent_protocol::connection_events::{canonical_json, event_identity, observation_identity};
 
-fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
+pub(super) fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
     let mut wakeup = false;
     let retained = observation["events"].as_array().unwrap();
     for record in state["operations"]
@@ -49,6 +50,20 @@ fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn reclaim_event_observations(&self) -> Result<(), AppIpcError> {
+        let Ok(_activation) = self.connection_observation_activations.try_write() else {
+            return Ok(());
+        };
+        for id in event_store::unreferenced(&self.event_subscription_path())? {
+            let source_gate = self.task_send_gate(&format!("connection-observation:{id}"));
+            let Ok(_source) = source_gate.try_lock() else {
+                continue;
+            };
+            event_store::remove_unreferenced(&self.event_subscription_path(), &id)?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn attach_event_observation(
         &self,
         source: &mut Value,
@@ -74,26 +89,125 @@ impl RuntimeWorkRpcHandler {
         );
         let gate = self.task_send_gate(&format!("connection-observation:{id}"));
         let _guard = gate.lock().await;
-        let existing =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["observations"][&id].clone())
-            })?;
+        let existing = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", &id),
+            |state| Ok(state["observations"][&id].clone()),
+        )?;
         if existing.is_object() {
+            if !existing["events"].is_array() || existing["sequence"].as_u64().is_none() {
+                return Err(AppIpcError::new(
+                    "control_storage_failed",
+                    "Invalid observation source journal",
+                ));
+            }
             return Ok((
                 id,
-                existing["sequence"].as_u64().unwrap_or_default(),
+                wegent_protocol::connection_events::activation_sequence(
+                    source,
+                    &existing,
+                    |value| {
+                        chrono::DateTime::parse_from_rfc3339(value.as_str()?)
+                            .ok()
+                            .map(|time| time.timestamp_millis())
+                    },
+                ),
                 checkpoint.clone(),
             ));
         }
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            if !state["observations"].is_object() {
-                state["observations"] = json!({});
-            }
-            state["observations"][&id] =
-                json!({"source":source,"checkpoint":checkpoint,"sequence":0,"events":[]});
-            Ok(())
-        })?;
+        event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", &id),
+            |state| {
+                if !state["observations"].is_object() {
+                    state["observations"] = json!({});
+                }
+                state["observations"][&id] =
+                    json!({"source":source,"checkpoint":checkpoint,"sequence":0,"events":[]});
+                Ok(())
+            },
+        )?;
         Ok((id, 0, checkpoint.clone()))
+    }
+
+    pub(in crate::runtime_work::handler) async fn poll_connection_observation_sources(
+        &self,
+    ) -> Result<(), AppIpcError> {
+        let sources = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Active,
+            |state| {
+                let now = now_ms();
+                let sidebar = state["observers"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|rows| rows.values())
+                    .filter(|row| {
+                        row["status"] == "observing"
+                            && row["cloud_registration"].is_null()
+                            && row["expires_at"].as_i64().unwrap_or_default() > now
+                    });
+                let conversations = state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|rows| rows.values())
+                    .filter(|row| {
+                        matches!(row["status"].as_str(), Some("armed" | "pending"))
+                            && row["operation_id"].is_null()
+                            && row["cloud_subscription"].is_null()
+                            && row["cloud_registration"].is_null()
+                    });
+                Ok(sidebar
+                    .chain(conversations)
+                    .filter_map(|row| row["observation_id"].as_str().map(str::to_owned))
+                    .filter(|id| {
+                        state["observations"][id]["next_poll_at"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            <= now
+                    })
+                    .collect::<std::collections::BTreeSet<_>>())
+            },
+        )?;
+        let cycle = uuid::Uuid::new_v4().to_string();
+        let mut collection = stream::iter(sources)
+            .map(|source| {
+                let cycle = cycle.clone();
+                async move {
+                    self.read_event_observation(&json!({"observation_id":source}), &cycle, false)
+                        .await
+                }
+            })
+            .buffer_unordered(4);
+        while let Some(result) = collection.next().await {
+            if let Err(error) = result {
+                log_executor_event(
+                    "Connection observation source deferred",
+                    &[("code", error.code)],
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn stored_event_observation(&self, id: &str) -> Result<Value, AppIpcError> {
+        let observation = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", id),
+            |state| Ok(state["observations"][id].clone()),
+        )?;
+        if !observation.is_object()
+            || !observation["source"].is_object()
+            || !observation["checkpoint"].is_object()
+            || !observation["events"].is_array()
+            || observation["sequence"].as_u64().is_none()
+        {
+            return Err(AppIpcError::new(
+                "control_storage_failed",
+                "Invalid observation source journal",
+            ));
+        }
+        Ok(observation)
     }
 
     pub(super) async fn read_event_observation(
@@ -107,25 +221,12 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| invalid("Missing observation identity"))?;
         let gate = self.task_send_gate(&format!("connection-observation:{id}"));
         let _guard = gate.lock().await;
-        let mut observation =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["observations"][id].clone())
-            })?;
-        if !observation.is_object()
-            || !observation["source"].is_object()
-            || !observation["checkpoint"].is_object()
-            || !observation["events"].is_array()
-            || observation["sequence"].as_u64().is_none()
-        {
-            return Err(AppIpcError::new(
-                "control_storage_failed",
-                "Invalid observation source journal",
-            ));
-        }
+        let mut observation = self.stored_event_observation(id)?;
         if observation["collection_cycle"] != tick
             && (force || observation["next_poll_at"].as_i64().unwrap_or_default() <= now_ms())
         {
             let source = observation["source"].clone();
+            let previous_error = observation["error_code"].as_str().map(str::to_owned);
             let result = self
                 .connection_call(
                     "collectObservation",
@@ -139,12 +240,24 @@ impl RuntimeWorkRpcHandler {
                     }
                     Ok(page)
                 });
-            observation["attempted_at"] = json!(now_ms());
-            observation["next_poll_at"] = json!(now_ms() + super::poll_schedule::INTERVAL_MS);
+            let attempted_at = now_ms();
+            let default_poll_at = attempted_at + super::poll_schedule::INTERVAL_MS;
+            observation["attempted_at"] = json!(attempted_at);
+            observation["next_poll_at"] = json!(default_poll_at);
             observation["collection_cycle"] = json!(tick);
             let collected = result.is_ok();
             match result {
                 Ok(page) => {
+                    // An explicit deadline starts another cycle only after this page is committed.
+                    if source["providerId"] == "@wegent/dsh-connection-git/github"
+                        && source["observeCurrentStatus"] == true
+                        && page["errorCode"].is_null()
+                    {
+                        if let Some(deadline) = page["nextPollAt"].as_i64() {
+                            observation["next_poll_at"] =
+                                json!(deadline.clamp(attempted_at, default_poll_at));
+                        }
+                    }
                     let events = page["events"].as_array().unwrap();
                     let mut retained = observation["events"]
                         .as_array()
@@ -176,8 +289,10 @@ impl RuntimeWorkRpcHandler {
                 }
                 Err(error) => observation["error_code"] = json!(error.code),
             }
-            let wakeup =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+            let wakeup = event_store::update(
+                &self.event_subscription_path(),
+                event_store::Scope::Source(id),
+                |state| {
                     let mut wakeup = false;
                     if collected {
                         // Capture every consumer before compacting shared history in this commit.
@@ -189,7 +304,23 @@ impl RuntimeWorkRpcHandler {
                     }
                     state["observations"][id] = observation.clone();
                     Ok(wakeup)
-                })?;
+                },
+            )?;
+            let error = observation["error_code"].as_str();
+            if error != previous_error.as_deref() {
+                log_executor_event(
+                    "Connection observation health changed",
+                    &[
+                        ("observation_id", id.to_owned()),
+                        (
+                            "provider",
+                            source["providerId"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("previous_code", previous_error.unwrap_or_default()),
+                        ("code", error.unwrap_or_default().to_owned()),
+                    ],
+                );
+            }
             if wakeup {
                 self.connection_observation_wakeup.notify_one();
             }
@@ -203,6 +334,133 @@ mod tests {
     use super::*;
 
     mod merge_readiness;
+
+    #[test]
+    fn github_ci_deadlines_publish_status_and_wake_only_on_completion() {
+        use crate::runtime_work::handler::control::tests::EnvGuard;
+        use futures_util::FutureExt;
+
+        let _guard = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+        let app = axum::Router::new().route(
+            "/wework/connections/v1/rpc",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                assert_eq!(body["method"], "collectObservation");
+                let step = body["input"]["checkpoint"]["step"].as_u64().unwrap();
+                let at = chrono::Utc::now().to_rfc3339();
+                let status = if step < 2 { "PENDING" } else { "SUCCESS" };
+                let events = if step == 1 {
+                    json!([])
+                } else {
+                    json!([{"id":format!("status-{step}"),"at":at,
+                        "external":{"eventType":"tracked.status",
+                            "payload":{"statusCheckRollup":{"state":status}}}}])
+                };
+                axum::Json(json!({"ok":true,"result":{
+                    "events":events,"nextCheckpoint":{"step":step+1},
+                    "nextPollAt":if step == 0 {json!(now_ms())} else if step == 1 {json!(now_ms()+15_000)} else {Value::Null},
+                    "resourceStates":[{"data":{"statusCheckRollup":{"state":status}}}]
+                }}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+        handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
+        let path = handler.event_subscription_path();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github",
+            "kind":"repository","transport":"cli",
+            "observeCurrentStatus":true,"enabledAfter":chrono::Utc::now().to_rfc3339()});
+        handler
+            .save_event_subscription(
+                "wait",
+                &json!({
+                    "observation_id":"pr","status":"armed","source":source,"task_id":"task",
+                    "initial_sequence":0,"after_sequence":0,
+                    "match":{"/external/payload/statusCheckRollup/state":"SUCCESS"}
+                }),
+            )
+            .unwrap();
+        event_store::transact(&path, |state| {
+            state["observations"]["pr"] =
+                json!({"source":source,"checkpoint":{"step":0},"sequence":0,"events":[]});
+            Ok(())
+        })
+        .unwrap();
+
+        handler.poll_connection_observation_sources().await.unwrap();
+        let pending = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(
+            pending["resource_states"][0]["data"]["statusCheckRollup"]["state"],
+            "PENDING"
+        );
+        assert_eq!(pending["next_poll_at"], pending["attempted_at"]);
+        handler.poll_connection_observation_sources().await.unwrap();
+        let checks = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(checks["checkpoint"]["step"], 2);
+        assert!(handler
+            .connection_observation_wakeup
+            .notified()
+            .now_or_never()
+            .is_none());
+        handler.poll_connection_observation_sources().await.unwrap();
+        assert_eq!(handler.stored_event_observation("pr").unwrap(), checks);
+
+        event_store::transact(&path, |state| {
+            state["observations"]["pr"]["next_poll_at"] = json!(now_ms());
+            Ok(())
+        })
+        .unwrap();
+        handler.poll_connection_observation_sources().await.unwrap();
+        let done = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(
+            done["resource_states"][0]["data"]["statusCheckRollup"]["state"],
+            "SUCCESS"
+        );
+        assert!(handler
+            .connection_observation_wakeup
+            .notified()
+            .now_or_never()
+            .is_some());
+        event_store::transact(&path, |state| {
+            assert_eq!(state["operations"]["wait"]["status"], "pending");
+            assert_eq!(state["operations"]["wait"]["events"][0]["id"], "status-2");
+            Ok(())
+        })
+        .unwrap();
+        server.abort();
+            });
+    }
+
+    #[test]
+    fn retained_completion_inside_activation_window_is_captured_once() {
+        let source = json!({"providerId":"github","enabledAfter":"2026-11-15T00:00:00Z"});
+        let observation = json!({"sequence":2,"events":[{"sequence":1,"key":"old","event":{"id":"old","at":"2026-11-14T00:00:00Z","state":"completed"}},{"sequence":2,"key":"completion","event":{"id":"completion","at":"2026-11-15T00:00:01Z","state":"completed"}}]});
+        let baseline =
+            wegent_protocol::connection_events::activation_sequence(&source, &observation, |v| {
+                chrono::DateTime::parse_from_rfc3339(v.as_str()?)
+                    .ok()
+                    .map(|v| v.timestamp_millis())
+            });
+        let record = json!({"observation_id":"shared","source":source,"status":"armed","initial_sequence":baseline,"after_sequence":baseline,"match":{"/state":"completed"}});
+        let mut state = json!({"operations":{"waiting":record}});
+        assert!(capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(
+            state["operations"]["waiting"]["resource_event_keys"],
+            json!(["completion"])
+        );
+        assert_eq!(state["operations"]["waiting"]["status"], "pending");
+        let captured = state.clone();
+        assert!(!capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(state, captured);
+    }
 
     #[test]
     fn every_consumer_captures_before_shared_history_is_compacted() {
@@ -261,7 +519,7 @@ mod tests {
             .unwrap();
         handler.save_event_subscription("consumer", &armed).unwrap();
         let read = || {
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+            event_store::transact(&handler.event_subscription_path(), |state| {
                 Ok(state["operations"]["consumer"].clone())
             })
             .unwrap()

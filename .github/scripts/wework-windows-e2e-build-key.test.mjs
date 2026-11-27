@@ -96,7 +96,7 @@ test('Windows package reuse follows build inputs and toolchain, independently of
       'wework/codex-binaries.lock.json',
       'executor/src/main.rs',
       'executor/vendor/dependency/src/lib.rs',
-      'backend-rs/src/main.rs',
+      'backend-rs/be-server/src/main.rs',
       'shared/assets/migration.sql',
       'shared/rust/protocol/src/execution.rs',
       'shared/rust/crypto/src/lib.rs',

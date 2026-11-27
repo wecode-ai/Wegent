@@ -79,6 +79,7 @@ export interface LocalExecutorBackendConnection {
   socketBaseUrl: string
   authToken: string
   runtimeAuthToken?: string | null
+  authenticatedUserId?: number
   deviceType: 'app' | 'remote'
 }
 
@@ -478,6 +479,14 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   )
 }
 
+export function getKnownLocalExecutorRuntimeInstanceId(): string | null {
+  return (
+    initializedLocalExecutorStatus?.runtimeInstanceId ||
+    availableLocalExecutorStatus?.runtimeInstanceId ||
+    null
+  )
+}
+
 export function ensureLocalExecutorAvailable(
   options: { refresh?: boolean } = {}
 ): Promise<LocalExecutorStatus> {
@@ -714,6 +723,9 @@ export function connectLocalExecutorToBackend(
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
+    ...(connection.authenticatedUserId === undefined
+      ? {}
+      : { authenticated_user_id: connection.authenticatedUserId }),
     device_type: connection.deviceType,
   })
 }

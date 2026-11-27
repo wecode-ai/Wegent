@@ -125,10 +125,16 @@ def prepare_load_skill_tool(
 
     # Build skill metadata from skill_configs
     skill_metadata = {}
+    chat_only_skills = set()
+    deployable_skills = set()
     if skill_configs:
         for config in skill_configs:
             name = config.get("name")
             if name:
+                if config.get("sandbox_deploy") is False:
+                    chat_only_skills.add(name)
+                else:
+                    deployable_skills.add(name)
                 skill_metadata[name] = {
                     "description": config.get("description", ""),
                     "prompt": config.get("prompt", ""),
@@ -143,6 +149,8 @@ def prepare_load_skill_tool(
         user_id=user_id,
         skill_names=skill_names,
         skill_metadata=skill_metadata,
+        # A real Skill takes precedence if a generated Connector shares its name.
+        chat_only_skills=chat_only_skills - deployable_skills,
     )
 
     logger.info(
@@ -824,7 +832,7 @@ async def _load_skill_mcp_tools(
         client = MCPClient(mcp_configs, task_data=task_data)
 
         try:
-            await asyncio.wait_for(client.connect(), timeout=30.0)
+            await client.connect()
             if client.is_connected:
                 # Get tools organized by server name
                 mcp_tools_with_server = client.get_tools_with_server()
@@ -858,28 +866,32 @@ async def _load_skill_mcp_tools(
                 )
                 await _safe_disconnect_client(client, task_id)
         except asyncio.TimeoutError:
-            logger.error(
+            logger.warning(
                 "[skill_factory] Timeout connecting to skill MCP servers for task %d",
                 task_id,
             )
             await _safe_disconnect_client(client, task_id)
         except Exception as e:
-            logger.error(
-                "[skill_factory] Failed to connect to skill MCP servers for task %d: %s",
+            logger.warning(
+                "[skill_factory] Skill MCP unavailable: task=%d error_type=%s",
                 task_id,
-                str(e),
+                type(e).__name__,
             )
             await _safe_disconnect_client(client, task_id)
 
-    except Exception:
-        logger.exception(
-            "[skill_factory] Unexpected error loading skill MCP tools for task %d",
+    except Exception as e:
+        logger.warning(
+            "[skill_factory] Skill MCP loading unavailable: task=%d error_type=%s",
             task_id,
+            type(e).__name__,
         )
         # Clean up client if it was created before the exception
         if client is not None:
             await _safe_disconnect_client(client, task_id)
 
+    # Retain availability metadata even when no skill service could initialize.
+    if client is not None and not mcp_clients:
+        mcp_clients.append(client)
     return mcp_tools_with_server, mcp_clients
 
 
@@ -899,7 +911,7 @@ async def _safe_disconnect_client(client: Any, task_id: int) -> None:
         )
     except Exception as e:
         logger.warning(
-            "[skill_factory] Error disconnecting MCP client for task %d: %s",
+            "[skill_factory] MCP cleanup unavailable: task=%d error_type=%s",
             task_id,
-            str(e),
+            type(e).__name__,
         )

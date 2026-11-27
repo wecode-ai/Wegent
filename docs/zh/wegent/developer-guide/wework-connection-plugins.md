@@ -113,6 +113,14 @@ GitHub 和 GitLab 仓库来源实现同一读取接口，查询指定 `entityKin
 
 主助理创建只读委托时，可通过 `create_task.readSources` 显式选择当前已连接的具体来源；省略时不继承任何来源。宿主保存不可扩大的读取快照，`continue_task` 保留并重新验证该快照，不加入后来新增的连接。只读工作仅获得所选来源的目录和读取能力；每页重新检查父子任务的用户、设备、主身份和当前连接。通配来源、其他身份的连接及已撤销的来源均拒绝，不能借委托获得配置或外部操作能力。
 
+### 供后台复盘读取的历史
+
+实现 `readSource` 的连接可以在 Provider 声明中添加 `"reviewHistory": {"resourceKinds": ["inbox"]}`，列出能提供原生历史的资源类型。角色开启自主学习后，执行器在现有授权范围内对具体资源请求 `query: {since, trainingUntil, limit}`。时间范围左闭右开，时间为带时区的 ISO 字符串，每页最多 20 条。分页应将游标绑定到账号、资源、订阅代际和原始查询，保留原有读取权限和采集进度。
+
+复盘页返回 `items`、`hasMore`、可选的 `nextCursor` 和 `reviewCoverage`。每条记录包含稳定的原生 `id`、`at`、`text`、`conversationId` 和 `author`。可附 `topicId`、`quotedMessageId`、`participantId` 和 `truncated`。能核实自然人时，使用 `owner` 或 `participant`。来源明确标记账号自动发送时使用 `accountAutomation`，仅能核实平台账号时使用 `authenticatedAccount`，仅有声称的发件人地址时使用 `accountCandidate`，其余使用 `unknown`。前三种账号线索均须与当前角色的真实发送回执匹配，才能确认助理原答。只有来源能覆盖原答及本人后续回复的完整历史时才声明 `complete`；只读收件箱、过滤后的事件、缺失线程等返回 `partial`。有限记录仍可提供有出处的观察。普通读取继续使用插件自己的业务数据格式。
+
+未声明复盘历史的资源类型可以通过已采集的原始事件参与复盘。宿主按当前角色、资源和授权代际读取已保存的事实，归属为未知作者，覆盖为部分。同一资源类型若只有部分配置能读取讨论，插件可以针对仅采集事件的配置返回空的末页，声明 `reviewCoverage: "partial"` 和 `reviewUseCollectedEvents: true`。这样可复用这次授权已接收的事件。
+
 ## Provider 接口
 
 | 方法                            | 输入与结果                                                                                                          |

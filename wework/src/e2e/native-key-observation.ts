@@ -25,3 +25,18 @@ export function createNativeKeyObservation(target: EventTarget, read: () => stri
     },
   }
 }
+
+export async function waitForNativeTerminalPageUp(
+  target: EventTarget,
+  before: string,
+  deadline: number
+): Promise<string> {
+  let after = readNativeTerminalViewport(target)
+  while (Number(before) > 1 && Number(after) >= Number(before)) {
+    if (Date.now() >= deadline)
+      throw new Error(`Native PageUp did not move backwards: ${before} -> ${after}`)
+    await new Promise<void>(resolve => window.setTimeout(resolve, 10))
+    after = readNativeTerminalViewport(target)
+  }
+  return after
+}

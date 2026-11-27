@@ -45,7 +45,8 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let runtime =
         TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
             .unwrap();
-    let context = SpaceMcpRequestContext::new(None, Some(url), Some("unit-test-token".into()));
+    let mut context = SpaceMcpRequestContext::new(None, Some(url), Some("unit-test-token".into()));
+    context.current_device_id = Some("unit-test-device".into());
 
     for method in ["initialize", "tools/list"] {
         let response =
@@ -70,7 +71,18 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    assert_eq!(projects[0]["id"], "12");
+    // Local spaces can precede backend spaces when a device identity is available.
+    let backend_projects = projects["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|project| project["space"]["project_store"] == "backend")
+        .collect::<Vec<_>>();
+    assert_eq!(backend_projects.len(), 1);
+    assert_eq!(backend_projects[0]["id"], "12");
+    assert_eq!(backend_projects[0]["space"]["space_id"], "12");
+    assert_eq!(backend_projects[0]["name"], "Authorized project");
+    assert_eq!(projects["coverage"]["complete"], true);
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }
@@ -179,6 +191,38 @@ async fn assert_local_issue_access(cross_project: bool) {
     assert_eq!(current["item_id"], source.id);
     assert_eq!(current["item"]["title"], "Source Issue");
     assert_eq!(current["item"]["version"], source.version);
+    assert_eq!(
+        current["space_ref"],
+        json!({
+            "project_store": "local", "space_id": project.id, "device_id": "device-1",
+        })
+    );
+    let mut executor_context = context.clone();
+    let grant = executor_context.grant.as_mut().unwrap();
+    grant.role = Some(SpaceContextRole::Executor);
+    grant.categories = context::role_categories(SpaceContextRole::Executor)
+        .iter()
+        .copied()
+        .collect();
+    let bound = result_value(
+        call_tool_with_runtime_context(
+            &runtime,
+            "get_current_context",
+            json!({}),
+            &executor_context,
+        )
+        .await,
+    );
+    let detail = result_value(
+        call_tool_with_runtime_context(&runtime, "batch_get_board_items",
+            json!({"items":[{"request_id":"bound","target":{"space":bound["space_ref"],"item_id":bound["item_id"]}}]}),
+            &executor_context).await,
+    );
+    assert_eq!(detail["results"][0]["state"], "succeeded");
+    assert_eq!(detail["results"][0]["result"]["item"]["id"], source.id);
+    let discovery =
+        call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &executor_context).await;
+    assert_eq!(discovery["isError"], true);
 }
 
 #[tokio::test]
@@ -330,5 +374,9 @@ async fn assert_cloud_issue_access(target_project_id: &'static str) {
     assert_eq!(current["item_id"], "ISSUE-1");
     assert_eq!(current["item"]["id"], "ISSUE-1");
     assert_eq!(current["item"]["cloud_project_id"], "12");
+    assert_eq!(
+        current["space_ref"],
+        json!({"project_store":"backend","space_id":"12"})
+    );
     server.abort();
 }

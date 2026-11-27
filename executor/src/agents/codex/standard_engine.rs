@@ -8,10 +8,14 @@ use std::{
     future::{ready, Future, Ready},
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::{
+    sync::{broadcast, mpsc, oneshot},
+    time::{sleep_until, Instant},
+};
 
 use crate::{
     agent_session,
@@ -26,10 +30,13 @@ use crate::{
 };
 
 use super::{
+    elicitation::native_user_input_timeout,
     mcp_form::{deferred_form, form_item},
     resolve_codex_binary, run_codex_app_server_turn_with_cancel, CodexAppServerTurn,
     CodexAppServerTurnOptions, CodexNotification,
 };
+
+const INTERACTION_CLOCK_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 type TurnFuture = Pin<Box<dyn Future<Output = Result<CodexAppServerTurn, String>> + Send>>;
 
@@ -42,6 +49,7 @@ use projection::StandardEventProjection;
 pub struct CodexAppServerEngine {
     binary: String,
     pending: Arc<Mutex<BTreeMap<String, PendingTurn>>>,
+    gateway_connection: Option<crate::agents::model_gateway::ConnectionSnapshot>,
 }
 
 impl fmt::Debug for CodexAppServerEngine {
@@ -93,12 +101,15 @@ struct SuspendedTurn {
     request: ExecutionRequest,
     builder: ResponsesEventBuilder,
     interaction: Interaction,
+    _expiry_guard: oneshot::Sender<()>,
 }
 
 struct Interaction {
     tool_use_id: String,
     question_ids: Vec<String>,
     request_id: Value,
+    deadline: Instant,
+    expires_at_unix_ms: u64,
 }
 
 enum TurnProgress {
@@ -119,7 +130,16 @@ impl CodexAppServerEngine {
         Self {
             binary: resolve_codex_binary(&binary.into()),
             pending: Arc::new(Mutex::new(BTreeMap::new())),
+            gateway_connection: None,
         }
+    }
+
+    pub(crate) fn with_gateway_connection(
+        mut self,
+        connection: Option<crate::agents::model_gateway::ConnectionSnapshot>,
+    ) -> Self {
+        self.gateway_connection = connection;
+        self
     }
 
     async fn execute<S: EventSink>(
@@ -178,23 +198,73 @@ impl CodexAppServerEngine {
                     "codex task waiting for user input",
                     &task_fields(&request.task_id, &request.subtask_id),
                 );
-                self.pending
-                    .lock()
-                    .map_err(|_| "Codex interaction state unavailable")?
-                    .insert(
-                        request.task_id.clone(),
-                        PendingTurn::Native(SuspendedTurn {
-                            turn: Box::new(turn),
-                            request,
-                            builder,
-                            interaction,
-                        }),
-                    );
+                self.suspend(turn, request, builder, interaction)?;
                 Ok(ExecutionOutcome::WaitingForUserInput {
                     stop_reason: "tool_deferred".to_owned(),
                 })
             }
         }
+    }
+
+    fn suspend(
+        &self,
+        turn: LiveTurn,
+        request: ExecutionRequest,
+        builder: ResponsesEventBuilder,
+        interaction: Interaction,
+    ) -> Result<(), String> {
+        let task_id = request.task_id.clone();
+        let subtask_id = request.subtask_id.clone();
+        let tool_use_id = interaction.tool_use_id.clone();
+        let deadline = interaction.deadline;
+        let expires_at_unix_ms = interaction.expires_at_unix_ms;
+        let (expiry_guard, finished) = oneshot::channel();
+        self.pending
+            .lock()
+            .map_err(|_| "Codex interaction state unavailable")?
+            .insert(
+                task_id.clone(),
+                PendingTurn::Native(SuspendedTurn {
+                    turn: Box::new(turn),
+                    request,
+                    builder,
+                    interaction,
+                    _expiry_guard: expiry_guard,
+                }),
+            );
+
+        // A suspended future is not polled, so its own RPC timeouts cannot
+        // release the process or Home lease when nobody answers.
+        let pending = Arc::downgrade(&self.pending);
+        tokio::spawn(async move {
+            let mut finished = finished;
+            while !interaction_expired(deadline, expires_at_unix_ms) {
+                // On hosts where the monotonic clock stops during sleep,
+                // periodically check the deadline displayed to the user.
+                let next_check = deadline.min(Instant::now() + INTERACTION_CLOCK_CHECK_INTERVAL);
+                tokio::select! {
+                    _ = &mut finished => return,
+                    _ = sleep_until(next_check) => {}
+                }
+            }
+            let Some(pending) = pending.upgrade() else {
+                return;
+            };
+            let Ok(mut pending) = pending.lock() else {
+                return;
+            };
+            if matches!(pending.get(&task_id), Some(PendingTurn::Native(turn))
+                if turn.interaction.tool_use_id == tool_use_id)
+            {
+                pending.remove(&task_id);
+                drop(pending);
+                log_executor_event(
+                    "codex task user input expired",
+                    &task_fields(&task_id, &subtask_id),
+                );
+            }
+        });
+        Ok(())
     }
 
     fn start_or_resume(&self, request: &mut ExecutionRequest) -> Result<LiveTurn, String> {
@@ -207,6 +277,11 @@ impl CodexAppServerEngine {
             .pending
             .lock()
             .map_err(|_| "Codex interaction state unavailable")?;
+        if matches!(pending.get(&request.task_id), Some(PendingTurn::Native(turn))
+            if interaction_expired(turn.interaction.deadline, turn.interaction.expires_at_unix_ms))
+        {
+            pending.remove(&request.task_id);
+        }
         if let Some(answer) = answer {
             let suspended = pending
                 .get(&request.task_id)
@@ -249,17 +324,28 @@ impl CodexAppServerEngine {
         drop(pending);
         let (notification_tx, notification_rx) = mpsc::unbounded_channel();
         let (answer_tx, answer_rx) = mpsc::channel(1);
-        let options = CodexAppServerTurnOptions {
+        let mut options = CodexAppServerTurnOptions {
             resume_thread_id: agent_session::load_saved_codex_thread_id(request),
             notifications: Some(notification_tx),
             request_user_input_answers: Some(answer_rx),
             defer_interactive_forms: true,
             ..CodexAppServerTurnOptions::default()
         };
-        let request = request.clone();
+        let mut request = request.clone();
         let binary = self.binary.clone();
+        let gateway_connection = self.gateway_connection.clone();
         Ok(LiveTurn {
             future: Box::pin(async move {
+                if let Some(connection) = gateway_connection {
+                    options.gateway_credentials = crate::agents::model_gateway::credentials(
+                        &connection,
+                        &mut request,
+                        None,
+                        false,
+                    )
+                    .await?
+                    .map(|(credentials, _)| credentials);
+                }
                 run_codex_app_server_turn_with_cancel(&binary, request, options).await
             }),
             notifications: notification_rx,
@@ -271,6 +357,10 @@ impl CodexAppServerEngine {
             file_changes,
         })
     }
+}
+
+fn interaction_expired(deadline: Instant, expires_at_unix_ms: u64) -> bool {
+    Instant::now() >= deadline || super::current_epoch_millis() as u64 >= expires_at_unix_ms
 }
 
 impl AgentEngine for CodexAppServerEngine {
@@ -429,10 +519,24 @@ impl LiveTurn {
                         &input,
                     ))
                     .await?;
-                    sink.send(builder.response_function_call_done(
-                        &pending.tool_use_id, "interactive_form_question", &input,
-                        Some(r#"{"__deferred_user_input__":true,"success":true,"status":"waiting_for_user_response"}"#), false,
-                    )).await?;
+                    sink.send(
+                        builder.response_function_call_done(
+                            &pending.tool_use_id,
+                            "interactive_form_question",
+                            &input,
+                            Some(
+                                &json!({
+                                    "__deferred_user_input__": true,
+                                    "success": true,
+                                    "status": "waiting_for_user_response",
+                                    "expires_at_unix_ms": pending.expires_at_unix_ms,
+                                })
+                                .to_string(),
+                            ),
+                            false,
+                        ),
+                    )
+                    .await?;
                     interaction = Some(pending);
                     continue;
                 }
@@ -505,11 +609,21 @@ impl Interaction {
             }));
             question_ids.push(id.to_owned());
         }
+        let now_ms = super::current_epoch_millis() as u64;
+        let expires_at_unix_ms = payload["expiresAtUnixMs"].as_u64().unwrap_or_else(|| {
+            now_ms.saturating_add(native_user_input_timeout().as_millis() as u64)
+        });
+        let remaining = Duration::from_millis(expires_at_unix_ms.saturating_sub(now_ms));
+        let deadline = Instant::now()
+            .checked_add(remaining)
+            .ok_or("Codex interaction deadline is out of range")?;
         Ok((
             Self {
                 tool_use_id: format!("codex-interaction-{}", uuid::Uuid::new_v4()),
                 question_ids,
                 request_id,
+                deadline,
+                expires_at_unix_ms,
             },
             json!({"questions": questions}),
         ))

@@ -2,7 +2,7 @@ import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { readFile, readdir, readlink, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -314,7 +314,9 @@ export function createGithubAuthBoundaries({
         await openDetail(control)
         await waitManage(control, '退出登录')
         protocol.state.apiFailure = true
-        await focus(control, '[data-testid="plugin-detail-action-error"]')
+        await focus(control, '[data-testid="plugin-detail-action-error"]', {
+          text: '无法验证 GitHub CLI 登录状态',
+        })
         assert.match(
           await control.command('getText', '[data-testid="plugin-detail-action-error"]'),
           /无法验证 GitHub CLI 登录状态/
@@ -328,6 +330,31 @@ export function createGithubAuthBoundaries({
         await control.command('waitFor', '[data-testid="git-hosting-cli-github-status"]', {
           text: '已就绪',
         })
+        const credentialStore = join(workbenchHome, 'git-auth')
+        const active = join(credentialStore, 'current')
+        const previousRevision = await readlink(active)
+        const unmanagedEntry = join(credentialStore, 'unmanaged-test-entry')
+        await writeFile(unmanagedEntry, 'Preserve this fixture', { flag: 'wx' })
+        try {
+          const response = await fetch(
+            cloud.backendUrl + '/api/devices/' + encodeURIComponent(deviceId) + '/git-accounts',
+            {
+              method: 'PUT',
+              headers: {
+                Authorization: 'Bearer ' + cloud.authToken,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ allow_empty: false }),
+              signal: AbortSignal.timeout(uiTimeoutMs),
+            }
+          )
+          assert.equal(response.status, 502, 'The device must reject an unmanaged store entry')
+          assert.equal((await response.json()).error_code, 'credential_directory_invalid')
+          assert.equal(await readlink(active), previousRevision)
+          assert.equal(await readFile(unmanagedEntry, 'utf8'), 'Preserve this fixture')
+        } finally {
+          await rm(unmanagedEntry)
+        }
         protocol.state.syncedValid = false
         await focus(control, '[data-testid="git-hosting-cli-github-status"]', {
           text: '未登录',

@@ -3,7 +3,10 @@ import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload }
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
-import { measureRuntimeStreamEvent } from '@/stream/runtimeStreamDiagnostics'
+import {
+  isRuntimeChatStreamDebugEnabled,
+  measureRuntimeStreamEvent,
+} from '@/stream/runtimeStreamDiagnostics'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -17,27 +20,11 @@ interface RuntimeChatStreamDeps {
 
 let nextRuntimeChatStreamSubscriptionId = 1
 let activeRuntimeChatStreamSubscriptions = 0
-const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
 export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
 export const E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENT_COUNTS__'
 export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
 export const E2E_RUNTIME_EVENT_LISTENERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__'
-
-export function isRuntimeChatStreamDebugEnabled(): boolean {
-  return (
-    import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' ||
-    globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
-  )
-}
-
-export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {
-  if (enabled) {
-    globalThis.localStorage?.setItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY, '1')
-    return
-  }
-  globalThis.localStorage?.removeItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY)
-}
 
 export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   const subscriptions = new Map<
@@ -83,8 +70,12 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
     }
     const subscriptionEntries = Array.from(subscriptions)
-    logRuntimeChatStreamNativeEvent(event, subscriptionEntries)
-    if (shouldLogRuntimeChatStreamEvent(event.event)) {
+    const debugEnabled = isRuntimeChatStreamDebugEnabled()
+    if (debugEnabled) logRuntimeChatStreamNativeEvent(event, subscriptionEntries)
+    if (
+      (debugEnabled || import.meta.env.VITE_WEWORK_E2E === 'true') &&
+      shouldLogRuntimeChatStreamEvent(event.event)
+    ) {
       const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
         isLocalExecutorEventInScope(event, subscription.handlers.scope)
       ).length
@@ -92,7 +83,42 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
     }
     for (const [subscriptionId, subscription] of subscriptionEntries) {
       if (event.event === 'wework.notification.created') {
-        subscription.handlers.onWeworkNotification?.()
+        const { id, stored, standInStartFailure } = event.payload
+        const { userId, itemTitle, code, url } = asRecord(standInStartFailure)
+        subscription.handlers.onWeworkNotification?.(
+          typeof id === 'string'
+            ? {
+                id,
+                stored: stored !== false,
+                standInStartFailure:
+                  typeof userId === 'number' &&
+                  typeof itemTitle === 'string' &&
+                  typeof code === 'string' &&
+                  typeof url === 'string'
+                    ? { userId, itemTitle, code, url }
+                    : undefined,
+              }
+            : undefined
+        )
+        continue
+      }
+      if (event.event === 'wework.issue.assignments.changed') {
+        if (typeof event.payload.userId === 'number') {
+          subscription.handlers.onIssueAssignmentsChanged?.(event.payload.userId)
+        }
+        continue
+      }
+      if (event.event === 'wework.issue.shared') {
+        const { id, userId, title, body, url } = event.payload
+        if (
+          typeof id === 'string' &&
+          typeof userId === 'number' &&
+          typeof title === 'string' &&
+          typeof body === 'string' &&
+          typeof url === 'string'
+        ) {
+          subscription.handlers.onIssueShared?.({ id, userId, title, body, url })
+        }
         continue
       }
       if (event.event === 'project.task.assigned') {
@@ -127,12 +153,13 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       if (event.event === 'response.output_text.delta') {
         subscription.textDeltaCount += 1
       }
-      logRuntimeChatStreamEvent(
-        subscriptionId,
-        event,
-        subscription.eventCount,
-        subscription.textDeltaCount
-      )
+      if (debugEnabled)
+        logRuntimeChatStreamEvent(
+          subscriptionId,
+          event,
+          subscription.eventCount,
+          subscription.textDeltaCount
+        )
       try {
         measureRuntimeStreamEvent(event.event, () => {
           emitResponseApiEvent(
@@ -312,19 +339,15 @@ function logRuntimeChatTerminalEvent(
   subscriptionCount: number
 ): void {
   const payload = asRecord(event.payload)
-  const details = {
+  logRuntimeTaskCreateStage('runtime-terminal-received', {
     event: event.event,
+    sequence: event.sequence ?? null,
     taskId: stringField(payload, 'taskId') ?? null,
     subtaskId: stringField(payload, 'subtaskId') ?? null,
     deviceId: stringField(payload, 'deviceId') ?? null,
     subscriptionCount,
     matchedSubscriptionCount,
-  }
-  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
-    logRuntimeTaskCreateStage('runtime-terminal-received', details)
-  } else {
-    console.info('[Wework] Runtime chat stream terminal event received', details)
-  }
+  })
 }
 
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
@@ -537,6 +560,8 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeEventLagged ||
     handlers.onRuntimeTransportReplaced ||
     handlers.onProjectTaskAssigned ||
+    handlers.onIssueShared ||
+    handlers.onIssueAssignmentsChanged ||
     handlers.onWeworkNotification
   )
 }
@@ -633,7 +658,6 @@ function logRuntimeChatStreamEvent(
   eventCount: number,
   textDeltaCount: number
 ): void {
-  if (!isRuntimeChatStreamDebugEnabled()) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
@@ -668,12 +692,11 @@ function logRuntimeChatStreamNativeEvent(
     ]
   >
 ): void {
-  if (!isRuntimeChatStreamDebugEnabled()) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.debug('[Wework] Runtime chat stream native event', {
+  logRuntimeTaskCreateStage('runtime-stream-native-event', {
     sequence: event.sequence,
     event: event.event,
     taskId: stringField(payload, 'taskId'),

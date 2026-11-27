@@ -536,6 +536,10 @@ export function createRuntimeTaskStreamHandlers(
           payload.result.value.trim() && { content: payload.result.value }),
         blocks,
         fileChanges,
+        completedAt:
+          typeof payload.result.completedAt === "number"
+            ? payload.result.completedAt
+            : (native?.completedAt ?? undefined),
         ...((typeof payload.result.durationMs === "number" ||
           typeof payload.result.duration_ms === "number") && {
           durationMs:
@@ -612,6 +616,7 @@ export function createRuntimeTaskStreamHandlers(
           error: payload.error,
           errorType: payload.type,
           startedAt: payload.startedAt,
+          errorInfo: payload.errorInfo,
           durationMs: payload.durationMs,
         });
       }
@@ -735,6 +740,9 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.contentDelta !== undefined && {
             contentDelta: payload.contentDelta,
+          }),
+          ...(payload.contentOffset !== undefined && {
+            contentOffset: payload.contentOffset,
           }),
           ...(payload.toolInput !== undefined && {
             toolInput: payload.toolInput,

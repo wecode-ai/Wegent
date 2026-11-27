@@ -160,10 +160,33 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           first.items[0].sequence
         )
         assert.ok(!JSON.stringify(listed).includes(created.secret))
+        const queuedDeliveryId = 'delivery-before-device-transfer'
+        await request(`/v1/git-connections/hooks/${created.id}`, 'POST', payload, 200, {
+          ...headers,
+          'x-github-delivery': queuedDeliveryId,
+        })
         const takeover = await request(base, 'PUT', { ...binding, deviceId: 'other-device' })
         cleanupBinding = { deviceId: 'other-device', generation: takeover.generation }
         await request(base, 'DELETE', binding, 409)
         await request(`${base}/events`, 'POST', { ...binding, after: 0 }, 409)
+        const deliveryId = 'delivery-after-device-transfer'
+        await request(`/v1/git-connections/hooks/${created.id}`, 'POST', payload, 200, {
+          ...headers,
+          'x-github-delivery': deliveryId,
+        })
+        const moved = await request(`${base}/events`, 'POST', {
+          ...cleanupBinding,
+          after: first.items[0].sequence,
+        })
+        assert.equal(moved.generation, takeover.generation)
+        assert.deepEqual(
+          moved.items.map(item => item.id),
+          [queuedDeliveryId, deliveryId]
+        )
+        await request(`${base}/ack`, 'POST', {
+          ...cleanupBinding,
+          sequence: moved.items.at(-1).sequence,
+        })
         await request(
           `${base}/ack`,
           'POST',
@@ -216,7 +239,6 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         await openGit('github')
         const personalView = JSON.parse(await control.command('snapshot', 'body'))
         assert.match(personalView.text, /个人全部事件/)
-        assert.match(personalView.text, /只关注某个仓库/)
         assert.doesNotMatch(personalView.text, /Webhook|轮询/)
         assert.equal(
           Number(
@@ -225,9 +247,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           0
         )
         await captureScreenshot(control, 'git-01-personal-scope-without-cloud-controls.png')
-        await control.command('select', '[data-testid="stand-in-git-kind"]', {
-          value: 'repository',
-        })
+        const kind = '[data-testid="stand-in-git-kind"]'
+        await control.command('setExpanded', kind, { value: 'true', visible: true })
+        const repository =
+          '[data-testid="stand-in-git-kind-options"] [role="option"][data-value="repository"]'
+        await control.command('waitFor', repository, { visible: true, text: '只关注某个仓库' })
+        await control.command('select', kind, { value: 'repository' })
         await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
         await captureScreenshot(control, 'git-02-repository-scope-search-layout.png')
         const remote = await request('/v1/git-connections/subscriptions')

@@ -1,8 +1,57 @@
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { createRuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
 describe('workbenchReducer', () => {
+  test('reuses identical inventories and preserves unaffected task rows across refreshes', () => {
+    const work: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local',
+          available: true,
+          workspacePath: '/tmp/chat',
+          tasks: [
+            {
+              taskId: 'first',
+              workspacePath: '/tmp/chat',
+              runtime: 'codex',
+              title: 'First',
+              status: 'done',
+              turnStatus: 'completed',
+            },
+            {
+              taskId: 'second',
+              workspacePath: '/tmp/chat',
+              runtime: 'codex',
+              title: 'Second',
+              status: 'done',
+              turnStatus: 'completed',
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+    const state = { ...initialWorkbenchState, runtimeWork: work }
+    expect(
+      workbenchReducer(state, {
+        type: 'runtime_work_refreshed',
+        runtimeWork: structuredClone(work),
+      })
+    ).toBe(state)
+
+    const changed = structuredClone(work)
+    changed.chats[0].tasks[1].pinned = true
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: changed,
+    })
+    expect(refreshed.runtimeWork?.chats[0].tasks[0]).toBe(work.chats[0].tasks[0])
+    expect(refreshed.runtimeWork?.chats[0].tasks[1].pinned).toBe(true)
+  })
+
   test('moves a fresh composer source selection to the new primary after refresh', () => {
     const project = {
       id: 7,
@@ -1300,4 +1349,80 @@ describe('workbenchReducer', () => {
       sidebarOrder: 3,
     })
   })
+})
+
+test('keeps an unresolved task owner until discovery proves its alias', () => {
+  const device: DeviceInfo = {
+    id: 79,
+    device_id: 'native-device',
+    name: 'Local',
+    status: 'online',
+    device_type: 'local',
+    is_default: true,
+  }
+  const address = {
+    deviceId: 'app-record-79',
+    taskId: 'same-task',
+    projectSession: { projectId: 'bound-project', issueId: 'bound-issue' },
+  }
+  const runtimeWork: RuntimeWorkListResponse = {
+    projects: [],
+    totalTasks: 1,
+    chats: [
+      {
+        deviceId: device.device_id,
+        workspacePath: '/workspace',
+        available: true,
+        mapped: true,
+        tasks: [
+          {
+            taskId: address.taskId,
+            threadId: 'native-thread',
+            title: 'Task',
+            runtime: 'claude_code',
+            workspacePath: '/workspace',
+          },
+        ],
+      },
+    ],
+  }
+  const beforeDiscovery = workbenchReducer(
+    {
+      ...initialWorkbenchState,
+      devices: [device],
+      currentRuntimeTask: address,
+    },
+    { type: 'runtime_work_refreshed', runtimeWork }
+  )
+  // A matching task id in another workspace is not device identity proof.
+  expect(beforeDiscovery.currentRuntimeTask).toBe(address)
+  const afterDiscovery = workbenchReducer(beforeDiscovery, {
+    type: 'devices_refreshed',
+    devices: [{ ...device, socket_device_id: address.deviceId }],
+  })
+  expect(afterDiscovery.currentRuntimeTask).toEqual({
+    ...address,
+    runtime: 'claude_code',
+    deviceId: device.device_id,
+    threadId: 'native-thread',
+    workspacePath: '/workspace',
+  })
+  const ambiguous = workbenchReducer(beforeDiscovery, {
+    type: 'devices_refreshed',
+    devices: [
+      { ...device, socket_device_id: address.deviceId },
+      { ...device, id: 80, device_id: 'another-device', socket_device_id: address.deviceId },
+    ],
+  })
+  expect(ambiguous.currentRuntimeTask).toBe(address)
+  const offline = { ...address, deviceId: 'offline-device' }
+  expect(
+    workbenchReducer(
+      {
+        ...beforeDiscovery,
+        currentRuntimeTask: offline,
+      },
+      { type: 'runtime_work_refreshed', runtimeWork }
+    ).currentRuntimeTask
+  ).toBe(offline)
 })

@@ -25,6 +25,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.cli",
         "runtime.connections.host",
         "runtime.connections.catalog",
+        "runtime.connections.readiness",
         "runtime.connections.resources",
         "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
@@ -343,6 +344,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
         Some(&PreparingTurn {
+            owner_request: None,
             cancellation_requested: true
         })
     );
@@ -1303,6 +1305,7 @@ fn keeps_payload_backend_credentials_over_the_snapshot() {
             backend_url: "https://backend.example.com".to_owned(),
             socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: String::new(),
         })));
     let handler =
@@ -2217,6 +2220,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2329,6 +2333,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -2517,7 +2522,8 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
         ..ExecutionRequest::default()
     };
 
-    handler.persist_failed_assistant_message("task-1", &request, "Codex failure");
+    let error_message = "Agent Skills directory contains unmanaged entries";
+    handler.persist_failed_assistant_message("task-1", &request, error_message);
 
     let task = handler
         .local_task_link("task-1")
@@ -2526,9 +2532,19 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "assistant");
     assert_eq!(messages[0]["status"], "failed");
-    assert_eq!(messages[0]["error"], "Codex failure");
+    assert_eq!(messages[0]["error"], error_message);
     assert_eq!(messages[0]["errorType"], "response.failed");
+    assert_eq!(messages[0]["errorCode"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["code"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["stage"], "prepare");
     assert_eq!(messages[0]["subtaskId"], "turn-1");
+    let restored = RuntimeWorkStore::new(index_path.clone())
+        .get_task("task-1")
+        .unwrap();
+    assert_eq!(
+        restored.runtime_handle["startupFailure"]["errorInfo"],
+        messages[0]["errorInfo"],
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -2675,7 +2691,7 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
     link.running = false;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")
@@ -2750,7 +2766,7 @@ fn syncing_changed_goal_status_updates_task_activity_time() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")
@@ -2897,6 +2913,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: Some("server_overloaded".to_owned()),
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),
@@ -2915,6 +2932,16 @@ fn failed_responses_emit_runtime_turn_duration() {
         .try_recv()
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "server_overloaded"
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["category"], "model");
+    assert_eq!(
+        event["payload"]["data"]["error_info"]["retry_policy"],
+        "after_backoff",
+    );
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
@@ -2940,6 +2967,10 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        root.path().join("workspace").to_str().unwrap(),
+    );
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -3015,27 +3046,38 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
         });
 }
 
-#[tokio::test]
-async fn archived_delete_falls_back_inline_when_enqueue_fails() {
-    let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
-    drop(archived_delete_rx);
-    handler.archived_delete_tx = archived_delete_tx;
-    let link = RuntimeTaskLink::new_pending(
-        "task-1".to_owned(),
-        "/tmp/runtime-work-delete-enqueue-fallback".to_owned(),
-        "Task".to_owned(),
+#[test]
+fn archived_delete_falls_back_inline_when_enqueue_fails() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        root.path().join("workspace").to_str().unwrap(),
     );
-    handler.upsert_local_task(link.clone());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+            handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+            let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+            drop(archived_delete_rx);
+            handler.archived_delete_tx = archived_delete_tx;
+            let link = RuntimeTaskLink::new_pending(
+                "task-1".to_owned(),
+                root.path().join("project").to_string_lossy().into_owned(),
+                "Task".to_owned(),
+            );
+            handler.upsert_local_task(link.clone());
 
-    let response = handler.delete_archived_link(link).await;
+            let response = handler.delete_archived_link(link).await;
 
-    assert_eq!(response["deleted"], true);
-    assert_eq!(response["cleanup"]["background"], false);
-    assert!(handler.local_task_link("task-1").is_none());
-    let _ = fs::remove_file(index_path);
+            assert_eq!(response["deleted"], true);
+            assert_eq!(response["cleanup"]["background"], false);
+            assert!(handler.local_task_link("task-1").is_none());
+        });
 }
 
 #[test]
@@ -3659,6 +3701,25 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Isolate process-wide Codex authentication paths.
 async fn codex_account_switch_waits_for_model_discovery() {
+    const ISOLATED: &str = "WEGENT_TEST_ISOLATED_ACCOUNT_SWITCH";
+    if env::var_os(ISOLATED).is_none() {
+        // Other native tests read the process-wide Home without taking ENV_LOCK.
+        // Isolate this test's no-write contract from their background startup.
+        let thread = std::thread::current();
+        let output = tokio::process::Command::new(env::current_exe().unwrap())
+            .args(["--exact", thread.name().unwrap(), "--nocapture"])
+            .env(ISOLATED, "1")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Isolated account switch failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
@@ -3676,7 +3737,14 @@ async fn codex_account_switch_waits_for_model_discovery() {
         .unwrap_err();
     assert_eq!(error.code, "codex_account_switch_failed");
     assert_eq!(error.message, "Codex account was not found");
-    assert!(fs::read_dir(home.path()).unwrap().next().is_none());
+    let entries = fs::read_dir(home.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert!(
+        entries.is_empty(),
+        "Unexpected Codex home entries: {entries:?}"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -5595,12 +5663,49 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn runtime_work_test_paths_are_independent_for_the_same_label() {
+    let paths = (0..128)
+        .map(|_| temp_runtime_work_index_path("shared-label"))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        paths.len(),
+        128,
+        "Test cleanup must not remove another fixture"
+    );
+}
+
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}.json",
         std::process::id(),
-        now_ms()
+        uuid::Uuid::new_v4()
     ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {
@@ -5642,6 +5747,7 @@ fn local_project_execution_never_inherits_backend_credentials() {
             backend_url: "https://backend.example.com".into(),
             socket_url: String::new(),
             auth_token: "cloud-token".into(),
+            authenticated_user_id: None,
             runtime_auth_token: "runtime-token".into(),
         }))),
     );
@@ -5921,6 +6027,8 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
         .worktrees
         .prepare(&source, "regular", None, false)
         .unwrap();
+    let unrelated_git = Path::new(&unrelated.path).join(".git");
+    fs::remove_file(unrelated_git).unwrap();
     for (id, path) in [
         ("regular", source.display().to_string()),
         ("shared-a", prepared.path.clone()),
@@ -5943,6 +6051,16 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
     assert!(source.join("tracked.txt").exists());
     assert!(Path::new(&unrelated.path).exists());
     assert!(Path::new(&prepared.path).exists());
+    assert_eq!(
+        handler
+            .worktrees
+            .worktree_for_cleanup(Path::new(&unrelated.path))
+            .unwrap()
+            .unwrap()
+            .state,
+        "active",
+        "Archiving tasks must not reconcile unrelated worktrees"
+    );
     let result = handler
         .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
         .await

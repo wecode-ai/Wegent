@@ -3,7 +3,25 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'workspace-attachments') {
+  if (checkpoint === 'plugin-development' && env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN) {
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN = env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
+  }
+  delete nextEnv.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
+  if (checkpoint === 'temporary-chat') {
+    nextEnv.WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS ??= '10000'
+  }
+  if (checkpoint === 'coordination-history') {
+    nextEnv.WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS ??= '1000'
+    nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
+  }
+  if (['stand-in', 'stand-in-cloud', 'stand-in-assignment-notifications'].includes(checkpoint)) {
+    nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
+  }
+  if (
+    ['workspace-attachments', 'clipboard-history-image', 'browser-toolbar-actions'].includes(
+      checkpoint
+    )
+  ) {
     nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
   }
   if (
@@ -29,13 +47,19 @@ export function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.TZ = 'Asia/Shanghai'
   }
   if (
-    checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
+    checkpoint === 'embedded-browser' ||
+    checkpoint === 'task-board-association' ||
+    checkpoint === 'project-create-people' ||
+    checkpoint === 'project-coordinator-publication' ||
+    checkpoint === 'collaboration-local-agent-dispatch' ||
     checkpoint === 'window-lifecycle' ||
-    checkpoint === 'window-background-policy' ||
-    checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
+    checkpoint === 'task-completion-notifications' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'collaboration-milestones' ||
+    checkpoint === 'collaboration-personal-issues' ||
+    checkpoint === 'stand-in-connections' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')

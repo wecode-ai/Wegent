@@ -11,6 +11,7 @@ impl RuntimeWorkRpcHandler {
         link: Option<&RuntimeTaskLink>,
         payload: Value,
         activity: bool,
+        owner_message: Option<OwnerMessage>,
     ) -> Result<Option<Value>, AppIpcError> {
         let Some(link) = link.filter(|link| {
             crate::runtime_work::conversation_sessions::is_identity_conversation(link)
@@ -28,11 +29,18 @@ impl RuntimeWorkRpcHandler {
             self.store.update_task(&link.local_task_id, |link| {
                 link.thread_id = Some(thread.clone());
             });
-            return Box::pin(self.send_message_with_activity_checks(payload, activity))
-                .await
-                .map(Some);
+            return Box::pin(self.send_message_with_activity_checks(
+                payload,
+                activity,
+                owner_message,
+                false,
+                None,
+                None,
+            ))
+            .await
+            .map(Some);
         }
-        Box::pin(self.create_task_after_local_checks(payload, activity))
+        Box::pin(self.create_task_after_local_checks(payload, activity, None, None))
             .await
             .map(Some)
     }

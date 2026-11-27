@@ -16,13 +16,16 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("connection-events:{task}"));
         let _guard = gate.lock().await;
         let id = self.subscription_id(task, &key);
-        let mut record =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let mut record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", &id),
+            |state| {
                 state["operations"]
                     .get(&id)
                     .cloned()
                     .ok_or_else(|| invalid("Subscription not found in this conversation"))
-            })?;
+            },
+        )?;
         if record["device_id"] != self.device_id
             || record["task_id"] != task
             || !matches!(
@@ -43,10 +46,11 @@ impl RuntimeWorkRpcHandler {
             let observation = self
                 .read_event_observation(&record, &format!("manual:{}", uuid::Uuid::new_v4()), true)
                 .await?;
-            record =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                    Ok(state["operations"][&id].clone())
-                })?;
+            record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| Ok(state["operations"][&id].clone()),
+            )?;
             record["last_collected_at"] = observation["last_collected_at"].clone();
             record["resource_states"] = observation["resource_states"].clone();
             if record["error_code"] != "observation_history_gap" {
@@ -81,8 +85,9 @@ impl RuntimeWorkRpcHandler {
             &self.device_id,
             task,
         );
-        let context = ControlContext::from_request(&request)
+        let mut context = ControlContext::from_request(&request)
             .ok_or_else(|| invalid("Conversation no longer permits personal control"))?;
+        context.use_runtime_backend = true;
         self.validate_control_context(&context)?;
         Ok((context, key.to_owned()))
     }

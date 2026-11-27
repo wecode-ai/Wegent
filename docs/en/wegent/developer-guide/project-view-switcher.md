@@ -22,7 +22,7 @@ Only plan choices and timeline segments are remembered. Management enters files 
 
 ## Unavailable links and layout
 
-Grouped navigation resolves an unavailable view to the first available entry in its group, then work. The shell displays safe content and reports the result through `onUnavailableView` without calling `onViewChange`. W-0022 must preserve the URL and display the required notice. Ungrouped hosts retain their existing state correction behavior.
+Grouped navigation resolves an unavailable view to the first available entry in its group, then work. The shell only displays safe content; `onViewChange` handles explicit user switches. The host navigation state owner obtains the resolution through `resolveCollaborationProjectViewNavigation` and handles unavailable-view receipts when committing navigation inputs: grouped mode reports through the owner’s `onUnavailableView` port while preserving the URL, and flat mode corrects the route to an available view. `CollaborationApp` integrates these receipts into its actual project state owner. W-0022 still owns the required notice. Do not mutate host navigation from shell rendering, DOM refs, or an extra lifecycle subscription.
 
 Grouped navigation sits below the fixed title bar. Work has no secondary row or placeholder. Below a project container width of 720px, secondary entries become a menu while calendar/gantt segments stay outside it. Primary entries never wrap; the secondary area can wrap. Both themes and hosts share the component structure.
 

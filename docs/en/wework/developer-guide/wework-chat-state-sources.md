@@ -298,6 +298,30 @@ including threads previously persisted as disabled. Explicit single-agent
 executions still disable collaboration tools. Desktop requests no longer send
 the conflicting legacy single field alongside their native mode.
 
+When neither `agents.max_concurrent_threads_per_session` nor `agents.max_threads`
+is present, executor initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+A non-table `agents` value is preserved for native configuration validation.
+In V2 this permits seven total threads including the root. Existing values of
+this field or the legacy `max_threads` field are preserved. The V2-specific
+`[features.multi_agent_v2] max_concurrent_threads_per_session` setting retains
+native precedence and counts the root. Later manual edits are preserved and
+take effect after restarting the runtime. Single-agent mode still disables
+subagents; the default capacity does not change delegation permissions.
+
+Project catalog synchronization in `projects.list` includes SQLite initialization
+and Git metadata discovery. It runs in a blocking worker rather than the IPC
+reactor. Catalog reads open only the project store, without initializing unrelated
+Issue or table providers. Concurrent listings share an asynchronous execution lock, which stays
+with an active worker after caller timeout or disconnect until the work finishes.
+Health queries and other IPC requests remain responsive during discovery; UI
+timeouts are not extended to hide blocking. The three Git probes for a new project share
+a 30-second deadline and reuse the native Git runner’s termination and reaping.
+A timeout does not persist that project’s catalog row; previously completed imports
+remain intact. Discovery errors are logged for the affected workspace and the scan continues
+with other entries; later listings can retry. Database and other non-discovery errors still propagate.
+
+E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
@@ -505,6 +529,8 @@ Enqueue, cancellation, and dequeue advance the same execution revision only afte
 persistence succeeds. Cancelling admission preserves the previous turn's result, and an
 older queued snapshot cannot make the cancelled task busy again.
 
+Prepare the model route before Goal activation. The prepared native session owns continuation after successful activation, so activation does not enqueue another recovery. Activation and the existing Goal journal still require durable persistence before admission can be acknowledged.
+
 `recovering` means the executor owns Goal recovery or bounded retry backoff. Recovery awaiting admission has no process binding; backoff retains process ownership and must settle when that process exits. Recovery remains busy without an active model turn; its queued legacy
 `task.running: false` must not present that owned recovery as stopped.
 
@@ -640,6 +666,8 @@ When a user submits new input while the message queue is paused, they can preser
 
 ## Message Admission and On-Demand Context
 
+Image paste registers file references synchronously; conversion and upload remain asynchronous. Submission captures every selected attachment, including later files in a sequential upload batch. The message enters its local conversation or queue immediately. Clearing the draft must not cancel submitted uploads or append their late results to a newer draft. Runtime transport waits for that attachment snapshot; any preparation failure fails the send instead of delivering text alone. In-memory preparation handles are omitted from persisted JSON; an unfinished attachment whose preparation cannot be recovered after restart must fail explicitly.
+
 No behavior may block local message admission. Send synchronously validates the input, records the message in its owning conversation or queue, and clears only the submitted draft revision before required attachment preparation, runtime checks, and transport. Late receipts must preserve newer drafts and other conversations. An unanswered question remains visible until delivery is confirmed; the new input appears as sending meanwhile. Admission, queueing, failure, and completed model execution are distinct states.
 
 Project and Issue bindings carry their owning task; late association results cannot populate a different conversation. Failed sends restore text and attachments against the original conversation's draft revision even after the pane switches or closes, preserving newer edits. Each send removes only the temporary queue entry it created; existing entries retain their retry action on failure.
@@ -657,7 +685,8 @@ sequenceDiagram
     participant T as Source tools
     C->>S: Record message or queue item and clear submitted draft
     S-->>C: Display immediately
-    S->>R: Message, explicit attachments, resource IDs
+    S->>S: Await conversion and upload of the submitted attachments; retain failures
+    S->>R: Message, prepared explicit attachments, resource IDs
     R-->>S: Accepted, queued, or failed receipt
     S->>S: Settle by original conversation and draft revision; retain failed retries
     R->>M: Start turn
@@ -917,3 +946,9 @@ The summary header owns the thinking-only duration and updates once per displaye
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
 - Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.
 - When runtime work and message state disagree, do not override display inside UI components and do not add fallback settlement; fix the primary path.
+
+## Streaming text positions and completion rendering
+
+Process text and plan blocks attach a block-local `content_offset` to `content_delta`, measured in Unicode code points rather than UTF-8 bytes or JavaScript UTF-16 units. Executor coalescing retains the first delta's position and never joins noncontiguous deltas. The renderer reuses positioned merging to skip prefixes already included in native history and append only unseen suffixes. Equal text at different positions remains legitimate repeated content.
+
+Ordinary replies and process text retain the same block-based Markdown tree at completion. When the text is unchanged, completion must not rebuild plain-text parser plugins or reparse existing blocks. Incomplete Markdown, diagrams, and annotation markers still receive their required finalization. `e2e:desktop --segment streaming-content` covers native history arriving before a delayed delta and verifies that completing process text retains its rendered paragraph.

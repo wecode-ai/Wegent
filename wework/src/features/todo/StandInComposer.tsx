@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
+import { type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
-import { useStandInModels } from './useStandInModels'
+import { useStandInComposerDraft } from './useStandInComposerDraft'
 import { type WorkspaceStandInSettings } from '@wegent/collaboration'
 import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProjectWorktreeAvailabilityProbe'
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
@@ -15,65 +15,63 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectKey, runtimeProjectToProject } from '@/lib/runtime-project'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { StandInSettingsError } from './StandInSettingsLayout'
+import { standInProjectWorkspace } from './useStandInRuntimeWork'
+
+type StandInComposerProps = {
+  draft: WorkspaceStandInSettings
+  onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
+  onSave(prompt: string, draft: WorkspaceStandInSettings): Promise<void | boolean>
+  disabled: boolean
+  submitDisabled: boolean
+  deviceControl?: ReactNode
+  runtimeWork?: RuntimeWorkListResponse | null
+  devices: DeviceInfo[]
+  services?: WorkbenchServices
+  showPrompt?: boolean
+}
 
 /** Configuration uses the ordinary composer without starting a conversation. */
-export function StandInComposer({
+export function StandInComposer(props: StandInComposerProps) {
+  const configuration = useStandInComposerDraft(props.draft, props.services, props.showPrompt)
+  return <StandInComposerFields {...props} {...configuration} />
+}
+
+/** Allows a draft owner to share the same resolved model with its external save action. */
+export function StandInComposerFields({
   draft,
   onChange,
   onSave,
   disabled,
   submitDisabled,
   deviceControl,
-  onValidityChange,
   runtimeWork,
   devices,
   services,
   showPrompt = true,
-}: {
-  draft: WorkspaceStandInSettings
-  onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
-  onSave(prompt: string): Promise<void | boolean>
-  disabled: boolean
-  submitDisabled: boolean
-  onValidityChange?(valid: boolean): void
-  deviceControl?: ReactNode
-  runtimeWork?: RuntimeWorkListResponse | null
-  devices: DeviceInfo[]
-  services?: WorkbenchServices
-  showPrompt?: boolean
+  models,
+}: StandInComposerProps & {
+  models: ReturnType<typeof useStandInComposerDraft>['models']
 }) {
   const { t } = useTranslation('common')
-  const composerCatalog = useStandInComposerCatalog(
-    draft.executionDeviceId
-      ? {
-          deviceId: draft.executionDeviceId,
-          scope: 'workspace',
-          workspacePath: draft.workspace?.workspacePath ?? null,
-        }
-      : null,
-    services,
-    t
-  )
-  const models = useStandInModels(services, draft)
-  useEffect(() => {
-    if (!showPrompt || draft.model || !models.defaultIdentity) return
-    const model = models.defaultIdentity
-    onChange(current => (current.model ? current : { ...current, model }))
-  }, [draft.model, models.defaultIdentity, onChange, showPrompt])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
-    const workspace = row.deviceWorkspaces.find(
-      workspace =>
-        workspace.deviceId === draft.executionDeviceId &&
-        workspace.available &&
-        workspace.workspaceKind !== 'chat' &&
-        workspace.workspaceSource !== 'remote'
-    )
+    const workspace = standInProjectWorkspace(row, draft.executionDeviceId)
     return workspace ? [{ ...row, deviceWorkspaces: [workspace] }] : []
   })
   const projects = rows.map(runtimeProjectToProject)
   const selected = rows.find(row => runtimeProjectKey(row.project) === draft.workspace?.projectKey)
   const project = selected ? runtimeProjectToProject(selected) : null
   const workspace = selected?.deviceWorkspaces[0] ?? null
+  const composerCatalog = useStandInComposerCatalog(
+    draft.executionDeviceId
+      ? {
+          deviceId: draft.executionDeviceId,
+          scope: 'workspace',
+          workspacePath: workspace?.workspacePath ?? null,
+        }
+      : null,
+    services,
+    t
+  )
   const device =
     devices.find(device =>
       [device.device_id, device.app_device_id].includes(draft.executionDeviceId)
@@ -99,7 +97,6 @@ export function StandInComposer({
       workspace: row
         ? {
             projectKey: runtimeProjectKey(row.project),
-            workspacePath: row.deviceWorkspaces[0].workspacePath,
             executionMode: 'current_workspace',
           }
         : null,
@@ -156,10 +153,6 @@ export function StandInComposer({
   const environment = draft.workspace
     ? `${project?.name ?? draft.workspace.projectKey} · ${t(draft.workspace.executionMode === 'git_worktree' ? 'standIn.new_worktree' : 'standIn.current_workspace')}`
     : t('standIn.inherit_environment')
-  const valid = !submitDisabled
-  useEffect(() => {
-    onValidityChange?.(valid)
-  }, [valid, onValidityChange])
   return (
     <div className="space-y-3">
       <div
@@ -245,9 +238,9 @@ export function StandInComposer({
             value={draft.prompt}
             onChange={prompt => onChange(current => ({ ...current, prompt }))}
             onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
-            onSubmit={prompt => onSave(prompt ?? draft.prompt)}
+            onSubmit={prompt => onSave(prompt ?? draft.prompt, draft)}
             disabled={disabled}
-            submitDisabled={!valid}
+            submitDisabled={submitDisabled}
             clearOnSubmit={false}
             allowEmptySubmit
             placeholder={t(

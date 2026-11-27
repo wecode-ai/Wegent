@@ -73,6 +73,7 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null;
   stoppedNotice?: boolean | null;
   runtimeGoalRequest?: boolean | null;
+  runtimeClientUserMessageId?: string | null;
   runtimeGuidance?: boolean | null;
   runtimeGuidanceSplitBefore?: boolean | null;
   runtimeGuidanceContinuation?: boolean | null;
@@ -105,6 +106,7 @@ export interface RuntimeConversationTurn {
   completedAt?: string | number | null;
   error?: string;
   errorType?: string;
+  errorInfo?: import("./api-types").ChatErrorInfo;
   stoppedNotice?: boolean | null;
   contentTruncated?: boolean;
   streamingThinkingContent?: string;

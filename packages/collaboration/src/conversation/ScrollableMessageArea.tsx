@@ -1,16 +1,17 @@
 import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 
-import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { useConversationTranslation } from './ConversationTranslation'
 
+import { ConversationHistoryBoundary } from './ConversationHistoryBoundary'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
-import { ConversationHistoryBoundary } from './ConversationHistoryBoundary'
 
+import { getInitialDistanceFromBottomPx } from './conversationScrollGeometry'
 import { getConversationScrollSnapshot } from './conversationViewportCache'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
-import { getInitialDistanceFromBottomPx } from './conversationScrollGeometry'
 import { useConversationScrollController } from './useConversationScrollController'
 import { useConversationSearchTarget } from './useConversationSearchTarget'
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
@@ -25,7 +26,6 @@ function ScrollableMessagePaneContent({
   useContentVisibility,
   onVirtualMeasurement,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   messages,
   renderGapAfterMessage,
@@ -33,6 +33,7 @@ function ScrollableMessagePaneContent({
   loading = false,
   historyError,
   isWaitingForAssistant = false,
+  waitingIndicatorStyle,
   hasMoreBefore = false,
   beforeCursor,
   loadingMoreBefore = false,
@@ -43,6 +44,7 @@ function ScrollableMessagePaneContent({
   scrollerClassName,
   contentClassName,
   messageListClassName,
+  layoutRevision,
   contentFooter,
   contentFooterClassName,
   stickyFooter,
@@ -54,6 +56,7 @@ function ScrollableMessagePaneContent({
   turnNavigationPortalTarget,
   conversationKey,
   devices,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -71,6 +74,7 @@ function ScrollableMessagePaneContent({
   onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onShareSelectionAsIssue,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
@@ -90,6 +94,7 @@ function ScrollableMessagePaneContent({
     internalScrollRef,
     scrollRef,
     contentRef,
+    bindContentRef,
     stickyFooterRef,
     contentFooterRef,
     scrollTailHeight,
@@ -107,6 +112,7 @@ function ScrollableMessagePaneContent({
     preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment,
+    captureNativeScrollRange,
     virtualAnchorToEnd,
     virtualAnchor,
     virtualScrollAdjustmentEnabled,
@@ -190,7 +196,8 @@ function ScrollableMessagePaneContent({
     onNavigationFailure: onSearchNavigationFailure,
   })
   const scrollToBottomButton = showScrollButton ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="scroll-to-bottom-button"
       onClick={handleScrollToBottom}
@@ -201,7 +208,7 @@ function ScrollableMessagePaneContent({
       aria-label={t('workbench.scroll_to_bottom')}
     >
       <ArrowDown className="h-4 w-4" />
-    </button>
+    </ControlButton>
   ) : null
 
   return (
@@ -226,7 +233,7 @@ function ScrollableMessagePaneContent({
         )}
       >
         <div
-          ref={contentRef}
+          ref={bindContentRef}
           data-testid={`${scrollTestId}-content`}
           className={cn(
             'min-w-0 [overflow-anchor:none]',
@@ -234,7 +241,7 @@ function ScrollableMessagePaneContent({
             contentClassName
           )}
         >
-          {messages.length === 0 ? (
+          {messages.length === 0 && !(isWaitingForAssistant && waitingIndicatorStyle === 'dots') ? (
             loading ? (
               <div
                 data-testid="chat-loading-state"
@@ -280,7 +287,6 @@ function ScrollableMessagePaneContent({
                 useContentVisibility={useContentVisibility}
                 onVirtualMeasurement={onVirtualMeasurement}
                 renderVisualization={renderVisualization}
-                assistantMessageStyle={assistantMessageStyle}
                 showProcessingStatus={showProcessingStatus}
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
@@ -290,6 +296,7 @@ function ScrollableMessagePaneContent({
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
+                layoutRevision={layoutRevision}
                 conversationKey={conversationKey}
                 forceVirtualMessageId={
                   searchTarget?.messageId ??
@@ -300,8 +307,10 @@ function ScrollableMessagePaneContent({
                 }
                 searchMessageId={searchTarget?.messageId}
                 isWaitingForAssistant={isWaitingForAssistant}
+                waitingIndicatorStyle={waitingIndicatorStyle}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}
+                onContinueInNewConversation={onContinueInNewConversation}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
                 onLoadFileChangesDiff={onLoadFileChangesDiff}
@@ -319,6 +328,7 @@ function ScrollableMessagePaneContent({
                 onForkMessage={onForkMessage}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onShareSelectionAsIssue={onShareSelectionAsIssue}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 onFillSelectionToAnswer={onFillSelectionToAnswer}
@@ -328,6 +338,7 @@ function ScrollableMessagePaneContent({
                 virtualizerRef={virtualizerRef}
                 scrollTailHeight={scrollTailHeight}
                 onVirtualScrollAdjustment={onVirtualScrollAdjustment}
+                onNativeScrollRange={captureNativeScrollRange}
                 renderGapAfterMessage={renderMessageGap}
               />
               {contentFooter ? (

@@ -1,38 +1,47 @@
 import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from "../controls/Collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "../controls/Popover";
+import { controlPopup } from "../controls/recipes";
+import { useCollaborationPortalTheme } from "../theme";
+import type { ProjectChatMessage } from "@wegent/chat-core";
+import {
   AlertCircle,
   Bot,
   Check,
+  ChevronRight,
   CircleCheck,
   CircleSlash,
   Clock3,
   Copy,
-  ChevronRight,
   ExternalLink,
   Hash,
   LoaderCircle,
   Square,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import type { CollaborationTranslate } from "../i18n";
+import { Button as ControlButton } from "../markdown/Button";
+import { activityClassNames as cn } from "./activityClassNames";
 import { activityDisplayBody } from "./activityDisplayBody";
+import {
+  backendTaskExecution,
+  resolveMessageRunStatus,
+  type IssueActivityAiState,
+} from "./activityMessageUtils";
+import { CompositedSpinner } from "./CompositedSpinner";
+import { executionDisplayStatus, isExecutionTerminal } from "./executionStatus";
+import { IssueActivityContent } from "./IssueActivityContent";
+import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
 import {
   IssueActivityAvatar,
   IssueActivityMessage,
 } from "./IssueActivityPresentation";
-import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
-import type { ProjectChatMessage } from "@wegent/chat-core";
-import type { CollaborationTranslate } from "../i18n";
-import { CompositedSpinner } from "./CompositedSpinner";
-import { Tooltip } from "./Tooltip";
-import { activityClassNames as cn } from "./activityClassNames";
-import { executionDisplayStatus } from "./executionStatus";
-import {
-  resolveMessageRunStatus,
-  backendTaskExecution,
-  type IssueActivityAiState,
-} from "./activityMessageUtils";
-import { IssueActivityContent } from "./IssueActivityContent";
 import { formatIssueTimestamp, issueActivityTimestamp } from "./issueTimestamp";
 import { managerActivityPresentation } from "./managerActivity";
+import { Tooltip } from "../controls/Tooltip";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -78,7 +87,7 @@ export function IssueExecutionStatusControl({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const rootRef = useRef<HTMLSpanElement>(null);
+  const popoverTheme = useCollaborationPortalTheme();
   const kind = taskExecutionStatusKind(status);
   const labels: Record<TaskExecutionStatusKind, string> = {
     waiting_approval:
@@ -108,16 +117,6 @@ export function IssueExecutionStatusControl({
             : LoaderCircle;
   const animated = ["starting", "running", "cancelling"].includes(kind);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () =>
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [open]);
-
   const copyDetails = async () => {
     const details = [
       `${t("activity.task_activity_status_label")}: ${label}`,
@@ -132,81 +131,91 @@ export function IssueExecutionStatusControl({
   };
 
   return (
-    <span ref={rootRef} className="task-detail-execution-status-control">
-      <Tooltip label={label} side="bottom" align="end">
-        <button
-          type="button"
-          data-testid={`cloud-task-activity-execution-status-${taskId}`}
-          data-status={kind}
-          aria-label={label}
-          aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
-          className="task-detail-execution-status-trigger"
-        >
-          {animated ? (
-            <CompositedSpinner icon={Icon} className="h-4 w-4" />
-          ) : (
-            <Icon className="h-4 w-4" />
-          )}
-        </button>
-      </Tooltip>
-      {open ? (
-        <span
-          role="dialog"
-          aria-label={t("activity.task_activity_status_details")}
-          data-testid={`cloud-task-activity-execution-details-${taskId}`}
-          className="task-detail-execution-status-popover"
-        >
-          <span className="task-detail-execution-status-popover-head">
-            <span className="task-detail-execution-status-popover-title">
-              {animated ? (
-                <CompositedSpinner icon={Icon} className="h-4 w-4" />
-              ) : (
-                <Icon className="h-4 w-4" />
-              )}
-              {label}
+    <span className="task-detail-execution-status-control">
+      <Popover open={open} onOpenChange={setOpen}>
+        <Tooltip label={label} side="bottom" align="end">
+          <PopoverTrigger
+            render={
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid={`cloud-task-activity-execution-status-${taskId}`}
+                data-status={kind}
+                aria-label={label}
+                aria-expanded={open}
+                className="task-detail-execution-status-trigger"
+              />
+            }
+          >
+            {animated ? (
+              <CompositedSpinner icon={Icon} className="h-4 w-4" />
+            ) : (
+              <Icon className="h-4 w-4" />
+            )}
+          </PopoverTrigger>
+        </Tooltip>
+        {open ? (
+          <PopoverContent
+            {...popoverTheme}
+            align="end"
+            sideOffset={4}
+            collisionPadding={8}
+            aria-label={t("activity.task_activity_status_details")}
+            data-testid={`cloud-task-activity-execution-details-${taskId}`}
+            className={popoverTheme.className + " " + controlPopup + " w-72"}
+          >
+            <span className="task-detail-execution-status-popover-head">
+              <span className="task-detail-execution-status-popover-title">
+                {animated ? (
+                  <CompositedSpinner icon={Icon} className="h-4 w-4" />
+                ) : (
+                  <Icon className="h-4 w-4" />
+                )}
+                {label}
+              </span>
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                onClick={() => void copyDetails()}
+                className="task-detail-execution-copy"
+                aria-label={t("activity.task_activity_copy_details")}
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                {copied
+                  ? t("activity.task_activity_copied")
+                  : t("activity.task_activity_copy")}
+              </ControlButton>
             </span>
-            <button
-              type="button"
-              onClick={() => void copyDetails()}
-              className="task-detail-execution-copy"
-              aria-label={t("activity.task_activity_copy_details")}
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-              {copied
-                ? t("activity.task_activity_copied")
-                : t("activity.task_activity_copy")}
-            </button>
-          </span>
-          {error ? (
-            <span
-              data-testid={`cloud-task-activity-execution-error-${taskId}`}
-              className="task-detail-execution-status-detail is-error"
-            >
-              <span>{t("activity.task_activity_error_label")}</span>
-              <span>{error}</span>
-            </span>
-          ) : null}
-          {note ? (
-            <span
-              data-testid={`cloud-task-activity-execution-note-${taskId}`}
-              className="task-detail-execution-status-detail"
-            >
-              <span>{t("activity.task_activity_note_label")}</span>
-              <span>{note}</span>
-            </span>
-          ) : null}
-          {!error && !note ? (
-            <span className="task-detail-execution-status-empty">
-              {t("activity.task_activity_no_status_details")}
-            </span>
-          ) : null}
-        </span>
-      ) : null}
+            {error ? (
+              <span
+                data-testid={`cloud-task-activity-execution-error-${taskId}`}
+                className="task-detail-execution-status-detail is-error"
+              >
+                <span>{t("activity.task_activity_error_label")}</span>
+                <span>{error}</span>
+              </span>
+            ) : null}
+            {note ? (
+              <span
+                data-testid={`cloud-task-activity-execution-note-${taskId}`}
+                className="task-detail-execution-status-detail"
+              >
+                <span>{t("activity.task_activity_note_label")}</span>
+                <span>{note}</span>
+              </span>
+            ) : null}
+            {!error && !note ? (
+              <span className="task-detail-execution-status-empty">
+                {t("activity.task_activity_no_status_details")}
+              </span>
+            ) : null}
+          </PopoverContent>
+        ) : null}
+      </Popover>
     </span>
   );
 }
@@ -317,11 +326,16 @@ export function IssueChatMessage({
   const openExecution =
     onOpenExecution ??
     (allowBackendExecutionFallback ? openBackendExecution : undefined);
+  const stopManagerExecution = isExecutionTerminal(runStatus)
+    ? undefined
+    : onStopExecution;
+  const hasManagerOutput = isSucceeded && text.trim().length > 0;
   if (
     compact &&
     plain &&
     isManager &&
     !isManagerStatusComment &&
+    !hasManagerOutput &&
     !message.replyToMessageId
   ) {
     const presentation = managerActivityPresentation(
@@ -350,30 +364,32 @@ export function IssueChatMessage({
               <span className="font-medium">{activityAuthor}</span>{" "}
               {presentation.label}
             </div>
-            {openExecution || onStopExecution ? (
+            {openExecution || stopManagerExecution ? (
               <div className="flex shrink-0 items-center gap-3">
                 {openExecution ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-task-manager-execution-${message.messageId}`}
                     className="text-xs text-text-muted hover:text-text-primary"
                     onClick={openExecution}
                   >
                     {t("activity.task_activity_view_execution")}
-                  </button>
+                  </ControlButton>
                 ) : null}
-                {onStopExecution ? (
-                  <button
+                {stopManagerExecution ? (
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                     disabled={stopping}
                     className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={onStopExecution}
+                    onClick={stopManagerExecution}
                   >
                     {stopping
                       ? t("activity.task_activity_stopping_workflow")
                       : t("activity.task_activity_stop_workflow")}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             ) : null}
@@ -410,8 +426,8 @@ export function IssueChatMessage({
               stopping={stopping}
             />
             {deviceName || runId || modelName ? (
-              <details>
-                <summary
+              <CollapsibleRoot>
+                <CollapsibleTrigger
                   data-testid={`task-activity-run-details-${message.messageId}`}
                 >
                   {t(
@@ -419,16 +435,16 @@ export function IssueChatMessage({
                       ? "activity.task_activity_subagent_execution"
                       : "activity.task_activity_ai_execution",
                   )}
-                </summary>
-                <div className="task-detail-thread-run-metadata">
+                </CollapsibleTrigger>
+                <CollapsiblePanel className="task-detail-thread-run-metadata">
                   {deviceName ? (
                     <span>{deviceName}</span>
                   ) : runId ? (
                     <span>Run {runId}</span>
                   ) : null}
                   {modelName ? <span>{modelName}</span> : null}
-                </div>
-              </details>
+                </CollapsiblePanel>
+              </CollapsibleRoot>
             ) : (
               <span>
                 {t(
@@ -523,7 +539,8 @@ export function IssueChatMessage({
               })}
             </span>
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`cloud-task-activity-open-backend-task-${message.messageId}`}
             onClick={openBackendExecution}
@@ -531,11 +548,12 @@ export function IssueChatMessage({
           >
             <ExternalLink className="h-3.5 w-3.5" />
             {t("activity.task_activity_open_in_task_page")}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       {isAgent && !compact && openExecution && !backendExecution ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`cloud-task-activity-open-execution-${message.messageId}`}
           onClick={openExecution}
@@ -543,7 +561,7 @@ export function IssueChatMessage({
         >
           <ExternalLink className="h-3.5 w-3.5" />
           {t("activity.task_activity_view_execution")}
-        </button>
+        </ControlButton>
       ) : null}
     </>
   );
@@ -618,7 +636,8 @@ export function IssueChatMessage({
               </div>
             ) : null}
             {taskSummary?.onOpen ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`cloud-task-activity-open-task-${message.messageId}`}
                 onClick={taskSummary.onOpen}
@@ -626,7 +645,7 @@ export function IssueChatMessage({
               >
                 {t("activity.task_activity_open_task")}
                 <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             ) : null}
           </div>
         </article>
@@ -689,7 +708,8 @@ export function IssueChatMessage({
         {taskSummary ? (
           <div className="task-detail-thread-task-link">
             {taskSummary.onOpen ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`cloud-task-activity-open-task-${message.messageId}`}
                 onClick={taskSummary.onOpen}
@@ -701,7 +721,7 @@ export function IssueChatMessage({
                   {taskSummary.title}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             ) : (
               <span
                 data-testid={`cloud-task-activity-task-title-${message.messageId}`}
@@ -830,7 +850,8 @@ function ExecutionStatusBadge({
         if (event.target === event.currentTarget) onOpenExecution?.();
       }}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={
           testId ?? `cloud-task-activity-execution-badge-${messageId}`
@@ -846,11 +867,12 @@ function ExecutionStatusBadge({
           <ExternalLink className="h-3.5 w-3.5" />
           {t("activity.task_activity_view_execution")}
         </span>
-      </button>
-      {onStopExecution ? (
-        <button
+      </ControlButton>
+      {onStopExecution && !terminal ? (
+        <ControlButton
+          variant="unstyled"
           type="button"
-          disabled={terminal || stopping}
+          disabled={stopping}
           title={t("activity.task_activity_stop_execution")}
           data-testid={`cloud-task-activity-stop-${messageId}`}
           aria-label={t("activity.task_activity_stop_execution")}
@@ -865,7 +887,7 @@ function ExecutionStatusBadge({
           ) : (
             <Square className="h-3 w-3" />
           )}
-        </button>
+        </ControlButton>
       ) : null}
     </span>
   );

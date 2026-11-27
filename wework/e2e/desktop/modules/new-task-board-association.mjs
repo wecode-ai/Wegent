@@ -3,6 +3,7 @@ import {
   verifyIssueRuntimeTitleIsolation,
 } from './issue-runtime-title-isolation.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   assert,
@@ -207,6 +208,22 @@ async function verifyDraft(control, project, existingItem) {
   })
   // Cancel after selecting a target; submission must retain the original choice.
   await chooseProject()
+  if (existingItem) {
+    await control.command('waitFor', '[data-testid^="task-board-association-item-"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const { keyboardBorder, unfocusedBorder } = await verifyProjectFieldFocus(
+      control,
+      'task-board-association-search',
+      {
+        includeParent: true,
+        previousButtonId: 'task-board-association-close',
+        nextButtonPattern: /^task-board-association-item-/,
+      }
+    )
+    assert.equal(keyboardBorder, unfocusedBorder, 'The search wrapper must keep its neutral border')
+  }
   await control.command('click', '[data-testid="task-board-association-close"]')
   assert.equal(
     Number(await control.command('getElementCount', `${content} [data-testid="message-user"]`)),
@@ -248,6 +265,18 @@ async function verifyDraft(control, project, existingItem) {
     visible: true,
   })
   await verifyIssueRuntimeTitleIsolation(control, content, project, persisted, binding)
+  if (!existingItem) {
+    // Settle the created Issue's automatic read before the next draft baseline.
+    await control.command(
+      'clickWhenEnabled',
+      `${content} [data-testid="work-item-guide-open-summary"]`
+    )
+    await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+      text: persisted.title,
+      visible: true,
+    })
+    await waitForViewedIssueRead(control, project.name, persisted.title)
+  }
   await control.command('click', `[data-testid="workspace-tab-close-${tabId}"]`)
   console.log(`[e2e] Draft ${existingItem ? 'association' : 'creation'} persisted: ${persisted.id}`)
 }

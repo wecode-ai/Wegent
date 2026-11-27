@@ -136,6 +136,25 @@ describe('acknowledgeStartedCommand', () => {
     ).toEqual({ status: 200, value: { ok: true } })
   })
 
+  test('binds Runtime admission to the queued action and value while retaining UI acknowledgements', () => {
+    const runtime = { action: 'fetchLocalRuntime', value: 'queued-runtime-value' }
+    const pending = new Map([['command-1', runtime]])
+    const started = { id: 'command-1', clientId: 'client-1', ...runtime }
+    expect(acknowledgeStartedCommand(pending, started).status).toBe(200)
+    for (const change of [
+      { action: 'getText' },
+      { value: 'changed-value' },
+      { action: undefined },
+    ]) {
+      expect(acknowledgeStartedCommand(pending, { ...started, ...change }).status).toBe(409)
+    }
+    const ui = new Map([['command-1', { action: 'click', value: 'ui-value' }]])
+    expect(acknowledgeStartedCommand(ui, { id: 'command-1', clientId: 'client-1' }).status).toBe(
+      200
+    )
+    expect(acknowledgeStartedCommand(ui, { ...started, value: 'ui-value' }).status).toBe(409)
+  })
+
   test('rejects acknowledgements for commands that are no longer pending', () => {
     expect(
       acknowledgeStartedCommand(new Map(), {
@@ -302,6 +321,14 @@ describe('resolveOptionalBoolean', () => {
 })
 
 describe('validateStartOptions', () => {
+  test('accepts an explicit boolean for startup video recording', () => {
+    expect(() => validateStartOptions({ record: 'true' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'false' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'yes' })).toThrow(
+      '--record must be "true" or "false"'
+    )
+  })
+
   test('accepts the Electron start options', () => {
     expect(() =>
       validateStartOptions({

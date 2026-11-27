@@ -1,6 +1,7 @@
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 
 /** Verify catalog navigation and draft persistence with the real local runtime. */
 export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captureScreenshot) {
@@ -19,6 +20,11 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   await captureScreenshot(control, 'connection-01-source-catalog.png', panel)
   const search = '[data-testid="stand-in-connection-search"]'
   const configuredFilter = '[data-testid="stand-in-connection-configured-filter"]'
+  await verifyProjectFieldFocus(control, 'stand-in-connection-search', {
+    includeParent: true,
+    previousButtonId: 'stand-in-connection-configured-filter',
+    nextButtonPattern: /^stand-in-add-.+-connection$/,
+  })
   await control.command('fill', search, { value: '迁移连接' })
   await control.command('waitFor', dingtalk)
   await control.command('waitFor', projects, { visible: false })
@@ -48,7 +54,10 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
     'Restoring the original intake setting must clear the unsaved draft'
   )
   if (!enabled) {
-    await control.command('waitFor', '[data-testid="stand-in-all-projects"]:checked:disabled')
+    await control.command(
+      'waitFor',
+      '[data-testid="stand-in-all-projects"][aria-checked="true"]:disabled'
+    )
   }
   await control.command('click', receive)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')

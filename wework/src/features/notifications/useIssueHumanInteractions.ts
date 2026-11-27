@@ -1,131 +1,64 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
-import { issueHumanInteraction } from './issueHumanInteractions'
+import { createIssueHumanInteractionSource } from './issueHumanInteractionSource'
 
 export function useIssueHumanInteractions(
   services: WorkbenchServices | undefined,
   cached: RuntimeInteraction[]
 ) {
-  const cloud = services?.issueHumanRequestsApi
-  const local = services?.localIssueHumanRequestsApi
-  const [items, setItems] = useState<RuntimeInteraction[]>(() =>
-    cached.filter(item => item.sharedRequest)
+  const cloudApi = services?.issueHumanRequestsApi
+  const localApi = services?.localIssueHumanRequestsApi
+  const [sources, setSources] = useState(() => ({
+    cloud: createIssueHumanInteractionSource(cloudApi, 'backend', cached),
+    local: createIssueHumanInteractionSource(localApi, 'local', cached),
+  }))
+  if (sources.cloud.api !== cloudApi || sources.local.api !== localApi)
+    setSources({
+      cloud:
+        sources.cloud.api === cloudApi
+          ? sources.cloud
+          : createIssueHumanInteractionSource(cloudApi, 'backend', []),
+      local:
+        sources.local.api === localApi
+          ? sources.local
+          : createIssueHumanInteractionSource(localApi, 'local', []),
+    })
+  const cloud = useSyncExternalStore(
+    sources.cloud.subscribe,
+    sources.cloud.getSnapshot,
+    sources.cloud.getSnapshot
   )
-  const generation = useRef(0)
-  const sequences = useRef(new Map<string, number>())
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [resolved, setResolved] = useState<RuntimeInteraction[]>([])
-  const itemsRef = useRef(items)
-  const previousApis = useRef({ cloud, local })
-  itemsRef.current = items
+  const local = useSyncExternalStore(
+    sources.local.subscribe,
+    sources.local.getSnapshot,
+    sources.local.getSnapshot
+  )
   const refresh = useCallback(
     async (onlyStore?: 'local' | 'backend') => {
-      const epoch = generation.current
-      await Promise.resolve()
-      if (epoch !== generation.current) return
-      const previous = previousApis.current
-      previousApis.current = { cloud, local }
-      if (previous.cloud !== cloud || previous.local !== local) {
-        const retain = (item: RuntimeInteraction) =>
-          item.project?.store === 'local' ? previous.local === local : previous.cloud === cloud
-        setItems(current => current.filter(retain))
-        setResolved(current => current.filter(retain))
-        setErrors({})
-      }
-      const reads = (
-        [
-          ['backend', cloud],
-          ['local', local],
-        ] as const
-      ).filter(([store, api]) => api && (!onlyStore || store === onlyStore))
-      await Promise.all(
-        reads.map(async ([store, api]) => {
-          const sequence = (sequences.current.get(store) ?? 0) + 1
-          sequences.current.set(store, sequence)
-          try {
-            const response = await api!.inbox()
-            if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
-            const ids = new Set(response.items.map(item => item.id))
-            const removed = itemsRef.current.filter(
-              item =>
-                item.project?.store === store &&
-                item.sharedRequest &&
-                !ids.has(item.sharedRequest.id)
-            )
-            const unverified: RuntimeInteraction[] = []
-            const failures: string[] = []
-            const incoming = response.items.map(request => issueHumanInteraction(request, store))
-            const replace = (retained: RuntimeInteraction[]) =>
-              setItems(current => [
-                ...current.filter(item => item.project?.store !== store),
-                ...incoming,
-                ...retained,
-              ])
-            replace(removed.map(item => ({ ...item, cached: true })))
-            for (const previous of removed) {
-              const project = previous.project!
-              // Only an authoritative terminal question settles a native snapshot.
-              const current = await api!
-                .list(project.projectId, project.issueId)
-                .then(result => result.items.find(item => item.id === previous.sharedRequest!.id))
-                .catch(cause => {
-                  // Preserve discovery evidence without retaining reply authority.
-                  unverified.push({ ...previous, cached: true })
-                  failures.push(cause instanceof Error ? cause.message : String(cause))
-                  return undefined
-                })
-              if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
-              if (current && ['resolved', 'cancelled'].includes(current.status))
-                setResolved(items =>
-                  items.some(item => item.id === previous.id)
-                    ? items
-                    : [...items, previous].slice(-100)
-                )
-            }
-            if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
-            if (removed.length) replace(unverified)
-            setErrors(current => {
-              const next = { ...current }
-              if (failures.length) next[`issue:${store}`] = failures.join('\n')
-              else delete next[`issue:${store}`]
-              return next
-            })
-          } catch (cause) {
-            if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
-            setItems(current =>
-              current.map(item =>
-                item.project?.store === store ? { ...item, cached: true } : item
-              )
-            )
-            // A failed refresh preserves previously loaded questions.
-            setErrors(current => ({
-              ...current,
-              [`issue:${store}`]: cause instanceof Error ? cause.message : String(cause),
-            }))
-          }
-        })
-      )
+      await Promise.all([
+        ...(onlyStore !== 'local' ? [sources.cloud.refresh()] : []),
+        ...(onlyStore !== 'backend' ? [sources.local.refresh()] : []),
+      ])
     },
-    [cloud, local]
+    [sources]
   )
   const discover = useCallback(
     async (localPending?: boolean) => {
-      await Promise.all([
-        refresh('backend'),
-        ...(localPending === true || itemsRef.current.some(item => item.project?.store === 'local')
-          ? [refresh('local')]
-          : []),
-      ])
+      await Promise.all([sources.cloud.discover(), sources.local.discover(localPending)])
     },
-    [refresh]
+    [sources]
   )
-  useEffect(() => {
-    const epoch = ++generation.current
-    void discover()
-    return () => {
-      generation.current = epoch + 1
+  const snapshot = useMemo(() => {
+    const errors: Record<string, string> = {}
+    if (cloud.error !== undefined) errors['issue:backend'] = cloud.error
+    if (local.error !== undefined) errors['issue:local'] = local.error
+    return {
+      items: [...cloud.items, ...local.items],
+      errors,
+      resolved: [...cloud.resolved, ...local.resolved],
+      transferred: [...cloud.transferred, ...local.transferred],
     }
-  }, [discover])
-  return { items, errors, refresh, discover, resolved }
+  }, [cloud, local])
+  return { ...snapshot, refresh, discover }
 }

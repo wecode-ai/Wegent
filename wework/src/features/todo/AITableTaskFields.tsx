@@ -1,7 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, Sparkles, X } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
-import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
+import type { AITableApi, AITableField } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
@@ -30,6 +41,7 @@ const EDITABLE_TYPES = new Set([
 ])
 const CONTENT_TYPES = new Set(['multiLineText', 'richText'])
 const PROPERTY_LIMIT = 8
+const EMPTY_FIELDS: AITableField[] = []
 
 function textValue(value: unknown): string {
   if (value === null || value === undefined) return ''
@@ -130,31 +142,39 @@ function FieldEditor({
   return (
     <div className="space-y-2">
       {field.type === 'singleSelect' && options.length > 0 ? (
-        <select
-          autoFocus
-          data-testid={`aitable-detail-edit-${field.id}`}
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none keyboard:focus:border-focus"
+        <SelectRoot
+          value={normalizeSelectValue(draft)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null) return setDraft(selectedValue)
+          }}
         >
-          <option value="">—</option>
-          {options.map(option => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label={field.name}
+            autoFocus
+            data-testid={`aitable-detail-edit-${field.id}`}
+            className="h-9 w-full"
+          />
+          <SelectContent>
+            <SelectItem value="">—</SelectItem>
+            {options.map(option => (
+              <SelectItem key={option} value={String(option)}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       ) : field.type === 'checkbox' ? (
         <label className="flex h-9 items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
+            aria-label={field.name}
             checked={draft === 'true' || value === true}
-            onChange={event => setDraft(String(event.target.checked))}
+            onCheckedChange={checked => setDraft(String(checked === true))}
           />
           已选中
         </label>
       ) : (
-        <textarea
+        <ControlTextarea
+          aria-label={field.name}
           autoFocus
           data-testid={`aitable-detail-edit-${field.id}`}
           value={draft}
@@ -164,21 +184,24 @@ function FieldEditor({
         />
       )}
       <div className="flex justify-end gap-2">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           onClick={onCancel}
           className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
         >
           <X className="h-3.5 w-3.5" /> 取消
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           disabled={saving}
           onClick={() => void save(field.type === 'checkbox' ? draft === 'true' : draft)}
           className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
         >
           {saving ? '保存中…' : '保存'}
-        </button>
+        </ControlButton>
       </div>
     </div>
   )
@@ -213,14 +236,15 @@ function ContentBlock({
         ) : null}
         <span className="flex-1" />
         {canEdit && editableField(field) && !editing ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`aitable-detail-edit-button-${field.id}`}
             onClick={() => setEditing(true)}
             className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
           >
             <Pencil className="h-3.5 w-3.5" /> 编辑
-          </button>
+          </ControlButton>
         ) : null}
       </header>
       {editing ? (
@@ -243,7 +267,8 @@ function ContentBlock({
             <FieldValue field={field} value={value} />
           </div>
           {long ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`aitable-detail-expand-${field.id}`}
               onClick={() => setExpanded(current => !current)}
@@ -255,7 +280,7 @@ function ContentBlock({
                 <ChevronRight className="h-3.5 w-3.5" />
               )}
               {expanded ? '收起' : '展开全部'}
-            </button>
+            </ControlButton>
           ) : null}
         </>
       )}
@@ -294,7 +319,8 @@ function PropertyItem({
           )}
         </div>
         {canEdit && editableField(field) && !editing ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`aitable-detail-edit-button-${field.id}`}
             onClick={() => setEditing(true)}
@@ -302,7 +328,7 @@ function PropertyItem({
             aria-label={`编辑${field.name}`}
           >
             <Pencil className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         ) : null}
       </div>
     </div>
@@ -318,26 +344,35 @@ export function AITableTaskFields({
   project: CloudProject
   item: CloudLoopItem
 }) {
-  const [fields, setFields] = useState<AITableField[]>([])
-  const [record, setRecord] = useState<AITableRecord | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
   const recordId = item.id.split(':').at(-1) ?? ''
-
-  useEffect(() => {
-    let active = true
-    if (!api.getRecord) return
-    void Promise.all([api.describe(project.id), api.getRecord(project.id, recordId)])
-      .then(([description, nextRecord]) => {
-        if (!active) return
-        setFields(description.fields)
-        setRecord(nextRecord)
-      })
-      .catch(cause => active && setError(cause instanceof Error ? cause.message : '字段加载失败'))
-    return () => {
-      active = false
-    }
-  }, [api, project.id, recordId])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(JSON.stringify([project.id, recordId]), async signal => {
+        await Promise.resolve()
+        signal.throwIfAborted()
+        if (!api.getRecord) throw new Error('字段加载失败')
+        const [description, record] = await Promise.all([
+          api.describe(project.id),
+          api.getRecord(project.id, recordId),
+        ])
+        return { fields: description.fields, record }
+      }),
+    [api, project.id, recordId]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const fields = snapshot.data?.fields ?? EMPTY_FIELDS
+  const record = snapshot.data?.record ?? null
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : '字段加载失败'
+      : null
 
   const layout = useMemo(() => {
     if (!record) return { content: [], properties: [], more: [] }
@@ -377,9 +412,15 @@ export function AITableTaskFields({
   async function updateField(fieldId: string, value: unknown) {
     try {
       const updated = await api.updateRecord(project.id, recordId, { [fieldId]: value })
-      setRecord(current =>
+      resource.update(current =>
         current
-          ? { ...current, cells: { ...current.cells, [fieldId]: updated.cells[fieldId] ?? value } }
+          ? {
+              ...current,
+              record: {
+                ...current.record,
+                cells: { ...current.record.cells, [fieldId]: updated.cells[fieldId] ?? value },
+              },
+            }
           : current
       )
       track('feature_action_completed', { domain: 'table_record', action: 'update' })
@@ -436,7 +477,8 @@ export function AITableTaskFields({
 
       {layout.more.length > 0 ? (
         <section className="mt-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="aitable-detail-more-toggle"
             aria-expanded={moreOpen}
@@ -445,7 +487,7 @@ export function AITableTaskFields({
           >
             {moreOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             更多字段 <span className="text-xs">{layout.more.length}</span>
-          </button>
+          </ControlButton>
           {moreOpen ? (
             <div className="grid gap-x-8 md:grid-cols-2" data-testid="aitable-detail-more-fields">
               {layout.more.map(field => (

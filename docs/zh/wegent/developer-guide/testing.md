@@ -313,6 +313,37 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不触发内存 E2E。
 
+平台 E2E 在 PR 和 merge queue 上按改动路径运行，定时和手动运行保留全量覆盖。
+仅改动任务执行 Rust crate 的源码时，由平台 E2E 和 Rust 测试验证执行行为。交付镜像
+继续在打包、启动和其余后端输入变动时验证，也会参加全量回归。
+Executor E2E 的设备用例和独立沙箱用例在不同 runner 上并行执行，各自使用独立的服务和数据库。
+设备用例保留单 worker，沙箱用例保留双 worker。Rust Backend 的 Clippy 与测试并行运行，
+`Test Summary` 要求两项都通过。
+macOS 渲染性能门禁按受影响的源码和性能测试输入触发，全量回归也会运行。失败时上传首次测量报告。需要进一步定位时，可在 macOS 上手动执行
+`pnpm --filter wework profile:renderer --capture` 采集 trace。
+
+Linux 桌面 E2E 分片从共享镜像获取原生测试工具。平台 E2E 在 Rust 后端构建期间准备依赖和服务，
+使用前等待同一次 CI 运行的后端产物。同仓库 PR 可复用该 PR 中构建输入完全匹配的 Linux 桌面包。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。
+需要从 PR 提取完整 macOS 构建或原生后端产物时，使用 `ci:all` 运行。
+
+Rust 后端 E2E 先查找精确匹配的最终运行时，再按需构建。构建可复用依赖镜像和由主分支写入的
+GHCR BuildKit 层。缺少依赖镜像时，直接用真实源码编译，依赖预热任务才编译占位目标。
+依赖镜像解析脚本也参与运行时缓存键，修改该脚本会触发实际构建。
+当前依赖镜像缺失时，从基础提交最近八个第一父提交中查找工具链和依赖构建阶段
+一致的镜像。Cargo 按当前锁文件验证依赖并重编受影响目标。
+构建按文件内容同步当前提交的工作区源码，删除已移除的文件，并保留未变文件的时间戳，
+由 Cargo 判断需要重新编译的 crate。
+功能 E2E 的网关包以优化级别 0 编译，复用原有依赖编译产物。Linux Core 为两个
+延迟基准和运行中会话历史分别保留专用分片，其余检查点在现有分片间均衡。
+耗时较长的检查点优先分到不同 runner，降低并发 Electron 会话的 CPU 争用。
+CI 调度、分类或 Rust E2E 构建编排改动触发桌面打包启动、原生生命周期和插件路由冒烟检查。
+产品文件继续按路径选择场景。定时、手动和 `ci:all` 运行完整桌面套件。
+仅修改桌面 E2E 的共享辅助模块时，PR 运行原生生命周期、设备文件交付、内嵌浏览器和插件路由，
+覆盖项目创建、文件和窗口操作，完整套件继续验证其他调用方。
+
+Backend Rust 模块检查中的单包 MySQL 和 Redis 回归复用工作区编译出的测试二进制，
+保留各自的服务配置和日志。筛选条件未命中任何测试时，检查失败。
+
 Windows 桌面构建由 `build-wework-windows-e2e` 共享 action 负责，主分支缓存预热与
 PR 使用同一路径。只有 `main` 可以写入共享缓存；完整桌面包按源码输入、Node、
 Rust 和 runner 镜像版本精确匹配，不使用前缀匹配。命中后直接验证并上传原始构建包，
@@ -388,6 +419,11 @@ CI 稳定性依赖以下约束：
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
+  同仓 PR 的生产 Backend 镜像验证在独立的 `wegent-backend-delivery-ci` 包内按 PR
+  编号复用 BuildKit 缓存，发布和快照继续读取原有共享缓存。
+- 同仓 PR 的平台 Executor E2E 按 PR 编号和已发布镜像摘要在 GHCR 复用提取出的
+  Executor 二进制文件。每轮仍签发同一提交的运行时清单，Executor E2E 会将二进制
+  文件与实际下载的测试镜像比对。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
 - Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的
@@ -401,6 +437,9 @@ CI 稳定性依赖以下约束：
 已经由 merge queue 验证过的测试。不要在 PR/merge-group 上新增大型自动保存缓存；需要增加缓存时，应采用
 `actions/cache/restore` 和仅限 `main` 的 `actions/cache/save`，或使用已有共享
 action。
+
+连续推送会取消旧预热。新的主分支预热从最近一次成功的主分支推送运行计算改动，
+覆盖被取消运行中的输入。找不到可用祖先时执行全量预热。
 
 ### 写入 GitHub Actions 输出
 

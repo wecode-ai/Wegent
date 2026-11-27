@@ -1,3 +1,5 @@
+@layer ui-sdk;
+
 /* Desktop-standard semantic sizes and overlay layers, shared by both hosts. */
 :root {
   --space-2xs: 2px;

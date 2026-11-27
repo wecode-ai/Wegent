@@ -4,6 +4,7 @@
 """MCP comments must use the activity stream consumed by the Issue UI."""
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -14,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.mcp_server.tool_registry import _register_tool
 from app.mcp_server.tools import wework_space
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, LoopItem, LoopItemTaskBinding
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import ResourceMember
@@ -124,6 +126,163 @@ def test_native_comment_http_uses_activity_and_checks_project_scope(
             wrong_scope, headers=headers, json={"body": "Wrong"}
         ).status_code
         == 404
+    )
+
+
+def test_listing_issue_activity_does_not_write_stale_run_metadata(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    issue_context: tuple[CloudProject, LoopItem],
+) -> None:
+    project, item = issue_context
+    message = ProjectChatMessage(
+        message_id=uuid4().hex,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="agent",
+        sender_name="Agent",
+        message_type="text",
+        content="Finished",
+        status="completed",
+        metadata_json={"run_status": "running"},
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    response = test_client.get(
+        f"/api/v1/cloud-projects/{project.id}/loop-items/{item.id}/activity-comments",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["id"] == message.message_id
+    test_db.refresh(message)
+    assert message.metadata_json["run_status"] == "running"
+
+
+@pytest.mark.parametrize("invited", [False, True])
+def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    issue_context: tuple[CloudProject, LoopItem],
+    monkeypatch: pytest.MonkeyPatch,
+    invited: bool,
+) -> None:
+    project, item = issue_context
+    publisher = test_user
+    if invited:
+        from app.services.loop_items.service import loop_item_service
+
+        publisher = User(
+            user_name=f"invited-publisher-{uuid4().hex}",
+            password_hash="unused",
+            is_active=True,
+        )
+        test_db.add(publisher)
+        test_db.commit()
+        loop_item_service.add_collaborator(test_db, item.id, publisher.id, test_user.id)
+        test_token = create_access_token(data={"sub": publisher.user_name})
+    device = Kind(
+        kind="Device",
+        name=f"assistant-publication-{uuid4().hex}",
+        namespace="default",
+        user_id=publisher.id,
+        is_active=True,
+        json={"spec": {"deviceType": "local"}},
+    )
+    test_db.add(device)
+    test_db.flush()
+    test_db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=project.id,
+            loop_item_id=item.id,
+            task_user_id=publisher.id,
+            device_id=device.name,
+            task_id="private-assistant-task",
+            linked_by_user_id=publisher.id,
+        )
+    )
+    test_db.commit()
+    commit = test_db.commit
+    committed_sources = []
+
+    def commit_publication():
+        test_db.flush()
+        row = (
+            test_db.query(ProjectChatMessage)
+            .filter_by(client_message_id="publication-once")
+            .one()
+        )
+        committed_sources.append(row.metadata_json.get("assistant_publication"))
+        assert committed_sources[-1]["verified"] is True
+        commit()
+
+    monkeypatch.setattr(test_db, "commit", commit_publication)
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = f"/api/v1/cloud-projects/{project.id}/loop-items/{item.id}/activity-comments"
+    response = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Verified public conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    published = response.json()
+    assert published["generation_source"] == "ai"
+    assert published["publication_source"] == "human"
+    assert published["confirmation_state"] == "authorized"
+    assert len(committed_sources) == 1
+    retry = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Verified public conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert retry.status_code == 200
+    assert retry.json()["id"] == published["id"]
+    assert len(committed_sources) == 1
+    mismatch = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Changed conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert mismatch.status_code == 409
+    assert (
+        test_client.post(
+            path,
+            headers=headers,
+            json={
+                "body": "Unavailable source",
+                "assistant_source": {
+                    "device_id": device.name,
+                    "task_id": "not-bound",
+                },
+            },
+        ).status_code
+        == 403
     )
 
 

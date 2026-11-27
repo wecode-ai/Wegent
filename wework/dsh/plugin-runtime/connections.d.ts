@@ -30,7 +30,9 @@ export interface ConnectionDescriptor {
   eventTypes: string[]
   /** Mutable event types must identify the object and its opaque source version. */
   versionedEventTypes: string[]
-  /** Business schemas belong to this provider, not the host. */
+  /** Native, attributed evidence exposed through readSource for these exact resource kinds. */
+  reviewHistory?: { resourceKinds: string[] }
+  /** Ordinary source reads use provider-specific business schemas. */
   read?: {
     inputSchema: Record<string, unknown>
     itemSchema: Record<string, unknown>
@@ -105,6 +107,7 @@ export interface ConnectionResourceQuery {
   query: string
   cursor?: string
   scope?: 'all'
+  profile?: string
 }
 
 export interface ConnectionResourcePage {
@@ -155,6 +158,36 @@ export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
   authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
+  profile?: string
+  accountId?: string
+  accountName?: string
+  organizationName?: string
+}
+
+export interface ConnectionReadinessQuery {
+  readiness: true
+  profile?: string
+  sources?: Array<{ id: string; kind: 'direct' | 'group' }>
+}
+
+export interface ConnectionIdentity {
+  profile: string
+  accountId: string
+  accountName: string
+  organizationId: string
+  organizationName: string
+}
+
+export interface ConnectionReadiness extends Omit<ConnectionAvailability, 'status'> {
+  status:
+    | ConnectionAvailability['status']
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
+  identity?: ConnectionIdentity
+  candidates?: ConnectionIdentity[]
+  component?: { source: 'bundled' | 'managed' | 'external'; version: string }
+  permissions?: { read: 'unchecked' | 'verified'; reply: 'unverified' }
 }
 
 export interface ConnectionContext {
@@ -217,6 +250,7 @@ export interface ConnectionMcpResult {
 
 export interface ConnectionProvider {
   check(context: ConnectionContext): Promise<ConnectionAvailability>
+  check(context: ConnectionContext, input: ConnectionReadinessQuery): Promise<ConnectionReadiness>
   listResources(
     context: ConnectionContext,
     input: ConnectionResourceQuery
@@ -235,6 +269,10 @@ export interface ConnectionProvider {
     items: Array<{ id: string; [key: string]: unknown }>
     hasMore: boolean
     nextCursor?: string
+    /** Required on review pages. Only complete, two-sided history can establish a full observation window. */
+    reviewCoverage?: 'partial' | 'complete'
+    /** An empty terminal partial page may select this role's already collected events. */
+    reviewUseCollectedEvents?: true
     [key: string]: unknown
   }>
   collect(

@@ -1,6 +1,7 @@
 //! Owner self-channel requests can start workers without acquiring personal control.
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
+use crate::task_runtime::stand_in_projection::project_visible_work;
 use sha2::{Digest, Sha256};
 
 fn denied() -> AppIpcError {
@@ -16,10 +17,18 @@ impl RuntimeWorkRpcHandler {
         let source = self.authorize_work_source_read(identity, &Value::Null)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
+        let settings = store
+            .personal_stand_in(identity.user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
+        let work = store
+            .stand_in_work(identity.user, identity.work.as_deref().ok_or_else(denied)?)
+            .map_err(super::stand_in::settings_error)?;
         let messages = store
             .stand_in_messages(identity.user, identity.work.as_deref().ok_or_else(denied)?)
             .map_err(super::stand_in::settings_error)?;
-        let record = messages
+        let visible = project_visible_work(&settings, work, messages).ok_or_else(denied)?;
+        let record = visible
+            .messages
             .iter()
             .find(|record| record["recordId"] == message)
             .ok_or_else(denied)?;
@@ -31,9 +40,6 @@ impl RuntimeWorkRpcHandler {
         {
             return Err(denied());
         }
-        let settings = store
-            .personal_stand_in(identity.user, &self.device_id)
-            .map_err(super::stand_in::settings_error)?;
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
         let mut config = roles
             .into_iter()
@@ -133,7 +139,7 @@ impl RuntimeWorkRpcHandler {
         }
         let delegation = json!({"userId":identity.user,"sourceTaskId":identity.task_id,
             "sourceMessageId":message,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"],"readSources":[]});
-        self.start_delegated_task(identity, args, &id, &config, delegation)
+        self.start_delegated_task(args, &id, &config, delegation, None, None)
             .await
     }
 

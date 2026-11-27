@@ -2269,6 +2269,30 @@ async def test_send_runtime_message_preserves_executor_queue_status(
     assert payload.get("queueIfBusy", False) is queue_if_busy
 
 
+@pytest.mark.parametrize("snake_case", [False, True])
+def test_runtime_send_response_preserves_async_guidance_receipts(snake_case):
+    from app.services.runtime_work_service import _runtime_send_response
+
+    result = {
+        "success": True,
+        "accepted": True,
+        "taskId": "task-1",
+        "turn_id" if snake_case else "turnId": "turn-1",
+        "guidance_id" if snake_case else "guidanceId": "answer-1",
+    }
+    response = _runtime_send_response(result, "task-1").model_dump(by_alias=True)
+    assert response["accepted"] is True
+    assert response["turnId"] == "turn-1"
+    assert response["guidanceId"] == "answer-1"
+
+    rejected = _runtime_send_response(
+        {"success": False, "code": "stale_request_user_input", "error": "Answered"},
+        "task-1",
+    ).model_dump(by_alias=True)
+    assert rejected["accepted"] is False
+    assert rejected["code"] == "stale_request_user_input"
+
+
 @pytest.mark.asyncio
 async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_rows(
     test_db,
@@ -5296,8 +5320,10 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert execution_request.team_id == 0
     assert execution_request.project_workspace_path == "/repo/Wegent"
     assert execution_request.device_id == "device-1"
-    assert execution_request.prompt.endswith("continue")
-    assert "terminal output" in execution_request.prompt
+    assert execution_request.prompt == "continue"
+    assert execution_request.additional_context == {
+        "wework.terminal.current": {"kind": "application", "value": "terminal output"}
+    }
 
 
 def test_compile_runtime_task_create_materializes_attachment_ids_once(
@@ -5640,13 +5666,22 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
 
 
 @pytest.mark.parametrize("local_task_id", [None, "runtime-local-1"])
+@pytest.mark.parametrize(
+    "backend_url", ["", " \t\n", "https://backend.example/deployment/api/"]
+)
 def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path(
     test_db,
     test_user,
     local_task_id,
+    backend_url,
+    monkeypatch,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.settings, "BACKEND_INTERNAL_URL", backend_url
+    )
 
     _codex_provider_model(
         test_db,
@@ -5678,6 +5713,12 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     )
 
     assert execution_request.team_id == 0
+    assert execution_request.backend_url == backend_url
+    monkeypatch.setattr(
+        runtime_work_service.settings,
+        "BACKEND_INTERNAL_URL",
+        "https://next.example/api/",
+    )
     followup = runtime_work_service._build_runtime_execution_request(
         db=test_db,
         user_id=test_user.id,
@@ -5688,6 +5729,7 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
         ),
     )
     assert followup.task_id == execution_request.task_id
+    assert followup.backend_url == "https://next.example/api/"
     assert followup.subtask_id != execution_request.subtask_id
     assert followup.subtask_id > 0
     assert execution_request.subtask_id > 0
@@ -5923,6 +5965,8 @@ def test_build_runtime_execution_request_uses_managed_project_space_tools_for_is
     )
 
     assert execution_request.mcp_servers == []
+    assert execution_request.prompt == request.message
+    assert execution_request.additional_context == request.additional_context
 
 
 @pytest.mark.parametrize("dispatch_role", ["manager", "executor", "member"])
@@ -5969,14 +6013,16 @@ def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_r
     )
 
     assert execution_request.mcp_servers == []
+    assert execution_request.prompt == request.message
+    assert execution_request.additional_context == request.additional_context
 
 
-def test_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
+def test_claude_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
     None
 ):
     from app.services import runtime_work_service
 
-    message = runtime_work_service._message_with_application_context(
+    message = runtime_work_service._claude_message_with_application_context(
         "这个 TODO 里有啥？",
         {
             "cloudCollaboration": {
@@ -5993,10 +6039,12 @@ def test_message_with_application_context_keeps_user_message_and_ignores_untrust
     assert message.endswith("这个 TODO 里有啥？")
 
 
-def test_message_with_cloud_reference_activates_project_space_capability() -> None:
+def test_claude_message_with_cloud_reference_activates_project_space_capability() -> (
+    None
+):
     from app.services import runtime_work_service
 
-    message = runtime_work_service._message_with_application_context(
+    message = runtime_work_service._claude_message_with_application_context(
         "[$项目空间](cloud://projects) 帮我创建一个新项目", None
     )
 
@@ -6041,3 +6089,36 @@ async def test_task_archive_forwards_cleanup_and_preserves_accepted_cleanup_erro
     }
     assert response.accepted is True
     assert response.cleanup_error == "Snapshot unavailable"
+
+
+@pytest.mark.parametrize(
+    ("requested_runtime", "shell_type"),
+    [("claude_code", "Codex"), ("codex", "ClaudeCode")],
+)
+def test_context_transport_follows_compiled_team_runtime(
+    requested_runtime: str, shell_type: str
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+    from shared.models.execution import ExecutionRequest
+
+    context = {"project": {"kind": "application", "value": "Project reference"}}
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=3,
+        wegentTeamId=42,
+        runtime=requested_runtime,
+        message="User request",
+        additionalContext=context,
+    )
+    execution = ExecutionRequest(bot=[{"shell_type": shell_type}])
+
+    runtime_work_service._apply_runtime_create_request(execution, request)
+
+    assert execution.to_dict()["additional_context"] == context
+    if shell_type == "Codex":
+        assert execution.prompt == request.message
+    else:
+        assert execution.prompt == (
+            "<application_context>\n[project]\nProject reference\n"
+            "</application_context>\n\nUser request"
+        )

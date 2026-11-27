@@ -138,8 +138,8 @@ async function startMysqlServer(logPath) {
     detached: process.platform !== 'win32',
   })
   await Promise.all([
-    appendProcessOutput(server.stdout, logPath),
-    appendProcessOutput(server.stderr, logPath),
+    appendProcessOutput(server.stdout, logPath, server),
+    appendProcessOutput(server.stderr, logPath, server),
   ])
   const connectionOptions = {
     host: '127.0.0.1',
@@ -258,8 +258,8 @@ async function startRedisServer(
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
     await Promise.all([
-      appendProcessOutput(redis.stdout, logPath),
-      appendProcessOutput(redis.stderr, logPath),
+      appendProcessOutput(redis.stdout, logPath, redis),
+      appendProcessOutput(redis.stderr, logPath, redis),
     ])
     try {
       await waitForRedisReady(redis, logPath, fromOffset)
@@ -472,6 +472,7 @@ class RealCloudEnvironment {
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
+      WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS: 'true',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
       INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),
@@ -583,8 +584,8 @@ class RealCloudEnvironment {
       }
     )
     await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath, this.pythonBackend),
+      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath, this.pythonBackend),
     ])
     await this.observePreparation('python-backend-ready', () =>
       waitForProcessUrl(
@@ -606,14 +607,14 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
-        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
+        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug,wegent_backend_rs::socketio::terminal_attach=info`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     await Promise.all([
-      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath, this.rustBackend),
+      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath, this.rustBackend),
     ])
     await this.observePreparation('rust-gateway-ready', () =>
       waitForProcessUrl(
@@ -661,6 +662,15 @@ class RealCloudEnvironment {
       operation: 'execute',
       sql,
       params,
+    })
+  }
+
+  async executeDatabaseTransaction(statements) {
+    return mysqlRequest({
+      ...this.mysqlConnectionOptions,
+      database: this.databaseName,
+      operation: 'transaction',
+      statements,
     })
   }
 
@@ -1223,8 +1233,8 @@ class RealCloudEnvironment {
       void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
     })
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     return executor
   }
@@ -1338,8 +1348,8 @@ class RealCloudEnvironment {
     })
     this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     return { executor, logPath }
   }
@@ -1457,7 +1467,7 @@ class RealCloudEnvironment {
     })
   }
 
-  revokeTerminalSession(sessionId) {
+  async revokeTerminalSession(sessionId) {
     assert.match(
       sessionId,
       /^[A-Za-z0-9:_-]+$/u,
@@ -1480,7 +1490,11 @@ class RealCloudEnvironment {
     )
     assert.ok(
       Number.isInteger(subscriberCount) && subscriberCount >= 1,
-      'The Backend did not observe the terminal-session revocation'
+      'No Backend was subscribed to terminal-session revocations'
+    )
+    await waitForLogPattern(
+      join(resultDir, 'backend-rs-logs', 'info.log'),
+      new RegExp(`terminal session revocation applied session_id="${sessionId}"`)
     )
   }
 
@@ -1599,8 +1613,8 @@ class RealCloudEnvironment {
     })
     this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     await this.waitForDevice(deviceId, logPath)
     return { home, logPath, executor }

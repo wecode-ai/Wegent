@@ -1,0 +1,43 @@
+[package]
+name = "wegent-video-jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Durable provider polling for generated video and research"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-mysql.workspace = true
+brz-redis.workspace = true
+brz-schedule.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+futures-util = { workspace = true, features = ["std"] }
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+url.workspace = true
+wegent-access.workspace = true
+wegent-attachment-links.workspace = true
+wegent-attachments.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-celery.workspace = true
+wegent-execution-completion.workspace = true
+wegent-execution-preparation.workspace = true
+wegent-identity.workspace = true
+wegent-job-runtime.workspace = true
+wegent-media.workspace = true
+wegent-network-policy.workspace = true
+wegent-protocol.workspace = true
+wegent-python-compat.workspace = true
+wegent-socket-events.workspace = true
+wegent-task-store.workspace = true
+wegent-task-views.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }

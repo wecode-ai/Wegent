@@ -137,3 +137,92 @@ fn valid_exclusions(source: &Value) -> bool {
             })
     })
 }
+
+pub fn source_provider(source: &Value) -> &str {
+    // Historical work/source records retain their identity and are read without re-keying.
+    source["providerId"].as_str().unwrap_or(DINGTALK_PROVIDER)
+}
+
+pub fn source_namespace(source: &Value) -> Value {
+    if source_provider(source) == DINGTALK_PROVIDER {
+        if source["delegated"] == true {
+            json!({"providerId":DINGTALK_PROVIDER,"profile":source["profile"],"accountId":source["accountId"]})
+        } else {
+            source["profile"].clone()
+        }
+    } else {
+        let mut namespace =
+            json!({"providerId":source_provider(source),"profile":source["profile"]});
+        if let Some(transport) = source.get("transport") {
+            namespace["transport"] = transport.clone();
+        }
+        namespace
+    }
+}
+
+/// Collection partitions are provider-owned cursors, never resource permissions.
+pub fn source_collection_namespace(source: &Value) -> Value {
+    let namespace = source_namespace(source);
+    match source.get("collectionKey") {
+        Some(key) => json!({"source":namespace,"collectionKey":key}),
+        None => namespace,
+    }
+}
+
+pub fn connection_memory_scope(source: &Value) -> Value {
+    if source_provider(source) == DINGTALK_PROVIDER {
+        let mut scope = json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]});
+        if source["delegated"] == true {
+            scope["accountId"] = source["accountId"].clone();
+        }
+        scope
+    } else {
+        json!({"kind":"connection","providerId":source_provider(source),"id":source["id"],"profile":source["profile"],"resourceKind":source["kind"]})
+    }
+}
+
+/// Identify the project intake grant independently of the Issue's comment stream.
+pub fn issue_training_source(
+    role: &Value,
+    project: &str,
+    store: &str,
+    issue: &str,
+) -> Option<Value> {
+    if project.is_empty()
+        || issue.is_empty()
+        || !matches!(store, "local" | "cloud")
+        || !role_project_matches(role, project, store)
+    {
+        return None;
+    }
+    let config = project_role(role, 0, project, store);
+    let since = config["enabledAfter"].as_str()?;
+    Some(
+        json!({"providerId":ISSUE_COMMENTS_PROVIDER, "profile":store, "projectId":project,
+        "kind":"issue","id":issue,"enabledAfter":since}),
+    )
+}
+
+pub fn training_source_granted(role: &Value, source: &Value) -> bool {
+    if source["providerId"] == ISSUE_COMMENTS_PROVIDER {
+        return source["projectId"]
+            .as_str()
+            .zip(source["profile"].as_str())
+            .zip(source["id"].as_str())
+            .and_then(|((project, storage), issue)| {
+                issue_training_source(role, project, storage, issue)
+            })
+            .is_some_and(|current| current == *source);
+    }
+    source["enabledAfter"].is_string()
+        && stand_in_collection_connection(role, source)
+            .is_some_and(|grant| source["enabledAfter"] == grant["enabledAfter"])
+}
+
+pub fn training_memory_scope(source: &Value) -> Value {
+    if source["providerId"] == ISSUE_COMMENTS_PROVIDER {
+        json!({"kind":"project","id":source["projectId"],"store":source["profile"]})
+    } else {
+        connection_memory_scope(source)
+    }
+}

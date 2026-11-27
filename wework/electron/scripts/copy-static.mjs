@@ -29,6 +29,10 @@ await cp(
   resolve(root, 'dist/runtime/upgrade-policy.mjs')
 )
 await cp(
+  resolve(root, 'src/runtime/release-block-map.mjs'),
+  resolve(root, 'dist/runtime/release-block-map.mjs')
+)
+await cp(
   resolve(root, 'src/runtime/release-preparation-progress.mjs'),
   resolve(root, 'dist/runtime/release-preparation-progress.mjs')
 )
@@ -36,6 +40,10 @@ await mkdir(resolve(root, 'dist/shell'), { recursive: true })
 await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
   recursive: true,
 })
+await cp(
+  resolve(root, '../../packages/collaboration/src/controls/offline-actions.css'),
+  resolve(root, 'dist/shell/offline-actions.css')
+)
 await mkdir(resolve(root, 'dist/host/browser-runtime'), { recursive: true })
 await cp(
   resolve(root, '../dsh/electron-host/json-line-reader.js'),

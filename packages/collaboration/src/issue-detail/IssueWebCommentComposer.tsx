@@ -1,12 +1,13 @@
 import { useIssueMentionCandidates } from './useIssueMentionCandidates'
-import { useEffect, useRef, useState, type ComponentProps } from 'react'
+import { createWebCommentDraft } from './webCommentDraft'
+import { useState, useSyncExternalStore, type ComponentProps } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { ProjectChatMention } from '@wegent/chat-core'
 import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationAgent, CollaborationComment, CollaborationMember } from '../types'
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
-import { IssueMainCommentComposer } from './IssueMainCommentComposer'
+import { IssueMainCommentComposer, type IssueMainCommentTestIds } from './IssueMainCommentComposer'
 import type { IssueMentionOption } from './issueCommentMentions'
 import {
   issueCommentBody,
@@ -47,6 +48,8 @@ export function IssueWebCommentComposer({
   onSent,
   onError,
   settings,
+  testIds,
+  sendKey,
 }: {
   issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
@@ -62,22 +65,33 @@ export function IssueWebCommentComposer({
   onSent(comment: CollaborationComment): void
   onError(): void
   settings?: ComponentProps<typeof IssueMainCommentComposer>['settings']
+  testIds?: IssueMainCommentTestIds
+  sendKey?: ComponentProps<typeof IssueMainCommentComposer>['sendKey']
 }) {
-  const [draft, setDraft] = useState('')
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const active = useRef(true)
-  const submitting = useRef(false)
+  const [owner, setOwner] = useState(() => ({
+    issueId,
+    attachmentApi,
+    draft: createWebCommentDraft(),
+    version: 0,
+  }))
+  if (owner.issueId !== issueId || owner.attachmentApi !== attachmentApi)
+    setOwner({ issueId, attachmentApi, draft: createWebCommentDraft(), version: owner.version + 1 })
+  const state = useSyncExternalStore(
+    owner.draft.subscribe,
+    owner.draft.getSnapshot,
+    owner.draft.getSnapshot
+  )
+  const { draft, sending, failure } = state
+  const error = failure
+    ? failure.cause instanceof Error
+      ? failure.cause.message
+      : translate('todo.send_failed')
+    : null
   const selection = useIssueCommentAttachments(
     canAttach && attachmentApi ? file => attachmentApi.upload(issueId, file) : undefined,
-    attachmentApi ? id => attachmentApi.remove(id) : undefined
+    attachmentApi ? id => attachmentApi.remove(id) : undefined,
+    owner.draft
   )
-  useEffect(() => {
-    active.current = true
-    return () => {
-      active.current = false
-    }
-  }, [])
   const mentionCandidates = useIssueMentionCandidates(members, agents, translate)
 
   async function submit(
@@ -85,44 +99,28 @@ export function IssueWebCommentComposer({
     mentions: IssueMentionOption[],
     submission?: { commentOnly?: boolean }
   ) {
-    if (!canComment || loading || submitting.current || !body || !selection.isAttachmentReadyToSend)
-      return false
-    submitting.current = true
-    setSending(true)
-    setError(null)
-    try {
-      const comment = await send(
-        issueCommentBody(body, selection.attachments),
-        ...(mentions.length
-          ? [
-              submission?.commentOnly
-                ? mentions.filter(mention => mention.type === 'user')
-                : mentions,
-            ]
-          : [])
-      )
-      if (!active.current) return true
-      if (comment) onSent(comment)
-      setDraft('')
-      selection.resetAttachments()
-      return true
-    } catch (cause) {
-      if (!active.current) return false
-      setError(cause instanceof Error ? cause.message : translate('todo.send_failed'))
-      onError()
-      return false
-    } finally {
-      submitting.current = false
-      if (active.current) setSending(false)
-    }
+    if (!canComment || loading || !body || !selection.isAttachmentReadyToSend) return false
+    return owner.draft.submit({
+      body: issueCommentBody(body, selection.attachments),
+      mentions: mentions.length
+        ? submission?.commentOnly
+          ? mentions.filter(mention => mention.type === 'user')
+          : mentions
+        : undefined,
+      send,
+      onSent,
+      onError,
+      resetAttachments: selection.resetAttachments,
+    })
   }
 
   return (
     <IssueMainCommentComposer
+      key={owner.version}
       issueActions={issueActions}
       assignment={assignment}
       value={draft}
-      onChange={setDraft}
+      onChange={owner.draft.setDraft}
       onSubmit={submit}
       disabled={!canComment || loading}
       sending={sending}
@@ -152,9 +150,10 @@ export function IssueWebCommentComposer({
         />
       }
       settings={settings}
+      sendKey={sendKey}
       mentionCandidates={mentionCandidates}
       translate={translate}
-      testIds={{
+      testIds={testIds ?? {
         form: 'collaboration-issue-comment-form',
         input: 'collaboration-issue-comment',
         send: 'collaboration-issue-comment-submit',

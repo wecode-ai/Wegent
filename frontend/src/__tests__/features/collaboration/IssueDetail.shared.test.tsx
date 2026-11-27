@@ -569,7 +569,11 @@ describe('shared IssueDetail', () => {
       })
       expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-execution-detail-close')).toHaveFocus()
-      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.keyDown(screen.getByTestId('runtime-execution-detail-close'), {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
       expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
       expect(screen.getByTestId('cloud-todo-detail')).toBe(editor)
       expect(comment).toHaveValue('保留这条草稿')
@@ -582,7 +586,11 @@ describe('shared IssueDetail', () => {
       expect(track).toHaveAttribute('data-has-conversation', 'true')
       fireEvent.click(screen.getByTestId('collaboration-open-execution-92'))
       expect(await screen.findByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
-      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.keyDown(screen.getByTestId('runtime-execution-detail-close'), {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
       expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
       expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
       fireEvent.click(screen.getByTestId('ai-chat-modal-close'))
@@ -636,9 +644,8 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: created.description },
     })
-    fireEvent.change(screen.getByTestId('cloud-todo-create-priority'), {
-      target: { value: 'high' },
-    })
+    await userEvent.click(screen.getByTestId('cloud-todo-create-priority'))
+    await userEvent.click(await screen.findByRole('option', { name: '高' }))
     fireEvent.click(screen.getByTestId('cloud-todo-create-confirm'))
 
     await waitFor(() =>
@@ -659,12 +666,12 @@ describe('shared IssueDetail', () => {
       .fn()
       .mockResolvedValueOnce({ ...issue, priority: 'high', version: 2 })
       .mockResolvedValueOnce(updated)
-    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 4 })
+      .mockResolvedValueOnce({ ...updated, assignee_user_id: 5, version: 4 })
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
     const api = createApi({
-      issues: { update, assign },
+      issues: { update },
     })
     renderDetail(api, {
       agents: [{ id: 'bot-1', name: '代码机器人' }],
@@ -690,9 +697,8 @@ describe('shared IssueDetail', () => {
       target: { value: '新描述' },
     })
     await openIssueProperties()
-    fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
-      target: { value: 'high' },
-    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-priority'))
+    await userEvent.click(await screen.findByRole('option', { name: '高' }))
     await waitFor(() =>
       expect(update).toHaveBeenNthCalledWith(1, 'issue-1', {
         version: 1,
@@ -715,10 +721,9 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+      expect(update).toHaveBeenNthCalledWith(3, issue.id, {
         version: 3,
-        assigneeType: 'user',
-        assigneeId: '5',
+        assigneeUserId: 5,
         notifyAssignee: true,
       })
     )
@@ -730,9 +735,8 @@ describe('shared IssueDetail', () => {
   it.each([true, false])(
     'allows assignment with notifyAssignee=%s without granting permission to edit Issue content',
     async notifyAssignee => {
-      const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
-      const update = jest.fn()
-      const api = createApi({ issues: { assign, update } })
+      const update = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
+      const api = createApi({ issues: { update } })
       renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
       await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
       const notify = screen.getByTestId('cloud-todo-assignee-notify')
@@ -742,14 +746,13 @@ describe('shared IssueDetail', () => {
       expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
       expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
       await waitFor(() =>
-        expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        expect(update).toHaveBeenCalledWith(issue.id, {
           version: 1,
-          assigneeType: 'user',
-          assigneeId: '5',
+          assigneeUserId: 5,
           notifyAssignee,
         })
       )
-      expect(update).not.toHaveBeenCalled()
+      expect(update).toHaveBeenCalledTimes(1)
     }
   )
 
@@ -846,7 +849,7 @@ describe('shared IssueDetail', () => {
     })
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
 
-    rerender(detailView({ ...api }))
+    rerender(detailView(api, { issue: { ...issue, version: issue.version + 1 } }))
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     await act(async () => {
       resolveUpload(uploaded)

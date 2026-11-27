@@ -26,6 +26,7 @@ interface QuickLaunchPanelProps {
   onPresetSelect: (selection: QuickPresetSelection) => void
   currentMode: TeamModeFilter
   defaultTeam?: Team | null
+  recommendedTeam?: Team | null
   launchIntent?: QuickLaunchIntent | null
   onLaunchIntentConsumed?: () => void
   renderMoreButton?: () => ReactNode
@@ -39,6 +40,7 @@ export function QuickLaunchPanel({
   onPresetSelect,
   currentMode,
   defaultTeam,
+  recommendedTeam,
   launchIntent,
   onLaunchIntentConsumed,
   renderMoreButton,
@@ -47,6 +49,8 @@ export function QuickLaunchPanel({
   const router = useRouter()
   const { toast } = useToast()
   const { t } = useTranslation('common')
+  const recommendedTeamId = recommendedTeam?.id
+  const previousRecommendedTeamId = useRef(recommendedTeamId)
   const selectionSequence = useRef(0)
   const pendingTeams = useRef(new Map<number, Promise<Team>>())
   const [selectedLauncher, setSelectedLauncher] = useState<(QuickLauncher & { team: Team }) | null>(
@@ -59,7 +63,7 @@ export function QuickLaunchPanel({
     isLoading: isQuickLaunchLoading,
     systemLaunchers,
     favoriteLaunchers,
-  } = useQuickLaunchers({ currentMode, defaultTeam })
+  } = useQuickLaunchers({ currentMode, defaultTeam, recommendedTeam })
   const currentTargetPage = getCurrentTargetPageByMode(currentMode)
 
   const shouldNavigateToLauncherPage = useCallback(
@@ -77,6 +81,18 @@ export function QuickLaunchPanel({
   }, [])
 
   useEffect(() => clearExitTimer, [clearExitTimer])
+
+  useLayoutEffect(() => {
+    if (previousRecommendedTeamId.current === recommendedTeamId) return
+    previousRecommendedTeamId.current = recommendedTeamId
+    if (recommendedTeamId === undefined || selectedLauncher?.team.id === recommendedTeamId) return
+
+    // A newly resolved link supersedes presets for an unrelated agent.
+    clearExitTimer()
+    setSelectedLauncher(null)
+    setSelectedLauncherKey(null)
+    setIsPhraseListExiting(false)
+  }, [clearExitTimer, recommendedTeamId, selectedLauncher])
 
   const showPhraseList = useCallback(
     (launcher: QuickLauncher & { team: Team }) => {
@@ -107,10 +123,11 @@ export function QuickLaunchPanel({
       router.push(
         buildQuickLaunchHref(launcher, {
           showPresets: launcher.inputPresets.length > 0,
+          recommend: launcher.team.id === recommendedTeamId,
         })
       )
     },
-    [router]
+    [recommendedTeamId, router]
   )
 
   const activateLauncher = useCallback(
@@ -154,7 +171,7 @@ export function QuickLaunchPanel({
     return () => {
       selectionSequence.current += 1
     }
-  }, [currentMode, selectedTeam?.id])
+  }, [currentMode, recommendedTeamId, selectedTeam?.id])
 
   useEffect(() => {
     if (!launchIntent?.launcherKey) return
@@ -168,7 +185,7 @@ export function QuickLaunchPanel({
     }
   }, [launchIntent, systemLaunchers, favoriteLaunchers, activateLauncher])
 
-  if (isQuickLaunchLoading) {
+  if (isQuickLaunchLoading && !recommendedTeam) {
     return (
       <div className="mx-auto mt-6 h-[108px] w-full max-w-[820px] animate-pulse rounded-lg bg-surface" />
     )

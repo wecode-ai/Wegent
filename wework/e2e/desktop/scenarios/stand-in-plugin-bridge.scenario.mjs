@@ -25,7 +25,7 @@ const ASSISTANCE = {
   confirmBefore: ['Changing a record requires native authorization'],
 }
 
-export function createDesktopScenario(options) {
+export function createDesktopScenario(options, { versionedEventTypes = [] } = {}) {
   const {
     resultDir,
     electronUserDataDirectory,
@@ -135,8 +135,8 @@ export function createDesktopScenario(options) {
                   resourceKinds: ['record'],
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
-                  eventTypes: ['record.received', 'message.received'],
-                  versionedEventTypes: ['record.received'],
+                  eventTypes: ['record.received', 'message.received', ...versionedEventTypes],
+                  versionedEventTypes: ['record.received', ...versionedEventTypes],
                   assistance: ASSISTANCE,
                 },
               ],
@@ -219,7 +219,7 @@ export function createDesktopScenario(options) {
       )
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
       const readyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(readyCount),
         workbenchReadyTimeoutMs,
@@ -244,7 +244,7 @@ export function createDesktopScenario(options) {
       })
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: true })
       const storyReadyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(storyReadyCount),
         workbenchReadyTimeoutMs,
@@ -270,7 +270,7 @@ export function createDesktopScenario(options) {
         try {
           await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
           const cleanupReadyCount = control.readyCount
-          await host(control, 'runtime.restartCoreDsh', {})
+          await control.command('restartCoreDsh', 'body')
           await withTimeout(
             control.awaitReadyAfter(cleanupReadyCount),
             workbenchReadyTimeoutMs,

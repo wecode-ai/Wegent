@@ -3,17 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from './runtimeUserMessage'
 
 describe('runtime user message', () => {
-  it('extracts visible input from attachment and application context wrappers', () => {
+  it('extracts visible input from attachment wrappers', () => {
     const content = [
       '# Files mentioned by the user:',
       '',
       '## image.png: /tmp/image.png',
       '',
       '## My request for Codex:',
-      '<application_context>',
-      '[wework.terminal.current]',
-      'terminal state',
-      '</application_context>',
       '',
       'Fix the sidebar',
     ].join('\n')
@@ -23,39 +19,5 @@ describe('runtime user message', () => {
       request: 'Fix the sidebar',
     })
     expect(visibleRuntimeUserMessage(content)).toBe('Fix the sidebar')
-  })
-
-  it('removes application context without an attachment wrapper', () => {
-    expect(
-      visibleRuntimeUserMessage(
-        '<application_context>\n[terminal]\nstate\n</application_context>\n\nContinue fixing'
-      )
-    ).toBe('Continue fixing')
-  })
-
-  it('removes a complete wrapper containing nested application contexts', () => {
-    const referencedConversation = JSON.stringify([
-      {
-        role: 'user',
-        content:
-          '<application_context>\\n[source]\\nsource state\\n</application_context>\\n\\nOriginal question',
-      },
-    ])
-    const content = [
-      '<application_context>',
-      '[referencedConversations]',
-      referencedConversation,
-      '</application_context>',
-      '',
-      'Continue with the referenced conversation',
-    ].join('\n')
-
-    expect(visibleRuntimeUserMessage(content)).toBe('Continue with the referenced conversation')
-  })
-
-  it('preserves malformed context instead of dropping user content', () => {
-    expect(visibleRuntimeUserMessage('<application_context>\nuser text')).toBe(
-      '<application_context>\nuser text'
-    )
   })
 })

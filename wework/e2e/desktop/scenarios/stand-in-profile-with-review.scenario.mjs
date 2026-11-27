@@ -5,6 +5,8 @@ import {
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { focusLayers, readFocusPaint } from '../modules/focus-paint.mjs'
+import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { ensureExperimentalFeaturesDisabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -71,13 +73,20 @@ async function verifyGuideExamples(control, completed = false) {
   ]) {
     await control.command('waitFor', `button[data-testid="stand-in-onboarding-example-${example}"]`)
   }
-  assert.equal(
+  const exampleLayout = JSON.parse(
     await control.command(
-      'getElementCount',
-      `${GUIDE} button[data-testid^="stand-in-onboarding-example-"]`
-    ),
-    '5'
+      'getElementMetrics',
+      `${GUIDE}, ${GUIDE} button[data-testid^="stand-in-onboarding-example-"]`,
+      { value: 'includeText' }
+    )
   )
+  assert.equal(exampleLayout.length, 6)
+  for (const item of exampleLayout) {
+    assert.ok(
+      item.clientWidth > 0 && item.scrollWidth <= item.clientWidth + 1,
+      `${item.testId} must fit horizontally (scroll: ${item.scrollWidth}, client: ${item.clientWidth})`
+    )
+  }
   for (const selector of [
     `${GUIDE} input[type="checkbox"]`,
     `${GUIDE} input[type="time"]`,
@@ -91,6 +100,46 @@ async function verifyGuideExamples(control, completed = false) {
     completed ? '0' : '1',
     'Only first-run onboarding has a completion action; reopened examples do not repeat setup'
   )
+}
+
+async function verifyGuideExampleFocus(control) {
+  const example = '[data-testid="stand-in-onboarding-example-daily_brief"]'
+  await withProjectRenderer(async (client, target) => {
+    const capture = async () => {
+      const response = await client({
+        action: 'command',
+        target,
+        method: 'Runtime.evaluate',
+        params: {
+          returnByValue: true,
+          awaitPromise: true,
+          expression: `(async () => {
+            const button = document.querySelector(${JSON.stringify(example)})
+            const nodes = [button, button.parentElement]
+            await Promise.allSettled(nodes.flatMap(node => node.getAnimations().map(a => a.finished)))
+            return { focused: button.matches(':focus'), layers: nodes.map(${readFocusPaint}) }
+          })()`,
+        },
+      })
+      return response.result.value
+    }
+    const unfocused = await capture()
+    assert.equal(unfocused.focused, false, 'The guide example must start unfocused')
+    await control.command('nativePress', '[data-testid="stand-in-onboarding-close"]', {
+      key: 'Tab',
+    })
+    await control.command('waitFor', `${example}:focus-visible`)
+    const focused = await capture()
+    assert.equal(focused.focused, true)
+    assert.equal(
+      focused.layers.reduce(
+        (count, paint, index) => count + focusLayers(paint, unfocused.layers[index]),
+        0
+      ),
+      1,
+      'The first guide example should have a single keyboard focus indicator'
+    )
+  })
 }
 
 async function openCalendarReviewTemplate(control) {
@@ -268,7 +317,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('click', '[data-testid="stand-in-onboarding-back"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-all-projects"]:checked')
+      await control.command('waitFor', '[data-testid="stand-in-all-projects"][aria-checked="true"]')
       await control.command('click', '[data-testid="stand-in-source-collaboration"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]', {
@@ -301,8 +350,22 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', GUIDE, { visible: false })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const roleSelector = '[data-testid="stand-in-role-selector"]'
+      await control.command('waitFor', `${roleSelector} [data-testid="stand-in-primary-open"]`, {
+        text: '默认助理',
+      })
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          `${roleSelector} [data-testid^="stand-in-overview-role-"]`
+        ),
+        '0',
+        'First-time setup must display only the primary stand-in'
+      )
+      assert.deepEqual(afterSetup.roles, [], 'First-time setup must not save a scenario role')
       assert.equal(
         afterSetup.primary.enabled,
         true,
@@ -340,6 +403,7 @@ export function createDesktopScenario(options) {
       assert.equal(connectedLater.primary.collaboration.policy.immediate, false)
       await openStandInExamples(control)
       await verifyGuideExamples(control, true)
+      await verifyGuideExampleFocus(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
       await control.command('waitFor', GUIDE, { visible: false })
       assert.equal(
@@ -440,6 +504,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openCalendarReviewTemplate(control)
       assert.equal(
         await control.command('getValue', '[data-testid="automation-name-input"]'),

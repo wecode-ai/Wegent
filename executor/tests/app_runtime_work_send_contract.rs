@@ -645,6 +645,14 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "concise"
     );
     assert_eq!(resume["params"]["config"]["service_tier"], "priority");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/start")
+            .count(),
+        1,
+        "only the initial create may start a thread"
+    );
 
     let last_turn_start = calls
         .iter()
@@ -1692,7 +1700,7 @@ async fn runtime_tasks_reload_a_generic_codex_thread_when_project_space_is_bound
     );
     let resume_call = &calls[resume_index];
     assert_eq!(
-        resume_call["params"]["config"]["mcp_servers.wework_space.enabled"],
+        resume_call["params"]["config"]["mcp_servers"]["wework_space"]["enabled"],
         true
     );
     assert!(resume_call["params"]["developerInstructions"]
@@ -4543,6 +4551,18 @@ async fn runtime_tasks_cancel_rejects_the_matching_pre_dispatch_send() {
         .expect("cancel should be accepted");
     assert_eq!(cancelled["accepted"], true);
 
+    let duplicate = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "taskId": "thread-1",
+                "clientUserMessageId": "cancelled-before-dispatch"
+            }
+        }))
+        .await
+        .expect("repeating the same pending cancellation should be accepted");
+    assert_eq!(duplicate["accepted"], true);
+
     let cancelled_again = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.cancel",
@@ -4892,8 +4912,8 @@ async fn verify_rollback_inference_context(native: bool) {
         .expect("the replacement must restore its inference context after control-only revert");
     assert_eq!(inference_resume.1["params"]["modelProvider"], "~");
     assert_eq!(
-        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"],
-        native
+        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"], false,
+        "replacement inference context must use HTTP Responses"
     );
     assert_eq!(
         inference_resume.1["params"]["config"]["model_providers.~"]["requires_openai_auth"],

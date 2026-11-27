@@ -1,7 +1,9 @@
+import { getWorkbenchPaneKey } from '@/components/layout/workbenchPaneIdentity'
+import { isPopoutWindowRuntime } from '@/appWindowIdentity'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type { DeviceInfo } from '@/types/api'
 import type { RefreshWorkLists, WorkbenchSelectionOptions } from './workbenchContextTypes'
-import { findFirstSelectableProject } from './workbenchProviderHelpers'
+import { findFirstSelectableProject, getProjectChatScopeKey } from './workbenchProviderHelpers'
 // Keep memoized callbacks in independent scopes so they cannot retain prior provider renders.
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
@@ -24,7 +26,11 @@ import {
   createWorkbenchDeviceResolver,
   resolveLocalWorkbenchDeviceId,
 } from '@/lib/workbench-device'
-import { requestNewChatComposerFocus, requestWorkbenchNewChat } from '@/lib/workbenchComposerFocus'
+import {
+  requestNewChatComposerFocus,
+  requestWorkbenchNewChat,
+  type NewWorkbenchChatOptions,
+} from '@/lib/workbenchComposerFocus'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import type { ActionDispatch, RefObject } from 'react'
@@ -265,6 +271,8 @@ export function useSelectStandaloneDevice({
 export function useOpenStandaloneWorkspace({
   projectSelectionStartedRef,
   state,
+  getSnapshot,
+  workspaceTabId,
   executorClient,
   dispatch,
   clearRemoteProjectSyncRemoval,
@@ -273,6 +281,8 @@ export function useOpenStandaloneWorkspace({
 }: {
   projectSelectionStartedRef: RefObject<boolean>
   state: WorkbenchState
+  getSnapshot(): { state: WorkbenchState }
+  workspaceTabId?: string
   executorClient: ExecutorClient
   dispatch: ActionDispatch<[action: WorkbenchAction]>
   clearRemoteProjectSyncRemoval: (target: RuntimeProjectSyncTarget) => void
@@ -288,6 +298,18 @@ export function useOpenStandaloneWorkspace({
       launchOptions?: WorkbenchWorkspaceLaunchOptions
     ) => {
       projectSelectionStartedRef.current = true
+      const launchOwner = (targetDeviceId: string, options: WorkbenchWorkspaceLaunchOptions) => ({
+        ownershipKey,
+        workspaceTabId,
+        paneKey: getWorkbenchPaneKey(
+          options.taskId
+            ? {
+                currentRuntimeTask: { deviceId: targetDeviceId, taskId: options.taskId },
+                currentProject: null,
+              }
+            : getSnapshot().state
+        ),
+      })
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!requestDeviceId || !normalizedWorkspacePath) return
@@ -346,9 +368,6 @@ export function useOpenStandaloneWorkspace({
           })
         )
         await refreshWorkLists()
-        if (launchOptions) {
-          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
-        }
         dispatch({
           type: 'project_workspace_selected',
           project: runtimeProjectToProject({
@@ -368,6 +387,13 @@ export function useOpenStandaloneWorkspace({
           }),
           startFreshChat: true,
         })
+        if (launchOptions)
+          queueWorkbenchWorkspaceLaunch(
+            response.deviceId,
+            response.roots[0],
+            launchOptions,
+            launchOwner(response.deviceId, launchOptions)
+          )
         navigateTo('/')
         return
       }
@@ -395,20 +421,26 @@ export function useOpenStandaloneWorkspace({
         requestDeviceId
 
       writeLastProjectId(ownershipKey, null)
-      if (launchOptions) {
-        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
-      }
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
         workspacePath: openedWorkspacePath,
         label: normalizedLabel,
       })
+      if (launchOptions)
+        queueWorkbenchWorkspaceLaunch(
+          openedDeviceId,
+          openedWorkspacePath,
+          launchOptions,
+          launchOwner(openedDeviceId, launchOptions)
+        )
       navigateTo('/')
     },
     [
       projectSelectionStartedRef,
       state.devices,
+      getSnapshot,
+      workspaceTabId,
       executorClient.runtime,
       executorClient.commands,
       clearRemoteProjectSyncRemoval,
@@ -426,6 +458,7 @@ export function useStartNewChat({
   dispatch,
   workspaceTabId,
   user,
+  setDraftInputForScope,
 }: {
   canNavigateWorkspaceTab: () => boolean
   state: WorkbenchState
@@ -433,48 +466,66 @@ export function useStartNewChat({
   dispatch: ActionDispatch<[action: WorkbenchAction]>
   workspaceTabId: string | undefined
   user: User
+  setDraftInputForScope: (scopeKey: string, value: string) => void
 }) {
-  return useCallback(() => {
-    navigateTo('/')
-    if (!canNavigateWorkspaceTab()) {
-      requestWorkbenchNewChat()
-      return
-    }
-    const project = state.currentProject
-      ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-      : null
-    if (project) {
-      writeLastProjectId(ownershipKey, project.id)
+  return useCallback(
+    (options?: NewWorkbenchChatOptions) => {
+      if (!isPopoutWindowRuntime()) navigateTo('/')
+      if (!canNavigateWorkspaceTab()) {
+        requestWorkbenchNewChat(options)
+        return
+      }
+      const initialInput = options?.initialInput
+      if (initialInput) {
+        setDraftInputForScope(
+          getProjectChatScopeKey({
+            currentRuntimeTask: null,
+            standaloneChatKey: state.standaloneChatKey + 1,
+          }),
+          initialInput
+        )
+      }
+      const project = state.currentProject
+        ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+        : null
+      if (project) {
+        writeLastProjectId(ownershipKey, project.id)
+        dispatch({
+          type: 'project_workspace_selected',
+          project,
+          deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+          ...(initialInput ? { startFreshChat: true } : {}),
+        })
+        requestNewChatComposerFocus(workspaceTabId)
+        return
+      }
+
+      writeLastProjectId(ownershipKey, null)
       dispatch({
-        type: 'project_workspace_selected',
-        project,
-        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+        type: 'project_cleared',
+        standaloneDeviceId: getRememberedStandaloneDeviceId(
+          user,
+          state.devices,
+          state.standaloneDeviceId
+        ),
+        standaloneWorkspacePath: null,
+        ...(initialInput ? { startFreshChat: true } : {}),
       })
       requestNewChatComposerFocus(workspaceTabId)
-      return
-    }
-
-    writeLastProjectId(ownershipKey, null)
-    dispatch({
-      type: 'project_cleared',
-      standaloneDeviceId: getRememberedStandaloneDeviceId(
-        user,
-        state.devices,
-        state.standaloneDeviceId
-      ),
-      standaloneWorkspacePath: null,
-    })
-    requestNewChatComposerFocus(workspaceTabId)
-  }, [
-    canNavigateWorkspaceTab,
-    state.currentProject,
-    state.projects,
-    state.runtimeWork,
-    state.devices,
-    state.standaloneDeviceId,
-    ownershipKey,
-    dispatch,
-    user,
-    workspaceTabId,
-  ])
+    },
+    [
+      canNavigateWorkspaceTab,
+      state.currentProject,
+      state.projects,
+      state.runtimeWork,
+      state.devices,
+      state.standaloneDeviceId,
+      state.standaloneChatKey,
+      setDraftInputForScope,
+      ownershipKey,
+      dispatch,
+      user,
+      workspaceTabId,
+    ]
+  )
 }

@@ -170,13 +170,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(&mut link, local_active, queue_position);
         }
         if let Some(path) = string_field(thread, "path") {
-            let mut runtime_handle = link
-                .runtime_handle
-                .as_object()
-                .cloned()
-                .unwrap_or_else(Map::new);
-            runtime_handle.insert("threadPath".to_owned(), Value::String(path));
-            link.runtime_handle = Value::Object(runtime_handle);
+            link.runtime_handle["threadPath"] = Value::String(path);
         }
         Some(link)
     }
@@ -198,11 +192,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) -> std::io::Result<()> {
-        let mut ids = vec![link.local_task_id.clone()];
-        if let Some(thread_id) = &link.thread_id {
-            ids.push(thread_id.clone());
-        }
-        self.store.mark_deleted_archived_task_ids(ids)
+        self.store.mark_deleted_archived_link(link)
     }
 
     pub(super) async fn archived_cleanup_links(
@@ -303,7 +293,11 @@ impl RuntimeWorkRpcHandler {
     ) {
         // Delayed native notifications are projections, not authority to
         // permanently cancel a wait established by a newer Goal mutation.
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.with_goal_status_change(local_task_id, |mutating| {
+            // A notification cannot settle the route being activated by an
+            // in-flight mutation. Its response or a later read is authoritative.
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, !mutating);
+        });
         self.schedule_connection_goal_reconciliation(local_task_id);
     }
 
@@ -311,9 +305,12 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         goal_status: Option<String>,
+        goal: Option<&Value>,
     ) {
-        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref(), goal);
+        self.with_goal_status_change(local_task_id, |_| {
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, true);
+        });
     }
 
     pub(super) fn hydrate_runtime_task_goal_status(
@@ -321,7 +318,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
-        self.update_runtime_task_goal_status(local_task_id, goal_status, false);
+        self.update_runtime_task_goal_status(local_task_id, goal_status, false, true);
     }
 
     fn update_runtime_task_goal_status(
@@ -329,6 +326,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
         update_activity_time: bool,
+        settle_inactive: bool,
     ) {
         let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
@@ -340,7 +338,7 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
-        if !goal_is_active {
+        if !goal_is_active && settle_inactive {
             self.clear_active_goal_turn(local_task_id);
         }
     }

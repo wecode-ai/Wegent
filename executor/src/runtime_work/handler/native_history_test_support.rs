@@ -56,6 +56,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
         ("thread_list", json!({"data":[],"nextCursor":null})),
+        ("thread_unsubscribe", json!({"status":"notLoaded"})),
+        (
+            "thread_resume",
+            json!({"thread":{"id":handler.local_task_link("task-1").and_then(|link| link.thread_id).unwrap_or_else(|| "thread-1".into()),"modelProvider":"~"}}),
+        ),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),
@@ -96,6 +101,8 @@ pub(in crate::runtime_work::handler) fn install_native_history(
   }
   $method = $request.method.Replace('/', '_')
   if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
+  if (Test-Path (Join-Path $PSScriptRoot ($method + '.defer'))) { continue }
+  while (Test-Path (Join-Path $PSScriptRoot ($method + '.hold'))) { Start-Sleep -Milliseconds 10 }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))

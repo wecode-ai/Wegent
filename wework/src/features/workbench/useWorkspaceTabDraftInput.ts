@@ -1,15 +1,63 @@
 import { useCallback, useLayoutEffect, useState } from 'react'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
   WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
-import { useScopedDraftInput } from './useScopedDraftInput'
+import { createScopedDraftStore } from './scopedDraftStore'
 
-export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
-  const draft = useScopedDraftInput(() => ({}))
-  const { inputs, replaceInputs } = draft
+const STANDALONE_CHAT_KEY_STORAGE_PREFIX = 'wework.composerStandaloneChatKey.v1'
+
+function standaloneChatKeyStorageKey(storageScope?: string): string | undefined {
+  return storageScope
+    ? `${STANDALONE_CHAT_KEY_STORAGE_PREFIX}:${encodeURIComponent(storageScope)}`
+    : undefined
+}
+
+function readStandaloneChatKey(storageScope?: string): number {
+  const key = standaloneChatKeyStorageKey(storageScope)
+  if (!key) return 0
+  try {
+    const value = Number(localStorage.getItem(key))
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function persistStandaloneChatKey(storageScope: string | undefined, value: number): void {
+  const key = standaloneChatKeyStorageKey(storageScope)
+  if (!key) return
+  try {
+    localStorage.setItem(key, String(value))
+  } catch {
+    // Draft persistence still works for the current session when storage is unavailable.
+  }
+}
+
+export function useWorkspaceTabDraftInput(workspaceTabId?: string, accountScope?: string) {
+  const [draftSession] = useState(() => {
+    const storageScope = accountScope
+      ? JSON.stringify([accountScope, workspaceTabId ?? 'main'])
+      : undefined
+    return {
+      storageScope,
+      draftStore: createScopedDraftStore({ storageScope }),
+      initialStandaloneChatKey: readStandaloneChatKey(storageScope),
+    }
+  })
+  const { draftStore, storageScope, initialStandaloneChatKey } = draftSession
   const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
+  const persistCurrentStandaloneChatKey = useCallback(
+    (value: number) => persistStandaloneChatKey(storageScope, value),
+    [storageScope]
+  )
+  useLayoutEffect(() => () => draftStore.flush(), [draftStore])
+  useWindowEvent('pagehide', () => draftStore.flush())
+  useDocumentEvent('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') draftStore.flush()
+  })
   const setGoalDraftActiveForScope = useCallback((scopeKey: string, active: boolean) => {
     setGoalDraftActiveByScope(current => {
       if (Boolean(current[scopeKey]) === active) return current
@@ -24,7 +72,7 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
     const restore = () => {
       const transfer = consumeWorkspaceTabTransfer(workspaceTabId)
       if (transfer) {
-        replaceInputs(transfer.draftInputByScope)
+        draftStore.restore(transfer.draftInputByScope)
         setGoalDraftActiveByScope(transfer.goalDraftActiveByScope ?? {})
       }
     }
@@ -34,13 +82,22 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
     restore()
     window.addEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
     return () => window.removeEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
-  }, [replaceInputs, workspaceTabId])
+  }, [draftStore, workspaceTabId])
   useLayoutEffect(() => {
     if (!workspaceTabId) return
+    // A hidden tab can still be popped out from the tab strip.
     publishWorkspaceTabTransferState(workspaceTabId, {
-      draftInputByScope: inputs,
+      get draftInputByScope() {
+        return draftStore.exportInputs()
+      },
       goalDraftActiveByScope,
     })
-  }, [goalDraftActiveByScope, inputs, workspaceTabId])
-  return { ...draft, goalDraftActiveByScope, setGoalDraftActiveForScope }
+  }, [draftStore, goalDraftActiveByScope, workspaceTabId])
+  return {
+    draftStore,
+    goalDraftActiveByScope,
+    setGoalDraftActiveForScope,
+    initialStandaloneChatKey,
+    persistStandaloneChatKey: persistCurrentStandaloneChatKey,
+  }
 }

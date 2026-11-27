@@ -8,6 +8,8 @@ impl CodexAppServerClient {
         params: Value,
     ) -> Result<Value, String> {
         if method == "thread/start" {
+            // Retain process ownership until the returned thread is registered as active.
+            let _preparation = self.state.lock().await.preparing_turns.begin();
             let result = self.request(method, params).await?;
             let id = thread_id_from_response(method, &result, None)?;
             self.mark_thread_active(&id).await;

@@ -1,22 +1,26 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactElement,
-} from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
+import { usePanelResizeDrag } from '@/components/layout/usePanelResizeDrag'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type {
   ProcessExplorerClient,
   ProcessOwnerRef,
-  ProcessRecord,
   ProcessSnapshot,
 } from '@wegent/process-explorer'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { DEFAULT_COLUMN_WIDTHS, resizeColumnWidths } from './columnWidths'
 import { describeDegradation } from './errors'
 import {
@@ -31,6 +35,8 @@ import {
   buildProcessTree,
   filterProcessTree,
   flattenProcessTree,
+  isExited,
+  type ProcessRow,
   type ProcessTreeNode,
 } from './processTree'
 
@@ -42,7 +48,7 @@ export interface ProcessExplorerViewProps {
   refreshIntervalMs?: number
 }
 
-const DEFAULT_REFRESH_INTERVAL_MS = 2000
+const DEFAULT_REFRESH_INTERVAL_MS = 1000
 
 const COLUMN_LABELS = [
   { label: 'process_explorer.column_process', align: 'text-left', padding: 'pl-3 pr-3' },
@@ -73,70 +79,40 @@ export function ProcessExplorerView({
   refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
 }: ProcessExplorerViewProps) {
   const { t } = useTranslation('common')
-  const [snapshot, setSnapshot] = useState<ProcessSnapshot | null>(null)
-  const [error, setError] = useState<unknown | null>(null)
   const [filter, setFilter] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [collapsedOwners, setCollapsedOwners] = useState<Set<string>>(() => new Set())
   const [columnWidths, setColumnWidths] = useState<number[]>(() => [...DEFAULT_COLUMN_WIDTHS])
-  const loadSequence = useRef(0)
   const tableRef = useRef<HTMLTableElement>(null)
-  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const { startResize: startPanelResize, stopResize } = usePanelResizeDrag()
 
-  const load = useCallback(async () => {
-    const sequence = ++loadSequence.current
-    const startedAt = Date.now()
-    traceSnapshotLoad('requested', sequence, startedAt)
-    try {
-      const next = await client.snapshot({ waitForSystemProcesses: false })
-      traceSnapshotLoad('received', sequence, startedAt, {
-        accepted: loadSequence.current === sequence,
-        processCount: next.processes.length,
-        degraded: next.degraded.map(item => item.code),
-      })
-      if (loadSequence.current !== sequence) return
-      setSnapshot(next)
-      setError(null)
-    } catch (loadError) {
-      traceSnapshotLoad('failed', sequence, startedAt, {
-        accepted: loadSequence.current === sequence,
-        errorName: loadError instanceof Error ? loadError.name : typeof loadError,
-      })
-      if (loadSequence.current !== sequence) return
-      setError(loadError)
+  const source = useMemo(
+    () => createProcessSnapshotSource(client, refreshIntervalMs),
+    [client, refreshIntervalMs]
+  )
+  const state = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const snapshot = state.data?.snapshot ?? null
+  const error = state.error ?? null
+  const load = source.reload
+  // A hidden window stops sampling; the first frame after it is shown is fresh.
+  useDocumentEvent('visibilitychange', () => {
+    if (!document.hidden) void load()
+  })
+  useWindowEvent('keydown', event => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
+      event.preventDefault()
+      window.close()
     }
-  }, [client])
-
-  useEffect(() => {
-    const initial = window.setTimeout(() => void load(), 0)
-    const timer = window.setInterval(() => void load(), refreshIntervalMs)
-    return () => {
-      window.clearTimeout(initial)
-      window.clearInterval(timer)
-    }
-  }, [load, refreshIntervalMs])
-
-  useEffect(() => {
-    document.title = t('process_explorer.title')
-  }, [t])
-
-  useEffect(() => {
-    const closeOnShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        window.close()
-      }
-    }
-    window.addEventListener('keydown', closeOnShortcut)
-    return () => window.removeEventListener('keydown', closeOnShortcut)
-  }, [])
+  })
 
   const groups = useMemo(() => buildRenderGroups(snapshot, filter), [snapshot, filter])
   const totalCpu = groups.reduce((total, group) => total + group.cpuPercent, 0)
   const totalMemory = groups.reduce((total, group) => total + group.memoryBytes, 0)
   const totalCount = groups.reduce((total, group) => total + group.count, 0)
-  const selectedRecord = snapshot?.processes.find(record => record.id === selectedId) ?? null
+  const selectedRecord =
+    snapshot?.processes.concat(snapshot.recentlyExited).find(record => record.id === selectedId) ??
+    null
   const selectedDetail = selectedRecord?.detail
     ? normalizeLaunchDetail(selectedRecord.detail)
     : null
@@ -158,7 +134,16 @@ export function ProcessExplorerView({
     })
   }
 
-  useEffect(() => () => resizeCleanupRef.current?.(), [])
+  const bindTable = useCallback(
+    (table: HTMLTableElement | null) => {
+      tableRef.current = table
+      return () => {
+        stopResize()
+        tableRef.current = null
+      }
+    },
+    [stopResize]
+  )
 
   const copySelectedDetail = async () => {
     if (!selectedRecord || !selectedDetail) return
@@ -174,29 +159,17 @@ export function ProcessExplorerView({
     if (event.button !== 0) return
     const table = tableRef.current
     if (!table || table.clientWidth === 0) return
-    event.preventDefault()
-    resizeCleanupRef.current?.()
-
+    stopResize()
     const startX = event.clientX
     const tableWidth = table.clientWidth
     const startWidths = [...columnWidths]
-    const move = (moveEvent: PointerEvent) => {
-      const deltaPercent = ((moveEvent.clientX - startX) / tableWidth) * 100
-      setColumnWidths(resizeColumnWidths(startWidths, index, deltaPercent))
-    }
-    const cleanup = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', cleanup)
-      window.removeEventListener('pointercancel', cleanup)
-      resizeCleanupRef.current = null
-    }
-
-    // Document-level listeners keep the drag alive outside the narrow handle
-    // and avoid relying on pointer capture across React renders.
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', cleanup)
-    window.addEventListener('pointercancel', cleanup)
-    resizeCleanupRef.current = cleanup
+    startPanelResize(event, {
+      cursor: 'col-resize',
+      onMove: ({ x }) => {
+        const deltaPercent = ((x - startX) / tableWidth) * 100
+        setColumnWidths(resizeColumnWidths(startWidths, index, deltaPercent))
+      },
+    })
   }
 
   const resetColumnWidths = () => setColumnWidths([...DEFAULT_COLUMN_WIDTHS])
@@ -209,20 +182,24 @@ export function ProcessExplorerView({
     )
   }
 
+  // This desktop-only window can be narrower than the shared button's
+  // touch-target breakpoint; keep its dense controls one size.
   return (
     <div
       data-testid="process-explorer-window"
-      className="flex h-screen flex-col bg-background text-text-primary"
+      className="flex h-screen flex-col bg-background text-text-primary max-md:[&_button]:min-h-0 max-md:[&_button]:min-w-0"
     >
+      <title>{t('process_explorer.title')}</title>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        <input
+        <ControlInput
+          density="dense"
           type="search"
           value={filter}
           onChange={event => setFilter(event.target.value)}
           placeholder={t('process_explorer.filter_placeholder')}
           aria-label={t('process_explorer.filter_placeholder')}
           data-testid="process-explorer-filter"
-          className="h-7 min-w-0 max-w-64 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+          className="min-w-0 max-w-64 flex-1 text-xs"
         />
         <div className="ml-auto flex min-w-0 flex-1 items-center gap-3 text-xs text-text-secondary">
           <span
@@ -235,7 +212,8 @@ export function ProcessExplorerView({
             {' · '}
             {t('process_explorer.summary_processes', { processCount: totalCount })}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="process-explorer-always-on-top"
             onClick={onToggleAlwaysOnTop}
@@ -256,17 +234,19 @@ export function ProcessExplorerView({
             )}
           >
             <Pin className={cn('h-3.5 w-3.5', alwaysOnTop && 'fill-current')} />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="process-explorer-refresh"
             onClick={() => void load()}
             aria-label={t('process_explorer.refresh')}
             title={t('process_explorer.refresh')}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted md:min-h-7"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         </div>
       </div>
 
@@ -300,7 +280,7 @@ export function ProcessExplorerView({
 
       <div className="min-h-0 flex-1 overflow-auto" data-testid="process-explorer-list">
         <table
-          ref={tableRef}
+          ref={bindTable}
           aria-label={t('process_explorer.title')}
           className="w-full table-fixed border-collapse text-sm"
         >
@@ -371,7 +351,8 @@ export function ProcessExplorerView({
                 >
                   <tr className="border-b border-border/60 bg-surface/60">
                     <td className="overflow-hidden px-3 py-1.5">
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid={`process-explorer-toggle-${group.owner.id}`}
                         onClick={() => toggleOwner(group.owner.id)}
@@ -385,7 +366,7 @@ export function ProcessExplorerView({
                         )}
                         <span>{ownerLabel}</span>
                         <span className="text-text-muted">{group.count}</span>
-                      </button>
+                      </ControlButton>
                     </td>
                     <td />
                     <td className="overflow-hidden px-2 py-1.5 text-right text-xs tabular-nums text-text-secondary">
@@ -420,7 +401,8 @@ export function ProcessExplorerView({
                 <span className="shrink-0 text-text-muted">PID {selectedRecord.pid}</span>
               </div>
               {selectedLaunch?.command ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="process-explorer-copy-launch-details"
                   aria-label={
@@ -441,7 +423,7 @@ export function ProcessExplorerView({
                   ) : (
                     <Copy className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
             {selectedLaunch?.command ? (
@@ -460,6 +442,65 @@ export function ProcessExplorerView({
         )}
       </footer>
     </div>
+  )
+}
+
+interface SnapshotRead {
+  snapshot: ProcessSnapshot
+  sequence: number
+  startedAt: number
+}
+interface SnapshotFailure {
+  cause: unknown
+  sequence: number
+  startedAt: number
+}
+let nextSnapshotSequence = 0
+
+function createProcessSnapshotSource(client: ProcessExplorerClient, refreshIntervalMs: number) {
+  return createAsyncResource<SnapshotRead>(
+    'process-explorer-snapshot',
+    async signal => {
+      const sequence = ++nextSnapshotSequence
+      const startedAt = Date.now()
+      traceSnapshotLoad('requested', sequence, startedAt)
+      try {
+        const snapshot = await client.snapshot({ waitForSystemProcesses: false })
+        if (signal.aborted)
+          traceSnapshotLoad('received', sequence, startedAt, {
+            accepted: false,
+            processCount: snapshot.processes.length,
+            degraded: snapshot.degraded.map(item => item.code),
+          })
+        return { snapshot, sequence, startedAt }
+      } catch (cause) {
+        if (signal.aborted)
+          traceSnapshotLoad('failed', sequence, startedAt, {
+            accepted: false,
+            errorName: cause instanceof Error ? cause.name : typeof cause,
+          })
+        throw { cause, sequence, startedAt } satisfies SnapshotFailure
+      }
+    },
+    {
+      refreshIntervalMs,
+      refreshIntervalMode: 'after-settle',
+      refreshEnabled: () => !document.hidden,
+      success({ snapshot, sequence, startedAt }) {
+        traceSnapshotLoad('received', sequence, startedAt, {
+          accepted: true,
+          processCount: snapshot.processes.length,
+          degraded: snapshot.degraded.map(item => item.code),
+        })
+      },
+      failure(error) {
+        const { cause, sequence, startedAt } = error as SnapshotFailure
+        traceSnapshotLoad('failed', sequence, startedAt, {
+          accepted: true,
+          errorName: cause instanceof Error ? cause.name : typeof cause,
+        })
+      },
+    }
   )
 }
 
@@ -484,20 +525,24 @@ function traceSnapshotLoad(
 
 function buildRenderGroups(snapshot: ProcessSnapshot | null, filter: string): RenderGroup[] {
   const normalizedFilter = filter.trim().toLowerCase()
-  return groupProcesses(snapshot?.processes ?? []).flatMap(group => {
+  // Exited processes stay in the tree while they fade, so a short-lived child
+  // remains visible under the parent that forked it.
+  const rows = snapshot?.processes.concat(snapshot.recentlyExited) ?? []
+  return groupProcesses(rows).flatMap(group => {
     let tree = buildProcessTree(group.processes)
     if (normalizedFilter) {
       tree = filterProcessTree(tree, record => matchesFilter(record, normalizedFilter))
     }
     const flat = flattenProcessTree(tree)
     if (flat.length === 0) return []
+    const running = flat.filter(node => !isExited(node.record))
     return [
       {
         owner: group.owner,
         tree,
-        count: flat.length,
-        cpuPercent: sum(flat.map(node => node.record.cpuPercent)),
-        memoryBytes: sum(flat.map(node => node.record.memoryBytes)),
+        count: running.length,
+        cpuPercent: sum(running.map(node => node.record.cpuPercent)),
+        memoryBytes: sum(running.map(node => node.record.memoryBytes)),
       },
     ]
   })
@@ -511,10 +556,12 @@ function renderNodes(
   select: (id: string) => void
 ): ReactElement[] {
   const record = node.record
+  const exited = isExited(record)
   return [
     <tr
       key={record.id}
       data-testid={`process-explorer-row-${record.pid}`}
+      data-state={exited ? 'exited' : undefined}
       tabIndex={0}
       aria-current={selectedId === record.id ? 'true' : undefined}
       onClick={() => select(record.id)}
@@ -524,13 +571,25 @@ function renderNodes(
         select(record.id)
       }}
       className={cn(
-        'cursor-pointer border-b border-border/40 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
-        selectedId === record.id && 'bg-muted'
+        'cursor-pointer border-b border-border/40 transition-opacity duration-300 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
+        selectedId === record.id && 'bg-muted',
+        exited && 'text-text-muted opacity-60'
       )}
     >
-      <td className="overflow-hidden py-1.5 pr-3" style={{ paddingLeft: 32 + depth * 16 }}>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate" title={record.name}>
+      <td className="overflow-hidden py-1.5 pl-4 pr-3">
+        <div className="flex min-w-0 items-center">
+          <span className="w-4 shrink-0" />
+          {Array.from({ length: depth }, (_, level) => (
+            <span
+              key={level}
+              aria-hidden
+              className="relative -my-1.5 w-4 shrink-0 self-stretch before:absolute before:inset-y-0 before:left-1/2 before:w-px before:bg-border/60"
+            />
+          ))}
+          <span
+            className="truncate"
+            title={exited ? `${record.name} · ${t('process_explorer.exited')}` : record.name}
+          >
             {record.name}
           </span>
         </div>
@@ -543,14 +602,14 @@ function renderNodes(
         {formatMemory(record.memoryBytes)}
       </td>
       <td className="overflow-hidden px-2 py-1.5 text-right tabular-nums">
-        {formatAge(record.startedAt)}
+        {formatAge(record.startedAt, exited ? record.exitedAt : undefined)}
       </td>
     </tr>,
     ...node.children.flatMap(child => renderNodes(child, depth + 1, t, selectedId, select)),
   ]
 }
 
-function matchesFilter(record: ProcessRecord, filter: string): boolean {
+function matchesFilter(record: ProcessRow, filter: string): boolean {
   if (/^\d+$/.test(filter)) return String(record.pid) === filter
   return (
     record.name.toLowerCase().includes(filter) ||

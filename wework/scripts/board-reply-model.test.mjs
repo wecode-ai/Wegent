@@ -7,8 +7,14 @@ import { test } from 'vitest'
 import { createBoardReplyModelRegression } from '../e2e/desktop/modules/board-reply-model.mjs'
 import { REPLY_PREDICTION_PROMPT } from '../e2e/desktop/modules/response-protocol.mjs'
 
-function requestFor(text) {
-  const request = Readable.from([JSON.stringify({ input: [{ role: 'user', content: text }] })])
+function requestFor(text, context) {
+  const input = [
+    ...(context
+      ? [{ role: 'developer', content: `<projectSpaceIssue>${context}</projectSpaceIssue>` }]
+      : []),
+    { role: 'user', content: text },
+  ]
+  const request = Readable.from([JSON.stringify({ input })])
   request.method = 'POST'
   return request
 }
@@ -35,7 +41,7 @@ test('holds the Issue-bound local task with its own prompt instead of the initia
   const task = model.holdLinkedIssueTask('space', { id: 'ISSUE-1', title: 'Issue title' })
   const result = response()
   const pending = model.handleHttp(
-    requestFor('[projectSpaceIssue] Issue title wework-issue://space/ISSUE-1'),
+    requestFor('Issue title wework-issue://space/ISSUE-1', 'space ISSUE-1 Issue title'),
     result,
     new URL('http://fixture/v1/responses')
   )
@@ -57,7 +63,23 @@ test('does not count predictions as Issue task requests and rejects missing Issu
   assert.equal(task.requests.length, 0)
   await assert.rejects(
     model.handleHttp(requestFor('Unrelated task'), response(), url),
+    /lost its project context/
+  )
+  await assert.rejects(
+    model.handleHttp(
+      requestFor('Issue title wework-issue://space/ISSUE-1', 'space'),
+      response(),
+      url
+    ),
     /lost its Issue context/
+  )
+  await assert.rejects(
+    model.handleHttp(
+      requestFor('<projectSpaceIssue>space ISSUE-1 Issue title</projectSpaceIssue>'),
+      response(),
+      url
+    ),
+    /lost its project context/
   )
   task.release()
 })

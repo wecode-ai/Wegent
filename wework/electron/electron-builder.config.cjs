@@ -36,8 +36,8 @@ module.exports = {
     weworkCredentialStorageVersion: 3,
     weworkCredentialStorageMode: 'isolated-copy-once',
     weworkReadableCredentialStorageVersions: [2, 3],
-    weworkDataSchema: 1,
-    weworkReadableDataSchemas: [1],
+    weworkDataSchema: 2,
+    weworkReadableDataSchemas: [1, 2],
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
     weworkAppId: identity.identifier,
@@ -81,6 +81,7 @@ module.exports = {
     entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
     extendInfo: {
       ...macosAppIcon.extendInfo,
+      NSDownloadsFolderUsageDescription: `${identity.productName} needs access to your Downloads folder to save downloaded files.`,
       NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
     },
     ...(useCustomMacosNotarization ? { notarize: false } : {}),

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ExternalKnowledgeRef } from '@/types/context'
+import type { ChatErrorInfo } from '@wegent/chat-core'
 
 // Authentication Types
 
@@ -79,7 +80,7 @@ export interface SkillRefMeta {
 
 /** Skill reference with full identification info for backend */
 export interface SkillRef {
-  skill_id?: number
+  skill_id?: number | null
   name: string
   namespace: string
   is_public: boolean
@@ -408,6 +409,7 @@ export interface CorrectionData {
 
 /** Subtask result structure */
 export interface SubtaskResult {
+  error_info?: ChatErrorInfo
   thinking?: unknown[]
   value?: string | { workbench?: WorkbenchData }
   workbench?: WorkbenchData

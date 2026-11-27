@@ -21,6 +21,14 @@
     "wework/src/lib/code-theme*",
     "wework/src/lib/xterm-theme*",
     "wework/electron/src/host/appearance-theme*",
-    "wework/src/components/code/PierreCodeProvider.tsx"
+    "wework/src/components/code/PierreCodeProvider.tsx",
+    "wework/e2e/desktop/modules/streaming-text-completion.mjs",
+    "wework/e2e/desktop/modules/streaming-command-cancellation.mjs",
+    "packages/chat-core/src/response-api*",
+    "packages/chat-core/src/runtime-turns.ts",
+    "packages/chat-core/src/runtime-turn-updates.ts",
+    "packages/chat-core/src/workbench-message-reducer*",
+    "executor/src/runtime_work/events.rs",
+    "executor/src/local/event_stream.rs"
   ]
 }

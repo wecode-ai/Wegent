@@ -3,28 +3,35 @@ import { join, dirname, resolve, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SourceMap } from 'node:module'
 
-const repositoryDirectory = fileURLToPath(new URL('../../', import.meta.url))
-
-export async function createDevtoolsClient(directory, timeoutMs = 30_000) {
+export async function createDesktopControlClient(directory, endpoint, timeoutMs = 30_000) {
   const registry = join(directory, 'desktop-control')
   const files = (await readdir(registry)).filter(name => name.endsWith('.json'))
   if (files.length !== 1) throw new Error('Expected exactly one isolated desktop control instance')
   const record = JSON.parse(await readFile(join(registry, files[0]), 'utf8'))
   if (!/^127\.0\.0\.1:\d+$/.test(record.address))
-    throw new Error('DevTools requires loopback transport')
+    throw new Error('Desktop control requires loopback transport')
   return async input => {
-    const response = await fetch(`http://${record.address}/devtools`, {
+    const response = await fetch(`http://${record.address}${endpoint}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${record.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(input),
       signal: AbortSignal.timeout(timeoutMs),
     })
     const body = await response.json()
-    if (!response.ok || !body.ok) throw new Error(body.error ?? `DevTools HTTP ${response.status}`)
+    if (!response.ok || !body.ok)
+      throw new Error(body.error ?? `Desktop control HTTP ${response.status}`)
+    return body.data
+  }
+}
+
+export async function createDevtoolsClient(directory, timeoutMs) {
+  const dispatch = await createDesktopControlClient(directory, '/devtools', timeoutMs)
+  return async input => {
+    const result = await dispatch(input)
     if (input.action === 'detach' && Number.isInteger(input.target)) {
       await rm(join(directory, `performance-${input.target}.json`), { force: true })
     }
-    return body.data
+    return result
   }
 }
 
@@ -34,7 +41,10 @@ export async function writeDiagnosticFile(path, value) {
   await chmod(path, 0o600)
 }
 
-export async function readLocalSourceMap(url, root = repositoryDirectory) {
+export async function readLocalSourceMap(
+  url,
+  root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+) {
   const path = await realpath(fileURLToPath(url))
   const within = relative(await realpath(root), path)
   if (within.startsWith('..') || isAbsolute(within) || !path.endsWith('.map')) {
@@ -68,7 +78,12 @@ export async function collectProtocolEvents(client, target, after = 0) {
   }
 }
 
-export async function startPerformanceRecording(client, directory, target) {
+export async function startPerformanceRecording(
+  client,
+  directory,
+  target,
+  { styleInvalidations = false, samplingIntervalUs } = {}
+) {
   const statePath = join(directory, `performance-${target}.json`)
   try {
     await readFile(statePath)
@@ -81,24 +96,40 @@ export async function startPerformanceRecording(client, directory, target) {
   let profiling = false
   let tracing = false
   try {
-    for (const domain of ['Runtime', 'Log', 'Network', 'Debugger', 'Performance', 'Profiler']) {
+    for (const domain of ['Runtime', 'Log', 'Network', 'Performance', 'Profiler']) {
       await command(`${domain}.enable`)
     }
+    // Retain execution contexts and other enablement events before recording traffic
+    // fills the event buffer. Script metadata is replayed after measurement.
+    const enabled = await collectProtocolEvents(client, target, initial.cursor)
     const baseline = await command('Performance.getMetrics')
+    if (samplingIntervalUs !== undefined) {
+      await command('Profiler.setSamplingInterval', { interval: samplingIntervalUs })
+    }
     await command('Profiler.start')
     profiling = true
     await command('Tracing.start', {
-      categories: 'devtools.timeline,v8,blink.user_timing,disabled-by-default-devtools.timeline',
+      categories: [
+        'devtools.timeline',
+        'v8',
+        'blink.user_timing',
+        'disabled-by-default-devtools.timeline',
+        ...(styleInvalidations
+          ? ['disabled-by-default-devtools.timeline.invalidationTracking']
+          : []),
+      ].join(','),
       transferMode: 'ReturnAsStream',
     })
     tracing = true
     await writeDiagnosticFile(statePath, {
       target,
-      after: initial.cursor,
-      metadata: initial.events.filter(event =>
+      after: enabled.cursor,
+      events: enabled.events,
+      lostEvents: enabled.lost,
+      metadata: [...initial.events, ...enabled.events].filter(event =>
         ['Debugger.scriptParsed', 'Runtime.executionContextCreated'].includes(event.method)
       ),
-      metadataLostEvents: initial.lost,
+      metadataLostEvents: initial.lost + enabled.lost,
       baseline,
       startedAt: Date.now(),
     })
@@ -193,17 +224,30 @@ export function analyzeCpuProfile(profile, maps) {
       cursor = parents.get(cursor)
     }
   }
+  const mappedCaller = id => {
+    const visited = new Set([id])
+    let cursor = parents.get(id)
+    while (cursor !== undefined && !visited.has(cursor)) {
+      visited.add(cursor)
+      const frame = nodes.get(cursor)?.callFrame
+      if (frame?.url) {
+        return { function: frame.functionName, location: sourceLocation(frame, maps) }
+      }
+      cursor = parents.get(cursor)
+    }
+  }
   return [...costs]
-    .map(([id, cost]) => ({
-      function: nodes.get(id)?.callFrame.functionName ?? '(unknown)',
-      location: sourceLocation(
-        nodes.get(id)?.callFrame ?? { lineNumber: -1, columnNumber: -1 },
-        maps
-      ),
-      selfMs: cost.selfUs / 1000,
-      totalMs: cost.totalUs / 1000,
-      samples: cost.samples,
-    }))
+    .map(([id, cost]) => {
+      const frame = nodes.get(id)?.callFrame ?? { lineNumber: -1, columnNumber: -1 }
+      return {
+        function: frame.functionName ?? '(unknown)',
+        location: sourceLocation(frame, maps),
+        caller: frame.url ? undefined : mappedCaller(id),
+        selfMs: cost.selfUs / 1000,
+        totalMs: cost.totalUs / 1000,
+        samples: cost.samples,
+      }
+    })
     .sort((a, b) => b.selfMs - a.selfMs)
     .slice(0, 50)
 }
@@ -286,7 +330,7 @@ export function analyzeNetwork(events) {
   }
 }
 
-export async function stopPerformanceRecording(client, directory, target, outputPath) {
+export async function stopPerformanceRecording(client, directory, target, outputPath, formatTrace) {
   const statePath = join(directory, `performance-${target}.json`)
   const state = JSON.parse(await readFile(statePath, 'utf8'))
   const command = (method, params) => client({ action: 'command', target, method, params })
@@ -296,7 +340,15 @@ export async function stopPerformanceRecording(client, directory, target, output
   try {
     await command('Tracing.end')
     tracingEnded = true
-    return await finishPerformanceRecording(client, command, target, state, profile, outputPath)
+    return await finishPerformanceRecording(
+      client,
+      command,
+      target,
+      state,
+      profile,
+      outputPath,
+      formatTrace
+    )
   } catch (error) {
     failure = error
     throw error
@@ -308,10 +360,18 @@ export async function stopPerformanceRecording(client, directory, target, output
   }
 }
 
-async function finishPerformanceRecording(client, command, target, state, profile, outputPath) {
-  const events = []
+async function finishPerformanceRecording(
+  client,
+  command,
+  target,
+  state,
+  profile,
+  outputPath,
+  formatTrace
+) {
+  const events = [...(state.events ?? [])]
   let cursor = state.after
-  let lost = 0
+  let lost = state.lostEvents ?? 0
   let complete
   const deadline = Date.now() + 30_000
   while (!complete) {
@@ -326,13 +386,30 @@ async function finishPerformanceRecording(client, command, target, state, profil
   }
   if (!complete.params.stream) throw new Error('Trace did not return a stream')
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
+  if (formatTrace) {
+    const report = {
+      ...formatTrace(trace),
+      traceDataLoss: complete.params.dataLossOccurred ?? false,
+    }
+    await writeDiagnosticFile(outputPath, report)
+    return report
+  }
   const metrics = await command('Performance.getMetrics')
-  await writeDiagnosticFile(outputPath + '.evidence.json', {
-    profile,
-    trace,
-    events,
-    metadata: state.metadata,
-  })
+  // Read source maps after measurement so the debugging domain does not affect
+  // the recorded workload or lose its script metadata to later stream traffic.
+  try {
+    await command('Debugger.enable')
+    const scripts = await collectProtocolEvents(client, target, cursor)
+    events.push(...scripts.events)
+    lost += scripts.lost
+  } finally {
+    await writeDiagnosticFile(outputPath + '.evidence.json', {
+      profile,
+      trace,
+      events,
+      metadata: state.metadata,
+    })
+  }
   const { maps, errors } = await loadSourceMaps(command, [...state.metadata, ...events], profile)
   const report = {
     target,

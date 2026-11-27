@@ -3,6 +3,8 @@
 
 """Cross-process project comment push contracts."""
 
+import pytest
+
 from app.api.ws.wework_runtime_namespace import (
     PROJECT_CHAT_CREATED_EVENT,
     WEWORK_RUNTIME_NAMESPACE,
@@ -17,6 +19,33 @@ class _Manager:
 
     def emit(self, event, data, **kwargs) -> None:
         self.calls.append({"event": event, "data": data, **kwargs})
+
+
+@pytest.mark.parametrize(
+    "message_type,metadata",
+    [("agent_chunk", {}), ("agent_status", {}), ("text", {"kind": "task_ai_subagent"})],
+)
+def test_room_push_redacts_execution_process_without_mutating_owner_view(
+    monkeypatch, message_type, metadata
+):
+    manager = _Manager()
+    monkeypatch.setattr(push, "_publish_manager", lambda: manager)
+    original = {
+        "projectId": "project",
+        "taskId": "issue",
+        "type": message_type,
+        "content": "private output",
+        "metadata": {**metadata, "private_prompt": "secret"},
+        "runtimeAddress": {"deviceId": "device", "taskId": "task"},
+        "traceRef": "opaque",
+    }
+    push.push_project_chat_message(original)
+    shared = manager.calls[0]["data"]
+    assert shared["content"] == ""
+    assert shared["runtimeAddress"] is None
+    assert shared["metadata"] == {}
+    assert shared["traceState"] == "restricted"
+    assert original["content"] == "private output"
 
 
 def test_project_chat_push_uses_cross_process_redis_manager(monkeypatch) -> None:

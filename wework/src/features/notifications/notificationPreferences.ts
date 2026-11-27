@@ -3,6 +3,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
 export const NOTIFICATION_PREFERENCES_CHANGED_EVENT = 'wework:notification-preferences-changed'
+export const NOTIFICATION_DELIVERY_FAILED_EVENT = 'wework:notification-delivery-failed'
 export const OPEN_NOTIFICATION_SETTINGS_EVENT = 'wework:open-notification-settings'
 const ACTIVE_NOTIFICATION_PREFERENCES_KEY = 'wework.notification-preferences:active'
 const LEGACY_TASK_SYSTEM_MIGRATION_PREFIX =
@@ -13,6 +14,13 @@ export const defaultNotificationPreferences: WeworkNotificationPreferences = {
   collaboration: { in_app: true, system: true, im: true },
   general: { in_app: true, system: null, im: true },
   stand_in: { in_app: true, system: true, im: null },
+}
+
+export function notificationPreferenceAccountKey(
+  baseUrl?: string | null,
+  userId?: number | null
+): string {
+  return `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
 }
 
 export function mergeNotificationPreferences(
@@ -79,5 +87,30 @@ export function readActiveNotificationPreferences(): WeworkNotificationPreferenc
     return mergeNotificationPreferences(parsed)
   } catch {
     return defaultNotificationPreferences
+  }
+}
+
+/** Publish the active notification preferences used by reminder surfaces. */
+export function createActiveNotificationPreferencesStore() {
+  let snapshot = readActiveNotificationPreferences()
+  const listeners = new Set<() => void>()
+  const refresh = () => {
+    snapshot = readActiveNotificationPreferences()
+    for (const listener of listeners) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      if (listeners.size === 1) {
+        window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, refresh)
+        refresh()
+      }
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size)
+          window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, refresh)
+      }
+    },
   }
 }

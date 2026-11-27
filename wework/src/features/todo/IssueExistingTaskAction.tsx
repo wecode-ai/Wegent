@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 import type { CloudLoopItem, LoopItemTaskBinding } from '@/api/deliveries'
+import { getRuntimeTaskActivityTime } from '@/components/layout/runtimeTaskSidebarHelpers'
 import type { RuntimeProjectSpaceRef, RuntimeWorkListResponse } from '@/types/api'
 import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import { IssueExistingTaskPicker, type ExistingIssueTask } from './IssueExistingTaskPicker'
 
@@ -12,33 +14,23 @@ export interface ExistingIssueTaskSource {
   onLinked?: () => void
 }
 
-/** All desktop Issue surfaces share task discovery, binding and refresh semantics. */
-export function IssueExistingTaskAction({
-  source,
-  issue,
-  project,
-  bindings,
-  deviceNamesById,
-  onLinked,
-}: {
-  source: ExistingIssueTaskSource
-  issue: CloudLoopItem
-  project: RuntimeProjectSpaceRef
-  bindings: LoopItemTaskBinding[]
-  deviceNamesById?: Readonly<Record<string, string>>
-  onLinked: () => void
-}) {
-  const [linked, setLinked] = useState<Set<string>>(new Set())
-  const existing = new Set(bindings.map(binding => `${binding.device_id}:${binding.task_id}`))
-  const tasks = new Map<string, ExistingIssueTask>()
+function collectExistingIssueTasks(
+  work: ExistingIssueTaskSource['work'],
+  bindings: readonly Pick<LoopItemTaskBinding, 'device_id' | 'task_id'>[] | undefined,
+  linked: ReadonlySet<string>
+): ExistingIssueTask[] {
+  const existing = new Set(bindings?.map(binding => `${binding.device_id}:${binding.task_id}`))
+  const tasks = new Map<string, ExistingIssueTask & { activityTime: number }>()
   for (const workspace of [
-    ...(source.work?.projects ?? []).flatMap(entry => entry.deviceWorkspaces),
-    ...(source.work?.chats ?? []),
+    ...(work?.projects ?? []).flatMap(entry => entry.deviceWorkspaces),
+    ...(work?.chats ?? []),
   ]) {
     for (const task of workspace.tasks) {
+      if (isStandInMemoryReviewTask(task)) continue
       const key = `${workspace.deviceId}:${task.taskId}`
       if (existing.has(key) || linked.has(key)) continue
       tasks.set(key, {
+        activityTime: getRuntimeTaskActivityTime(task),
         title: task.title,
         address: {
           deviceId: workspace.deviceId,
@@ -51,9 +43,34 @@ export function IssueExistingTaskAction({
       })
     }
   }
+  return [...tasks.values()].sort((left, right) => right.activityTime - left.activityTime)
+}
+
+/** All desktop Issue surfaces share task discovery, binding and refresh semantics. */
+export function IssueExistingTaskAction({
+  source,
+  issue,
+  project,
+  bindings,
+  deviceNamesById,
+  onLinked,
+}: {
+  source: ExistingIssueTaskSource
+  issue: Pick<CloudLoopItem, 'id'>
+  project?: RuntimeProjectSpaceRef
+  bindings?: readonly Pick<LoopItemTaskBinding, 'device_id' | 'task_id'>[]
+  deviceNamesById?: Readonly<Record<string, string>>
+  onLinked: () => void
+}) {
+  const [linked, setLinked] = useState<Set<string>>(new Set())
+  const { work } = source
+  const tasks = useMemo(
+    () => collectExistingIssueTasks(work, bindings, linked),
+    [work, bindings, linked]
+  )
   return (
     <IssueExistingTaskPicker
-      tasks={[...tasks.values()]}
+      tasks={tasks}
       deviceNamesById={deviceNamesById}
       onSelect={async task => {
         await source.port.bindTask(
@@ -65,11 +82,13 @@ export function IssueExistingTaskAction({
         setLinked(
           current => new Set([...current, `${task.address.deviceId}:${task.address.taskId}`])
         )
-        publishProjectSpaceTaskBindingChanged({
-          task: task.address,
-          project,
-          type: 'bound',
-        })
+        if (project)
+          publishProjectSpaceTaskBindingChanged({
+            task: task.address,
+            project,
+            type: 'bound',
+            itemId: issue.id,
+          })
         onLinked()
         source.onLinked?.()
       }}

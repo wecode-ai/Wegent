@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { createStandInImConnectionsStory } from '../modules/stand-in-im-connections.mjs'
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import {
@@ -111,6 +112,10 @@ export function createDesktopScenario({
       await imStory.verify(control)
       assert.ok(userId, 'The scenario must use its authenticated backend identity')
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        userId
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
@@ -266,6 +271,20 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
         visible: false,
       })
+      const detail = `${CONTENT} [data-testid="cloud-todo-detail"]`
+      const closeIssueDrawer = async () => {
+        await control.command(
+          'clickWhenEnabled',
+          `${CONTENT} [data-testid="cloud-todo-detail-close"]`
+        )
+        // A clipped exit frame is invisible before the modal releases its route and inert scope.
+        await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
+      }
+      // Establish the active board and its Issue before dismissing the modal.
+      // A single DOM sample after reload can precede restoration of the board tab.
+      await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
+      await control.command('waitFor', detail, { text: issue.id, timeoutMs: uiTimeoutMs })
+      await closeIssueDrawer()
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await openCollaborationNotifications(control)
@@ -286,10 +305,22 @@ export function createDesktopScenario({
             y: status.top + status.height / 2,
           },
         }
-        await control.command('clickAt', 'body', { value: JSON.stringify(points[target]) })
-        await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
-          visible: false,
+        const hitText = await control.command('clickAt', 'body', {
+          value: JSON.stringify(points[target]),
         })
+        try {
+          await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+            visible: false,
+          })
+        } catch (error) {
+          console.error('[stand-in-notifications] row hit did not dismiss inbox', {
+            target,
+            point: points[target],
+            bounds,
+            hitText: hitText?.slice(0, 300),
+          })
+          throw error
+        }
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
           await control.command(
@@ -302,10 +333,7 @@ export function createDesktopScenario({
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
           text: issue.id,
         })
-        await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
-        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
-          visible: false,
-        })
+        await closeIssueDrawer()
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {

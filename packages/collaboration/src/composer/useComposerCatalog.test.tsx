@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import { act, useEffect } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 import { useComposerCatalog, type ComposerCatalogStore } from './useComposerCatalog'
 
 type App = { id: string; name: string; isEnabled?: boolean }
-const events = {}
-const isMenuOpen = () => true
+const events = {
+  requestSync: 'test:composer-sync',
+  catalogChanged: 'test:composer-changed',
+}
+let menuOpen = true
+const isMenuOpen = () => menuOpen
 function createStore() {
   let apps: App[] = []
   const listeners = new Set<() => void>()
@@ -39,6 +43,7 @@ describe('shared composer catalog lifecycle', () => {
   let store: ComposerCatalogStore<App>
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    menuOpen = true
     store = createStore()
     container = document.createElement('div')
     document.body.append(container)
@@ -62,40 +67,60 @@ describe('shared composer catalog lifecycle', () => {
       events,
       isMenuOpen,
     })
-    useEffect(() => {
-      current = catalog
-    }, [catalog])
+    current = catalog
     return <div>{catalog.apps.map(app => `${app.name}:${app.isEnabled}`).join(',')}</div>
   }
   async function mount(apps: () => Promise<App[]>, skills?: () => Promise<string[]>) {
     await act(async () => root.render(<Harness apps={apps} skills={skills} />))
   }
 
-  it('clears the previous task and rejects its pending response when the store changes', async () => {
-    let resolveOld!: (apps: App[]) => void
-    const oldStore = store
-    store.replace([{ id: 'old', name: 'Old task' }])
-    const oldApps = vi.fn(
-      () =>
-        new Promise<App[]>(resolve => {
-          resolveOld = resolve
-        })
-    )
-    await mount(oldApps, async () => ['old skill'])
-    await act(async () => current.loadLocalMentions())
-    expect(current.skills).toEqual(['old skill'])
-    store = createStore()
-    const newApps = vi.fn().mockResolvedValue([{ id: 'new', name: 'New task' }])
-    await mount(newApps, async () => ['new skill'])
-    expect(current.apps).toEqual([])
-    expect(current.skills).toEqual([])
-    await act(async () => resolveOld([{ id: 'late-old', name: 'Old response' }]))
-    expect(store.get()).toEqual([])
-    expect(oldStore.get()).toEqual([{ id: 'old', name: 'Old task' }])
-    await act(async () => current.loadLocalMentions())
-    expect(current.apps).toEqual([{ id: 'new', name: 'New task' }])
-    expect(current.skills).toEqual(['new skill'])
-  })
+  it.each([false, true])(
+    'isolates changed catalog stores and reloads only an open menu (open=%s)',
+    async open => {
+      let resolveOld!: (apps: App[]) => void
+      const oldStore = store
+      store.replace([{ id: 'old', name: 'Old task' }])
+      const oldApps = vi.fn(
+        () =>
+          new Promise<App[]>(resolve => {
+            resolveOld = resolve
+          })
+      )
+      await mount(oldApps, async () => ['old skill'])
+      await act(async () => current.loadLocalMentions())
+      expect(current.skills).toEqual(['old skill'])
+      menuOpen = open
+      store = createStore()
+      let finishApps!: (apps: App[]) => void
+      let finishSkills!: (skills: string[]) => void
+      const pendingApps = new Promise<App[]>(resolve => {
+        finishApps = resolve
+      })
+      const pendingSkills = new Promise<string[]>(resolve => {
+        finishSkills = resolve
+      })
+      await mount(
+        () => pendingApps,
+        () => pendingSkills
+      )
+      expect(current.apps).toEqual([])
+      expect(current.skills).toEqual([])
+      await act(async () => resolveOld([{ id: 'late-old', name: 'Old response' }]))
+      expect(store.get()).toEqual([])
+      expect(oldStore.get()).toEqual([{ id: 'old', name: 'Old task' }])
+      await act(async () => {
+        finishApps([{ id: 'new', name: 'New task' }])
+        finishSkills(['new skill'])
+      })
+      if (!open) {
+        expect(current.apps).toEqual([])
+        expect(current.skills).toEqual([])
+        await act(async () => current.loadLocalMentions())
+      }
+      expect(current.apps).toEqual([{ id: 'new', name: 'New task' }])
+      expect(current.skills).toEqual(['new skill'])
+    }
+  )
 
   it('refreshes metadata and accessibility when an installed app keeps its ID', async () => {
     const apps = vi.fn().mockResolvedValue([{ id: 'plugin', name: 'Old name', isEnabled: true }])
@@ -177,5 +202,56 @@ describe('shared composer catalog lifecycle', () => {
     await act(async () => finish([{ id: 'plugin', name: 'Stale installed' }]))
     expect(current.apps).toEqual([])
     expect(store.get()).toEqual([])
+  })
+  it('continues an already-requested read across loader changes before menu visibility commits', async () => {
+    menuOpen = false
+    let finish!: (apps: App[]) => void
+    const oldApps = vi.fn(
+      () =>
+        new Promise<App[]>(resolve => {
+          finish = resolve
+        })
+    )
+    await mount(oldApps)
+    await act(async () => current.loadLocalMentions())
+    expect(current.appsLoading).toBe(true)
+    const next = vi.fn().mockResolvedValue([{ id: 'new', name: 'Latest catalog' }])
+    await mount(next)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(current.apps).toEqual([{ id: 'new', name: 'Latest catalog' }])
+    await act(async () => finish([{ id: 'old', name: 'Late old catalog' }]))
+    expect(current.apps).toEqual([{ id: 'new', name: 'Latest catalog' }])
+    expect(store.get()).toEqual([{ id: 'new', name: 'Latest catalog' }])
+  })
+  it('refreshes plugin changes through native events and defers skills until the menu opens', async () => {
+    const apps = vi.fn().mockResolvedValue([{ id: 'old', name: 'Old app' }])
+    const skills = vi.fn().mockResolvedValue(['old skill'])
+    await mount(apps, skills)
+    await act(async () => current.loadLocalMentions())
+    menuOpen = false
+    apps.mockResolvedValue([{ id: 'new', name: 'New app' }])
+    skills.mockResolvedValue(['new skill'])
+    await act(async () => window.dispatchEvent(new Event(events.catalogChanged)))
+    expect(current.apps).toEqual([{ id: 'new', name: 'New app' }])
+    expect(current.skills).toEqual([])
+    expect(skills).toHaveBeenCalledTimes(1)
+    await act(async () => current.loadLocalMentions())
+    expect(current.skills).toEqual(['new skill'])
+    expect(apps).toHaveBeenCalledTimes(2)
+  })
+
+  it('removes native refresh listeners and ignores old commands when the composer detaches', async () => {
+    const apps = vi.fn().mockResolvedValue([{ id: 'app', name: 'App' }])
+    await mount(apps)
+    await act(async () => current.loadLocalMentions())
+    const old = current
+    await act(async () => root.render(<div>Closed composer</div>))
+    await act(async () => {
+      window.dispatchEvent(new Event(events.catalogChanged))
+      window.dispatchEvent(new Event(events.requestSync))
+      old.loadLocalMentions({ force: true })
+    })
+    expect(apps).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toBe('Closed composer')
   })
 })

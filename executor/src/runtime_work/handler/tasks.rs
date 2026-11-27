@@ -5,10 +5,16 @@
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
+use super::turns::TurnAdmission;
 use super::*;
 
 #[path = "startup_recovery.rs"]
 mod startup_recovery;
+
+enum OwnerMessage {
+    Direct,
+    Interrupt,
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
@@ -444,8 +450,19 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn create_task_with_activity(
         &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.create_task_with_initial_permissions(payload, activity, None, None)
+            .await
+    }
+
+    pub(super) async fn create_task_with_initial_permissions(
+        &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
@@ -457,13 +474,23 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity).await
+        super::dispatch::boxed_rpc(|| {
+            self.create_task_after_local_checks(
+                payload,
+                activity,
+                initial_permissions,
+                owner_request,
+            )
+        })
+        .await
     }
 
     async fn create_task_after_local_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
@@ -484,7 +511,7 @@ impl RuntimeWorkRpcHandler {
                 format!("runtime task create schemaVersion {schema_version} is unsupported"),
             ));
         }
-        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+        if let Some(receipt) = self.existing_payload_command(&payload, false).await? {
             return Ok(receipt);
         }
         if schema_version == 2 {
@@ -535,7 +562,6 @@ impl RuntimeWorkRpcHandler {
         set_runtime_task_title(&mut request, &title);
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
-        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -791,6 +817,16 @@ impl RuntimeWorkRpcHandler {
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         store_runtime_execution_request(&mut link.runtime_handle, &request);
         apply_runtime_profile_handle(&mut link.runtime_handle, &payload);
+        if is_codex_runtime(&runtime) {
+            let permissions = failed_start
+                .as_ref()
+                .and_then(super::stand_in_task_permissions::task_permissions)
+                .or(initial_permissions);
+            if let Some(permissions) = permissions {
+                link.runtime_handle[super::stand_in_task_permissions::TASK_PERMISSIONS] =
+                    json!(permissions);
+            }
+        }
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -855,7 +891,42 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
-        self.upsert_local_task(link);
+        {
+            // Owner admissions publish under the queue lock and cancellation
+            // uses the lifecycle lock, including the preparation fast path.
+            let _queue = if owner_request.is_some() {
+                Some(self.turn_queue_operation.lock().await)
+            } else {
+                None
+            };
+            let _lifecycle = owner_request.map(|_| {
+                self.stand_in_lifecycle_gate
+                    .lock()
+                    .expect("stand-in lifecycle gate poisoned")
+            });
+            if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
+                return Err(super::stand_in_role_delegation::denied());
+            }
+            if link.runtime_handle["origin"]["type"] == "stand_in_task"
+                && link.runtime_handle["origin"]["roleDelegation"].is_object()
+            {
+                let link = self.store.try_upsert_task(link).map_err(|error| {
+                    log_executor_event(
+                        "Specialist task persistence failed",
+                        &[
+                            ("task_id", local_task_id.clone()),
+                            ("error", error.to_string()),
+                        ],
+                    );
+                    AppIpcError::new("runtime_task_save_failed", "Could not save delegated task")
+                })?;
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.project_runtime_link_status(&link);
+            } else {
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.upsert_local_task(link);
+            }
+        }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
@@ -883,11 +954,14 @@ impl RuntimeWorkRpcHandler {
                 resume_thread_id: None,
                 initial_thread_goal,
             };
-            let spawn_result = if force_start {
-                self.spawn_forced_turn(turn).await
+            let admission = if force_start {
+                TurnAdmission::Forced
             } else {
-                self.spawn_turn(turn).await
+                TurnAdmission::Normal
             };
+            let spawn_result = self
+                .schedule_turn(turn, admission, initial_permissions.is_some())
+                .await;
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
                 self.forget_runtime_model_config(&local_task_id);
@@ -1055,11 +1129,80 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_from_owner(payload, false).await
+    }
+
+    pub(super) async fn send_message_from_event(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_task_gate(payload, false, true).await
+    }
+
+    pub(super) async fn send_stand_in_role_result(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        let user = payload["userId"].as_i64().ok_or_else(|| {
+            AppIpcError::new("permission_denied", "Assistant result has no owner")
+        })?;
+        if !self.local_task_link(&task).is_some_and(|link| {
+            super::stand_in_role_delegation::owned_role_task(&link, user, &self.device_id)
+                && !matches!(link.status.as_str(), "archived" | "cancelled")
+        }) {
+            return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
+        }
+        self.send_message_with_activity_checks(payload, true, None, true, None, None)
+            .await
+    }
+
+    pub(super) async fn send_stand_in_role_retry(
+        &self,
+        payload: Value,
+        attempt: u64,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        self.send_message_with_activity_checks(payload, false, None, false, None, Some(attempt))
+            .await
+    }
+
+    pub(super) async fn send_message_from_owner(
+        &self,
+        payload: Value,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_task_gate(payload, owner_input, false)
+            .await
+    }
+
+    async fn send_message_with_task_gate(
+        &self,
+        payload: Value,
+        owner_input: bool,
+        from_event: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let gate = self.task_send_gate(&local_task_id);
+        let prepared = self.prepare_question_reply(&payload).await?;
+        let gate = self.task_send_gate(&self.canonical_local_task_id(&local_task_id));
         let _guard = gate.lock().await;
-        self.send_message_after_local_checks(payload).await
+        let owner_message = owner_input.then_some(OwnerMessage::Direct);
+        self.send_message_with_activity_checks(
+            payload,
+            false,
+            owner_message,
+            from_event,
+            prepared,
+            None,
+        )
+        .await
     }
 
     pub(super) async fn send_coordination_assessment(
@@ -1116,18 +1259,25 @@ impl RuntimeWorkRpcHandler {
             let mut payload = payload;
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
-            return self
-                .create_task_after_local_checks(payload, false)
-                .await
-                .map(Some);
+            return super::dispatch::boxed_rpc(|| {
+                self.create_task_after_local_checks(payload, false, None, None)
+            })
+            .await
+            .map(Some);
         }
-        self.send_message_after_local_checks(payload)
+        self.send_message_after_local_checks(payload, None, None)
             .await
             .map(Some)
     }
 
-    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false).await
+    async fn send_message_after_local_checks(
+        &self,
+        payload: Value,
+        prepared: Option<PreparedQuestionReply>,
+        owner_message: Option<OwnerMessage>,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_activity_checks(payload, false, owner_message, false, prepared, None)
+            .await
     }
 
     pub(super) async fn send_identity_activity(
@@ -1136,15 +1286,55 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let task = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true).await
+        self.send_message_with_activity_checks(payload, true, None, false, prepared, None)
+            .await
     }
 
     async fn send_message_with_activity_checks(
         &self,
+        payload: Value,
+        activity: bool,
+        owner_message: Option<OwnerMessage>,
+        from_event: bool,
+        prepared: Option<PreparedQuestionReply>,
+        role_retry_attempt: Option<u64>,
+    ) -> Result<Value, AppIpcError> {
+        // All callers hold the task send gate until acceptance is recorded.
+        let question = self.unanswered_async_question_reply(&payload)?;
+        let result = self
+            .dispatch_message_with_activity_checks(
+                payload,
+                activity,
+                owner_message,
+                from_event,
+                prepared,
+                role_retry_attempt,
+            )
+            .await;
+        if let (Some((task_id, key)), Ok(receipt)) = (question, &result) {
+            if receipt["accepted"] == true {
+                self.store.update_task(&task_id, |link| {
+                    if !link.runtime_handle["answeredAsyncQuestions"].is_object() {
+                        link.runtime_handle["answeredAsyncQuestions"] = json!({});
+                    }
+                    link.runtime_handle["answeredAsyncQuestions"][key] = json!(true);
+                });
+            }
+        }
+        result
+    }
+
+    async fn dispatch_message_with_activity_checks(
+        &self,
         mut payload: Value,
         activity: bool,
+        owner_message: Option<OwnerMessage>,
+        from_event: bool,
+        prepared: Option<PreparedQuestionReply>,
+        role_retry_attempt: Option<u64>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1195,14 +1385,22 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
         }
         let existing_link = self.local_task_link(&local_task_id);
-        let mut payload = if let Some(link) = &existing_link {
+        let mut payload = if let Some(link) = existing_link.as_ref().filter(|_| !from_event) {
             self.refresh_project_coordinator_payload(payload, link)
                 .await?
         } else {
             payload
         };
-        if let Some(receipt) = self.existing_payload_command(&payload).await? {
-            return Ok(receipt);
+        let question_response = request_user_input_response(&payload);
+        // Async answers own the saved execution profile. Look up their command
+        // only after the reply has restored that profile.
+        let async_answer = question_response
+            .as_ref()
+            .is_some_and(|response| response["delivery"] == "async");
+        if !async_answer {
+            if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                return Ok(receipt);
+            }
         }
         if payload.get("resourceEventKeys").is_some()
             && existing_link
@@ -1215,19 +1413,25 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
-        if payload["automaticStandIn"] == true
-            && existing_link.as_ref().is_some_and(|link| {
-                link.interaction_status
-                    .as_deref()
-                    .is_some_and(|status| !status.is_empty())
-            })
-        {
-            return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
-        }
-        if let Some(response) = request_user_input_response(&payload) {
-            if response["delivery"] == "async" {
-                self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
-                    .await?;
+        // The desktop delivers an async answer as the next ordinary user message.
+        let reply_input = question_response.is_some()
+            || existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            });
+        let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
+        let ordinary_input = question_response.is_none();
+        if let Some(response) = question_response {
+            if async_answer {
+                self.apply_prepared_async_question_reply(
+                    &local_task_id,
+                    &response,
+                    &mut payload,
+                    prepared,
+                )
+                .await?;
+                if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                    return Ok(receipt);
+                }
                 if self.is_busy_local_task(&local_task_id) {
                     let guided = self.send_guidance(payload.clone()).await?;
                     if guided["code"] != "no_active_turn" {
@@ -1239,9 +1443,7 @@ impl RuntimeWorkRpcHandler {
                 self.refresh_persisted_model_credentials(&mut payload)
                     .await?;
             } else {
-                return self
-                    .send_request_user_input_response(&local_task_id, response)
-                    .await;
+                return self.send_prepared_question_response(&local_task_id, response, prepared);
             }
         }
         let payload_execution_request = execution_request(&payload);
@@ -1249,7 +1451,8 @@ impl RuntimeWorkRpcHandler {
         let queue_if_busy = bool_field(&payload, "queueIfBusy")
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
-        let was_busy = self.is_busy_local_task(&local_task_id);
+        let was_busy = self.is_busy_local_task(&local_task_id)
+            || self.native_task_holds_capacity(&local_task_id);
         // Native completion can precede isolated app-server/process cleanup.
         // Admit one continuation through the existing serial scheduler while
         // retaining the old execution's resources until cleanup finishes.
@@ -1270,7 +1473,36 @@ impl RuntimeWorkRpcHandler {
                 turn.local_task_id == local_task_id
                     && turn.request.extra.contains_key(quota_recovery::MARKER)
             });
-        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
+        let steer_stand_in = ordinary_input
+            && !activity
+            && existing_link.as_ref().is_some_and(|link| {
+                match link.runtime_handle["origin"]["type"].as_str() {
+                    Some("stand_in_identity") => owner_input,
+                    Some("connection_work" | "dingtalk_work") => from_event,
+                    _ => false,
+                }
+            });
+        let active_stand_in = steer_stand_in
+            && was_busy
+            && !start_new_session
+            && existing_link.as_ref().is_some_and(|link| {
+                is_codex_runtime(&link.runtime) && stand_in_guidance_during_interaction(link)
+            });
+        let automatic_stand_in_waiting = payload["automaticStandIn"] == true
+            && existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status
+                    .as_deref()
+                    .is_some_and(|status| !status.is_empty())
+            });
+        if automatic_stand_in_waiting && !active_stand_in {
+            return Ok(stand_in_waiting_for_user());
+        }
+        if was_busy
+            && !queue_if_busy
+            && !steer_stand_in
+            && !completed_native_turn
+            && !replacing_quota_wait
+        {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1306,6 +1538,27 @@ impl RuntimeWorkRpcHandler {
         }
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        if let Some(comment_id) = request
+            .extra
+            .get("origin")
+            .filter(|origin| origin["type"] == "board_comment")
+            .and_then(|origin| origin["comment_trigger_message_id"].as_str())
+            .map(str::to_owned)
+        {
+            request
+                .extra
+                .insert("issue_comment_trigger_id".to_owned(), json!(&comment_id));
+            let context = request
+                .extra
+                .entry("additionalContext")
+                .or_insert_with(|| json!({}));
+            if let Some(context) = context.as_object_mut() {
+                context.insert("wework.issue-reply".into(), json!({
+                    "kind": "application",
+                    "value": format!("This turn responds to Issue comment {comment_id}. Use this comment ID for an explicit reply if other comments arrive in this turn.")
+                }));
+            }
+        }
         apply_runtime_payload_metadata(&mut request, &payload);
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
         self.prepare_resource_event_request(&local_task_id, &mut request)?;
@@ -1337,10 +1590,35 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
+            if let Some(attempt) = role_retry_attempt {
+                let delegation = request
+                    .extra
+                    .get_mut("standInDelegation")
+                    .filter(|delegation| delegation["roleDelegation"].is_object())
+                    .ok_or_else(super::stand_in_role_delegation::denied)?;
+                delegation["attempt"] = json!(attempt);
+            }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
+            self.refresh_shared_conversation_request(&mut request)
+                .await?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
-        request.new_session = start_new_session;
+        // A prepared local request defaults to a new native session, while a
+        // continuation must resume its thread. Only the Backend's explicit
+        // unproven-session fallback or a user-selected boundary starts fresh.
+        let backend_fallback = request.legacy_session_fallback;
+        request.new_session = start_new_session || backend_fallback;
+        let start_fresh_native_session = request.new_session;
+        log_executor_event(
+            "runtime continuation session selected",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("explicit_new_session", start_new_session.to_string()),
+                ("legacy_session_fallback", backend_fallback.to_string()),
+                ("new_session", request.new_session.to_string()),
+            ],
+        );
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
@@ -1378,10 +1656,24 @@ impl RuntimeWorkRpcHandler {
             .map(|link| link.runtime.clone())
             .or_else(|| string_field(&payload, "runtime"))
             .unwrap_or_else(|| "codex".to_owned());
+        if active_stand_in && !start_fresh_native_session {
+            if let Some(link) = existing_link.as_ref() {
+                if let Some(receipt) = self
+                    .guide_stand_in_input(link, &payload, &request, owner_input)
+                    .await?
+                {
+                    return Ok(receipt);
+                }
+            }
+        }
+        if automatic_stand_in_waiting {
+            return Ok(stand_in_waiting_for_user());
+        }
         if is_claude_runtime(&runtime) {
             ensure_claude_execution_identity(&local_task_id, &mut request);
             if let Some(session) = existing_link
                 .as_ref()
+                .filter(|_| !start_fresh_native_session)
                 .and_then(|link| link.runtime_handle.get("executorSession"))
             {
                 request.inherited_sessions.insert(0, session.clone());
@@ -1439,12 +1731,13 @@ impl RuntimeWorkRpcHandler {
                 super::super::conversation_sessions::is_identity_conversation(link)
                     && runtime_session_id_from_link(link).is_none()
             });
-        let recovered_link = if retrying_preparation || awaiting_identity_start {
-            None
-        } else {
-            self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
-                .await
-        };
+        let recovered_link =
+            if start_fresh_native_session || retrying_preparation || awaiting_identity_start {
+                None
+            } else {
+                self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+                    .await
+            };
         let thread_id = existing_link
             .as_ref()
             .filter(|link| super::super::conversation_sessions::is_identity_conversation(link))
@@ -1460,9 +1753,17 @@ impl RuntimeWorkRpcHandler {
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
             });
-        if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
+        let can_start_without_thread = retrying_preparation
+            || awaiting_identity_start
+            || (start_fresh_native_session && existing_link.is_some());
+        if thread_id.is_none() && !can_start_without_thread {
             if let Some(result) = self
-                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .recover_failed_session_start(
+                    existing_link.as_ref(),
+                    payload.clone(),
+                    activity,
+                    owner_message,
+                )
                 .await?
             {
                 return Ok(result);
@@ -1502,13 +1803,22 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let direct_thread_id = thread_id
             .clone()
-            .filter(|_| ephemeral && !start_new_session);
-        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
+            .filter(|_| ephemeral && !start_fresh_native_session);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_fresh_native_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
+        payload[super::control::connection_events::OWNER_INPUT] = json!(
+            owner_input
+                && !super::automatic_turns::is_automatic_input(&request)
+                && !start_new_session
+        );
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        let use_saved_stand_in_permissions =
+            (owner_message.is_some() && !reply_input) || role_retry_attempt.is_some();
         let turn = SpawnTurnRequest {
-            task_kind: None,
+            // A verified retry already restored its origin and advanced only the attempt.
+            // Rebinding at admission would replace it with the preceding attempt.
+            task_kind: role_retry_attempt.map(|_| RuntimeTaskKind::StandIn),
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -1520,9 +1830,11 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.submit_continuation(turn).await?;
+            self.submit_continuation(turn, use_saved_stand_in_permissions)
+                .await?;
         } else {
-            self.spawn_turn(turn).await?;
+            self.schedule_turn(turn, TurnAdmission::Normal, use_saved_stand_in_permissions)
+                .await?;
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1543,8 +1855,9 @@ impl RuntimeWorkRpcHandler {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&local_task_id);
-        let _guard = gate.lock().await;
+        let guard = gate.lock().await;
         let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
             || !bool_field(&payload, "ephemeral").unwrap_or(false),
             |link| !runtime_task_uses_ephemeral_codex_thread(&link),
@@ -1558,54 +1871,65 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if had_active_local_execution {
+        if let Some(execution_id) = self.active_local_execution_id(&local_task_id) {
             self.request_active_turn_stop(&local_task_id);
-        }
-        if !had_active_local_execution {
-            if let Some(thread_id) = thread_id.as_deref() {
-                if self
-                    .settle_local_execution_from_terminal_codex_turn(
-                        &local_task_id,
-                        thread_id,
-                        "interrupt_and_send_provider_terminal",
-                        PROVIDER_STATE_RECONCILIATION_TIMEOUT,
-                    )
-                    .await
-                {
-                    return self.send_message_after_local_checks(payload).await;
-                }
-            }
-        }
-        let local_stop = self.abort_active_turn(&local_task_id);
-        let provider_stop = async {
-            match (had_active_local_execution, thread_id.as_deref()) {
-                (false, Some(thread_id)) => tokio::time::timeout(
+            // The stopped worker may need this gate to release its preparation.
+            drop(guard);
+            let stopped = self
+                .abort_local_task_execution_with_timeout(
+                    &local_task_id,
+                    execution_id,
                     Duration::from_secs(10),
-                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await;
+            let _guard = gate.lock().await;
+            if !stopped {
+                // Timeout is not confirmation that the provider stopped. Keep
+                // ownership so ordinary admission defers the replacement.
+                log_executor_event(
+                    "runtime work interrupt stop acknowledgement pending",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
+            // Ordinary admission rechecks a newer owner under the reacquired gate.
+            return self
+                .send_message_after_local_checks(payload, prepared, Some(OwnerMessage::Interrupt))
+                .await;
+        }
+        if let Some(thread_id) = thread_id.as_deref() {
+            if self
+                .settle_local_execution_from_terminal_codex_turn(
+                    &local_task_id,
+                    thread_id,
+                    "interrupt_and_send_provider_terminal",
+                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
                 )
                 .await
-                .unwrap_or(false),
-                _ => true,
+            {
+                return self
+                    .send_message_after_local_checks(
+                        payload,
+                        prepared,
+                        Some(OwnerMessage::Interrupt),
+                    )
+                    .await;
             }
-        };
-        let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped {
-            self.force_settle_local_task_execution(
-                &local_task_id,
-                thread_id,
-                "cancelled",
-                "interrupt_and_send_timeout",
-            );
+            let provider_stopped = tokio::time::timeout(
+                Duration::from_secs(10),
+                self.interrupt_provider_active_turn(thread_id),
+            )
+            .await
+            .unwrap_or(false);
+            if !provider_stopped {
+                log_executor_event(
+                    "runtime work provider interrupt cleanup pending",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
         }
-        if !provider_stopped {
-            log_executor_event(
-                "runtime work provider interrupt cleanup pending",
-                &[("local_task_id", local_task_id.clone())],
-            );
-        }
-        self.send_message_after_local_checks(payload).await
+        self.send_message_after_local_checks(payload, prepared, Some(OwnerMessage::Interrupt))
+            .await
     }
 
     async fn settle_local_execution_from_terminal_codex_turn(
@@ -1743,6 +2067,8 @@ impl RuntimeWorkRpcHandler {
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
         self.refresh_identity_conversation_origin(&mut request, &existing_link)?;
+        self.refresh_shared_conversation_request(&mut request)
+            .await?;
         self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {
@@ -1843,18 +2169,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             (None, Some(thread_id))
         };
-        self.spawn_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: local_task_id.clone(),
-            runtime: "codex".to_owned(),
-            request,
-            send_payload: None,
-            direct_thread_id,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id,
-            initial_thread_goal: None,
-        })
+        self.schedule_turn(
+            SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
+                request,
+                send_payload: None,
+                direct_thread_id,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id,
+                initial_thread_goal: None,
+            },
+            TurnAdmission::Normal,
+            true,
+        )
         .await?;
 
         Ok(json!({
@@ -2011,24 +2341,222 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    async fn guide_stand_in_input(
+        &self,
+        link: &RuntimeTaskLink,
+        payload: &Value,
+        request: &ExecutionRequest,
+        owner_input: bool,
+    ) -> Result<Option<Value>, AppIpcError> {
+        use super::command_journal::{CommandState, RuntimeCommand};
+
+        let task = &link.local_task_id;
+        // Turn permissions are fixed at launch. A stricter input needs its own turn.
+        if (payload["origin"]["askBeforeAct"] == true
+            || request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin["askBeforeAct"] == true))
+            && link.runtime_handle["executionRequest"]["origin"]["askBeforeAct"] != true
+            && link.runtime_handle["executionRequest"]["runtime_permission_profile"]
+                != CODEX_READ_ONLY_PERMISSION_PROFILE
+        {
+            return Ok(None);
+        }
+        if self.wait_for_guidance_turn(task).await.is_none() {
+            return Ok(None);
+        }
+        let input = crate::agents::codex_guidance_input(request.clone()).await;
+        if input.is_empty() {
+            return Ok(None);
+        }
+        let mut presentation = user_message_presentation(payload);
+        let id = request
+            .extra
+            .get("client_user_message_id")
+            .cloned()
+            .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
+        let mut context = request
+            .extra
+            .get("additionalContext")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if let Some(source) = payload.get("source").filter(|source| source.is_object()) {
+            context["wework.message-source"] = json!({"kind":"untrusted","value":json!({"source":source["source"],"channel":source["channel_type"],"sender":source["sender_id"]}).to_string()});
+        }
+        let mut guidance = json!({"taskId":task,"clientGuidanceId":id,"additionalContext":context});
+        if let Some(context) = payload.get("conversationContext") {
+            guidance["conversationContext"] = context.clone();
+        }
+        let command = RuntimeCommand::from_turn(
+            &SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: task.clone(),
+                runtime: "codex".into(),
+                request: request.clone(),
+                send_payload: None,
+                direct_thread_id: None,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id: None,
+                initial_thread_goal: None,
+            },
+            CommandState::RecoveryRequired,
+        )?;
+        if let Some(command) = &command {
+            self.persist_guidance_command(&command.key(), Some(command.clone()))
+                .await?;
+        }
+        if let Some(display) = presentation.as_mut() {
+            display["guidance"] = json!(true);
+            display["ensureVisible"] = json!(false);
+            self.store.update_task_without_snapshot(task, |link| {
+                append_runtime_handle_user_message_presentation(
+                    &mut link.runtime_handle,
+                    display.clone(),
+                );
+            });
+        }
+        let mut result = self
+            .deliver_guidance(guidance, None, owner_input, true, input)
+            .await?;
+        match result["code"].as_str() {
+            Some("no_active_turn" | "user_input_pending" | "conversation_context_mismatch") => {
+                if presentation.is_some() {
+                    self.store.update_task_without_snapshot(task, |link| {
+                        if let Some(messages) = link.runtime_handle["userMessagePresentations"].as_array_mut() {
+                            messages.retain(|message| message["clientUserMessageId"] != id);
+                        }
+                    });
+                }
+                if let Some(command) = command {
+                    self.persist_guidance_command(&command.key(), None).await?;
+                }
+                if result["code"] == "user_input_pending" && payload["automaticStandIn"] == true {
+                    return Ok(Some(stand_in_waiting_for_user()));
+                }
+                Ok(None)
+            }
+            _ if result["accepted"] == true => {
+                if let Some(mut presentation) = presentation {
+                    presentation["turnId"] = result["turnId"].clone();
+                    self.store.update_task_without_snapshot(task, |link| {
+                        retain_stand_in_guidance_source(link, &result["turnId"], &presentation);
+                        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
+                    });
+                    emit_runtime_work_changed(&self.event_tx, &self.device_id, task);
+                }
+                if let Some(command) = command {
+                    let key = command.key();
+                    self.persist_guidance_command(&key, Some(command.settle_guidance(string_field(&result, "turnId")))).await?;
+                }
+                result["guided"] = json!(true);
+                Ok(Some(result))
+            }
+            _ if command.is_some() => Err(AppIpcError::new(
+                "command_recovery_required",
+                "The current turn could not confirm delivery. Review the conversation before retrying.",
+            )),
+            _ => Ok(Some(result)),
+        }
+    }
+
     pub(super) async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_guidance_with_context(payload, None, false).await
+    }
+
+    pub(super) async fn send_guidance_with_context(
+        &self,
+        payload: Value,
+        event_operation: Option<&str>,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let owner_input = owner_input
+            && payload.get("issueCommentId").is_none()
+            && self.store.read_task(&local_task_id, |link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
-            .map(|value| value.trim().to_owned())
             .unwrap_or_default();
-        let steer_input = guidance_input_items(&message, payload.get("attachments"));
-        if steer_input.is_empty() {
+        let attachments: Vec<Value> = payload["attachments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|attachment| {
+                id_field(attachment, "id").is_some_and(|id| id.parse::<i64>().is_ok())
+                    && string_field(attachment, "local_path")
+                        .or_else(|| string_field(attachment, "localPath"))
+                        .is_some()
+            })
+            .cloned()
+            .collect();
+        if message.is_empty() && attachments.is_empty() {
             return Err(AppIpcError::new(
                 "bad_request",
-                "message or image attachment is required",
+                "message or local attachment is required",
             ));
         }
+        let has_attachments = !attachments.is_empty();
+        let mut payload = payload;
+        let steer_input = if has_attachments {
+            payload["message"] = json!(message);
+            payload["attachments"] = Value::Array(attachments);
+            let mut request = ExecutionRequest {
+                task_id: local_task_id.clone(),
+                prompt: Value::String(message),
+                ..Default::default()
+            };
+            request
+                .extra
+                .insert("attachments".into(), payload["attachments"].clone());
+            crate::agents::codex_guidance_input(request).await
+        } else {
+            vec![json!({ "type": "text", "text": message })]
+        };
         log_executor_event(
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
+        let result = self
+            .deliver_guidance(
+                payload.clone(),
+                event_operation,
+                owner_input,
+                false,
+                steer_input,
+            )
+            .await?;
+        if has_attachments && result["accepted"] == true {
+            payload["clientUserMessageId"] = result["guidanceId"].clone();
+            if let Some(mut presentation) = user_message_presentation(&payload) {
+                presentation["turnId"] = result["turnId"].clone();
+                presentation["guidance"] = json!(true);
+                presentation["ensureVisible"] = json!(false);
+                self.store
+                    .update_task_without_snapshot(&local_task_id, |link| {
+                        append_runtime_handle_user_message_presentation(
+                            &mut link.runtime_handle,
+                            presentation,
+                        );
+                    });
+            }
+        }
+        Ok(result)
+    }
+
+    pub(super) async fn deliver_guidance(
+        &self,
+        payload: Value,
+        event_operation: Option<&str>,
+        owner_input: bool,
+        preserve_interaction: bool,
+        steer_input: Vec<Value>,
+    ) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let Some((thread_id, mut turn_id)) = self.wait_for_guidance_turn(&local_task_id).await
         else {
             log_executor_event(
@@ -2056,9 +2584,36 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(failure);
         }
+        if preserve_interaction
+            && self.store.read_task(&local_task_id, |link| {
+                !stand_in_guidance_during_interaction(link)
+            }) == Some(true)
+        {
+            return Ok(json!({"accepted":false,"code":"user_input_pending"}));
+        }
+        self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
+        let issue_comment = payload["issueCommentId"]
+            .as_str()
+            .filter(|comment| *comment == guidance_id.as_str());
+        if let Some(comment) = issue_comment {
+            if self.store.read_task(&local_task_id, |link| {
+                link.interaction_status
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            }) == Some(true)
+            {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "code": "user_input_pending",
+                    "taskId": local_task_id,
+                }));
+            }
+            self.set_public_issue_guidance_target(&local_task_id, &turn_id, comment, true);
+        }
         let additional_context = payload
             .get("additionalContext")
             .or_else(|| payload.get("additional_context"))
@@ -2076,6 +2631,9 @@ impl RuntimeWorkRpcHandler {
             .await;
         let steer_result = match steer_result {
             Err(error) => {
+                if let Some(comment) = issue_comment {
+                    self.set_public_issue_guidance_target(&local_task_id, &turn_id, comment, false);
+                }
                 let Some(actual_turn_id) = active_turn_id_from_steer_mismatch(&error) else {
                     return Ok(runtime_guidance_failure(
                         &local_task_id,
@@ -2097,6 +2655,14 @@ impl RuntimeWorkRpcHandler {
                 {
                     return Ok(failure);
                 }
+                if preserve_interaction
+                    && self.store.read_task(&local_task_id, |link| {
+                        !stand_in_guidance_during_interaction(link)
+                    }) == Some(true)
+                {
+                    return Ok(json!({"accepted":false,"code":"user_input_pending"}));
+                }
+                self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
                 log_executor_event(
                     "runtime guidance active turn corrected",
                     &[
@@ -2107,6 +2673,14 @@ impl RuntimeWorkRpcHandler {
                     ],
                 );
                 turn_id = actual_turn_id.clone();
+                if let Some(comment) = issue_comment {
+                    self.set_public_issue_guidance_target(
+                        &local_task_id,
+                        &actual_turn_id,
+                        comment,
+                        true,
+                    );
+                }
                 self.codex_app_server
                     .steer_turn(
                         &thread_id,
@@ -2121,7 +2695,19 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
-                self.set_interaction_status(&local_task_id, None);
+                if !preserve_interaction
+                    && event_operation.is_none()
+                    && issue_comment.is_none()
+                    && self.store.read_task(&local_task_id, |link| {
+                        link.interaction_status.as_deref()
+                            == Some(INTERACTION_WAITING_FOR_USER_INPUT)
+                    }) != Some(true)
+                {
+                    self.set_interaction_status(&local_task_id, None);
+                }
+                if owner_input {
+                    self.resume_goal_after_owner_input(&local_task_id, &thread_id);
+                }
                 log_executor_event(
                     "runtime guidance accepted",
                     &[
@@ -2140,13 +2726,47 @@ impl RuntimeWorkRpcHandler {
                     "runtime": "codex",
                 }))
             }
-            Err(error) => Ok(runtime_guidance_failure(
-                &local_task_id,
-                &thread_id,
-                &turn_id,
-                error,
-            )),
+            Err(error) => {
+                if let Some(comment) = issue_comment {
+                    self.set_public_issue_guidance_target(&local_task_id, &turn_id, comment, false);
+                }
+                Ok(runtime_guidance_failure(
+                    &local_task_id,
+                    &thread_id,
+                    &turn_id,
+                    error,
+                ))
+            }
         }
+    }
+
+    fn validate_event_guidance(
+        &self,
+        task: &str,
+        thread: &str,
+        operation: Option<&str>,
+    ) -> Result<(), AppIpcError> {
+        let Some(operation) = operation else {
+            return Ok(());
+        };
+        let link = self
+            .store
+            .get_task_summary(task)
+            .ok_or_else(|| AppIpcError::new("not_found", "Event conversation is unavailable"))?;
+        self.validate_event_input_session(task, Some(operation), &link)?;
+        if runtime_session_id_from_link(&link).as_deref() != Some(thread) {
+            return Err(AppIpcError::new(
+                "native_session_changed",
+                "The event's native session changed",
+            ));
+        }
+        if link.interaction_status.is_some() {
+            return Err(AppIpcError::new(
+                "user_input_pending",
+                "Event guidance must wait for the conversation's human participation",
+            ));
+        }
+        Ok(())
     }
 
     fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
@@ -2174,6 +2794,11 @@ impl RuntimeWorkRpcHandler {
         };
 
         let mut request = runtime_model_request(&link, &payload)?;
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
@@ -2197,8 +2822,17 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
+        let gateway_credentials = crate::agents::model_gateway::credentials(
+            &self.backend_connection,
+            &mut request,
+            link.gateway_binding.as_ref(),
+            false,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("model_route_failed", error))?
+        .map(|(credentials, _)| credentials);
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -2207,15 +2841,62 @@ impl RuntimeWorkRpcHandler {
         );
         self.ensure_notification_router().await;
         let thread_path = runtime_thread_path_from_link(link);
-        // Retain the registered inference route until native compaction settles.
-        let (thread_id, _model_route) = match client
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
-            .await
-        {
-            Ok(context) => context,
+        let mut registration = None;
+        let resumed = {
+            let gate = self.task_send_gate(&format!("goal-status:{local_task_id}"));
+            let _guard = gate.lock().await;
+            let _mutation = self.begin_goal_status_mutation(local_task_id);
+            client
+                .resume_thread_for_model_action(
+                    &request,
+                    gateway_credentials,
+                    thread_id,
+                    thread_path.as_deref(),
+                    |prepared| {
+                        self.retain_goal_model_route(thread_id, prepared.clone());
+                        registration = prepared;
+                    },
+                )
+                .await
+        };
+        let thread_id = match resumed {
+            Ok(thread_id) => thread_id,
+            // An ambiguous resume may still activate a Goal. An inactive read
+            // issued before that resume settles cannot release its registration.
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
+        let result = self
+            .run_context_compaction(client, link, local_task_id, thread_id.clone())
+            .await;
+        // Settle the shared registration only from a current native Goal snapshot.
+        // The local registration also covers compaction if a Goal stops mid-action.
+        if registration.is_some() {
+            let projection = self.begin_goal_status_read(local_task_id);
+            if let Ok(snapshot) = client
+                .request("thread/goal/get", json!({"threadId": thread_id}))
+                .await
+            {
+                if let Some(goal) = snapshot.get("goal") {
+                    projection.apply_if_current(|| {
+                        self.hydrate_runtime_task_goal_status(
+                            local_task_id,
+                            string_field(goal, "status"),
+                        );
+                    });
+                }
+            }
+        }
+        result
+    }
+
+    async fn run_context_compaction(
+        &self,
+        client: &CodexAppServerClient,
+        link: &RuntimeTaskLink,
+        local_task_id: &str,
+        thread_id: String,
+    ) -> Result<Value, AppIpcError> {
         let previous_turn_id = match self
             .read_codex_recent_turns_with_client(client, &thread_id)
             .await
@@ -2327,109 +3008,6 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| thread_id.to_owned()))
     }
 
-    pub(super) async fn send_request_user_input_response(
-        &self,
-        local_task_id: &str,
-        response: Value,
-    ) -> Result<Value, AppIpcError> {
-        let pending_request = self
-            .active_request_user_inputs
-            .lock()
-            .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
-        let Some(pending_request) = pending_request else {
-            return Ok(json!({
-                "success": false,
-                "error": "request_user_input is not pending",
-                "code": "missing_request_user_input",
-                "taskId": local_task_id,
-                "runtime": "codex",
-            }));
-        };
-        let active_turn = self.active_codex_turn(local_task_id);
-        let scoped_to_other_turn = response.get("interactionScope").is_some_and(|scope| {
-            active_turn
-                .as_ref()
-                .map_or(true, |turn| scope.as_str() != Some(turn.turn_id.as_str()))
-        }) || active_turn
-            .as_ref()
-            .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
-        let invalid_interaction_response = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|items| {
-                items.get(local_task_id).map(|active| {
-                    active
-                        .items
-                        .iter()
-                        .find_map(|item| {
-                            super::super::mcp_elicitation::accepts_response(item, &response)
-                        })
-                        .map(|accepted| !accepted)
-                        .unwrap_or_else(|| {
-                            if let Some(id) = super::super::mcp_elicitation::response_id(&response)
-                            {
-                                let key = id
-                                    .as_str()
-                                    .map(str::to_owned)
-                                    .unwrap_or_else(|| id.to_string());
-                                return !active
-                                    .user_input_requests
-                                    .get(&key)
-                                    .copied()
-                                    .unwrap_or(false);
-                            }
-                            super::super::mcp_elicitation::response_id(&response).is_none()
-                                && active.items.iter().any(|item| {
-                                    item["type"] == "mcpElicitation"
-                                        && item["renderPayload"]["interactionStatus"] == "pending"
-                                })
-                        })
-                })
-            })
-            .unwrap_or(false);
-        if scoped_to_other_turn || invalid_interaction_response {
-            return Ok(json!({
-                "success": false, "code": "stale_request_user_input",
-                "error": "This interaction is expired, settled, or belongs to another turn",
-                "taskId": local_task_id, "runtime": "codex",
-            }));
-        }
-        let response_key = active_turn.as_ref().and_then(|turn| {
-            self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
-        });
-        // Reserve the validated channel before recording the answer. Delivery can
-        // immediately finish the turn, so history must be updated before send.
-        let Ok(permit) = pending_request.sender.reserve().await else {
-            return Ok(json!({
-                "success": false,
-                "error": "request_user_input response channel is closed",
-                "code": "closed_request_user_input",
-                "taskId": local_task_id,
-                "runtime": "codex",
-            }));
-        };
-        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
-            if let Some(turn) = active_turn {
-                self.settle_request_user_input_response(
-                    local_task_id,
-                    &turn.turn_id,
-                    response_key.as_deref(),
-                    &response,
-                );
-            }
-        }
-        permit.send(response);
-        Ok(json!({
-            "success": true,
-            "accepted": true,
-            "deviceId": self.device_id,
-            "taskId": local_task_id,
-            "runtime": "codex",
-        }))
-    }
-
     pub(super) async fn cancel_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         self.cancel_task_with_timeout(payload, Duration::from_secs(10))
             .await
@@ -2453,9 +3031,29 @@ impl RuntimeWorkRpcHandler {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        // A preparation can own the send gate while awaiting cancellable provider I/O.
+        let stopped_preparation = self.stop_preparing_turn_before_send_gate(&local_task_id)?;
+        if stopped_preparation {
+            // The notified owner cleans up its own preparation and queue reservation.
+            // Acknowledgement must not wait behind another send or touch its state.
+            return Ok(match self.local_task_link(&local_task_id) {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         let send_gate = self.task_send_gate(&local_task_id);
         let _send_guard = send_gate.lock().await;
-        self.invalidate_stand_in_owner_request(&local_task_id);
+        if let Err(error) = self.invalidate_stand_in_owner_request(&local_task_id) {
+            self.cancel_preparing_turn(&local_task_id);
+            self.request_active_turn_stop(&local_task_id);
+            self.resolve_pending_request_user_input_for_stop(&local_task_id);
+            return Err(error);
+        }
         let pending_client_user_message_id = string_field(&payload, "clientUserMessageId")
             .or_else(|| string_field(&payload, "client_user_message_id"));
         let link = self.local_task_link(&local_task_id);
@@ -2758,7 +3356,12 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            if !thread_id.is_empty() || payload["startNewSession"] != true {
+            // Keep the current identity thread until the new thread is bound
+            // so the conversation can archive its native history.
+            let preserve_identity_thread = thread_id.is_empty()
+                && request.new_session
+                && super::super::conversation_sessions::is_identity_conversation(link);
+            if !preserve_identity_thread {
                 link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             }
             clear_runtime_handle_messages(&mut link.runtime_handle);
@@ -2861,6 +3464,17 @@ fn detach_collaboration_manager_from_backend_execution(
         request.get_mut("execution_request")
     };
     if let Some(execution_request) = execution_request.and_then(Value::as_object_mut) {
+        let system_prompt = execution_request
+            .get("system_prompt")
+            .or_else(|| execution_request.get("systemPrompt"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let instructions = crate::task_runtime::PUBLIC_ISSUE_MESSAGE_INSTRUCTIONS;
+        if !system_prompt.contains(instructions) {
+            let system_prompt = format!("{system_prompt}\n\n{instructions}");
+            execution_request.remove("systemPrompt");
+            execution_request.insert("system_prompt".to_owned(), Value::String(system_prompt));
+        }
         execution_request.insert(
             "task_id".to_owned(),
             Value::String(manager_task_id.to_owned()),
@@ -3209,6 +3823,17 @@ pub(super) fn retry_source_turn_id(payload: &Value) -> Option<String> {
     string_field(payload, "retrySourceTurnId")
         .or_else(|| string_field(payload, "retry_source_turn_id"))
         .filter(|turn_id| !turn_id.trim().is_empty())
+}
+
+fn stand_in_waiting_for_user() -> Value {
+    json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
+}
+
+fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
+    matches!(
+        link.interaction_status.as_deref(),
+        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    )
 }
 
 #[cfg(test)]

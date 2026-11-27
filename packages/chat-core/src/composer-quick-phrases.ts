@@ -74,6 +74,7 @@ export function createQuickPhrasePreferencesStore(port: QuickPhrasePreferencesPo
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) {
       listeners.add(listener)
+      if (!snapshot.loaded && !operation) void run(() => port.load(), false)
       return () => {
         listeners.delete(listener)
       }

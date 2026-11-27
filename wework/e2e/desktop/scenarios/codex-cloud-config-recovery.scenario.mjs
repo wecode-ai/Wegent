@@ -183,12 +183,12 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         assert.equal(result.pendingRequestCount, 0)
         return result
       }
-      const startFault = async () => {
+      const startFault = async (options = {}) => {
         // A persisted reply can still own a native background prediction. Admit
         // the cold-process fixture only after that work has actually finished.
         const idleRestart = await restartWhenIdle()
         evidence.push({ beforeFault: true, idleRestart })
-        const failureCount = await model.failBundle()
+        const failureCount = await model.failBundle(options)
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
           'runtime.codex.app_server.restart',
@@ -261,12 +261,27 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
 
       // A real bundled-plugin change must restart the idle process without
       // restoring the subscription auth whose cloud configuration is still down.
-      const pluginSync = await rpc(
-        'runtime.codex.plugin.sync_bundled',
-        await preparePluginSyncFixture(resultDir)
+      const pluginFixture = await preparePluginSyncFixture(resultDir)
+      let deferredPluginSyncs = 0
+      const pluginSync = await waitForValue(
+        () => rpc('runtime.codex.plugin.sync_bundled', pluginFixture),
+        result => {
+          assert.ok(
+            result?.status === 'ready' || result?.status === 'deferred',
+            `Unexpected bundled plugin sync result: ${JSON.stringify(result)}`
+          )
+          if (result.status === 'deferred') {
+            assert.equal(result.updated, false, JSON.stringify(result))
+            deferredPluginSyncs += 1
+            return false
+          }
+          return true
+        },
+        'Bundled plugin did not synchronize after native work settled',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.deepEqual(pluginSync, { status: 'ready', updated: true })
-      evidence.push({ pluginSync })
+      evidence.push({ pluginSync, deferredPluginSyncs })
 
       model.plan(`${PREFIX}_NEW_OFFLINE`)
       const offlineTask = await create('NEW_OFFLINE')
@@ -293,8 +308,11 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const rejected = await transcript(protectedTask)
       assert.equal(rejected.running, false)
       assert.equal(rejected.threadId, null)
-      assert.deepEqual(rejected.turns, [])
-      // Prelaunch failures are published by the Runtime and have no native history.
+      // Prelaunch rejection creates no native turn, but a refreshed transcript
+      // still exposes the Runtime diagnostic as one synthetic failed turn.
+      assert.equal(rejected.turns.length, 1)
+      assert.equal(rejected.turns[0].status, 'failed')
+      assert.match(rejected.turns[0].error, /^Codex authentication mode is busy/)
       await waitForLogPattern(
         logPath,
         new RegExp(
@@ -329,6 +347,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
       await assertDegraded(startFaultState, { methods: ['thread/start', 'plugin/installed'] })
+
+      // A startup failure can make native Codex use defaults before the first task RPC.
+      await restoreOfficial('OFFICIAL_BEFORE_BOOTSTRAP')
+      const bootstrapFault = await startFault({ allowBootstrap: false })
+      model.plan(`${PREFIX}_BOOTSTRAP_RECOVERED`)
+      const bootstrapTask = await create('BOOTSTRAP_RECOVERED')
+      await completed(bootstrapTask, `${PREFIX}_BOOTSTRAP_RECOVERED`)
+      await assertDegraded(bootstrapFault, { methods: ['thread/start', 'plugin/installed'] })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`

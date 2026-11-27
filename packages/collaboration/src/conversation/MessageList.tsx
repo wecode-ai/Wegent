@@ -1,22 +1,20 @@
 import type { UserMessageServices } from './UserMessage'
+import type { RenderMessageVisualization } from './AssistantMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { hideAnsweredQuestionSummaries } from './answeredQuestionPresentation'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
   getDisplayProcessingBlocks,
 } from './assistantMessagePresentation'
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useDocumentEvent, useWindowEvent, useElementTypography } from '../dom-events'
 import {
-  Fragment,
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
-import { flushSync } from 'react-dom'
+  createMessageTextSelectionState,
+  type ConversationShareSelectionContext,
+} from './messageTextSelectionState'
+import { createMessageListViewportPort } from './messageListViewportPort'
 import { defaultRangeExtractor, type Range as VirtualRange } from '@tanstack/react-virtual'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { RequestUserInputResponse, TurnFileChangesSummary } from '@wegent/chat-core/runtime'
@@ -38,13 +36,13 @@ import {
   getMessagePretextIntrinsicHeight,
   getMessageLayoutSignature,
   readMessageLayoutTypography,
+  messageLayoutTypographyFromStyles,
+  MESSAGE_LAYOUT_CSS_PROPERTIES,
   getMessageFontMetricsRevision,
 } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
-import {
-  cacheConversationVirtualMeasurements,
-  getConversationVirtualMeasurements,
-} from './conversationViewportCache'
+import { getConversationVirtualMeasurements } from './conversationViewportCache'
+import type { ConversationLayoutChangeReason } from './scrollableMessageTypes'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
 import {
   useConversationVirtualizer,
@@ -53,40 +51,35 @@ import {
 import { useMessageRowMeasure, useMessageRowMeasurements } from './useMessageRowMeasurements'
 import {
   createMarkdownWindowingScope,
+  useMarkdownWindowingViewport,
   MarkdownWindowingContext,
   MarkdownWindowingDisabledContext,
 } from '../markdown/MarkdownWindowingScope'
-import {
-  getConversationDiagnosticContext,
-  isConversationDiagnosticsEnabled,
-  recordConversationDiagnostic,
-} from './conversationDiagnostics'
 
 export interface MessageListProps {
-  assistantMessageStyle?: 'plain' | 'bubble'
   showProcessingStatus?: boolean
   userMessageServices: UserMessageServices
   virtualize?: boolean
   useContentVisibility?: boolean
   onVirtualMeasurement?: (details: VirtualMessageMeasurement) => void
-  renderVisualization?: (
-    part: { file: string; mode?: 'wide'; title?: string },
-    message: WorkbenchMessage
-  ) => ReactNode
+  renderVisualization?: RenderMessageVisualization
   messages: WorkbenchMessage[]
   turns?: RuntimeConversationTurn[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
   scrollTailHeight?: number
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
-  onVirtualLayoutChange?: () => void
+  onVirtualLayoutChange?: (reason?: ConversationLayoutChangeReason) => void
+  layoutRevision?: string
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
+  waitingIndicatorStyle?: 'dots'
   disableContentVisibility?: boolean
   forceVirtualMessageId?: string | null
   searchMessageId?: string
   devices?: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
@@ -119,6 +112,7 @@ export interface MessageListProps {
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onShareSelectionAsIssue?: (text: string, context: ConversationShareSelectionContext) => void
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onFillSelectionToAnswer?: (text: string) => void
@@ -127,6 +121,7 @@ export interface MessageListProps {
   virtualAnchorToEnd?: boolean
   virtualizerRef?: RefObject<ConversationVirtualizer | null>
   onVirtualScrollAdjustment?: (delta: number) => void
+  onNativeScrollRange?: () => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -135,19 +130,12 @@ export interface MessageListProps {
 
 const EMPTY_TURNS: RuntimeConversationTurn[] = []
 const EMPTY_DEVICES: NonNullable<MessageListProps['devices']> = []
-const SELECTION_ACTION_GAP = 8
 const VIRTUAL_MESSAGE_OVERSCAN = 2
-const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
+const FULLY_RENDERED_MESSAGE_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
 
-interface MessageTextSelection {
-  text: string
-  left: number
-  top: number
-  conversationKey?: string | number | null
-}
 export interface VirtualMessageMeasurement {
   messageId: string | null
   previousSize: number | null
@@ -162,7 +150,6 @@ export const MessageList = memo(function MessageList({
   useContentVisibility = false,
   onVirtualMeasurement,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   messages,
   turns = EMPTY_TURNS,
@@ -171,13 +158,16 @@ export const MessageList = memo(function MessageList({
   scrollTailHeight = 0,
   onBeforeUserMessageToggle,
   onVirtualLayoutChange,
+  layoutRevision,
   className,
   conversationKey,
   isWaitingForAssistant = false,
+  waitingIndicatorStyle,
   disableContentVisibility = false,
   forceVirtualMessageId = null,
   searchMessageId,
   devices = EMPTY_DEVICES,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -195,6 +185,7 @@ export const MessageList = memo(function MessageList({
   onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onShareSelectionAsIssue,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
@@ -203,23 +194,36 @@ export const MessageList = memo(function MessageList({
   virtualScrollAdjustmentEnabled = true,
   virtualizerRef,
   onVirtualScrollAdjustment,
+  onNativeScrollRange,
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
-  const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
-  const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
-  const [layout, setLayout] = useState(() => ({
-    width: 0,
-    typography: readMessageLayoutTypography(scrollElementRef?.current),
-    fontEpoch: getMessageFontMetricsRevision(),
-  }))
+  // Register business font-cache invalidation before the native typography observer mounts.
+  const fontEpoch = getMessageFontMetricsRevision()
+  const [initialTypography] = useState(() => readMessageLayoutTypography(scrollElementRef?.current))
+  const nativeTypography = useElementTypography(
+    listRef,
+    MESSAGE_LAYOUT_CSS_PROPERTIES,
+    virtualize && scrollElementRef !== undefined,
+    layoutRevision
+  )
+  const layout = useMemo(
+    () => ({
+      width: nativeTypography?.contentWidth ?? 0,
+      typography: nativeTypography
+        ? messageLayoutTypographyFromStyles(nativeTypography)
+        : initialTypography,
+      fontEpoch,
+    }),
+    [nativeTypography, initialTypography, fontEpoch]
+  )
   const layoutWidth = layout.width
-  const layoutKey = JSON.stringify([
-    layout.width,
+  const layoutPropertiesKey = JSON.stringify([
     className ?? null,
     layout.typography,
     layout.fontEpoch,
   ])
+  const layoutKey = JSON.stringify([layoutWidth, layoutPropertiesKey])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -232,6 +236,10 @@ export const MessageList = memo(function MessageList({
     [turns]
   )
   const visibleMessages = useMemo(() => {
+    const displayMessages =
+      showProcessingStatus === false
+        ? hideAnsweredQuestionSummaries(resolvedMessages)
+        : resolvedMessages
     const userTurns = new Set(
       resolvedMessages
         .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
@@ -243,8 +251,10 @@ export const MessageList = memo(function MessageList({
         .map(message => message.turnId)
         .filter(turnId => turnId && !userTurns.has(turnId))
     )
-    return resolvedMessages.filter(message => {
+    return displayMessages.filter((message, index) => {
       if (isStandInActivityMessage(message)) return false
+      const questionSummaryRemoved = message !== resolvedMessages[index]
+      if (questionSummaryRemoved && !shouldRenderMessage(message, false)) return false
       if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
         const turn = runtimeTurnsById.get(message.turnId)
         if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
@@ -258,9 +268,9 @@ export const MessageList = memo(function MessageList({
           return true
         if (isCompletedStandInActivityTrace(message)) return false
       }
-      return shouldRenderMessage(message)
+      return questionSummaryRemoved || shouldRenderMessage(message)
     })
-  }, [resolvedMessages, runtimeTurnsById])
+  }, [resolvedMessages, runtimeTurnsById, showProcessingStatus])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
@@ -286,22 +296,33 @@ export const MessageList = memo(function MessageList({
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    !resolvedMessages.some(
-      message => message.role === 'assistant' && message.status === 'streaming'
-    )
-  const virtualMessages = virtualize && scrollElementRef !== undefined
-  const hasVisibleContent = visibleMessages.length > 0 || shouldShowWaitingIndicator
+    // Outcome views hide the thinking indicator inside streaming assistant messages.
+    (showProcessingStatus === false ||
+      waitingIndicatorStyle === 'dots' ||
+      !resolvedMessages.some(
+        message => message.role === 'assistant' && message.status === 'streaming'
+      ))
+  const rowCount = visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0)
+  const hasViewportRows = virtualize && scrollElementRef !== undefined
+  // The complete list already fits within the virtualizer's render budget.
+  // Keep the same row nodes and let the browser size them directly.
+  const virtualMessages = hasViewportRows && rowCount > FULLY_RENDERED_MESSAGE_COUNT
   // Validate the actual column before hydrating sizes or preparing the transcript.
   const virtualLayoutReady = virtualMessages && layoutWidth > 0
-  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
-  const measurementLayout = useMemo(
-    () => ({
-      key: layoutKey,
-      messages: new Map(
-        visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+  const virtualMeasurementKey =
+    virtualMessages && conversationKey != null ? String(conversationKey) : null
+  const measurementSignatures = useMemo(
+    () =>
+      new Map(
+        virtualMessages
+          ? visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+          : []
       ),
-    }),
-    [layoutKey, visibleMessages]
+    [visibleMessages, virtualMessages]
+  )
+  const measurementLayout = useMemo(
+    () => ({ key: layoutKey, messages: measurementSignatures }),
+    [layoutKey, measurementSignatures]
   )
   const initialMeasurementsCache = useMemo(
     () =>
@@ -310,23 +331,10 @@ export const MessageList = memo(function MessageList({
         : (getConversationVirtualMeasurements(virtualMeasurementKey, measurementLayout) ?? []),
     [measurementLayout, virtualMeasurementKey]
   )
-  const messageIntrinsicHeights = useMemo(() => {
-    if (!virtualLayoutReady) return new Map<string, number>()
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    return new Map(
-      visibleMessages.map(message => [
-        message.id,
-        measuredSizes.get(message.id) ??
-          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography),
-      ])
-    )
-  }, [
-    initialMeasurementsCache,
-    layoutWidth,
-    layout.typography,
-    virtualLayoutReady,
-    visibleMessages,
-  ])
+  const measuredSizes = useMemo(
+    () => new Map(initialMeasurementsCache.map(item => [item.key, item.size])),
+    [initialMeasurementsCache]
+  )
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8'
@@ -341,23 +349,43 @@ export const MessageList = memo(function MessageList({
     () => findLastIndex(visibleMessages, message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const sizingKey = (message: WorkbenchMessage) =>
+    message.status === 'streaming' ? undefined : measurementLayout.messages.get(message.id)
+  const readRows = () =>
+    visibleMessages.map(message => ({
+      id: message.id,
+      size: sizingKey(message),
+    }))
+  const [previousRows, setRows] = useState(readRows)
+  const rowsChanged =
+    previousRows.length !== visibleMessages.length ||
+    visibleMessages.some(
+      (message, index) =>
+        message.id !== previousRows[index].id || sizingKey(message) !== previousRows[index].size
+    )
+  const geometryRows = rowsChanged ? readRows() : previousRows
+  if (rowsChanged) setRows(geometryRows)
+  // TanStack rebuilds its geometry when the key reader changes. Streamed text
+  // updates keep the same rows and ResizeObserver supplies their real sizes.
   const getItemKey = useCallback(
-    (index: number) => visibleMessages[index]?.id ?? 'assistant-waiting',
-    [visibleMessages]
+    (index: number) => geometryRows[index]?.id ?? 'assistant-waiting',
+    [geometryRows]
   )
   const estimateSize = useCallback(
-    (index: number) =>
-      index === visibleMessages.length
-        ? 32
-        : Math.ceil(messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220),
-    [messageIntrinsicHeights, visibleMessages]
+    (index: number) => {
+      const message = visibleMessages[index]
+      if (!message) return 32
+      if (!virtualLayoutReady) return 220
+      return Math.ceil(
+        measuredSizes.get(message.id) ??
+          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography)
+      )
+    },
+    [measuredSizes, layoutWidth, layout.typography, virtualLayoutReady, visibleMessages]
   )
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
-      const indexes =
-        range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
-          ? Array.from({ length: range.count }, (_, index) => index)
-          : defaultRangeExtractor(range)
+      const indexes = defaultRangeExtractor(range)
       const forcedIndexes = [
         ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
       ].filter(index => index >= 0 && !indexes.includes(index))
@@ -365,14 +393,21 @@ export const MessageList = memo(function MessageList({
     },
     [forcedVirtualMessageIndex, streamingVirtualMessageIndex]
   )
-  const measureElement = useMessageRowMeasure(onVirtualMeasurement)
+  const [viewportPort] = useState(createMessageListViewportPort)
+  const recordMeasurement = useCallback(
+    (row: HTMLElement, width: number, size: number) => {
+      viewportPort.recordMeasurement(row, width, size, layoutWidth, measurementLayout)
+    },
+    [viewportPort, layoutWidth, measurementLayout]
+  )
+  const measureElement = useMessageRowMeasure(onVirtualMeasurement, recordMeasurement, layoutWidth)
   const {
     virtualizer: messageVirtualizer,
     tailHeight,
     scrollMargin,
     viewportReady,
   } = useConversationVirtualizer({
-    count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
+    count: rowCount,
     enabled: virtualLayoutReady,
     getItemKey,
     estimateSize,
@@ -403,320 +438,106 @@ export const MessageList = memo(function MessageList({
     messageVirtualizer,
     virtualLayoutReady
   )
-  const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
-  const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())
-  const markdownWindowingState = useMemo(
-    () => ({
-      conversationKey,
-      layoutKey,
-      scope: createMarkdownWindowingScope(
-        scrollElementRef,
-        element => {
-          markdownLayoutHandlerRef.current(element)
-        },
-        layout.typography.rootFontSize
-      ),
-    }),
-    [conversationKey, scrollElementRef, layoutKey, layout.typography.rootFontSize]
-  )
-  markdownLayoutHandlerRef.current = element => {
-    const list = listRef.current
-    if (!list) {
-      pendingMarkdownLayoutsRef.current.add(element)
-      return
-    }
-    if (!list.contains(element)) return
-    if (!virtualMessages) {
-      onVirtualLayoutChange?.()
-      return
-    }
-    const row = element.closest<HTMLElement>('[data-message-row][data-index]')
-    if (!row || !list.contains(row)) return
-    measureRow(row)
-  }
-
-  useEffect(() => {
-    const scope = markdownWindowingState.scope
-    const scroller = scope.scrollElementRef?.current
-    if (!scroller) return
-    const renderPendingChunks = () => {
-      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
-      const renders = scope.getViewportRenders()
-      if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
-      if (startedAt === null) return
-      const elapsedMs = performance.now() - startedAt
-      if (elapsedMs >= 16) {
-        recordConversationDiagnostic('search-scroll-render', {
-          elapsedMs,
-          renderedCount: renders.length,
-        })
-      }
-    }
-    scroller.addEventListener('scroll', renderPendingChunks, { passive: true })
-    return () => scroller.removeEventListener('scroll', renderPendingChunks)
-  }, [markdownWindowingState])
-
-  useLayoutEffect(() => {
-    if (virtualMessages && !virtualLayoutReady) return
-    // Child layout effects run before the list's host ref is attached on first mount.
-    const pendingChunks = [...pendingMarkdownLayoutsRef.current]
-    pendingMarkdownLayoutsRef.current.clear()
-    pendingChunks.forEach(chunk => markdownLayoutHandlerRef.current(chunk))
-    if (!virtualMessages) return
-    markdownWindowingState.scope.getViewportRenders().forEach(render => render())
-    if (isConversationDiagnosticsEnabled()) {
-      const scroller = scrollElementRef?.current
-      recordConversationDiagnostic('virtual-range', {
-        ...getConversationDiagnosticContext(listRef.current),
-        rangeStart: messageVirtualizer.range?.startIndex,
-        rangeEnd: messageVirtualizer.range?.endIndex,
-        renderedCount: virtualRows.length,
-        totalSize: virtualTotalSize,
-        scrollTop: scroller?.scrollTop,
-        scrollHeight: scroller?.scrollHeight,
-        clientHeight: scroller?.clientHeight,
-        clientWidth: scroller?.clientWidth,
-        scrolling: messageVirtualizer.isScrolling,
-      })
-    }
-    onVirtualLayoutChange?.()
-  }, [
-    markdownWindowingState,
-    messageVirtualizer,
-    onVirtualLayoutChange,
-    scrollElementRef,
-    virtualMessages,
-    virtualLayoutReady,
-    virtualRows,
-    virtualTotalSize,
-  ])
-
-  const snapshotRef = useRef<{
-    layout: typeof measurementLayout
-  } | null>(null)
-  const uncacheableMessageIdsRef = useRef(new Set<string>())
-  useLayoutEffect(() => {
-    if (!virtualLayoutReady) return
-    listRef.current
-      ?.querySelectorAll<HTMLElement>('[data-message-row][data-index]')
-      .forEach(row => {
-        const id = row.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId
-        if (!id) return
-        if (
-          row.querySelector('[aria-expanded="true"], [data-testid="user-message-editor"]') ||
-          id === searchMessageId
-        )
-          uncacheableMessageIdsRef.current.add(id)
-        else uncacheableMessageIdsRef.current.delete(id)
-      })
-    snapshotRef.current = { layout: measurementLayout }
-  })
-  useEffect(
-    () => () => {
-      const snapshot = snapshotRef.current
-      if (
-        virtualMessages &&
-        messageVirtualizer.options.enabled &&
-        virtualMeasurementKey !== null &&
-        snapshot
-      )
-        cacheConversationVirtualMeasurements(
-          virtualMeasurementKey,
-          messageVirtualizer
-            .takeSnapshot()
-            .filter(item => !uncacheableMessageIdsRef.current.has(String(item.key))),
-          snapshot.layout
-        )
-    },
-    [messageVirtualizer, virtualMeasurementKey, virtualMessages]
-  )
-
-  useLayoutEffect(() => {
-    const element = listRef.current
-    if (!element || !virtualMessages) return
-    let active = true
-    const update = (fontLoaded = false) => {
-      const style = getComputedStyle(element)
-      const width = Math.max(
-        0,
-        Math.round(
-          element.clientWidth -
-            (Number.parseFloat(style.paddingLeft) || 0) -
-            (Number.parseFloat(style.paddingRight) || 0)
-        )
-      )
-      const typography = readMessageLayoutTypography(element)
-      setLayout(previous => {
-        if (
-          !fontLoaded &&
-          previous.width === width &&
-          JSON.stringify(previous.typography) === JSON.stringify(typography)
-        )
-          return previous
-        return {
-          width,
-          typography,
-          fontEpoch: getMessageFontMetricsRevision(),
-        }
-      })
-    }
-    update()
-    const observer = new ResizeObserver(() => update())
-    observer.observe(element)
-    const mutation = new MutationObserver(() => update())
-    mutation.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    })
-    const fontsLoaded = () => {
-      if (active) update(true)
-    }
-    document.fonts?.addEventListener('loadingdone', fontsLoaded)
-    return () => {
-      active = false
-      observer.disconnect()
-      mutation.disconnect()
-      document.fonts?.removeEventListener('loadingdone', fontsLoaded)
-    }
-  }, [hasVisibleContent, scrollElementRef, virtualMessages])
-
-  const previousLayoutKeyRef = useRef<string | null>(null)
-  useLayoutEffect(() => {
-    if (!virtualLayoutReady || previousLayoutKeyRef.current === layoutKey) return
-    const previousKey = previousLayoutKeyRef.current
-    previousLayoutKeyRef.current = layoutKey
-    if (previousKey === null) return
-    messageVirtualizer.measure()
-    measureRows(
-      Array.from(
-        listRef.current?.querySelectorAll<HTMLElement>('[data-message-row][data-index]') ?? []
-      )
+  const markdownWindowingState = useMemo(() => {
+    const scope = createMarkdownWindowingScope(
+      scrollElementRef,
+      (element, materialized) => viewportPort.chunkLayout(scope, element, materialized),
+      layout.typography.rootFontSize,
+      onNativeScrollRange
     )
-  }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady])
-
-  const hasSelectionActions = Boolean(
-    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
-  )
-  useEffect(() => {
-    if (!useContentVisibility && !hasSelectionActions) return
-
-    const updateSelectionState = (
-      preserveCapturedSelection = false,
-      eventTarget?: EventTarget | null
-    ) => {
-      if (
-        isEditableSelectionTarget(eventTarget) ||
-        isEditableSelectionTarget(document.activeElement)
-      ) {
-        setIsTextSelectionActive(false)
-        setTextSelection(null)
-        return
-      }
-      const selection = document.getSelection?.()
-      const root = listRef.current
-      if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
-        setIsTextSelectionActive(false)
-        if (!preserveCapturedSelection) {
-          setTextSelection(null)
-        }
-        return
-      }
-
-      const selectionTouchesList =
-        isNodeInsideElement(selection.anchorNode, root) ||
-        isNodeInsideElement(selection.focusNode, root)
-      if (!selectionTouchesList) {
-        setIsTextSelectionActive(false)
-        setTextSelection(null)
-        return
-      }
-      setIsTextSelectionActive(useContentVisibility)
-      if (!hasSelectionActions) return
-
-      const range = selection.getRangeAt(0)
-      const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
-      if (selectedMessageBodies.length !== 1) {
-        setTextSelection(null)
-        return
-      }
-
-      const text = selection.toString().trim()
-      if (!text) {
-        setTextSelection(null)
-        return
-      }
-      const rect = range.getBoundingClientRect()
-      const nextSelection: MessageTextSelection = {
-        text,
-        left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
-        top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
-        conversationKey,
-      }
-      setTextSelection(current =>
-        current?.text === nextSelection.text &&
-        current.left === nextSelection.left &&
-        current.top === nextSelection.top &&
-        current.conversationKey === nextSelection.conversationKey
-          ? current
-          : nextSelection
-      )
-    }
-
-    const scheduleSelectionUpdate = () => {
-      window.requestAnimationFrame(() => updateSelectionState(true))
-    }
-
-    const finalizeSelectionUpdate = (event: Event) => {
-      if (
-        event.target instanceof Element &&
-        event.target.closest('[data-testid="message-selection-actions"]')
-      ) {
-        return
-      }
-      updateSelectionState(false, event.target)
-    }
-
-    const handleBlur = () => {
-      updateSelectionState()
-    }
-
-    const handleScroll = () => {
-      updateSelectionState(true)
-    }
-
-    document.addEventListener('pointerup', finalizeSelectionUpdate)
-    document.addEventListener('pointercancel', finalizeSelectionUpdate)
-    document.addEventListener('mouseup', finalizeSelectionUpdate)
-    document.addEventListener('keyup', finalizeSelectionUpdate)
-    document.addEventListener('focusin', finalizeSelectionUpdate)
-    document.addEventListener('selectionchange', scheduleSelectionUpdate)
-    window.addEventListener('scroll', handleScroll, true)
-    window.addEventListener('blur', handleBlur)
-
-    return () => {
-      document.removeEventListener('pointerup', finalizeSelectionUpdate)
-      document.removeEventListener('pointercancel', finalizeSelectionUpdate)
-      document.removeEventListener('mouseup', finalizeSelectionUpdate)
-      document.removeEventListener('keyup', finalizeSelectionUpdate)
-      document.removeEventListener('focusin', finalizeSelectionUpdate)
-      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
-      window.removeEventListener('scroll', handleScroll, true)
-      window.removeEventListener('blur', handleBlur)
-    }
+    return { conversationKey, scope }
   }, [
     conversationKey,
-    useContentVisibility,
-    hasSelectionActions,
-    onAddSelectionToConversation,
-    onAskSelectionInSidebar,
-    onFillSelectionToAnswer,
+    scrollElementRef,
+    layoutPropertiesKey,
+    layout.typography.rootFontSize,
+    viewportPort,
+    onNativeScrollRange,
   ])
+  useMarkdownWindowingViewport(markdownWindowingState.scope)
+
+  const hasSelectionActions = Boolean(
+    onShareSelectionAsIssue ||
+    onAddSelectionToConversation ||
+    onAskSelectionInSidebar ||
+    onFillSelectionToAnswer
+  )
+  const selectionState = useMemo(
+    () =>
+      createMessageTextSelectionState(conversationKey, useContentVisibility, hasSelectionActions),
+    [conversationKey, useContentVisibility, hasSelectionActions]
+  )
+  const { isTextSelectionActive, textSelection } = useSyncExternalStore(
+    selectionState.subscribe,
+    selectionState.getSnapshot,
+    selectionState.getSnapshot
+  )
+  const observeSelection = useContentVisibility || hasSelectionActions
+  useDocumentEvent('pointerup', selectionState.finalize, {
+    enabled: observeSelection,
+  })
+  useDocumentEvent('pointercancel', selectionState.finalize, {
+    enabled: observeSelection,
+  })
+  useDocumentEvent('mouseup', selectionState.finalize, {
+    enabled: observeSelection,
+  })
+  useDocumentEvent('keyup', selectionState.finalize, {
+    enabled: observeSelection,
+  })
+  useDocumentEvent('focusin', selectionState.finalize, {
+    enabled: observeSelection,
+  })
+  useDocumentEvent('selectionchange', selectionState.schedule, {
+    enabled: observeSelection,
+  })
+  useWindowEvent('scroll', () => selectionState.update(true), {
+    capture: true,
+    enabled: observeSelection && (isTextSelectionActive || textSelection !== null),
+  })
+  useWindowEvent('blur', () => selectionState.update(), {
+    enabled: observeSelection,
+  })
+  const attachList = useCallback(
+    (element: HTMLDivElement | null) => {
+      listRef.current = element
+      if (!element) return
+      const release = selectionState.attach(element)
+      const releaseViewport = viewportPort.attach(element)
+      return () => {
+        listRef.current = null
+        release()
+        releaseViewport()
+      }
+    },
+    [selectionState, viewportPort]
+  )
+  useLayoutEffect(() => {
+    viewportPort.update({
+      scope: markdownWindowingState.scope,
+      virtual: virtualMessages,
+      ready: virtualLayoutReady,
+      layoutKey,
+      layoutWidth,
+      layoutPropertiesKey,
+      measurementKey: virtualMeasurementKey,
+      measurementLayout,
+      virtualizer: messageVirtualizer,
+      rows: virtualRows,
+      totalSize: virtualTotalSize,
+      searchMessageId,
+      scrollElementRef,
+      measureRow,
+      measureRows,
+      onLayoutChange: onVirtualLayoutChange,
+    })
+  })
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
     action(textSelection.text)
     document.getSelection()?.removeAllRanges()
-    setTextSelection(null)
+    selectionState.clearCapture()
   }
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
@@ -725,7 +546,7 @@ export const MessageList = memo(function MessageList({
 
   const content = (
     <div
-      ref={listRef}
+      ref={attachList}
       className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
       data-conversation-message-list=""
       data-conversation-layout-width={layoutWidth}
@@ -749,6 +570,18 @@ export const MessageList = memo(function MessageList({
         textSelection.conversationKey === conversationKey && (
           <SelectionActionsPopover
             position={{ left: textSelection.left, top: textSelection.top }}
+            onShareAsIssue={
+              onShareSelectionAsIssue
+                ? () =>
+                    applySelectionAction(text =>
+                      onShareSelectionAsIssue(text, {
+                        ...textSelection,
+                        messages,
+                        turns,
+                      })
+                    )
+                : undefined
+            }
             onAddToConversation={
               onAddSelectionToConversation
                 ? () => applySelectionAction(onAddSelectionToConversation)
@@ -778,9 +611,9 @@ export const MessageList = memo(function MessageList({
               ),
             } satisfies CSSProperties,
           }))
-        : visibleMessages.map((_, index) => ({
+        : Array.from({ length: rowCount }, (_, index) => ({
             index,
-            key: visibleMessages[index].id,
+            key: visibleMessages[index]?.id ?? 'assistant-waiting',
             style: undefined,
           }))
       ).map(row => {
@@ -790,13 +623,14 @@ export const MessageList = memo(function MessageList({
           return (
             <article
               key={row.key}
-              data-index={index}
-              data-message-row
+              data-index={hasViewportRows ? index : undefined}
+              data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
+              role={waitingIndicatorStyle === 'dots' ? undefined : 'status'}
               data-testid="message-assistant-waiting"
             >
-              <AssistantThinkingIndicator />
+              <AssistantThinkingIndicator variant={waitingIndicatorStyle} />
             </article>
           )
         const nextMessage = visibleMessages[index + 1]
@@ -827,14 +661,11 @@ export const MessageList = memo(function MessageList({
               forceExpanded={searchMessageId === message.id}
               // Waiting for the next assistant must not keep a completed turn's process open.
               isActiveTurn={
-                message.role === 'assistant' &&
-                message.status === 'streaming' &&
-                !isHistoricalTurn
+                message.role === 'assistant' && message.status === 'streaming' && !isHistoricalTurn
               }
               isHistoricalTurn={isHistoricalTurn}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
-              assistantMessageStyle={assistantMessageStyle}
               showProcessingStatus={showProcessingStatus}
               conversationKey={conversationKey}
               devices={devices}
@@ -848,6 +679,7 @@ export const MessageList = memo(function MessageList({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onOpenLocalSkillFile={onOpenLocalSkillFile}
               onEditLastUserMessage={onEditLastUserMessage}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetryFailedMessage={onRetryFailedMessage}
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
@@ -870,7 +702,7 @@ export const MessageList = memo(function MessageList({
           </MarkdownWindowingDisabledContext.Provider>
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
-        return virtualMessages ? (
+        return hasViewportRows ? (
           <div key={row.key} data-index={index} data-message-row style={row.style}>
             {searchableArticle}
             {gap}
@@ -898,11 +730,6 @@ export const MessageList = memo(function MessageList({
           }}
         />
       )}
-      {!virtualMessages && shouldShowWaitingIndicator && (
-        <article className="min-w-0" data-testid="message-assistant-waiting">
-          <AssistantThinkingIndicator />
-        </article>
-      )}
     </div>
   )
   return (
@@ -912,50 +739,10 @@ export const MessageList = memo(function MessageList({
   )
 })
 
-function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(
-    element => selectedTextWithinElement(range, element).trim().length > 0
-  )
-}
-
-function selectedTextWithinElement(range: Range, element: HTMLElement): string {
-  if (!range.intersectsNode(element)) return ''
-
-  const intersection = document.createRange()
-  intersection.selectNodeContents(element)
-  if (intersection.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
-    intersection.setStart(range.startContainer, range.startOffset)
-  }
-  if (intersection.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
-    intersection.setEnd(range.endContainer, range.endOffset)
-  }
-  return intersection.toString()
-}
-
-function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
-  if (!node) return false
-
-  if (node.nodeType === Node.ELEMENT_NODE) {
-    return root.contains(node)
-  }
-
-  return Boolean(node.parentElement && root.contains(node.parentElement))
-}
-
-function isEditableSelectionTarget(target?: EventTarget | null): boolean {
-  return (
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        'input, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'
-      )
-    )
-  )
-}
-
-function shouldRenderMessage(message: WorkbenchMessage): boolean {
+function shouldRenderMessage(message: WorkbenchMessage, allowEmptyStreaming = true): boolean {
   if (message.role !== 'assistant') return true
-  if (message.status === 'streaming' || message.status === 'failed') return true
+  if ((allowEmptyStreaming && message.status === 'streaming') || message.status === 'failed')
+    return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
   if (message.references?.length || message.memoryCitations?.length) {

@@ -1,27 +1,14 @@
-import { WorkspaceTitleTab } from './WorkspaceTitleTab'
-import { revealWorkspaceTab } from './revealWorkspaceTab'
 import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
+import { isMcpAppPanelTab, useMcpAppPanels } from '@/features/mcp-apps/workspacePanels'
+import { isQuestionDiscussionTab } from '@/features/notifications/questionDiscussion'
 import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
+import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
-  isQuestionDiscussionTab,
-  type QuestionDiscussionTab,
-} from '@/features/notifications/questionDiscussion'
-import {
-  getMcpAppPanel,
-  isMcpAppPanelTab,
-  useMcpAppPanels,
-  type McpAppPanelTab,
-} from '@/features/mcp-apps/workspacePanels'
-import {
-  Bot,
-  CheckCircle2,
-  CircleAlert,
   File,
   FileDiff,
   Globe2,
   LayoutDashboard,
-  ListChecks,
-  Loader2,
   MessageCircle,
   PanelRight,
   Plus,
@@ -29,536 +16,91 @@ import {
   RefreshCw,
   SquareTerminal,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { revealWorkspaceTab } from './revealWorkspaceTab'
+import type { RightWorkspaceTerminalTab } from './RightWorkspacePanel.types'
+import { createRightWorkspaceExtensionCatalog } from './rightWorkspacePanelState'
+
 import {
   memo,
   useCallback,
-  useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ComponentType, ReactNode, Ref } from 'react'
-import {
-  FileChangesReviewPanel,
-  type FileChangesReviewViewOption,
-} from '@/components/chat/FileChangesReviewPanel'
-import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
-import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
+
+import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewPanel'
+
 import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
-import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
+
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
-import type { HarnessAppVerificationReport } from '@/api/local/harnessApps'
-import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+
 import { useTranslation } from '@/hooks/useTranslation'
-import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
-import type {
-  CodeCommentContext,
-  WorkspaceFileApi,
-  WorkspaceFileOpenOptions,
-  WorkspaceFileOpenRequest,
-  WorkspaceTarget,
-} from '@/types/workspace-files'
-import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
+
+import { reloadEmbeddedBrowser } from '@/lib/embedded-browser'
 import { getPlatform } from '@/lib/platform'
-import { reloadEmbeddedBrowser, type EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
-import {
-  observePluginDevelopmentWorkspace,
-  pluginDevelopmentProjectKind,
-  pluginDevelopmentProjectsRevision,
-  subscribePluginDevelopmentProjects,
-} from '@/features/dsh-plugins/pluginDevelopmentProjects'
-import {
-  getComposerApps,
-  subscribeComposerApps,
-} from '@/components/chat/composer/composerAppsSnapshot'
-import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
-import type { GitPatchAction } from '@/api/environment'
-import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
-import {
-  FileWorkspacePanel,
-  type FileWorkspacePanelHandle,
-  type FileWorkspacePanelSelection,
-} from './FileWorkspacePanel'
-import {
-  isWorkspaceFileTab,
-  workspaceFileTabLabel,
-  type WorkspaceFileTabId,
-  type WorkspaceFileTabs,
-} from './workspaceFileTabs'
+
+import { FileWorkspacePanel, type FileWorkspacePanelHandle } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
-import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
+import { isWorkspaceFileTab } from './workspaceFileTabs'
+
 import { WorkspacePanelCards } from './WorkspacePanelCards'
-import { WorkspaceFileIcon } from './WorkspaceFileIcon'
-import { TemporaryChatPanel } from './TemporaryChatPanel'
+
 import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
-import type { BackgroundTerminal } from '../backgroundTerminals'
+import { TemporaryChatPanel } from './TemporaryChatPanel'
+
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
-import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
+
 import {
+  isRightWorkspaceExtensionTab,
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
-  isWeworkWorkspaceSidebarTabAvailable,
-  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
-  isRightWorkspaceExtensionTab,
   titleOfWeworkWorkspaceSidebarTab,
-  type WeworkWorkspaceScope,
-  type WeworkWorkspaceSidebarTabDescriptor,
-  type RightWorkspaceExtensionTab,
-  type RightWorkspaceExtensionTabState,
 } from './rightWorkspaceDshSidebar'
+import type {
+  RightWorkspaceBrowserTab,
+  RightWorkspacePanelProps,
+  RightWorkspacePanelTab,
+} from './RightWorkspacePanel.types'
 
-function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
-  if (platform !== 'mac') {
-    return {
-      review: 'Alt+Ctrl+R',
-      browser: 'Ctrl+T',
-      chat: 'Alt+Ctrl+S',
-      files: 'Alt+Ctrl+F',
-    } as const
-  }
-  return {
-    review: '⌥⌘R',
-    browser: '⌘T',
-    chat: '⌥⌘S',
-    files: '⌥⌘F',
-  } as const
-}
+import {
+  PlanWorkspacePanel,
+  RightWorkspaceBrowserPanelSlot,
+  RightWorkspaceLauncher,
+  RightWorkspaceTitleTab,
+  SmartAppDevelopmentPreviewState,
+  SmartAppDevelopmentVerification,
+} from './RightWorkspacePanelParts'
 
-export type RightWorkspaceChatTab = `chat:${string}`
-export type RightWorkspaceBrowserTab = `browser:${string}`
-export type RightWorkspaceHarnessTab = `harness:${string}`
-export type RightWorkspaceTerminalTab = `terminal:${string}`
-export type RightWorkspaceBackgroundTerminalTab = `background-terminal:${string}`
-export type RightWorkspacePanelTab =
-  | McpAppPanelTab
-  | QuestionDiscussionTab
-  | 'review'
-  | 'files'
-  | 'plan'
-  | 'subagents'
-  | 'work-item'
-  | RightWorkspaceChatTab
-  | RightWorkspaceBrowserTab
-  | RightWorkspaceHarnessTab
-  | RightWorkspaceTerminalTab
-  | RightWorkspaceBackgroundTerminalTab
-  | RightWorkspaceExtensionTab
-  | WorkspaceFileTabId
-export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
+import {
+  getRightWorkspaceChatTabSuffix,
+  getRightWorkspaceHarnessSessionId,
+  getRightWorkspaceShortcuts,
+  getRightWorkspaceTabIcon,
+  getRightWorkspaceTabLabel,
+  isRightWorkspaceBrowserTab,
+  isRightWorkspaceChatTab,
+  isRightWorkspaceHarnessTab,
+  isRightWorkspaceTerminalTab,
+  requestIdForWorkspaceFileTab,
+} from './rightWorkspacePanelHelpers'
 
-function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
-  return tab.startsWith('chat:')
-}
-
-function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightWorkspaceBrowserTab {
-  return tab.startsWith('browser:')
-}
-
-function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
-  return tab.startsWith('harness:')
-}
-
-function isRightWorkspaceTerminalTab(
-  tab: RightWorkspacePanelView
-): tab is RightWorkspaceTerminalTab {
-  return tab.startsWith('terminal:')
-}
-
-function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
-  return tab.slice('harness:'.length)
-}
-
-function getRightWorkspaceChatTabSuffix(tab: RightWorkspaceChatTab) {
-  return tab.slice('chat:'.length)
-}
-
-function requestIdForWorkspaceFileTab(tab: WorkspaceFileTabId): number {
-  let hash = 0
-  for (const character of tab) {
-    hash = (hash * 31 + character.charCodeAt(0)) | 0
-  }
-  return hash >>> 0
-}
-
-function getRightWorkspaceBrowserTabSuffix(tab: RightWorkspaceBrowserTab) {
-  return tab.slice('browser:'.length)
-}
-
-function getRightWorkspaceTerminalTabSuffix(tab: RightWorkspaceTerminalTab) {
-  return tab.slice('terminal:'.length)
-}
-
-export interface RightWorkspaceBrowserState {
-  label: string
-  nativeLabel?: string | null
-  browserSessionId: string
-  url: string | null
-  title: string | null
-  faviconUrl: string | null
-  isLoading: boolean
-  agentActive?: boolean
-  hasActiveDownload: boolean
-  openRequest: EmbeddedBrowserOpenRequest | null
-  developmentPreview?: {
-    installationId: string
-    displayName: string
-    workspaceTabId?: string
-    status: 'starting' | 'ready' | 'reloading' | 'error'
-    error?: string
-    verificationStatus: 'unverified' | 'running' | 'passed' | 'failed' | 'stale'
-    verificationReport?: HarnessAppVerificationReport | null
-    verificationError?: string
-  }
-}
-
-interface RightWorkspaceReviewState {
-  loading: boolean
-  diff: string
-  error?: string
-  reviewTitle?: string
-  defaultFileTreeVisible?: boolean
-  branchName?: string
-  targetBranchName?: string
-  focusFilePath?: string
-  reviewMode?: DesktopReviewMode
-}
-
-export type RightWorkspacePanelHandle = FileWorkspacePanelHandle
-
-interface RightWorkspacePanelProps {
-  ref?: Ref<RightWorkspacePanelHandle>
-  showWorkbenchBackground?: boolean
-  visible: boolean
-  renderTabsInAppTitlebar?: boolean
-  expanded?: boolean
-  allowTemporaryChat?: boolean
-  activeView: RightWorkspacePanelView
-  openTabs: RightWorkspacePanelTab[]
-  currentProject: ProjectWithTasks | null
-  canBrowseFiles: boolean
-  currentRuntimeTask: RuntimeTaskAddress | null
-  devices: DeviceInfo[]
-  workspaceTarget: WorkspaceTarget | null
-  fileWorkspaceTarget?: WorkspaceTarget | null
-  fileWorkspaceTargets?: WorkspaceTarget[]
-  preferLocalTerminal?: boolean
-  terminalContextTitle?: string | null
-  workspaceActions?: WorkspaceAddMenuItem[]
-  harnessSessions?: LocalHarnessWorkbenchSession[]
-  workspaceSessionApi?: WorkspaceSessionApi
-  workspaceFileApi: WorkspaceFileApi
-  openFileRequest?: WorkspaceFileOpenRequest | null
-  initialFileSelection?: FileWorkspacePanelSelection | null
-  fileTabs?: WorkspaceFileTabs
-  onOpenFileTab?: (target: WorkspaceTarget, path: string) => void
-  workspaceTargetError?: string | null
-  review: RightWorkspaceReviewState
-  planContent?: string | null
-  subagentPanel?: ReactNode
-  backgroundTerminals?: BackgroundTerminal[]
-  workItemPanel?: ReactNode
-  extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
-  extensionScope: WeworkWorkspaceScope
-  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
-  browserTransferSourceLabels?: Partial<Record<RightWorkspaceBrowserTab, string>>
-  onBrowserStateChange: (
-    tab: RightWorkspaceBrowserTab,
-    update: Partial<RightWorkspaceBrowserState>
-  ) => void
-  onReloadSmartAppDevelopmentPreview?: (
-    tab: RightWorkspaceBrowserTab,
-    installationId: string
-  ) => void
-  onAddSmartAppDevelopmentPlugin?: (
-    tab: RightWorkspaceBrowserTab,
-    installationId: string,
-    pluginSpec: string
-  ) => Promise<void>
-  onVerifySmartAppDevelopmentPreview?: (
-    tab: RightWorkspaceBrowserTab,
-    installationId: string
-  ) => void
-  codeCommentCount?: number
-  codeCommentContexts?: CodeCommentContext[]
-  browserAnnotationCommand?: BrowserAnnotationCommand | null
-  canOpenReview: boolean
-  reviewViewOptions?: FileChangesReviewViewOption[]
-  onAddCodeComment: (context: CodeCommentContext) => void
-  onReplaceBrowserCodeComments?: (
-    scope: BrowserAnnotationScope,
-    contexts: CodeCommentContext[]
-  ) => void
-  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
-  onFileDirtyChange?: (dirty: boolean) => void
-  onFileSelectionChange?: (selection: FileWorkspacePanelSelection) => void
-  onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
-  onSelectReview: () => void
-  onSelectTerminal: () => void
-  onSelectBrowser: () => void
-  onSelectFiles: () => void
-  onSelectChat: () => void
-  onSelectPlan: () => void
-  onSelectTab: (tab: RightWorkspacePanelTab) => void
-  onCloseTab: (tab: RightWorkspacePanelTab) => void
-  onHarnessSessionExit?: (sessionId: string) => void
-  onRefreshReview?: () => void
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onOpenReviewSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
-  onApplyReviewPatch?: (action: GitPatchAction, patch: string) => Promise<void>
-  onRestoreConversation?: () => void
-  getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
-  getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
-  onChatAddressChange?: (tab: RightWorkspaceChatTab, address: RuntimeTaskAddress | null) => void
-}
-
-interface RightWorkspaceBrowserPanelSlotProps {
-  tab: RightWorkspaceBrowserTab
-  active: boolean
-  state: RightWorkspaceBrowserState
-  transferFromLabel?: string
-  codeCommentCount: number
-  codeCommentContexts: CodeCommentContext[]
-  browserAnnotationCommand?: BrowserAnnotationCommand | null
-  onAddCodeComment: (context: CodeCommentContext) => void
-  onReplaceBrowserCodeComments?: (
-    scope: BrowserAnnotationScope,
-    contexts: CodeCommentContext[]
-  ) => void
-  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
-  onBrowserStateChange: (
-    tab: RightWorkspaceBrowserTab,
-    update: Partial<RightWorkspaceBrowserState>
-  ) => void
-}
-
-function RightWorkspaceBrowserPanelSlot({
-  tab,
-  active,
-  state,
-  transferFromLabel,
-  codeCommentCount,
-  codeCommentContexts,
-  browserAnnotationCommand,
-  onAddCodeComment,
-  onReplaceBrowserCodeComments,
-  onRemoveBrowserCodeComments,
-  onBrowserStateChange,
-}: RightWorkspaceBrowserPanelSlotProps) {
-  const handleDownloadActivityChange = useCallback(
-    (hasActiveDownload: boolean) => onBrowserStateChange(tab, { hasActiveDownload }),
-    [onBrowserStateChange, tab]
-  )
-  const handleFaviconChange = useCallback(
-    (faviconUrl: string | null) => onBrowserStateChange(tab, { faviconUrl }),
-    [onBrowserStateChange, tab]
-  )
-  const handleLoadingChange = useCallback(
-    (isLoading: boolean) => onBrowserStateChange(tab, { isLoading }),
-    [onBrowserStateChange, tab]
-  )
-  const handleAgentActiveChange = useCallback(
-    (agentActive: boolean) => onBrowserStateChange(tab, { agentActive }),
-    [onBrowserStateChange, tab]
-  )
-  const handleTitleChange = useCallback(
-    (title: string | null) => onBrowserStateChange(tab, { title }),
-    [onBrowserStateChange, tab]
-  )
-  const handleNativeLabelChange = useCallback(
-    (nativeLabel: string | null) => onBrowserStateChange(tab, { nativeLabel }),
-    [onBrowserStateChange, tab]
-  )
-  const handleUrlChange = useCallback(
-    (url: string | null) => onBrowserStateChange(tab, { url }),
-    [onBrowserStateChange, tab]
-  )
-
-  return (
-    <WorkspaceBrowserPanel
-      active={active}
-      hideToolbar={Boolean(state.developmentPreview)}
-      label={state.label}
-      transferFromLabel={transferFromLabel}
-      transferredNativeLabel={transferFromLabel ? state.nativeLabel : null}
-      transferredUrl={transferFromLabel ? state.url : null}
-      browserTabId={tab}
-      openRequest={state.openRequest}
-      codeCommentCount={codeCommentCount}
-      codeCommentContexts={codeCommentContexts}
-      browserAnnotationCommand={browserAnnotationCommand}
-      onAddCodeComment={onAddCodeComment}
-      onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
-      onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
-      onDownloadActivityChange={handleDownloadActivityChange}
-      onFaviconChange={handleFaviconChange}
-      onLoadingChange={handleLoadingChange}
-      onAgentActiveChange={handleAgentActiveChange}
-      onTitleChange={handleTitleChange}
-      onNativeLabelChange={handleNativeLabelChange}
-      onUrlChange={handleUrlChange}
-    />
-  )
-}
-
-function SmartAppDevelopmentPreviewState({
-  status,
-  error,
-}: {
-  status: 'starting' | 'reloading' | 'error'
-  error?: string | null
-}) {
-  const { t } = useTranslation('common')
-  const isError = status === 'error'
-  const fallback = t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
-  const message =
-    status === 'starting'
-      ? t('workbench.smart_app_preview_starting')
-      : status === 'reloading'
-        ? t('workbench.smart_app_preview_reloading')
-        : error
-          ? localizeSmartAppIssue(error, fallback, t)
-          : fallback
-
-  return (
-    <div
-      data-testid={`smart-app-development-preview-${status}`}
-      className="flex min-h-0 flex-1 items-center justify-center bg-background px-6 text-center"
-    >
-      <div className="flex max-w-sm flex-col items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-          {isError ? (
-            <LayoutDashboard className="h-5 w-5" />
-          ) : (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          )}
-        </div>
-        <div className="text-sm font-medium text-text-primary">{message}</div>
-        {!isError ? (
-          <div className="text-xs text-text-secondary">
-            {t('workbench.smart_app_preview_starting_hint')}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function SmartAppDevelopmentVerification({
-  disabled,
-  preview,
-  tab,
-  onVerify,
-}: {
-  disabled: boolean
-  preview: NonNullable<RightWorkspaceBrowserState['developmentPreview']>
-  tab: RightWorkspaceBrowserTab
-  onVerify?: (tab: RightWorkspaceBrowserTab, installationId: string) => void
-}) {
-  const { t, i18n } = useTranslation('common')
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const blockingIssue = preview.verificationReport?.issues.find(issue => issue.blocking)
-  const issues = preview.verificationReport?.issues ?? []
-  const localizeIssue = (value: string) => {
-    if (!i18n.language.startsWith('zh')) return value
-    const fallback = t(
-      'workbench.smart_app_preview_verification_issue',
-      '智能工作台校验未通过，请修复后重新验证。'
-    )
-    const localized = localizeSmartAppIssue(value, fallback, t)
-    return /[\u4e00-\u9fff]/.test(localized) || !/[A-Za-z]{3}/.test(localized)
-      ? localized
-      : fallback
-  }
-  const label =
-    preview.verificationStatus === 'passed'
-      ? t('workbench.smart_app_preview_verification_passed')
-      : preview.verificationStatus === 'failed'
-        ? t('workbench.smart_app_preview_verification_failed')
-        : preview.verificationStatus === 'stale'
-          ? t('workbench.smart_app_preview_verification_stale')
-          : preview.verificationStatus === 'running'
-            ? t('workbench.smart_app_preview_verification_running')
-            : t('workbench.smart_app_preview_verification_unverified')
-
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <div
-        data-testid={`smart-app-development-preview-verification-${preview.verificationStatus}`}
-        className="min-w-0 text-xs text-text-secondary"
-      >
-        <span className="inline-flex items-center gap-1">
-          {preview.verificationStatus === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : preview.verificationStatus === 'passed' ? (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          ) : preview.verificationStatus === 'failed' || preview.verificationStatus === 'stale' ? (
-            <CircleAlert className="h-3.5 w-3.5" />
-          ) : null}
-          {label}
-        </span>
-        {preview.verificationStatus === 'failed' && (blockingIssue || preview.verificationError) ? (
-          <span className="ml-2">
-            {blockingIssue ? (
-              <>
-                {localizeIssue(blockingIssue.message)}
-                {blockingIssue.file ? ` · ${blockingIssue.file}` : ''}
-                {blockingIssue.hint ? ` · ${localizeIssue(blockingIssue.hint)}` : ''}
-              </>
-            ) : (
-              localizeIssue(preview.verificationError ?? '')
-            )}
-          </span>
-        ) : null}
-      </div>
-      {issues.length > 1 ? (
-        <button
-          type="button"
-          data-testid="smart-app-development-preview-verification-details"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen(current => !current)}
-          className="shrink-0 rounded px-1.5 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-        >
-          {detailsOpen
-            ? t('workbench.smart_app_preview_verification_hide_details')
-            : t('workbench.smart_app_preview_verification_show_details', { count: issues.length })}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        data-testid="smart-app-development-preview-verify"
-        disabled={disabled || preview.verificationStatus === 'running'}
-        onClick={() => onVerify?.(tab, preview.installationId)}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {t('workbench.smart_app_preview_verify')}
-      </button>
-      {detailsOpen && issues.length > 1 ? (
-        <div
-          data-testid="smart-app-development-preview-verification-issues"
-          className="absolute right-3 top-12 z-popover w-80 rounded-md border border-border bg-background p-3 shadow-md"
-        >
-          <ul className="space-y-2 text-xs text-text-secondary">
-            {issues.map(issue => (
-              <li key={`${issue.stage}:${issue.code}:${issue.file ?? ''}`}>
-                <div className="font-medium text-text-primary">{issue.code}</div>
-                <div>{issue.file ?? localizeIssue(issue.message)}</div>
-                {issue.hint ? <div>{localizeIssue(issue.hint)}</div> : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  )
-}
+export type {
+  RightWorkspaceBackgroundTerminalTab,
+  RightWorkspaceBrowserState,
+  RightWorkspaceBrowserTab,
+  RightWorkspaceChatTab,
+  RightWorkspaceHarnessTab,
+  RightWorkspacePanelHandle,
+  RightWorkspacePanelTab,
+  RightWorkspacePanelView,
+  RightWorkspaceTerminalTab,
+} from './RightWorkspacePanel.types'
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   ref,
@@ -631,7 +173,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const { t } = useTranslation('common')
   const mcpAppPanels = useMcpAppPanels(currentRuntimeTask)
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
-  const tabsViewportRef = useRef<HTMLDivElement>(null)
   const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
   const activeFilePanelTarget = activeFileTab?.target ?? fileWorkspaceTarget
   const activeFileOpenRequest =
@@ -656,37 +197,19 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     else action()
   }, [])
   useImperativeHandle(ref, () => ({ navigate: navigateFromFile }), [navigateFromFile])
-  const registeredExtensionTabs = useSyncExternalStore(
-    rightWorkspaceDshSidebar.subscribe,
-    rightWorkspaceDshSidebar.getTabs,
-    rightWorkspaceDshSidebar.getTabs
-  )
-  useSyncExternalStore(
-    subscribePluginDevelopmentProjects,
-    pluginDevelopmentProjectsRevision,
-    pluginDevelopmentProjectsRevision
-  )
-  const [composerApps, setComposerApps] = useState(getComposerApps)
-  useEffect(
-    () =>
-      subscribeComposerApps(() => {
-        setComposerApps(getComposerApps())
-      }),
-    []
-  )
-  useEffect(
-    () => observePluginDevelopmentWorkspace(extensionScope.cwd ?? null),
+  const extensionCatalog = useMemo(
+    () => createRightWorkspaceExtensionCatalog(extensionScope.cwd ?? null),
     [extensionScope.cwd]
   )
-  const currentProjectKind = pluginDevelopmentProjectKind(extensionScope.cwd)
-  const availableExtensionTabs = registeredExtensionTabs.filter(descriptor =>
-    isWeworkWorkspaceSidebarTabAvailable(descriptor, currentProjectKind, pluginKey =>
-      composerApps.some(app => app.pluginKey === pluginKey)
-    )
+  const subscribeExtensions = useCallback(
+    (listener: () => void) =>
+      extensionCatalog.subscribe(listener, { openTabs, extensionTabs, onCloseTab }),
+    [extensionCatalog, openTabs, extensionTabs, onCloseTab]
   )
-  const availableExtensionTabIds = useMemo(
-    () => new Set(availableExtensionTabs.map(descriptor => descriptor.id)),
-    [availableExtensionTabs]
+  const { availableTabs: availableExtensionTabs } = useSyncExternalStore(
+    subscribeExtensions,
+    extensionCatalog.getSnapshot,
+    extensionCatalog.getSnapshot
   )
   const [pluginDialog, setPluginDialog] = useState<{
     tab: RightWorkspaceBrowserTab
@@ -703,29 +226,16 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const platform = getPlatform()
   const renderTabsInTitlebar =
     renderTabsInAppTitlebar && isDesktopRuntime() && platform !== 'win' && visible && showTabs
-  useLayoutEffect(() => {
-    revealWorkspaceTab(tabsViewportRef.current)
-  }, [activeView, renderTabsInTitlebar, showTabs, visible])
+  const bindTabsViewport = useCallback(
+    (viewport: HTMLDivElement | null) => {
+      if (!visible || !showTabs || activeView === 'launcher') return
+      revealWorkspaceTab(viewport)
+    },
+    [activeView, visible, showTabs]
+  )
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
-
-  useEffect(() => {
-    for (const tab of openTabs) {
-      if (!isRightWorkspaceExtensionTab(tab)) continue
-      const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
-      if (
-        descriptor &&
-        shouldCloseUnavailableWeworkWorkspaceSidebarTab(
-          descriptor,
-          currentProjectKind,
-          availableExtensionTabIds.has(descriptor.id)
-        )
-      ) {
-        onCloseTab(tab)
-      }
-    }
-  }, [availableExtensionTabIds, currentProjectKind, extensionTabs, onCloseTab, openTabs])
 
   const closeTab = (tab: RightWorkspacePanelTab) => {
     if (tab === activeView) navigateFromFile(() => onCloseTab(tab))
@@ -801,99 +311,109 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   ]
 
   const tabBar = showTabs ? (
-    <header
-      data-testid="right-workspace-tabbar"
-      role="tablist"
-      className={cn(
-        'electron-titlebar-interactive-region relative z-chrome flex min-w-0 shrink-0 items-center pointer-events-auto',
-        renderTabsInTitlebar
-          ? 'h-[38px] w-full gap-1 bg-transparent pl-4'
-          : cn(
-              'h-10 gap-1.5 px-3',
-              platform === 'win' ? '' : 'border-b border-border',
-              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
-            )
-      )}
+    <TabsRoot
+      value={activeView === 'launcher' ? null : getRightWorkspaceTabTestId(activeView)}
+      onValueChange={next => {
+        const tab = visibleTabs.find(tab => getRightWorkspaceTabTestId(tab) === next)
+        if (tab) getTabSelectHandler(tab)()
+      }}
+      render={<div className="contents" />}
     >
-      <div
-        ref={tabsViewportRef}
-        data-testid="right-workspace-tabs-viewport"
-        className="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-none"
-      >
-        {visibleTabs.map(tab => (
-          <RightWorkspaceTitleTab
-            key={tab}
-            tab={tab}
-            active={activeView === tab}
-            title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
-            filePath={
-              isWorkspaceFileTab(tab)
-                ? fileTabs[tab]?.path
-                : tab === 'files'
-                  ? primaryFilePath
-                  : undefined
-            }
-            label={getRightWorkspaceTabLabel(
-              tab,
-              t,
-              browserStates,
-              harnessSessionsById,
-              extensionTabs,
-              backgroundTerminals
-            )}
-            icon={
-              isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
-                ? LayoutDashboard
-                : getRightWorkspaceTabIcon(tab)
-            }
-            extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
-            iconSrc={
-              isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
-                ? browserStates[tab]?.faviconUrl
-                : null
-            }
-            loading={
-              isRightWorkspaceBrowserTab(tab) &&
-              (browserStates[tab]?.isLoading ||
-                browserStates[tab]?.developmentPreview?.status === 'starting' ||
-                browserStates[tab]?.developmentPreview?.status === 'reloading')
-            }
-            agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
-            onSelect={getTabSelectHandler(tab)}
-            onClose={() => closeTab(tab)}
-          />
-        ))}
-      </div>
-      <div className="relative shrink-0">
-        {visible ? (
-          <WorkspaceAddMenu
-            ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
-            buttonTestId="right-workspace-new-tab-button"
-            menuTestId="right-workspace-new-tab-menu"
-            items={getNewTabOptions()}
-            buttonClassName="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary pointer-events-auto"
-          />
-        ) : (
-          <button
-            type="button"
-            data-testid="right-workspace-new-tab-button"
-            disabled
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary opacity-50"
-            aria-label={t('workbench.workspace_tab_new', '打开新标签页')}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+      <TabsList
+        render={<header />}
+        data-testid="right-workspace-tabbar"
+        className={cn(
+          'electron-titlebar-interactive-region relative z-chrome flex min-w-0 shrink-0 items-center pointer-events-auto',
+          renderTabsInTitlebar
+            ? 'h-[38px] w-full gap-1 bg-transparent pl-4'
+            : cn(
+                'h-10 gap-1.5 px-3',
+                platform === 'win' ? '' : 'border-b border-border',
+                showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+              )
         )}
-      </div>
-      {renderTabsInTitlebar ? (
+      >
         <div
-          data-testid="right-workspace-titlebar-drag-region"
-          className="min-w-0 flex-1 self-stretch"
+          ref={bindTabsViewport}
+          data-testid="right-workspace-tabs-viewport"
+          className="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-none"
         >
-          <MacOSTitleBarDragRegion className="h-full w-full" />
+          {visibleTabs.map(tab => (
+            <RightWorkspaceTitleTab
+              key={tab}
+              tab={tab}
+              active={activeView === tab}
+              title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
+              filePath={
+                isWorkspaceFileTab(tab)
+                  ? fileTabs[tab]?.path
+                  : tab === 'files'
+                    ? primaryFilePath
+                    : undefined
+              }
+              label={getRightWorkspaceTabLabel(
+                tab,
+                t,
+                browserStates,
+                harnessSessionsById,
+                extensionTabs,
+                backgroundTerminals
+              )}
+              icon={
+                isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
+                  ? LayoutDashboard
+                  : getRightWorkspaceTabIcon(tab)
+              }
+              extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
+              iconSrc={
+                isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
+                  ? browserStates[tab]?.faviconUrl
+                  : null
+              }
+              loading={
+                isRightWorkspaceBrowserTab(tab) &&
+                (browserStates[tab]?.isLoading ||
+                  browserStates[tab]?.developmentPreview?.status === 'starting' ||
+                  browserStates[tab]?.developmentPreview?.status === 'reloading')
+              }
+              agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
+              onSelect={getTabSelectHandler(tab)}
+              onClose={() => closeTab(tab)}
+            />
+          ))}
         </div>
-      ) : null}
-    </header>
+        <div className="relative shrink-0">
+          {visible ? (
+            <WorkspaceAddMenu
+              ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
+              buttonTestId="right-workspace-new-tab-button"
+              menuTestId="right-workspace-new-tab-menu"
+              items={getNewTabOptions()}
+              buttonClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary pointer-events-auto"
+            />
+          ) : (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="right-workspace-new-tab-button"
+              disabled
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary opacity-50"
+              aria-label={t('workbench.workspace_tab_new', '打开新标签页')}
+            >
+              <Plus className="h-4 w-4" />
+            </ControlButton>
+          )}
+        </div>
+        {renderTabsInTitlebar ? (
+          <div
+            data-testid="right-workspace-titlebar-drag-region"
+            className="min-w-0 flex-1 self-stretch"
+          >
+            <MacOSTitleBarDragRegion className="h-full w-full" />
+          </div>
+        ) : null}
+      </TabsList>
+    </TabsRoot>
   ) : null
   const chatTabs = allowTemporaryChat ? openTabs.filter(isRightWorkspaceChatTab) : []
 
@@ -1098,7 +618,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                         tab={tab}
                         onVerify={onVerifySmartAppDevelopmentPreview}
                       />
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="smart-app-development-preview-add-plugins"
                         disabled={developmentPreview.status !== 'ready'}
@@ -1113,8 +634,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                       >
                         <Puzzle className="h-3.5 w-3.5" />
                         {t('workbench.smart_app_preview_add_plugins')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="smart-app-development-preview-refresh"
                         disabled={developmentPreview.status !== 'ready'}
@@ -1123,8 +645,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
                         {t('workbench.smart_app_preview_refresh')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="outline"
+                        size="sm"
                         type="button"
                         data-testid="smart-app-development-preview-reload"
                         disabled={
@@ -1148,7 +672,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                           )}
                         />
                         {t('workbench.smart_app_preview_reload')}
-                      </button>
+                      </ControlButton>
                     </div>
                   </header>
                   {developmentPreview.status === 'ready' ? (
@@ -1246,338 +770,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   )
 })
 
-function RightWorkspaceTitleTab({
-  tab,
-  active,
-  label,
-  title,
-  filePath,
-  icon: Icon,
-  extensionState,
-  iconSrc,
-  loading = false,
-  agentActive = false,
-  onSelect,
-  onClose,
-}: {
-  tab: RightWorkspacePanelTab
-  active: boolean
-  label: string
-  title?: string
-  filePath?: string
-  icon: LucideIcon
-  extensionState?: RightWorkspaceExtensionTabState
-  iconSrc?: string | null
-  loading?: boolean
-  agentActive?: boolean
-  onSelect: () => void
-  onClose: () => void
-}) {
-  return (
-    <WorkspaceTitleTab
-      testId={getRightWorkspaceTabTestId(tab)}
-      active={active}
-      label={filePath ? workspaceFileTabLabel(filePath) : label}
-      title={title ?? filePath}
-      onSelect={onSelect}
-      onClose={onClose}
-      icon={
-        filePath ? (
-          <WorkspaceFileIcon path={filePath} testId={`${getRightWorkspaceTabTestId(tab)}-icon`} />
-        ) : (
-          <RightWorkspaceTabIcon
-            icon={Icon}
-            extensionState={extensionState}
-            iconSrc={iconSrc}
-            loading={loading}
-            agentActive={agentActive}
-            testId={getRightWorkspaceTabTestId(tab)}
-          />
-        )
-      }
-    />
-  )
-}
-
-function RightWorkspaceTabIcon({
-  icon: Icon,
-  extensionState,
-  iconSrc,
-  loading,
-  agentActive,
-  testId,
-}: {
-  icon: ComponentType<{ className?: string }>
-  extensionState?: RightWorkspaceExtensionTabState
-  iconSrc?: string | null
-  loading: boolean
-  agentActive: boolean
-  testId: string
-}) {
-  const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null)
-  const imageFailed = Boolean(iconSrc && failedIconSrc === iconSrc)
-
-  if (agentActive) {
-    return <BrowserAgentCursorIcon testId={`${testId}-agent-icon`} className="h-4 w-4" />
-  }
-
-  if (loading) {
-    return (
-      <Loader2
-        data-testid={`${testId}-loading-icon`}
-        className="h-3.5 w-3.5 shrink-0 animate-spin text-text-secondary"
-      />
-    )
-  }
-
-  const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
-  if (descriptor) return <PanelRight data-testid={`${testId}-icon`} className="h-4 w-4 shrink-0" />
-
-  if (iconSrc && !imageFailed) {
-    return (
-      <img
-        data-testid={`${testId}-favicon`}
-        src={iconSrc}
-        alt=""
-        className="h-4 w-4 shrink-0 rounded-[3px] object-contain"
-        onError={() => setFailedIconSrc(iconSrc)}
-      />
-    )
-  }
-
-  return (
-    <Icon data-testid={`${testId}-icon`} className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-  )
-}
-
-function PlanWorkspacePanel({
-  content,
-  showWorkbenchBackground,
-}: {
-  content: string
-  showWorkbenchBackground: boolean
-}) {
-  const { t } = useTranslation('common')
-
-  return (
-    <section
-      data-testid="workspace-plan-panel"
-      className={cn(
-        'min-h-0 flex-1 overflow-y-auto px-8 py-6',
-        showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
-      )}
-    >
-      <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
-        {content.trim() ? (
-          <AssistantMarkdown content={content} />
-        ) : (
-          <div className="text-sm text-text-muted">
-            {t('workbench.workspace_plan_empty', '暂无计划内容')}
-          </div>
-        )}
-      </div>
-    </section>
-  )
-}
-
-function RightWorkspaceLauncher({
-  canOpenReview,
-  canBrowseFiles,
-  allowTemporaryChat,
-  workspaceActions,
-  extensionTabs,
-  onSelectReview,
-  onSelectTerminal,
-  onSelectBrowser,
-  onSelectFiles,
-  onSelectChat,
-  showWorkbenchBackground,
-}: {
-  canOpenReview: boolean
-  canBrowseFiles: boolean
-  allowTemporaryChat: boolean
-  workspaceActions: WorkspaceAddMenuItem[]
-  extensionTabs: readonly WeworkWorkspaceSidebarTabDescriptor[]
-  onSelectReview: () => void
-  onSelectTerminal: () => void
-  onSelectBrowser: () => void
-  onSelectFiles: () => void
-  onSelectChat: () => void
-  showWorkbenchBackground: boolean
-}) {
-  const { t } = useTranslation('common')
-  const platform = getPlatform()
-
-  return (
-    <div
-      data-testid="right-workspace-launcher"
-      className="flex min-h-0 flex-1 items-center justify-center px-8"
-    >
-      <div className="flex w-full max-w-xl flex-col gap-1.5">
-        {[...extensionTabs]
-          .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
-          .map(descriptor => (
-            <RightWorkspaceLauncherItem
-              key={descriptor.id}
-              data-testid={`right-workspace-extension-option-${descriptor.id}`}
-              icon={PanelRight}
-              label={titleOfWeworkWorkspaceSidebarTab(descriptor, t)}
-              onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
-              showWorkbenchBackground={showWorkbenchBackground}
-            />
-          ))}
-        {workspaceActions.map(action => (
-          <RightWorkspaceLauncherItem
-            key={action.id}
-            data-testid={action.testId ?? `right-workspace-${action.id}-option`}
-            icon={action.icon}
-            label={action.label}
-            shortcut={action.shortcut}
-            onClick={() => void action.onSelect()}
-            disabled={action.disabled}
-            showWorkbenchBackground={showWorkbenchBackground}
-          />
-        ))}
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-review-option"
-          icon={FileDiff}
-          label={t('workbench.workspace_tab_review', '审查')}
-          shortcut={getRightWorkspaceShortcuts(platform).review}
-          onClick={onSelectReview}
-          disabled={!canOpenReview}
-          showWorkbenchBackground={showWorkbenchBackground}
-        />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-terminal-option"
-          icon={SquareTerminal}
-          label={t('workbench.terminal', '终端')}
-          onClick={onSelectTerminal}
-          showWorkbenchBackground={showWorkbenchBackground}
-        />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-browser-option"
-          icon={Globe2}
-          label={t('workbench.browser')}
-          shortcut={getRightWorkspaceShortcuts(platform).browser}
-          onClick={onSelectBrowser}
-          showWorkbenchBackground={showWorkbenchBackground}
-        />
-        {allowTemporaryChat && (
-          <RightWorkspaceLauncherItem
-            data-testid="right-workspace-chat-option"
-            icon={MessageCircle}
-            label={t('workbench.workspace_tab_chat', '临时聊天')}
-            shortcut={getRightWorkspaceShortcuts(platform).chat}
-            onClick={onSelectChat}
-            showWorkbenchBackground={showWorkbenchBackground}
-          />
-        )}
-        {canBrowseFiles && (
-          <RightWorkspaceLauncherItem
-            data-testid="right-workspace-file-option"
-            icon={File}
-            label={t('workbench.workspace_tab_files', '文件')}
-            shortcut={getRightWorkspaceShortcuts(platform).files}
-            onClick={onSelectFiles}
-            showWorkbenchBackground={showWorkbenchBackground}
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function RightWorkspaceLauncherItem({
-  icon: Icon,
-  label,
-  shortcut,
-  disabled,
-  onClick,
-  showWorkbenchBackground,
-  'data-testid': testId,
-}: {
-  icon: ComponentType<{ className?: string }>
-  label: string
-  shortcut?: string
-  disabled?: boolean
-  onClick: () => void
-  showWorkbenchBackground: boolean
-  'data-testid': string
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-        showWorkbenchBackground
-          ? 'border border-border/45 bg-surface/20 hover:bg-background/30'
-          : 'bg-surface hover:bg-muted'
-      )}
-    >
-      <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {shortcut && (
-        <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
-          {shortcut}
-        </span>
-      )}
-    </button>
-  )
-}
-
-function getRightWorkspaceTabLabel(
-  tab: RightWorkspacePanelTab,
-  t: ReturnType<typeof useTranslation>['t'],
-  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
-  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>,
-  extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>,
-  backgroundTerminals: BackgroundTerminal[]
-) {
-  if (isMcpAppPanelTab(tab)) return getMcpAppPanel(tab)?.title ?? t('mcp_apps.title')
-  if (isQuestionDiscussionTab(tab)) return t('question_discussion.title')
-  if (tab.startsWith('background-terminal:')) {
-    return (
-      unwrapShellCommand(
-        backgroundTerminals.find(terminal => terminal.tabId === tab)?.command ?? ''
-      ) || t('workbench.background_terminal')
-    )
-  }
-  if (isRightWorkspaceExtensionTab(tab)) {
-    const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
-    if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
-    return titleOfWeworkWorkspaceSidebarTab(descriptor, t)
-  }
-  if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
-  if (isRightWorkspaceTerminalTab(tab)) {
-    const suffix = getRightWorkspaceTerminalTabSuffix(tab)
-    return suffix === '1'
-      ? t('workbench.terminal', '终端')
-      : `${t('workbench.terminal', '终端')} ${suffix}`
-  }
-  if (isRightWorkspaceBrowserTab(tab)) {
-    const browserState = browserStates[tab]
-    return (
-      browserState?.developmentPreview?.displayName ||
-      browserState?.title ||
-      t('workbench.browser_new_tab', '新选项卡')
-    )
-  }
-  if (isRightWorkspaceChatTab(tab)) return t('workbench.workspace_tab_chat', '临时聊天')
-  if (isRightWorkspaceHarnessTab(tab)) {
-    return (
-      harnessSessionsById.get(getRightWorkspaceHarnessSessionId(tab))?.title ??
-      t('workbench.harness_session_picker_title', '新建编码会话')
-    )
-  }
-  if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
-  if (tab === 'subagents') return t('workbench.workspace_tab_subagents', '子代理')
-  if (tab === 'work-item') return t('workbench.work_item_detail', 'Issue 详情')
-  return t('workbench.workspace_tab_files', '文件')
-}
-
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
   if (isMcpAppPanelTab(tab)) return `right-workspace-mcp-app-tab-${tab.slice(8)}`
   if (isQuestionDiscussionTab(tab)) return `right-workspace-discussion-tab-${tab.slice(11)}`
@@ -1603,19 +795,10 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
   }
   return `right-workspace-${tab}-tab`
 }
+function getRightWorkspaceBrowserTabSuffix(tab: RightWorkspaceBrowserTab) {
+  return tab.slice('browser:'.length)
+}
 
-function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
-  if (isMcpAppPanelTab(tab)) return PanelRight
-  if (isQuestionDiscussionTab(tab)) return MessageCircle
-  if (tab.startsWith('background-terminal:')) return SquareTerminal
-  if (isRightWorkspaceExtensionTab(tab)) return PanelRight
-  if (tab === 'review') return FileDiff
-  if (isRightWorkspaceTerminalTab(tab)) return SquareTerminal
-  if (isRightWorkspaceBrowserTab(tab)) return Globe2
-  if (isRightWorkspaceChatTab(tab)) return MessageCircle
-  if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal
-  if (tab === 'plan') return ListChecks
-  if (tab === 'subagents') return Bot
-  if (tab === 'work-item') return LayoutDashboard
-  return File
+function getRightWorkspaceTerminalTabSuffix(tab: RightWorkspaceTerminalTab) {
+  return tab.slice('terminal:'.length)
 }

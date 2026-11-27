@@ -47,6 +47,7 @@ class ChatContextResult:
     system_prompt: str = ""
     kb_meta_prompt: str = ""
     backtrack_hint: str = ""
+    mcp_hint: str = ""
     mcp_clients: list = field(default_factory=list)
 
 
@@ -153,6 +154,7 @@ class ChatContext:
         """
         self._request = request
         self._mcp_clients: list = []
+        self._mcp_unavailable = False
         self._db_session: AsyncSession | None = None
         self._load_skill_tool: Any = None
 
@@ -321,6 +323,17 @@ class ChatContext:
             # Merge skill MCP clients with MCP server clients
             all_mcp_clients = mcp_clients + skill_mcp_clients
             self._mcp_clients = all_mcp_clients
+            mcp_hint = (
+                "Some connectors are temporarily unavailable; their MCP capabilities "
+                "have been skipped. Continue with available tools. Briefly explain any "
+                "affected work to the user without exposing credentials or inventing results."
+                if self._mcp_unavailable
+                or any(
+                    getattr(client, "unavailable_servers", [])
+                    for client in all_mcp_clients
+                )
+                else ""
+            )
 
             add_span_event(
                 "context_prepare_completed",
@@ -336,6 +349,7 @@ class ChatContext:
                 system_prompt=system_prompt,
                 kb_meta_prompt=kb_meta_prompt,
                 backtrack_hint=backtrack_hint,
+                mcp_hint=mcp_hint,
                 mcp_clients=all_mcp_clients,
             )
 
@@ -726,20 +740,10 @@ class ChatContext:
                 )
                 return {"success": False, "client": client}
         except Exception as e:
-            error_msg = str(e)
-            if hasattr(e, "exceptions"):
-                for exc in e.exceptions:
-                    if hasattr(exc, "exceptions"):
-                        for sub_exc in exc.exceptions:
-                            error_msg = str(sub_exc)
-                            break
-                    else:
-                        error_msg = str(exc)
-                    break
             logger.warning(
-                "[CHAT_CONTEXT] Failed to load MCP server %s: %s",
+                "[CHAT_CONTEXT] MCP unavailable: server=%s error_type=%s",
                 server_name,
-                error_msg,
+                type(e).__name__,
             )
             return {"success": False, "client": None}
 
@@ -798,18 +802,18 @@ class ChatContext:
         # Build individual server configs
         server_configs = []
         for server in self._request.mcp_servers:
+            if not isinstance(server, dict):
+                self._mcp_unavailable = True
+                logger.warning("[CHAT_CONTEXT] Skipping invalid MCP configuration")
+                continue
             server_name = server.get("name", "server")
-            transport_type = server.get("type", "streamable-http")
-            server_url = server.get("url", "")
-            config = {
-                server_name: {
-                    "type": transport_type,
-                    "url": server_url,
-                }
-            }
-            auth = server.get("auth")
-            if auth:
-                config[server_name]["headers"] = auth
+            if not isinstance(server_name, str) or not server_name.strip():
+                self._mcp_unavailable = True
+                logger.warning("[CHAT_CONTEXT] Skipping MCP with invalid server name")
+                continue
+            config = {server_name: dict(server)}
+            if "headers" not in server and server.get("auth"):
+                config[server_name]["headers"] = server["auth"]
             server_configs.append((server_name, config))
 
         # Connect to each server in parallel with individual error handling
@@ -822,14 +826,20 @@ class ChatContext:
         )
 
         for result in results:
-            if isinstance(result, Exception):
-                logger.warning("[CHAT_CONTEXT] MCP server connection error: %s", result)
+            if isinstance(result, BaseException):
+                self._mcp_unavailable = True
+                logger.warning(
+                    "[CHAT_CONTEXT] MCP server connection error: error_type=%s",
+                    type(result).__name__,
+                )
                 continue
             if result.get("success"):
                 mcp_tools.extend(result["tools"])
                 if result.get("client"):
                     mcp_clients.append(result["client"])
                 mcp_summary.append(result["summary"])
+            else:
+                self._mcp_unavailable = True
 
         if mcp_summary:
             add_span_event(

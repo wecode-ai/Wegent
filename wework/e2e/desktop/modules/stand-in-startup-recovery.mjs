@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import { waitForLogPattern } from './shared.mjs'
 
 /** Fail a real native startup, retain its diagnosis, then retry the same Issue. */
 export async function verifyStandInStartupRecovery({
@@ -53,95 +54,91 @@ export async function verifyStandInStartupRecovery({
       loopItemId: issue.id,
       ...issue.human_task_binding,
     }
-    try {
-      const accepted = await rpc('runtime.tasks.create', {
-        taskId,
-        title: issue.title,
-        runtime: 'codex',
-        workspacePath,
-        message: issue.title,
+    // The shared runner removes result-directory workspaces after stopping the app.
+    const accepted = await rpc('runtime.tasks.create', {
+      taskId,
+      title: issue.title,
+      runtime: 'codex',
+      workspacePath,
+      message: issue.title,
+      origin,
+      executionRequest: {
+        task_id: taskId,
+        subtask_id: `${taskId}-initial`,
+        user_id: user.id,
+        prompt: issue.title,
+        new_session: true,
+        // The real skill deployment stage rejects a missing required artifact
+        // before creating a native thread. Only the model service is mocked.
+        bot: [{ shell_type: 'Codex', name: role.name, skills: [requiredSkill] }],
+        preload_skills: [requiredSkill],
+        model_config: {},
         origin,
-        executionRequest: {
-          task_id: taskId,
-          subtask_id: `${taskId}-initial`,
-          user_id: user.id,
-          prompt: issue.title,
-          new_session: true,
-          // The real skill deployment stage rejects a missing required artifact
-          // before creating a native thread. Only the model service is mocked.
-          bot: [{ shell_type: 'Codex', name: role.name, skills: [requiredSkill] }],
-          preload_skills: [requiredSkill],
-          model_config: {},
-          origin,
-        },
-      })
-      assert.equal(accepted.accepted, true)
-      const failed = await until(
-        () => rpc('runtime.tasks.get', { taskId }),
-        result =>
-          result.task?.status === 'failed' &&
-          result.task?.running === false &&
-          (!restart || result.task?.runtimeHandle?.startupFailure?.failedAt > 0),
-        'A missing required Skill must fail native startup'
-      )
-      assert.equal(failed.task.threadId ?? null, null)
-      const executorLogPath = join(resultDir, 'executor.log')
-      assert.ok(
-        (await readFile(executorLogPath, 'utf8')).includes(
-          `required Skill deployment failed: ${requiredSkill}`
-        ),
-        'The failure must come from real required Skill deployment'
-      )
-      const failure = failed.task.runtimeHandle.startupFailure
-      if (restart) {
-        assert.equal(failure.code, 'runtime_start_failed')
-        assert.ok(failure.message.length > 0)
-        assert.ok(failure.failedAt > 0)
+      },
+    })
+    assert.equal(accepted.accepted, true)
+    const failed = await until(
+      () => rpc('runtime.tasks.get', { taskId }),
+      result =>
+        result.task?.status === 'failed' &&
+        result.task?.running === false &&
+        (!restart || result.task?.runtimeHandle?.startupFailure?.failedAt > 0),
+      'A missing required Skill must fail native startup'
+    )
+    assert.equal(failed.task.threadId ?? null, null)
+    const executorLogPath = join(resultDir, 'executor.log')
+    await waitForLogPattern(
+      executorLogPath,
+      new RegExp(`required Skill deployment failed: ${requiredSkill}`)
+    )
+    const failure = failed.task.runtimeHandle.startupFailure
+    if (restart) {
+      assert.equal(failure.code, 'runtime_start_failed')
+      assert.ok(failure.message.length > 0)
+      assert.ok(failure.failedAt > 0)
 
-        const logOffset = (await readFile(executorLogPath, 'utf8')).length
-        const originalPid = await currentExecutorPid(control)
-        assert.ok(originalPid)
-        process.kill(originalPid, 'SIGTERM')
-        await waitForRestartedExecutor({
-          control,
-          originalPid,
-          executorLogPath,
-          logOffset,
-          timeoutMs,
-        })
-        await waitForBackend()
-        const restored = await rpc('runtime.tasks.get', { taskId })
-        assert.equal(restored.task.status, 'failed')
-        assert.deepEqual(restored.task.runtimeHandle.startupFailure, failure)
-        assert.ok(restored.task.runtimeHandle.startupFailure.message.includes(requiredSkill))
-      }
-
-      // Delegation rebuilds the request from the valid role configuration,
-      // replacing the rejected attempt's missing deployment plan.
-      const retry = await rpc('runtime.stand_in.run', {
-        projectId: String(project.id),
-        issueId: issue.id,
-        userId: user.id,
-        projectStore: 'cloud',
-        standInId: role.id,
+      const logOffset = (await readFile(executorLogPath, 'utf8')).length
+      const originalPid = await currentExecutorPid(control)
+      assert.ok(originalPid)
+      process.kill(originalPid, 'SIGTERM')
+      await waitForRestartedExecutor({
+        control,
+        originalPid,
+        executorLogPath,
+        logOffset,
+        timeoutMs,
       })
-      assert.equal(retry.taskId, taskId)
-      const completed = await until(
-        () => rpc('runtime.tasks.get', { taskId }),
-        result => {
-          assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
-          return result.task?.status === 'done' && result.task?.running === false
-        },
-        'Explicit retry must start the original failed Issue conversation'
-      )
-      assert.ok(completed.task.threadId)
-      assert.equal(completed.task.runtimeHandle.startupFailure.code, 'runtime_start_failed')
-      if (failure) assert.deepEqual(completed.task.runtimeHandle.startupFailure, failure)
-      const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
-      assert.equal(bindings.length, 1)
-      assert.equal(bindings[0].task_id, taskId)
-    } finally {
-      await rm(workspacePath, { recursive: true, force: true })
+      await waitForBackend()
+      const restored = await rpc('runtime.tasks.get', { taskId })
+      assert.equal(restored.task.status, 'failed')
+      assert.deepEqual(restored.task.runtimeHandle.startupFailure, failure)
+      assert.ok(restored.task.runtimeHandle.startupFailure.message.includes(requiredSkill))
     }
+
+    // Delegation rebuilds the request from the valid role configuration,
+    // replacing the rejected attempt's missing deployment plan.
+    const retry = await rpc('runtime.stand_in.run', {
+      projectId: String(project.id),
+      issueId: issue.id,
+      userId: user.id,
+      projectStore: 'cloud',
+      standInId: role.id,
+    })
+    assert.equal(retry.taskId, taskId)
+    const completed = await until(
+      () => rpc('runtime.tasks.get', { taskId }),
+      result => {
+        assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
+        return result.task?.status === 'done' && result.task?.running === false
+      },
+      'Explicit retry must start the original failed Issue conversation'
+    )
+    assert.ok(completed.task.threadId)
+    // Starting the native retry clears the preparation diagnostic while the
+    // diagnostic itself remains covered by the restart assertions above.
+    assert.equal(completed.task.runtimeHandle.startupFailure ?? null, null)
+    const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
+    assert.equal(bindings.length, 1)
+    assert.equal(bindings[0].task_id, taskId)
   }
 }

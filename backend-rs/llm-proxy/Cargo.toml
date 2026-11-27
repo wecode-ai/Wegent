@@ -1,0 +1,32 @@
+[package]
+name = "wegent-llm-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Model resolution, provider credentials, and streaming LLM proxy"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server.workspace = true
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+regex.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+wegent-protocol.workspace = true
+wegent-access.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-network-policy.workspace = true
+wegent-python-compat.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

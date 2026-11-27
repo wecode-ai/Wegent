@@ -1,8 +1,10 @@
-import { Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, Upload, UserCog } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { useOptionalAppearance } from '@/features/appearance'
+import { Switch } from '@wegent/collaboration/controls/Switch'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, Upload, UserCog } from 'lucide-react'
 import { resolvePreferredPluginLogo } from './plugin-assets'
 import type { PluginDistribution } from './pluginDistribution'
 import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
@@ -43,6 +45,10 @@ export function InstalledPluginRow({
   onToggle,
   onUninstall,
   isUninstalling = false,
+  availableUpdate,
+  updating = false,
+  updateDisabled = false,
+  onUpdate,
 }: {
   plugin: InstalledPluginItem
   marketplaceItem?: PluginMarketplaceItem
@@ -56,11 +62,13 @@ export function InstalledPluginRow({
   onToggle: () => void
   onUninstall: () => void
   isUninstalling?: boolean
+  availableUpdate?: { current?: string | null; version: string }
+  updating?: boolean
+  updateDisabled?: boolean
+  onUpdate?: () => void
 }) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const actionsRef = useRef<HTMLDivElement>(null)
   const shareRecipient = marketplaceItem?.accessRole === 'recipient'
   const toggleLabel = plugin.enabled
     ? t('workbench.plugins_disable_plugin', '停用插件')
@@ -83,17 +91,6 @@ export function InstalledPluginRow({
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
   const recoveryError = plugin.raw.spec.sourcePayload?.runtimeRecoveryError
   const needsRecovery = typeof recoveryError === 'string' && Boolean(recoveryError.trim())
-
-  useEffect(() => {
-    if (!isMenuOpen) return
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!actionsRef.current?.contains(event.target as Node)) {
-        setIsMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handlePointerDown)
-    return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [isMenuOpen])
 
   const mainContent = (
     <>
@@ -120,7 +117,7 @@ export function InstalledPluginRow({
           >
             {distributionLabel}
           </span>
-          {plugin.updateAvailable && (
+          {plugin.updateAvailable && !availableUpdate && (
             <span className="plugin-management-pill plugin-management-pill-official">
               {t('workbench.plugins_update_available', '可更新')}
             </span>
@@ -129,6 +126,23 @@ export function InstalledPluginRow({
         <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
           {subtitle}
         </small>
+        {availableUpdate && (
+          <small className="mt-0.5 block text-sm text-text-secondary">
+            {availableUpdate.current
+              ? t(
+                  onUpdate
+                    ? 'workbench.plugins_update_version_pair'
+                    : 'workbench.plugins_marketplace_version_hint',
+                  {
+                    current: availableUpdate.current.replace(/^v/i, ''),
+                    target: availableUpdate.version.replace(/^v/i, ''),
+                  }
+                )
+              : t('workbench.plugins_update_target_version', {
+                  version: availableUpdate.version.replace(/^v/i, ''),
+                })}
+          </small>
+        )}
         {needsRecovery && (
           <small
             role="status"
@@ -149,20 +163,34 @@ export function InstalledPluginRow({
       className="plugin-management-row grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4"
     >
       {onOpen ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           aria-label={`${t('workbench.plugins_view_plugin_detail', '查看 {{name}} 详情', { name: plugin.name })}`}
           className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/30"
           onClick={onOpen}
         >
           {mainContent}
-        </button>
+        </ControlButton>
       ) : (
         <div className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2">
           {mainContent}
         </div>
       )}
-      <div ref={actionsRef} className="relative flex items-center gap-[7px]">
+      <div className="relative flex items-center gap-[7px]">
+        {onUpdate && !isUninstalling && (
+          <ControlButton
+            variant="primary"
+            size="sm"
+            type="button"
+            data-testid={`installed-plugin-update-${plugin.id}`}
+            disabled={updateDisabled}
+            onClick={onUpdate}
+          >
+            {updating && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            {t('workbench.plugins_update', '更新')}
+          </ControlButton>
+        )}
         {isUninstalling ? (
           <span
             role="status"
@@ -173,7 +201,8 @@ export function InstalledPluginRow({
             {t('workbench.plugins_uninstalling', '正在卸载')}
           </span>
         ) : onTry && !needsRecovery ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             aria-label={`${t('workbench.plugins_try_now', '立即对话')} ${plugin.name}`}
             title={t('workbench.plugins_try_now', '立即对话')}
@@ -182,105 +211,66 @@ export function InstalledPluginRow({
             onClick={onTry}
           >
             <MessageCirclePlus className="h-[17px] w-[17px]" strokeWidth={2} />
-          </button>
+          </ControlButton>
         ) : null}
         {!isUninstalling && !shareRecipient && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={plugin.enabled}
+          <Switch
+            checked={plugin.enabled}
             aria-label={`${toggleLabel} ${plugin.name}`}
             title={toggleLabel}
             data-testid={`installed-plugin-toggle-${plugin.id}`}
-            className={[
-              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40',
-              plugin.enabled ? 'bg-primary wework:bg-emerald-600' : 'bg-border',
-            ].join(' ')}
-            onClick={onToggle}
-          >
-            <span
-              className={[
-                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform wework:bg-white',
-                plugin.enabled ? 'bg-primary-contrast' : 'bg-background',
-                plugin.enabled ? 'translate-x-4' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
+            onCheckedChange={onToggle}
+          />
         )}
         {!isUninstalling && (
-          <button
-            type="button"
-            aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${plugin.name}`}
-            aria-expanded={isMenuOpen}
-            title={t('workbench.plugins_more_actions', '更多操作')}
-            data-testid={`installed-plugin-actions-${plugin.id}`}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-            onClick={() => setIsMenuOpen(open => !open)}
-          >
-            <Ellipsis className="h-[17px] w-[17px]" strokeWidth={2} />
-          </button>
-        )}
-        {!isUninstalling && isMenuOpen && (
-          <div
-            data-testid={`installed-plugin-actions-menu-${plugin.id}`}
-            className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
-          >
-            {onShare && (
-              <button
-                type="button"
-                data-testid={`installed-plugin-share-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  onShare()
-                }}
-              >
-                <UserCog className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {shareLabel || t('workbench.plugins_manage_access', '管理权限')}
-              </button>
-            )}
-            {onPublish && (
-              <button
-                type="button"
-                data-testid={`installed-plugin-publish-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  onPublish()
-                }}
-              >
-                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {publishLabel || t('workbench.plugins_publish_to_marketplace', '发布')}
-              </button>
-            )}
-            {onCopy && (
-              <button
-                type="button"
-                data-testid={`installed-plugin-copy-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  onCopy()
-                }}
-              >
-                <Copy className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {t('workbench.plugins_copy_to_personal', '复制为个人插件')}
-              </button>
-            )}
-            {(onPublish || onShare || onCopy) && <div className="my-1 h-px bg-border/25" />}
-            <button
-              type="button"
-              data-testid={`installed-plugin-uninstall-${plugin.id}`}
-              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/20 wework:text-red-600 wework:hover:bg-red-50 wework:focus-visible:ring-red-500/20 wework:dark:hover:bg-red-950/30"
-              onClick={() => {
-                setIsMenuOpen(false)
-                onUninstall()
-              }}
-            >
-              <Trash2 className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-              {t('workbench.plugins_uninstall_plugin_action', '卸载插件')}
-            </button>
-          </div>
+          <ActionMenu
+            ariaLabel={t('workbench.plugins_more_actions', '更多操作') + ' ' + plugin.name}
+            testId={`installed-plugin-actions-${plugin.id}`}
+            menuTestId={`installed-plugin-actions-menu-${plugin.id}`}
+            icon={Ellipsis}
+            items={[
+              ...(onShare
+                ? [
+                    {
+                      testId: `installed-plugin-share-${plugin.id}`,
+                      label: shareLabel || t('workbench.plugins_manage_access', '管理权限'),
+                      icon: UserCog,
+                      onSelect: onShare,
+                    },
+                  ]
+                : []),
+              ...(onPublish
+                ? [
+                    {
+                      testId: `installed-plugin-publish-${plugin.id}`,
+                      label: publishLabel || t('workbench.plugins_publish_to_marketplace', '发布'),
+                      icon: Upload,
+                      onSelect: onPublish,
+                    },
+                  ]
+                : []),
+              ...(onCopy
+                ? [
+                    {
+                      testId: `installed-plugin-copy-${plugin.id}`,
+                      label: t('workbench.plugins_copy_to_personal', '复制为个人插件'),
+                      icon: Copy,
+                      onSelect: onCopy,
+                    },
+                  ]
+                : []),
+              ...(onPublish || onShare || onCopy
+                ? [{ id: 'uninstall-separator', label: '', separator: true }]
+                : []),
+              {
+                testId: `installed-plugin-uninstall-${plugin.id}`,
+                label: t('workbench.plugins_uninstall_plugin_action', '卸载插件'),
+                icon: Trash2,
+                danger: true,
+                onSelect: onUninstall,
+              },
+            ]}
+          />
         )}
       </div>
     </article>

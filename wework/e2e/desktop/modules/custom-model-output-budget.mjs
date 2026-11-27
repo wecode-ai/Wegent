@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 /** Verify output-budget validation, persistence, editing and clearing through the real host. */
 export async function verifyCustomModelOutputBudget(control) {
@@ -80,8 +81,14 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
   await control.command('waitFor', '[data-testid="provider-editor-test-result"][role="alert"]')
   await control.command('click', '[data-testid="provider-editor-test-error-details"]')
-  await control.command('waitFor', '[data-testid="provider-editor-test-result"][open]', {
+  await control.command(
+    'waitFor',
+    '[data-testid="provider-editor-test-error-details"][aria-expanded="true"]',
+    { visible: true }
+  )
+  await control.command('waitFor', '[data-testid="provider-editor-test-result"] p', {
     text: '连接失败',
+    visible: true,
   })
   await control.command('fill', '[data-testid="provider-api-key"]', { value: 'model-test-key' })
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
@@ -96,11 +103,17 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   assert.ok(row, 'The new model provider was not persisted')
   const id = row.slice('provider-row-'.length)
   const edit = `[data-testid="provider-edit-${id}"]`
+  const expandModel = '[data-testid="provider-editor"] [data-testid^="provider-model-expand-"]'
+  const reopenModel = async () => {
+    await control.command('clickWhenEnabled', edit)
+    await control.command('setExpanded', expandModel, { value: 'true' })
+    await control.command('waitFor', output)
+    await control.command('scrollIntoView', output, { visible: true })
+    await control.command('waitFor', output, { visible: true })
+  }
   await control.command('navigate', 'body', { value: '/settings/general' })
   await control.command('navigate', 'body', { value: '/settings/personal/models' })
-  await control.command('clickWhenEnabled', edit)
-  await control.command('click', '[data-testid^="provider-model-editor-"] > details > summary')
-  await control.command('waitFor', output)
+  await reopenModel()
   assert.equal(await control.command('getValue', output), '16000')
   assert.equal(await control.command('getValue', context), '128000')
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
@@ -108,12 +121,16 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   await control.command('fill', output, { value: '' })
   await control.command('clickWhenEnabled', save)
   await waitForSnapshot(control, snapshot => !snapshot.testIds.includes('provider-editor'))
-  await control.command('clickWhenEnabled', edit)
-  await control.command('click', '[data-testid^="provider-model-editor-"] > details > summary')
-  await control.command('waitFor', output)
+  await reopenModel()
   assert.equal(await control.command('getValue', output), '')
   await control.command('click', '[data-testid="provider-editor-cancel"]')
   await control.command('click', `[data-testid="provider-delete-${id}"]`)
+  await waitForValue(
+    () => control.command('getActiveElementTestId', 'body'),
+    id => id === 'provider-action-confirm-cancel-button',
+    'Deleting a provider should initially focus Cancel',
+    5_000
+  )
   await control.command('clickWhenEnabled', '[data-testid="provider-action-confirm"]')
   await waitForSnapshot(control, snapshot => !snapshot.testIds.includes(row))
 }

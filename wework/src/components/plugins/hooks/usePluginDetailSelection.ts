@@ -1,24 +1,29 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
+import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { pluginMarketplaceIdentity } from '@/api/local/codexPlugins'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
+import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { PluginMarketplaceItem } from '@/types/api'
-import { marketplaceItemMarketplaceId, marketplacePluginDistribution } from '../pluginDistribution'
+import {
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+  marketplacePluginDistribution,
+} from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
   createdPluginSlugFromKey,
+  findPackableCreatedPlugin,
   marketplaceItemOwnsLocalCreatedPackage,
 } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
+
+function localSourceIdentity(item: PluginMarketplaceItem): string | undefined {
+  if (isLocalMarketplaceItem(item)) return localMarketplaceDedupeKey(item)
+  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource)
+    return `personal:${item.localPersonalSource.pluginName.trim().toLowerCase()}`
+}
 
 export function findMarketplaceItemForPluginReference(
   items: PluginMarketplaceItem[],
@@ -40,8 +45,8 @@ export function findMarketplaceItemForPluginReference(
         return isWegentCloudMarketplace(marketplaceName) && !personalListing
       }
       return (
-        marketplaceId === normalizedMarketplaceName ||
-        (isWegentCloudMarketplace(marketplaceId) && isWegentCloudMarketplace(marketplaceName))
+        pluginMarketplaceIdentity(item.name, marketplaceId) ===
+        pluginMarketplaceIdentity(pluginName, marketplaceName)
       )
     }) ?? null
   )
@@ -51,7 +56,7 @@ function pluginReferenceKey(reference: PluginReference | null | undefined): stri
   const pluginName = reference?.pluginName?.trim() ?? ''
   const marketplaceName = reference?.marketplaceName?.trim() ?? ''
   if (!pluginName || !marketplaceName) return null
-  return `${pluginName}@${marketplaceName}`.toLowerCase()
+  return pluginMarketplaceIdentity(pluginName, marketplaceName)
 }
 
 export function usePluginDetailSelection({
@@ -73,7 +78,8 @@ export function usePluginDetailSelection({
   setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
 }) {
-  const dismissedPluginReferenceKeyRef = useRef<string | null>(null)
+  const [dismissedReference, setDismissedReference] = useState<string | null>(null)
+  const [referenceSelection, setReferenceSelection] = useState<string | null>(null)
   const selectionKey = JSON.stringify([scopeKey, selectedMarketplacePluginId])
   const [localSelection, setLocalSelection] = useState<{
     key: string
@@ -93,55 +99,109 @@ export function usePluginDetailSelection({
       item => item.id === selectedMarketplacePluginId
     )
     if (direct) return direct
-    // Disk and native listings represent the same local resource with different
-    // row IDs. Reuse the catalog's scoped identity, never a cloud name match.
+    // Background publication can replace the same author source's disk-only row.
     const matches = localIdentity
-      ? pluginMarketplaceState.items.filter(
-          item => isLocalMarketplaceItem(item) && localMarketplaceDedupeKey(item) === localIdentity
-        )
+      ? pluginMarketplaceState.items.filter(item => localSourceIdentity(item) === localIdentity)
       : []
     return matches.length === 1 ? matches[0] : null
   }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
-  const selectedLocalIdentity =
-    selectedMarketplacePlugin && isLocalMarketplaceItem(selectedMarketplacePlugin)
-      ? localMarketplaceDedupeKey(selectedMarketplacePlugin)
-      : undefined
+  const selectedLocalIdentity = selectedMarketplacePlugin
+    ? localSourceIdentity(selectedMarketplacePlugin)
+    : undefined
   if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
     setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
   }
 
-  useEffect(() => {
-    const referenceKey = pluginReferenceKey(pluginReference)
-    if (!referenceKey) {
-      dismissedPluginReferenceKeyRef.current = null
-      return
-    }
-    if (dismissedPluginReferenceKeyRef.current === referenceKey) return
-
-    const requestedPlugin = findMarketplaceItemForPluginReference(
-      pluginMarketplaceState.items,
-      pluginReference
-    )
-    if (!requestedPlugin) return
-
-    setSelectedPluginId(null)
-    setSelectedMarketplacePluginId(current =>
-      current === requestedPlugin.id ? current : requestedPlugin.id
-    )
-  }, [
+  const referenceKey = pluginReferenceKey(pluginReference)
+  const requestedPlugin = findMarketplaceItemForPluginReference(
     pluginMarketplaceState.items,
-    pluginReference,
-    setSelectedMarketplacePluginId,
-    setSelectedPluginId,
+    pluginReference
+  )
+  const installedByReference = useMemo(
+    () =>
+      new Map(
+        installedPlugins.map(plugin => [
+          pluginMarketplaceIdentity(
+            plugin.raw.spec.source.pluginKey,
+            installedPluginMarketplaceId(plugin.raw) || INTERNAL_DEVICE_MARKETPLACE_ID
+          ),
+          plugin,
+        ])
+      ),
+    [installedPlugins]
+  )
+  const requestedInstalledPlugin = referenceKey ? installedByReference.get(referenceKey) : null
+  const requestedCreatedPlugin = useMemo(
+    () =>
+      requestedPlugin &&
+      (requestedPlugin.visibility === 'personal' ||
+        (requestedPlugin.latestReleaseId == null &&
+          marketplacePluginDistribution(requestedPlugin) === 'personal'))
+        ? findMarketplaceCreatedPlugin(requestedPlugin, installedPlugins, findPackableCreatedPlugin)
+        : null,
+    [requestedPlugin, installedPlugins]
+  )
+  const requestedSelection = JSON.stringify([
+    scopeKey,
+    referenceKey,
+    requestedPlugin?.id ?? null,
+    requestedInstalledPlugin?.id ?? null,
+    requestedCreatedPlugin?.id ?? null,
   ])
+  if (referenceSelection !== requestedSelection) {
+    setReferenceSelection(requestedSelection)
+    if (!referenceKey) {
+      if (dismissedReference !== null) setDismissedReference(null)
+    } else if (dismissedReference !== referenceKey && requestedCreatedPlugin) {
+      // These setters belong to the same component that owns this hook.
+      setSelectedMarketplacePluginId(null)
+      setSelectedPluginId(requestedCreatedPlugin.id)
+    } else if (dismissedReference !== referenceKey && requestedPlugin) {
+      if (selectedPluginId !== null) setSelectedPluginId(null)
+      if (selectedMarketplacePluginId !== requestedPlugin.id)
+        setSelectedMarketplacePluginId(requestedPlugin.id)
+    } else if (dismissedReference !== referenceKey && requestedInstalledPlugin) {
+      setSelectedMarketplacePluginId(null)
+      setSelectedPluginId(requestedInstalledPlugin.id)
+    }
+  }
 
   const dismissPluginReferenceDetail = useCallback(() => {
-    dismissedPluginReferenceKeyRef.current = pluginReferenceKey(pluginReference)
+    setDismissedReference(pluginReferenceKey(pluginReference))
     setSelectedPluginId(null)
     setSelectedMarketplacePluginId(null)
   }, [pluginReference, setSelectedMarketplacePluginId, setSelectedPluginId])
 
   return { selectedPlugin, selectedMarketplacePlugin, dismissPluginReferenceDetail }
+}
+
+interface MarketplaceDetailSelection {
+  item: PluginMarketplaceItem
+  installedPlugins: InstalledPluginItem[]
+  findPackableCreatedPlugin: typeof findPackableCreatedPlugin
+  setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
+  setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
+}
+
+function findMarketplaceCreatedPlugin(
+  item: PluginMarketplaceItem,
+  installedPlugins: InstalledPluginItem[],
+  findPackable: typeof findPackableCreatedPlugin
+): InstalledPluginItem | null {
+  const installed =
+    item.installedPluginId === null || item.installedPluginId === undefined
+      ? null
+      : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
+        null)
+  return marketplaceItemOwnsLocalCreatedPackage(item)
+    ? findPackable(installedPlugins, [
+        item.name,
+        createdPluginSlugFromKey(item.name),
+        item.displayName,
+        installed?.raw.spec.source.pluginKey,
+        installed?.name,
+      ])
+    : null
 }
 
 export function openMarketplacePluginDetailSelection({
@@ -150,30 +210,12 @@ export function openMarketplacePluginDetailSelection({
   findPackableCreatedPlugin,
   setSelectedPluginId,
   setSelectedMarketplacePluginId,
-}: {
-  item: PluginMarketplaceItem
-  installedPlugins: InstalledPluginItem[]
-  findPackableCreatedPlugin: (
-    plugins: InstalledPluginItem[],
-    names: Array<string | null | undefined>
-  ) => InstalledPluginItem | null
-  setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
-  setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
-}) {
-  const installed =
-    item.installedPluginId === null || item.installedPluginId === undefined
-      ? null
-      : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
-        null)
-  const packableCreated = marketplaceItemOwnsLocalCreatedPackage(item)
-    ? findPackableCreatedPlugin(installedPlugins, [
-        item.name,
-        createdPluginSlugFromKey(item.name),
-        item.displayName,
-        installed?.raw.spec.source.pluginKey,
-        installed?.name,
-      ])
-    : null
+}: MarketplaceDetailSelection) {
+  const packableCreated = findMarketplaceCreatedPlugin(
+    item,
+    installedPlugins,
+    findPackableCreatedPlugin
+  )
   if (packableCreated) {
     setSelectedMarketplacePluginId(null)
     setSelectedPluginId(packableCreated.id)

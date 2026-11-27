@@ -1,7 +1,15 @@
-import type { CollaborationProject } from '@wegent/collaboration'
-import { ArrowUpRight, ChevronDown } from 'lucide-react'
 import { roleIncludesProject, standInRoleName, type StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { CollaborationProject } from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, ChevronDown } from 'lucide-react'
 
 /** Select a reusable stand-in for a project and summarize its instructions and intake state. */
 export function StandInProjectSetup({
@@ -20,12 +28,12 @@ export function StandInProjectSetup({
   saving: boolean
   creating: boolean
   onChoose(value: string): void
-  role: StandInRole
+  role?: StandInRole
   onOpenSettings?(): void
 }) {
   const { t } = useTranslation('common')
   const enabled =
-    role.enabled &&
+    role?.enabled &&
     roleIncludesProject(role, {
       id: project.id,
       store: project.project_store === 'local' ? 'local' : 'cloud',
@@ -35,32 +43,42 @@ export function StandInProjectSetup({
       <label className="block space-y-2">
         <span className="font-medium">{t('standIn.personal.use_stand_in')}</span>
         <div className="relative rounded-lg border border-border bg-muted/40 hover:bg-muted/60 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus">
-          <select
-            data-testid="stand-in-project-select"
-            value={creating ? '__new' : projectRoleId}
+          <SelectRoot
+            value={normalizeSelectValue(creating ? '__new' : projectRoleId)}
             disabled={saving}
-            onChange={event => {
-              onChoose(event.target.value)
+            onValueChange={selectedValue => {
+              if (selectedValue === null) return
+              onChoose(selectedValue)
             }}
-            className="min-h-9 w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-3 pr-10 text-base outline-none disabled:cursor-default"
           >
-            <option value="" disabled>
-              {t('standIn.personal.choose_stand_in')}
-            </option>
-            {roles.map(row => (
-              <option key={row.id} value={row.id}>
-                {standInRoleName(row, roles.indexOf(row), t('standIn.personal.default_role'))}
-              </option>
-            ))}
-            <option value="__new">{t('standIn.personal.new_project_stand_in')}</option>
-          </select>
+            <SelectTrigger
+              appearance="plain"
+              data-testid="stand-in-project-select"
+              className="min-h-9 w-full cursor-pointer appearance-none pl-3 pr-10 text-base disabled:cursor-default"
+            />
+            <SelectContent>
+              <SelectItem value="" disabled>
+                {t('standIn.personal.choose_stand_in')}
+              </SelectItem>
+              {roles.map(row => (
+                <SelectItem key={row.id} value={String(row.id)}>
+                  {standInRoleName(
+                    row,
+                    roles.indexOf(row),
+                    t('standIn.personal.unnamed_assistant')
+                  )}
+                </SelectItem>
+              ))}
+              <SelectItem value="__new">{t('standIn.personal.new_project_stand_in')}</SelectItem>
+            </SelectContent>
+          </SelectRoot>
           <ChevronDown
             aria-hidden="true"
             className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary"
           />
         </div>
       </label>
-      {!creating && projectRoleId && (
+      {!creating && projectRoleId && role && (
         <>
           <div className="py-1" data-testid="stand-in-project-summary">
             <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
@@ -91,7 +109,8 @@ export function StandInProjectSetup({
           </div>
           {onOpenSettings && (
             <div className="text-xs text-text-muted">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={saving}
                 data-testid="stand-in-personal-settings-link"
@@ -100,7 +119,7 @@ export function StandInProjectSetup({
               >
                 {t('standIn.personal.open_personal_settings')}
                 <ArrowUpRight className="h-3 w-3" />
-              </button>
+              </ControlButton>
               <p>{t('standIn.personal.shared_settings_help')}</p>
             </div>
           )}

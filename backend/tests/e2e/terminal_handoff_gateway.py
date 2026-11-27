@@ -5,6 +5,7 @@
 """Exercise terminal handoff through the real hybrid gateway and Chat Shell."""
 
 import asyncio
+import faulthandler
 import json
 import os
 import threading
@@ -555,7 +556,14 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertIn(answer, json.dumps(capture))
             self.assertNotIn("late callback payload", json.dumps(capture))
 
-    async def _send_chat_turns(self, team_id: int, prompts: list[str]) -> list[dict]:
+    async def _send_chat_turns(
+        self,
+        team_id: int,
+        prompts: list[str],
+        *,
+        task_id: int | None = None,
+        is_group_chat: bool = False,
+    ) -> list[dict]:
         client = socketio.AsyncClient(reconnection=False)
         await client.connect(
             str(self.api.base_url),
@@ -566,9 +574,18 @@ class TerminalHandoffGateway(unittest.TestCase):
         try:
             responses = []
             for prompt in prompts:
+                payload = {
+                    "team_id": team_id,
+                    "message": prompt,
+                    "task_type": "chat",
+                }
+                if is_group_chat:
+                    payload["is_group_chat"] = True
+                if task_id is not None:
+                    payload["task_id"] = task_id
                 result = await client.call(
                     "chat:send",
-                    {"team_id": team_id, "message": prompt, "task_type": "chat"},
+                    payload,
                     namespace="/chat",
                     timeout=15,
                 )
@@ -577,6 +594,36 @@ class TerminalHandoffGateway(unittest.TestCase):
             return responses
         finally:
             await client.disconnect()
+
+    def test_rust_appends_a_chat_turn_to_an_owned_subscription_task(self) -> None:
+        team_id, _ = self._create_team(pipeline=False)
+        (initial,) = asyncio.run(
+            self._send_chat_turns(team_id, ["Initial message"], is_group_chat=True)
+        )
+        task_id = initial["task_id"]
+        with SessionLocal() as db:
+            task = db.get(TaskResource, task_id)
+            self.assertIsNotNone(task)
+            task.is_active = TaskResource.STATE_SUBSCRIPTION
+            db.commit()
+
+        (continued,) = asyncio.run(
+            self._send_chat_turns(
+                team_id, ["Follow-up message"], task_id=task_id, is_group_chat=True
+            )
+        )
+
+        self.assertEqual(continued["task_id"], task_id)
+        _, rows = self._snapshot(task_id)
+        self.assertEqual([row["role"] for row in rows], ["USER", "USER"])
+        self.assertEqual(
+            [row["id"] for row in rows],
+            [initial["subtask_id"], continued["subtask_id"]],
+        )
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.get(TaskResource, task_id).is_active, TaskResource.STATE_SUBSCRIPTION
+            )
 
     def _wait_for_held_model_requests(self, count: int) -> None:
         self._wait_for(
@@ -790,27 +837,50 @@ class TerminalHandoffGateway(unittest.TestCase):
     @contextmanager
     def _reject_terminal_write(self, task_id: int, subtask_id: int) -> Iterator[None]:
         name = f"{self.marker.replace('-', '_')}_terminal"
-        with SessionLocal() as db:
-            db.execute(
-                text(
-                    f"""
+        with SessionLocal() as lock:
+            self.assertEqual(
+                lock.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": name}), 1
+            )
+            try:
+                with SessionLocal() as db:
+                    db.execute(
+                        text(
+                            f"""
                 CREATE TRIGGER {name} BEFORE UPDATE ON subtasks
                 FOR EACH ROW BEGIN
                     IF NEW.task_id = {task_id:d} AND NEW.id = {subtask_id:d}
-                       AND NEW.status IN ('COMPLETED','FAILED','CANCELLED') THEN
+                       AND NEW.status IN ('COMPLETED','FAILED','CANCELLED')
+                       AND IS_USED_LOCK('{name}') IS NOT NULL THEN
                         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'E2E terminal write rejected';
                     END IF;
                 END
             """
+                        )
+                    )
+                    db.commit()
+                self.addCleanup(self._drop_terminal_write_trigger, name)
+                yield
+            finally:
+                # Disable the fault without waiting for table metadata locks.
+                # Remove the trigger after the recovery assertions finish.
+                self.assertEqual(
+                    lock.scalar(text("SELECT RELEASE_LOCK(:name)"), {"name": name}), 1
                 )
-            )
+
+    def _drop_terminal_write_trigger(self, name: str) -> None:
+        with SessionLocal() as db:
+            previous_timeout = db.scalar(text("SELECT @@SESSION.lock_wait_timeout"))
+            try:
+                db.execute(text("SET SESSION lock_wait_timeout = 5"))
+                db.execute(text(f"DROP TRIGGER IF EXISTS {name}"))
+            finally:
+                # Restore the setting before commit or rollback returns the
+                # connection to the pool, including after a metadata timeout.
+                db.execute(
+                    text("SET SESSION lock_wait_timeout = :timeout"),
+                    {"timeout": previous_timeout},
+                )
             db.commit()
-        try:
-            yield
-        finally:
-            with SessionLocal() as db:
-                db.execute(text(f"DROP TRIGGER {name}"))
-                db.commit()
 
     def test_cancel_endpoint_settles_active_sse_with_partial_content(self) -> None:
         self._cancel_active_stream(terminal_arrives_first=False)
@@ -981,4 +1051,8 @@ if __name__ == "__main__":
     )
     for process in ("rust", "python"):
         os.kill(int(state[process]), 0)
-    unittest.main(verbosity=2)
+    faulthandler.dump_traceback_later(120, repeat=True)
+    try:
+        unittest.main(verbosity=2)
+    finally:
+        faulthandler.cancel_dump_traceback_later()

@@ -1,6 +1,6 @@
 {
   "order": 193500,
-  "scenario": "./scenarios/clipboard-history-image.scenario.mjs",
+  "scenario": "./scenarios/clipboard-images-with-send.scenario.mjs",
   "scenarioOnly": true,
   "ci": { "core": { "order": 141500, "shard": 2, "position": 7500 } },
   "paths": [
@@ -9,6 +9,8 @@
     "wework/src/components/chat/composer/desktopComposerServices.*",
     "wework/electron/src/host/clipboard-image-conversion.*",
     "wework/e2e/desktop/fixtures/clipboard-history-image.json",
-    "wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs"
+    "wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs",
+    "wework/e2e/desktop/scenarios/clipboard-images-with-send.scenario.mjs",
+    "wework/e2e/desktop/scenarios/paste-image-send.scenario.mjs"
   ]
 }

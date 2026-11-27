@@ -1,6 +1,17 @@
 use super::*;
 
 impl LocalTaskStore {
+    pub fn project_board_config(&self, project_id: &str) -> Result<Value, TaskRuntimeError> {
+        let project = self.get_project(project_id)?;
+        let mut config = project_status::default_board_config();
+        if let Some(custom) = project.metadata["board_config"].as_object() {
+            config
+                .as_object_mut()
+                .expect("board config object")
+                .extend(custom.clone());
+        }
+        Ok(config)
+    }
     pub fn list_projects(&self) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(

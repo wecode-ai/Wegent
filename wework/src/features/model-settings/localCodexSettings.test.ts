@@ -1,34 +1,40 @@
-// @vitest-environment node
-
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getLocalCodexPersonality, saveLocalCodexPersonality } from './localCodexSettings'
-
-const requestLocalExecutor = vi.fn()
+import { expect, it, vi } from 'vitest'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { saveLocalCodexTransport } from './localCodexSettings'
 
 vi.mock('@/desktop/localExecutor', () => ({
-  ensureLocalExecutorStarted: vi.fn().mockResolvedValue(undefined),
-  requestLocalExecutor: (...args: unknown[]) => requestLocalExecutor(...args),
+  ensureLocalExecutorStarted: vi.fn(),
+  requestLocalExecutor: vi.fn(),
 }))
 
-describe('localCodexSettings', () => {
-  beforeEach(() => requestLocalExecutor.mockReset())
-
-  test('reads personality from Codex config', async () => {
-    requestLocalExecutor.mockResolvedValue({ personality: 'friendly' })
-    await expect(getLocalCodexPersonality()).resolves.toBe('friendly')
-    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.personality.read')
-  })
-
-  test('writes personality through Codex app-server', async () => {
-    requestLocalExecutor.mockResolvedValue({ personality: 'friendly' })
-    await expect(saveLocalCodexPersonality('friendly')).resolves.toBe('friendly')
-    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.personality.write', {
-      personality: 'friendly',
+it('rebuilds the transport edit from the latest provider after a version conflict', async () => {
+  const request = vi.mocked(requestLocalExecutor)
+  request
+    .mockResolvedValueOnce({ layers: [{ name: { type: 'user' }, version: 'old', config: {} }] })
+    .mockRejectedValueOnce(
+      new Error('Configuration was modified since last read. Fetch latest version and retry.')
+    )
+    .mockResolvedValueOnce({
+      layers: [
+        {
+          name: { type: 'user' },
+          version: 'new',
+          config: { model_providers: { '~': { name: 'Existing provider' } } },
+        },
+      ],
     })
-  })
+    .mockResolvedValueOnce({})
 
-  test('defaults unsupported responses to pragmatic', async () => {
-    requestLocalExecutor.mockResolvedValue({ personality: 'unknown' })
-    await expect(getLocalCodexPersonality()).resolves.toBe('pragmatic')
+  await saveLocalCodexTransport('websocket')
+
+  expect(request).toHaveBeenCalledTimes(4)
+  expect(request).toHaveBeenLastCalledWith('codex.app_server_request', {
+    method: 'config/value/write',
+    params: {
+      keyPath: 'model_providers."~"',
+      value: { supports_websockets: true },
+      mergeStrategy: 'upsert',
+      expectedVersion: 'new',
+    },
   })
 })

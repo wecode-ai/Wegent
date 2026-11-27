@@ -40,6 +40,7 @@ async fn pending_cloud_binding_is_finalized_without_replaying_an_accepted_task()
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -122,6 +123,7 @@ async fn automatic_intent_keeps_its_device_before_cloud_reservation_exists() {
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -186,6 +188,7 @@ async fn manual_wrong_device_rejection_cannot_be_recovered_as_accepted_work() {
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -317,8 +320,6 @@ fn dispatch_intent_requires_backend_scope_and_ignores_unmatched_roles() {
 #[tokio::test]
 async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     let root = tempfile::tempdir().unwrap();
-    let user = Arc::new(AtomicUsize::new(7));
-    let current_user = user.clone();
     let issue = Arc::new(Mutex::new(
         json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}}),
     ));
@@ -326,10 +327,6 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
     let router = Router::new()
-        .route("/api/users/me", get(move || {
-            let id = current_user.load(Ordering::SeqCst);
-            async move { Json(json!({"id":id})) }
-        }))
         .route("/api/v1/loop-items/issue", get(move || {
             let value = current_issue.lock().unwrap().clone();
             async move { Json(value) }
@@ -355,6 +352,7 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url.clone(),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         handler
@@ -389,7 +387,13 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
         1,
         "Restart must preserve backoff"
     );
-    user.store(8, Ordering::SeqCst);
+    restarted
+        .backend_connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(8);
     restarted
         .flush_stand_in_dispatches_at(chrono::Utc::now().timestamp() + 10)
         .await
@@ -400,7 +404,13 @@ async fn stand_in_dispatch_recovers_a_reservation_after_failure_and_restart() {
         "Another account must not execute persisted work"
     );
     assert_eq!(store.pending_stand_in_dispatches().unwrap().len(), 1);
-    user.store(7, Ordering::SeqCst);
+    restarted
+        .backend_connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(7);
     restarted
         .flush_stand_in_dispatches_at(chrono::Utc::now().timestamp() + 20)
         .await
@@ -475,6 +485,7 @@ async fn manual_issue_startup_intent_survives_restart_without_assignment_or_inta
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url.clone(),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         }))),
         ..RuntimeWorkRpcHandler::new("mac", "unused")
@@ -493,6 +504,7 @@ async fn manual_issue_startup_intent_survives_restart_without_assignment_or_inta
     assert_eq!(pending[0].1["manual"], true);
     assert_eq!(pending[0].1["retryCount"], 1);
     let mut moved = store.personal_stand_in(7, "mac").unwrap();
+    moved["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     moved["roles"][0]["executionDeviceId"] = json!("remote");
     store.save_personal_stand_in(7, "mac", moved).unwrap();
     drop(handler);

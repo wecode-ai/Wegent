@@ -1,63 +1,66 @@
+import { Button as ControlButton } from '../markdown/Button'
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '../controls/MenuParts'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from 'react'
 
 export interface ProjectSpaceSidebarNavItem {
-  icon?: ReactNode;
-  label: string;
-  onClick(): void;
-  selected?: boolean;
-  testId?: string;
+  icon?: ReactNode
+  label: string
+  onClick(): void
+  selected?: boolean
+  testId?: string
 }
 
 export interface ProjectSpaceSidebarProject {
-  actionsAvailable?: boolean;
-  canManage: boolean;
-  count?: number;
-  icon: ReactNode;
-  id: string;
-  key: string;
-  name: string;
-  selected: boolean;
-  onArchive(): void;
-  onCopyId(): Promise<void>;
-  onRename(): void;
+  actionsAvailable?: boolean
+  archiveDisabled?: boolean
+  canManage: boolean
+  count?: number
+  icon: ReactNode
+  id: string
+  key: string
+  name: string
+  selected: boolean
+  onArchive(): void
+  onCopyId(): Promise<void>
+  onRename(): void
 }
 
 interface ProjectSpaceSidebarTooltipOptions {
-  align: "end";
-  children: ReactNode;
-  className?: string;
-  label: string;
-  side: "bottom";
+  align: 'end'
+  children: ReactNode
+  className?: string
+  label: string
+  side: 'bottom'
 }
 
 interface ProjectSpaceSidebarLabels {
-  actions: string;
-  archive: string;
-  copied: string;
-  copyId: string;
-  rename: string;
+  actions: string
+  archive: string
+  copied: string
+  copyId: string
+  rename: string
 }
 
 interface ProjectSpaceSidebarProps {
-  account?: ReactNode;
-  addIcon: ReactNode;
-  addLabel: string;
-  checkIcon: ReactNode;
-  copyIcon: ReactNode;
-  header: ReactNode;
-  labels: ProjectSpaceSidebarLabels;
-  moreIcon: ReactNode;
-  navItems: ProjectSpaceSidebarNavItem[];
-  onAdd(): void;
-  onSelectProject(projectKey: string): void;
-  projects: ProjectSpaceSidebarProject[];
-  renderTooltip?(options: ProjectSpaceSidebarTooltipOptions): ReactNode;
-  sectionOnly?: boolean;
-  sectionLabel: string;
+  account?: ReactNode
+  addIcon: ReactNode
+  addLabel: string
+  checkIcon: ReactNode
+  copyIcon: ReactNode
+  header: ReactNode
+  labels: ProjectSpaceSidebarLabels
+  moreIcon: ReactNode
+  navItems: ProjectSpaceSidebarNavItem[]
+  onAdd(): void
+  onSelectProject(projectKey: string): void
+  projects: ProjectSpaceSidebarProject[]
+  renderTooltip?(options: ProjectSpaceSidebarTooltipOptions): ReactNode
+  sectionOnly?: boolean
+  sectionLabel: string
 }
 
 export function ProjectSpaceSidebar({
@@ -77,57 +80,31 @@ export function ProjectSpaceSidebar({
   sectionOnly = false,
   sectionLabel,
 }: ProjectSpaceSidebarProps) {
-  const [openProjectId, setOpenProjectId] = useState<string | null>(null);
-  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (openProjectId === null) return;
-
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (
-        event.target instanceof Element &&
-        !event.target.closest("[data-cloud-project-menu-root]")
-      ) {
-        setOpenProjectId(null);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenProjectId(null);
-    };
-
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [openProjectId]);
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
 
   const copyProjectId = (project: ProjectSpaceSidebarProject) => {
     void project.onCopyId().then(() => {
-      setCopiedProjectId(project.id);
-      window.setTimeout(() => setCopiedProjectId(null), 2000);
-    });
-    setOpenProjectId(null);
-  };
+      setCopiedProjectId(project.id)
+      window.setTimeout(() => setCopiedProjectId(null), 2000)
+    })
+  }
   const primaryTextClass = sectionOnly
-    ? "text-text-primary"
-    : "text-[rgb(var(--color-sidebar-text-primary))]";
+    ? 'text-text-primary'
+    : 'text-[rgb(var(--color-sidebar-text-primary))]'
   const secondaryTextClass = sectionOnly
-    ? "text-text-secondary"
-    : "text-[rgb(var(--color-sidebar-text-secondary))]";
+    ? 'text-text-secondary'
+    : 'text-[rgb(var(--color-sidebar-text-secondary))]'
   const hoverBackgroundClass = sectionOnly
-    ? "hover:bg-hover"
-    : "hover:bg-[rgb(var(--color-sidebar-hover))]";
+    ? 'hover:bg-hover'
+    : 'hover:bg-[rgb(var(--color-sidebar-hover))]'
   const hoverPrimaryTextClass = sectionOnly
-    ? "hover:text-text-primary"
-    : "hover:text-[rgb(var(--color-sidebar-text-primary))]";
-  const activeBackgroundClass = sectionOnly
-    ? "bg-hover"
-    : "bg-[rgb(var(--color-sidebar-active))]";
+    ? 'hover:text-text-primary'
+    : 'hover:text-[rgb(var(--color-sidebar-text-primary))]'
+  const activeBackgroundClass = sectionOnly ? 'bg-hover' : 'bg-[rgb(var(--color-sidebar-active))]'
 
   const addButton = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="cloud-project-add"
       onClick={onAdd}
@@ -136,104 +113,136 @@ export function ProjectSpaceSidebar({
       title={renderTooltip ? undefined : addLabel}
     >
       {addIcon}
-    </button>
-  );
+    </ControlButton>
+  )
 
   const renderProjectMoreButton = (project: ProjectSpaceSidebarProject) => {
     const button = (
-      <button
-        type="button"
+      <MenuTrigger
+        render={<button type="button" />}
         data-testid={`cloud-sidebar-project-more-${project.id}`}
-        onClick={() =>
-          setOpenProjectId((current) =>
-            current === project.id ? null : project.id,
-          )
-        }
-        className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-md transition focus:flex group-hover:flex ${secondaryTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
-        aria-expanded={openProjectId === project.id}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition focus:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 ${secondaryTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
         aria-label={labels.actions}
         title={renderTooltip ? undefined : labels.actions}
       >
         {moreIcon}
-      </button>
-    );
+      </MenuTrigger>
+    )
 
-    return renderTooltip
+    const trigger = renderTooltip
       ? renderTooltip({
-          align: "end",
+          align: 'end',
           children: button,
           label: labels.actions,
-          side: "bottom",
+          side: 'bottom',
         })
-      : button;
-  };
+      : button
+    return (
+      <Menu>
+        {trigger}
+        <MenuContent
+          data-testid={`cloud-sidebar-project-menu-${project.id}`}
+          align="end"
+          aria-label={labels.actions}
+          className="w-36"
+        >
+          {project.canManage ? (
+            <>
+              <MenuItem
+                data-testid={`cloud-sidebar-rename-project-${project.id}`}
+                onSelect={project.onRename}
+              >
+                <span className="w-3.5 text-center" aria-hidden="true">
+                  Aa
+                </span>
+                {labels.rename}
+              </MenuItem>
+              <MenuItem
+                destructive
+                data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                disabled={project.archiveDisabled}
+                onSelect={project.onArchive}
+              >
+                <span className="w-3.5 text-center" aria-hidden="true">
+                  ×
+                </span>
+                {labels.archive}
+              </MenuItem>
+            </>
+          ) : null}
+          <MenuItem
+            data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+            onSelect={() => copyProjectId(project)}
+          >
+            {copiedProjectId === project.id ? checkIcon : copyIcon}
+            {copiedProjectId === project.id ? labels.copied : labels.copyId}
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+    )
+  }
 
   return (
-    <div
-      className={
-        sectionOnly ? "w-full" : "flex h-full w-[240px] flex-col px-1.5 pt-1.5"
-      }
-    >
+    <div className={sectionOnly ? 'w-full' : 'flex h-full w-[240px] flex-col px-1.5 pt-1.5'}>
       {!sectionOnly ? header : null}
       {!sectionOnly ? (
         <nav className="space-y-0.5">
-          {navItems.map((item) => (
-            <button
+          {navItems.map(item => (
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={item.testId}
-              aria-current={item.selected ? "page" : undefined}
+              aria-current={item.selected ? 'page' : undefined}
               key={item.testId ?? item.label}
               onClick={item.onClick}
               className={
                 item.selected
-                  ? "flex h-[30px] w-full items-center gap-2 rounded-[10px] bg-[rgb(var(--color-sidebar-active))] px-2 text-left text-base leading-5 text-text-primary"
-                  : "flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                  ? 'flex h-[30px] w-full items-center gap-2 rounded-[10px] bg-[rgb(var(--color-sidebar-active))] px-2 text-left text-base leading-5 text-text-primary'
+                  : 'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
               }
             >
               {item.icon}
               <span>{item.label}</span>
-            </button>
+            </ControlButton>
           ))}
         </nav>
       ) : null}
       <div
-        className={`${sectionOnly ? "" : "mt-6 "}flex h-[30px] items-center px-2.5 text-xs font-medium ${secondaryTextClass}`}
+        className={`${sectionOnly ? '' : 'mt-6 '}flex h-[30px] items-center px-2.5 text-xs font-medium ${secondaryTextClass}`}
       >
         {sectionLabel}
         {renderTooltip ? (
           renderTooltip({
-            align: "end",
+            align: 'end',
             children: addButton,
-            className: "ml-auto",
+            className: 'ml-auto',
             label: addLabel,
-            side: "bottom",
+            side: 'bottom',
           })
         ) : (
           <span className="ml-auto inline-flex">{addButton}</span>
         )}
       </div>
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-        {projects.map((project) => (
+        {projects.map(project => (
           <div
             key={project.key}
-            data-cloud-project-menu-root
             className={
               project.selected
                 ? `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${activeBackgroundClass} ${primaryTextClass}`
                 : `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${primaryTextClass} ${hoverBackgroundClass}`
             }
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`cloud-sidebar-project-${project.id}`}
               onClick={() => onSelectProject(project.key)}
               className={`flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base ${primaryTextClass}`}
             >
               {project.icon}
-              <span className="min-w-0 flex-1 truncate text-left">
-                {project.name}
-              </span>
-            </button>
+              <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+            </ControlButton>
             {project.count ? (
               <span
                 className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs group-hover:hidden ${secondaryTextClass}`}
@@ -241,67 +250,11 @@ export function ProjectSpaceSidebar({
                 {project.count}
               </span>
             ) : null}
-            {project.actionsAvailable !== false
-              ? renderProjectMoreButton(project)
-              : null}
-            {openProjectId === project.id ? (
-              <div
-                data-testid={`cloud-sidebar-project-menu-${project.id}`}
-                role="menu"
-                className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
-              >
-                {project.canManage ? (
-                  <>
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-rename-project-${project.id}`}
-                      onClick={() => {
-                        project.onRename();
-                        setOpenProjectId(null);
-                      }}
-                      role="menuitem"
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                    >
-                      <span className="w-3.5 text-center" aria-hidden="true">
-                        Aa
-                      </span>
-                      {labels.rename}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-archive-project-${project.id}`}
-                      onClick={() => {
-                        project.onArchive();
-                        setOpenProjectId(null);
-                      }}
-                      role="menuitem"
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
-                    >
-                      <span className="w-3.5 text-center" aria-hidden="true">
-                        ×
-                      </span>
-                      {labels.archive}
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
-                  onClick={() => copyProjectId(project)}
-                  role="menuitem"
-                  className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                >
-                  {copiedProjectId === project.id ? checkIcon : copyIcon}
-                  {copiedProjectId === project.id
-                    ? labels.copied
-                    : labels.copyId}
-                </button>
-              </div>
-            ) : null}
+            {project.actionsAvailable !== false ? renderProjectMoreButton(project) : null}
           </div>
         ))}
       </div>
       {!sectionOnly ? account : null}
     </div>
-  );
+  )
 }

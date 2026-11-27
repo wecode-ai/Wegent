@@ -6,6 +6,7 @@ pub(super) fn identity(device_id: &str, snapshot: &Value) -> Value {
 }
 
 pub(super) async fn confirm(
+    controller: &LocalBackendConnectionController,
     connection: &ConnectionConfig,
     instance: &str,
     device_id: &str,
@@ -24,18 +25,37 @@ pub(super) async fn confirm(
     {
         return Err(error("plugin_local_invalid_response"));
     }
-    let response = post(
-        connection,
-        "/api/plugins/local-sync/complete",
-        &json!({
+    let body = json!({
             "protocolVersion":1, "instanceId":instance,
             "completion":{
                 "deviceId":device_id, "generation":snapshot["generation"],
                 "installedRevisions":snapshot["installedRevisions"], "result":result,
             }
-        }),
-    )
-    .await?;
+    });
+    let send = || post(connection, "/api/plugins/local-sync/complete", &body);
+    let response = if targeted {
+        controller.retry_plugin_contention(connection, send).await
+    } else {
+        send().await
+    }
+    .map_err(|failure| {
+        if matches!(
+            failure.code.as_str(),
+            "plugin_write_busy"
+                | "plugin_write_conflict"
+                | "plugin_write_unavailable"
+                | "plugin_write_lease_lost"
+                | "plugin_local_http_unavailable"
+        ) {
+            crate::logging::write_executor_error_line(&format!(
+                "Local plugin materialized; confirmation remains pending: code={}",
+                failure.code
+            ));
+            error("plugin_local_confirmation_pending")
+        } else {
+            failure
+        }
+    })?;
     if !response["recorded"].is_array() || !response["superseded"].is_array() {
         return Err(error("plugin_local_invalid_response"));
     }

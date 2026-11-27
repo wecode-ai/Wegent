@@ -140,7 +140,9 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
       failAgentResponse: vi.fn(),
     } as unknown as ProjectChatClient
     api = {
-      issues: { get: vi.fn().mockResolvedValue(issue) } as unknown as SharedWorkspaceApi['issues'],
+      issues: {
+        get: vi.fn().mockResolvedValue(issue),
+      } as unknown as SharedWorkspaceApi['issues'],
       attachments: {
         importContexts: vi.fn().mockResolvedValue([
           {
@@ -169,7 +171,14 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
                 client={client}
                 project={project}
                 issue={issue}
-                agents={[{ id: 'agent-1', name: 'AI', runtime: 'codex', status: 'active' }]}
+                agents={[
+                  {
+                    id: 'agent-1',
+                    name: 'AI',
+                    runtime: 'codex',
+                    status: 'active',
+                  },
+                ]}
                 messages={[user, { ...run, status }]}
                 onMessages={() => {}}
                 canComment
@@ -194,9 +203,7 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
         '[data-testid="collaboration-chat-reply-input-root"]'
       )!
       input.value = text
-      input.dispatchEvent(
-        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true })
-      )
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
     })
     await act(async () =>
       (
@@ -232,7 +239,10 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
     await act(async () => handlers.onAssistantSettled?.('turn-1', 'succeeded'))
     expect(client.send).toHaveBeenCalledOnce()
     expect(client.send).toHaveBeenCalledWith(
-      expect.objectContaining({ replyToMessageId: 'root', text: 'Continue this card' })
+      expect.objectContaining({
+        replyToMessageId: 'root',
+        text: 'Continue this card',
+      })
     )
     expect(runtime.work.sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -302,7 +312,9 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
   it('preserves the runtime attachment IDs when importing files into the reply comment', async () => {
     await mount()
     const fileInput = container.querySelector<HTMLInputElement>('input[type=file]')!
-    Object.defineProperty(fileInput, 'files', { value: [new File(['a'], 'notes.txt')] })
+    Object.defineProperty(fileInput, 'files', {
+      value: [new File(['a'], 'notes.txt')],
+    })
     await act(async () => fileInput.dispatchEvent(new Event('change', { bubbles: true })))
     await send('Read this')
     await act(async () => handlers.onAssistantSettled?.('turn-1', 'succeeded'))
@@ -315,5 +327,53 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
         text: 'Read this\n\n[notes.txt](wegent://attachments/issue-attachment)',
       })
     )
+  })
+  it('keeps a queued reply on subscription failure and retries through one fresh catalog read', async () => {
+    await mount()
+    await send('Retry the original session')
+    const oldHandlers = handlers
+    vi.mocked(runtime.subscribe).mockRejectedValueOnce(new Error('Stream disconnected'))
+    await act(async () => oldHandlers.onHistoryInvalidated?.())
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Stream disconnected')
+    await act(async () => oldHandlers.onAssistantSettled?.('old turn', 'succeeded'))
+    expect(client.send).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Retry the original session')
+    const work = await runtime.work.listRuntimeWork()
+    work.chats[0].tasks[0].running = false
+    const before = vi.mocked(runtime.work.listRuntimeWork).mock.calls.length
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-testid="collaboration-chat-retry-root"]')!.click()
+    )
+    expect(runtime.work.listRuntimeWork).toHaveBeenCalledTimes(before + 1)
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(runtime.work.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: { deviceId: 'device-1', taskId: 'original-task' },
+        message: 'Retry the original session',
+      })
+    )
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  it('does not release queued work while the replacement subscription is still pending', async () => {
+    await mount()
+    await send('Wait for the new subscription')
+    const oldHandlers = handlers
+    let resolveConnection!: (cleanup: () => void) => void
+    vi.mocked(runtime.subscribe).mockImplementationOnce(async (_address, callbacks) => {
+      handlers = callbacks
+      return new Promise(resolve => {
+        resolveConnection = resolve
+      })
+    })
+    await act(async () => oldHandlers.onHistoryInvalidated?.())
+    await act(async () => handlers.onAssistantSettled?.('new turn', 'succeeded'))
+    expect(client.send).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Wait for the new subscription')
+    const work = await runtime.work.listRuntimeWork()
+    work.chats[0].tasks[0].running = false
+    await act(async () => resolveConnection(vi.fn()))
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
   })
 })

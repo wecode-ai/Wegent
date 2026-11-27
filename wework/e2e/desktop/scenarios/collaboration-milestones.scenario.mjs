@@ -5,6 +5,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
@@ -66,10 +67,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const bulkMilestone = async (control, id) => {
     await selectCollaborationProjectView(control, CONTENT, 'table')
     await control.command('waitFor', scoped('collaboration-issue-table'))
-    const unchecked = `${scoped('collaboration-issue-table-select-all')}:not(:checked)`
-    if (Number(await control.command('getElementCount', unchecked)) > 0) {
-      await control.command('click', unchecked)
+    const selectAll = `${scoped('collaboration-issue-table-select-all')}[role="checkbox"]`
+    await control.command('waitFor', selectAll, { visible: true })
+    const selected = `${selectAll}[aria-checked="true"]`
+    if (Number(await control.command('getElementCount', selected)) === 0) {
+      await control.command('clickWhenEnabled', selectAll)
     }
+    await control.command('waitFor', selected)
     await control.command('waitFor', `${scoped('milestone-bulk-select')}:enabled`)
     await selectMilestone(control, id ?? '', 'milestone-bulk-select')
     await control.command('clickWhenEnabled', scoped('milestone-bulk-apply'))
@@ -157,8 +161,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     const filterShell = `${CONTENT} .milestone-picker-filter`
     assert.equal(await style(control, filterShell, 'outline-style'), 'solid')
     assert.ok(parseFloat(await style(control, filterShell, 'outline-width')) >= 2)
+    assert.equal(await style(control, filterShell, 'box-shadow'), 'none')
   }
   const assertFormStates = async control => {
+    await verifyProjectFieldFocus(control, 'milestone-title', { scope: CONTENT })
     await control.command('focus', scoped('milestone-title'))
     assert.equal(await style(control, scoped('milestone-title'), 'border-top-style'), 'solid')
     assert.ok(parseFloat(await style(control, scoped('milestone-title'), 'border-top-width')) >= 1)
@@ -608,6 +614,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '协作交付目标',
       })
       await assertToolbarTypography(control)
+      await selectCollaborationProjectView(control, CONTENT, 'milestones')
+      await control.command('waitFor', scoped('milestones-back'))
+      await selectCollaborationProjectView(control, CONTENT, 'table')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Milestones and table must use the same selected milestone'
+      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Returning to board must retain the shared milestone'
+      )
+      await showAllCollaborationIssues(control, CONTENT)
       await selectMilestone(control, 'all', 'milestone-filter')
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped('cloud-board-parent-rows'))
@@ -674,6 +695,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await selectMilestone(control, localId, 'milestone-filter')
       await openMilestones(control)
+      await control.command('clickWhenEnabled', scoped('milestones-back'))
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')

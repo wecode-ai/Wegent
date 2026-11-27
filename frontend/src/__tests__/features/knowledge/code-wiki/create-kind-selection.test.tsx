@@ -9,6 +9,7 @@
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
@@ -67,16 +68,38 @@ jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
   GenerationStrategySelect: () => null,
 }))
 
-jest.mock('@/components/model-select/ModelRefSelector', () => ({
-  ModelRefSelector: ({ error }: { error?: string }) => (
-    <div data-testid="model-ref-selector">{error}</div>
-  ),
-}))
+const mockUseActualModelSelector = jest.fn(() => false)
+jest.mock('@/components/model-select/ModelRefSelector', () => {
+  const { ModelRefSelector: ActualModelRefSelector } = jest.requireActual<
+    typeof import('@/components/model-select/ModelRefSelector')
+  >('@/components/model-select/ModelRefSelector')
+  return {
+    ModelRefSelector: (props: ComponentProps<typeof ActualModelRefSelector>) =>
+      mockUseActualModelSelector() ? (
+        <ActualModelRefSelector {...props} />
+      ) : (
+        <div data-testid="model-ref-selector">
+          {props.error}
+          {props.dataTestId === 'code-wiki-execution-model-select' && (
+            <button
+              type="button"
+              onClick={() =>
+                props.onChange({ name: 'wiki-model', type: 'public', namespace: 'default' })
+              }
+            >
+              Choose Wiki model
+            </button>
+          )}
+        </div>
+      ),
+  }
+})
 
 // The code option is behind a staged rollout. These tests are about what choosing it
 // does, so they turn it on; the test below is about the rollout itself.
 const mockRuntimeConfig = jest.fn(() => ({ enableCodeWiki: true }))
 jest.mock('@/lib/runtime-config', () => ({
+  getApiBaseUrl: () => '',
   getRuntimeConfigSync: () => mockRuntimeConfig(),
 }))
 
@@ -100,11 +123,44 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
 
   beforeEach(() => {
     mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true })
+    mockUseActualModelSelector.mockReturnValue(false)
+    jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({ data: [] })
     mockedGetKnowledgeBaseRetrievalProfile.mockReset()
     mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(() => new Promise(() => undefined))
   })
 
-  it('loads retrieval resources for the selected group rather than the opening scope', async () => {
+  it('loads only the active retrieval panel and ignores late responses from the previous space', async () => {
+    let resolvePersonal!: () => void
+    jest
+      .mocked(retrieverApis.getUnifiedRetrievers)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolvePersonal = () =>
+              resolve({
+                data: [
+                  {
+                    name: 'personal-index',
+                    displayName: 'Personal index',
+                    type: 'user',
+                    namespace: 'default',
+                    storageType: 'qdrant',
+                  },
+                ],
+              })
+          })
+      )
+      .mockResolvedValueOnce({
+        data: [
+          {
+            name: 'team-index',
+            displayName: 'Team index',
+            type: 'group',
+            namespace: 'team-space',
+            storageType: 'qdrant',
+          },
+        ],
+      })
     render(
       <CreateKnowledgeBaseDialog
         open
@@ -128,9 +184,21 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
     )
+    fireEvent.click(screen.getByTestId('rag-mode-disabled'))
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-team'))
 
+    expect(retrieverApis.getUnifiedRetrievers).not.toHaveBeenCalledWith('group', 'team-space')
+    expect(modelApis.getUnifiedModels).not.toHaveBeenCalledWith(
+      undefined,
+      false,
+      'group',
+      'team-space',
+      'embedding'
+    )
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    expect(screen.getByTestId('rag-mode-auto')).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
     )
@@ -144,25 +212,56 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       )
     )
 
+    expect(await screen.findByText('Team index', { exact: false })).toBeVisible()
+    await act(async () => resolvePersonal())
+    expect(screen.getByText('Team index', { exact: false })).toBeVisible()
+    expect(screen.queryByText('Personal index', { exact: false })).not.toBeInTheDocument()
+
+    jest.mocked(retrieverApis.getUnifiedRetrievers).mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    fireEvent.click(await screen.findByTestId('retry-retriever-catalog'))
+    expect(screen.getByText('Team index', { exact: false })).toBeVisible()
+    await waitFor(() =>
+      expect(screen.queryByTestId('retry-retriever-catalog')).not.toBeInTheDocument()
+    )
+
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-personal'))
+    expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    expect(screen.getByTestId('rag-mode-disabled')).toHaveAttribute('aria-pressed', 'true')
+    expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
+    fireEvent.click(screen.getByTestId('rag-mode-auto'))
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('personal', undefined)
     )
   })
 
-  it('starts on documents, where a name is required', async () => {
+  it('opens Basic Information and returns to the name when validation fails on another section', () => {
     const onSubmit = jest.fn()
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    const basic = screen.getByTestId('knowledge-basic-section-trigger')
+    expect(basic.getAttribute('aria-current')).toBe('true')
+    fireEvent.change(screen.getByTestId('kb-description-input'), {
+      target: { value: 'Release documentation' },
+    })
+    fireEvent.click(screen.getByTestId('knowledge-access-section-trigger'))
     fireEvent.click(screen.getByTestId('submit-create-kb'))
 
-    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled())
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(basic.getAttribute('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(screen.getByTestId('kb-name-input'))
+    expect(screen.getByDisplayValue('Release documentation')).toBeInTheDocument()
   })
 
-  it('loads the retrieval profile for documents before a kind is selected', async () => {
+  it('loads the retrieval profile only when Retrieval is opened', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    expect(getKnowledgeBaseRetrievalProfile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
   })
 
@@ -180,6 +279,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     )
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() => expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     await act(async () => {
       resolveProfile({
@@ -196,12 +296,43 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    const syncTab = screen.getByTestId('knowledge-data-sync-section-trigger')
+    expect(screen.queryByTestId('knowledge-dingtalk-auto-sync')).not.toBeInTheDocument()
+    fireEvent.click(syncTab)
+    expect(screen.getByTestId('knowledge-dingtalk-auto-sync')).toBeVisible()
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
 
     // A code wiki has no notebook/classic choice: it has a reader of its own.
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
-    expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
+    expect(syncTab).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-language')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
+    expect(screen.getByTestId('code-wiki-language')).toBeVisible()
+  })
+
+  it('submits the selected default document view', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    expect(screen.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+    const documentView = screen.getByTestId('switch-kb-type')
+    expect(documentView).toHaveTextContent('typeClassic')
+    fireEvent.click(documentView)
+    expect(documentView).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.change(screen.getByTestId('kb-name-input'), { target: { value: 'Docs' } })
+    fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kb_type: 'classic',
+        })
+      )
+    )
   })
 
   it('offers both ways to name a repository', () => {
@@ -220,6 +351,22 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     // A wiki hands a whole repository to whichever model it names, so that is a
     // choice the creator makes rather than one inherited from the team's bot.
     const onSubmit = jest.fn()
+    let finishResolve!: () => void
+    jest.mocked(codeWikiApi.resolve).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishResolve = () =>
+            resolve({
+              exists: true,
+              visibility: 'public',
+              default_branch: 'main',
+              name: 'wecode-ai/Wegent',
+              description: '',
+              access: 'public',
+              existing_wikis: [],
+            })
+        })
+    )
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
@@ -227,22 +374,138 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
       target: { value: 'https://github.com/wecode-ai/Wegent.git' },
     })
-    // The URL is committed to the form only once the debounced probe has run. Until
-    // then the repository check below fails first and this proves nothing.
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
+    // Let the repository lookup run while a different section is visible.
     await waitFor(() => expect(codeWikiApi.resolve).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('code-wiki-show-generation-task'))
+    await act(async () => finishResolve())
+    expect(screen.getByTestId('code-wiki-show-generation-task')).toBeChecked()
 
     fireEvent.click(screen.getByTestId('submit-create-kb'))
 
     // Named rather than just absent: without the model error the repository check
     // above would produce the same silence, and this would pass for the wrong reason.
     await screen.findByText('knowledge:codeWiki.create.modelRequired')
+    expect(screen.getByTestId('knowledge-generation-section-trigger')).toHaveAttribute(
+      'aria-current',
+      'true'
+    )
+    expect(screen.getByDisplayValue('https://github.com/wecode-ai/Wegent.git')).toBeInTheDocument()
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('uses the default Wiki model without requiring a visit to generation settings', async () => {
+    mockUseActualModelSelector.mockReturnValue(true)
+    jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({
+      data: [
+        {
+          name: 'default-model',
+          displayName: 'Default model',
+          namespace: 'default',
+          type: 'public',
+        },
+      ],
+    })
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+    fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
+      target: { value: 'https://github.com/wecode-ai/Wegent' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('code-wiki-execution-model-select')).toHaveTextContent(
+        'Default model'
+      )
+    )
+    expect(screen.getByTestId('code-wiki-execution-model-select')).not.toBeVisible()
+    expect(screen.queryByTestId('code-wiki-language')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          execution_model_ref: expect.objectContaining({ name: 'default-model' }),
+        })
+      )
+    )
+  })
+
+  it('submits the current repository while an earlier probe is returning', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const olderUrl = 'https://github.com/wecode-ai/old-repo'
+    const currentUrl = 'https://github.com/wecode-ai/current-repo'
+    let resolveOlder!: () => void
+    jest.useFakeTimers()
+    try {
+      jest.mocked(codeWikiApi.resolve).mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOlder = () =>
+              resolve({
+                exists: true,
+                visibility: 'public',
+                default_branch: 'main',
+                name: 'Old repository',
+                description: '',
+                access: 'public',
+                existing_wikis: [],
+              })
+          })
+      )
+      render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+      fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+      fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
+      fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+      fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
+      fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+      const repository = screen.getByTestId('code-wiki-source-url')
+      fireEvent.change(repository, { target: { value: olderUrl } })
+      act(() => jest.advanceTimersByTime(600))
+      fireEvent.change(repository, { target: { value: currentUrl } })
+      await act(async () => resolveOlder())
+      fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+      fireEvent.click(screen.getByRole('switch'))
+      fireEvent.click(screen.getByTestId('submit-create-kb'))
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source_url: currentUrl,
+          resolved_name: undefined,
+        })
+      )
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('shows and submits the same repository after switching knowledge base kinds', () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const url = 'https://github.com/wecode-ai/wegent'
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
+    fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+    fireEvent.change(screen.getByTestId('code-wiki-source-url'), { target: { value: url } })
+    fireEvent.click(screen.getByTestId('create-kb-kind-document'))
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+
+    expect(screen.getByTestId('code-wiki-source-mode-url')).toBeChecked()
+    expect(screen.getByTestId('code-wiki-source-url')).toHaveValue(url)
+    fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ source_url: url }))
   })
 
   it('tells the creator that generating exposes the repository to the model', () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
 
     expect(screen.getByText('knowledge:codeWiki.create.modelDescription')).toBeInTheDocument()
   })

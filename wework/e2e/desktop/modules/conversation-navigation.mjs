@@ -1,9 +1,10 @@
+import { Buffer } from 'node:buffer'
+
 import {
   assertDesktopComposerDocked,
   countTextOccurrences,
   getElementMetrics,
   getSingleElementMetrics,
-  verifyViewImageProcessingBlock,
   waitForComposerFocus,
   waitForElementInsideScroller,
   waitForOverflowMetrics,
@@ -61,8 +62,6 @@ import {
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
   TURN_NAVIGATION_REGRESSION_TURN_COUNT,
   TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN,
-  VIEW_IMAGE_COMPLETION_TEXT,
-  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
@@ -803,6 +802,8 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
+  await verifyAttachmentOnlyGuidance({ composerSelector, control })
+
   if (returnTaskRowTestId) {
     await ensureTaskRowVisible(control, returnTaskRowTestId)
     await control.command('clickWhenEnabled', `[data-testid="${returnTaskRowTestId}"]`, {
@@ -813,6 +814,51 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+}
+
+async function verifyAttachmentOnlyGuidance({ composerSelector, control }) {
+  const scenario = 'guidance_attachment'
+  const filename = 'guidance-file.txt'
+  const fileContent = 'WEWORK_DESKTOP_E2E_GUIDANCE_FILE_CONTENT'
+  control.setScenario(scenario)
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_ACTIVE_PROMPT)
+  await control.awaitScenarioRequestCount(scenario, 1)
+  control.releaseGuidanceScrollToolExecution()
+  await control.awaitScenarioRequestCount(scenario, 2)
+
+  await control.command('dropFile', composerSelector, {
+    filename,
+    mimeType: 'text/plain',
+    value: Buffer.from(fileContent).toString('base64'),
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), '')
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="guide-current-turn-option"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const guidedRequest = await control.awaitScenarioRequestCount(scenario, 3)
+  assert.ok(
+    JSON.stringify(guidedRequest.body).includes(fileContent),
+    'Attachment-only guidance did not deliver the file contents to the running turn'
+  )
+  control.releaseGuidanceScrollCompletion()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-text-attachment"]`,
+    { text: fileContent, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
 }
 
 async function verifyTurnNavigationTracksVisibleTurnMessages(
@@ -1227,40 +1273,13 @@ async function reopenCurrentTurnNavigationTask(
     )
 
     await verifyEnvironmentPanelScrollStability(control)
+    await verifyTurnNavigationComposerClearance(control, expectedTurnCount)
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   return restartedApp
-}
-
-async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
-  control.setScenario('view_image')
-  await control.command(
-    'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await selectE2EModel(control)
-  await sendPrompt(control, composerSelector, VIEW_IMAGE_PROMPT)
-  await withTimeout(
-    control.awaitScenarioRequest('view_image'),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The model service did not receive the standalone view_image request'
-  )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      text: VIEW_IMAGE_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await verifyViewImageProcessingBlock(control)
 }
 
 async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
@@ -1741,10 +1760,7 @@ export {
   verifyBackgroundGuidanceNavigation,
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
-  verifyEnvironmentPanelScrollStability,
-  verifyTurnNavigationComposerClearance,
   reopenCurrentTurnNavigationTask,
-  verifyStandaloneViewImageTask,
   verifyVisionSidecar,
   verifyMultimodalVision,
   startPausedQueueCase,

@@ -567,19 +567,6 @@ mod tests {
     }
 
     #[test]
-    fn cached_search_ignores_hidden_context_and_keeps_user_presentation_identity() {
-        let messages = vec![json!({
-            "id":"provider-user", "clientUserMessageId":"client-user", "turnId":"turn-1",
-            "role":"user", "content":"<application_context>needle</application_context>Visible",
-        })];
-        let hidden = search_cached_transcript(&messages, "needle", 250);
-        assert_eq!(hidden["totalMatches"], 0);
-        let visible = search_cached_transcript(&messages, "Visible", 250);
-        assert_eq!(visible["matches"][0]["messageId"], "client-user");
-        assert_eq!(visible["matches"][0]["itemId"], "client-user");
-    }
-
-    #[test]
     fn cached_search_ignores_hidden_failed_final_content() {
         for content in [
             "needle",

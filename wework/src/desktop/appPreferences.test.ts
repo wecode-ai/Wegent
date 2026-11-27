@@ -46,6 +46,7 @@ const mergedDefaultPreferences = {
   browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  appshotsShortcut: 'CommandOrControl+Shift+2',
   computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
@@ -160,6 +161,21 @@ describe('appPreferences', () => {
 
     await expect(getAppPreferences()).resolves.toMatchObject({
       performanceRecordingEnabled: expected,
+    })
+  })
+
+  test.each([
+    [undefined, 'CommandOrControl+Shift+2'],
+    [null, null],
+    ['', null],
+    [' Command+Shift+3 ', 'Command+Shift+3'],
+  ])('loads Appshots shortcut preference %j as %j', async (stored, expected) => {
+    invokeMock.mockResolvedValue(stored === undefined ? {} : { appshotsShortcut: stored })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({
+      appshotsShortcut: expected,
     })
   })
 

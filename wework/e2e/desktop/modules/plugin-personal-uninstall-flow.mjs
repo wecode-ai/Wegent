@@ -4,6 +4,7 @@ import { lstat, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { refreshPluginInventory } from './plugin-inventory-state.mjs'
+import { collectLocalPluginCacheDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -12,10 +13,241 @@ import {
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
-import { resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import { CLOUD_DEVICE_ID, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+export const personalVersionSlug = 'desktop-e2e-personal-version'
+
+export async function uploadPersonalVersionFixture({
+  request,
+  backendUrl,
+  packageBytes,
+  version,
+  pluginSlug = personalVersionSlug,
+  targets,
+}) {
+  const initialized = await request('/plugins/submissions/init', 'POST', {
+    slug: pluginSlug,
+    displayName: pluginSlug === personalVersionSlug ? 'Personal Version E2E' : pluginSlug,
+    version,
+    filename: `${pluginSlug}-${version}.zip`,
+    sha256: digest(packageBytes),
+    sizeBytes: packageBytes.length,
+    listingType: 'plugin',
+    purpose: 'restricted_share',
+    visibility: 'personal',
+    targets,
+    releaseNotes: 'Verify personal release HTTP permission boundaries.',
+  })
+  const uploaded = await fetch(new URL(initialized.uploadUrl, backendUrl), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/zip' },
+    body: packageBytes,
+  })
+  assert.equal(uploaded.status, 204, 'The HTTP boundary fixture package failed to upload')
+  return initialized
+}
+
+export async function deletePersonalPluginListing(request, pluginId) {
+  const path = `/plugins/marketplace/${pluginId}`
+  const impact = await request(`${path}/delete-impact`)
+  await request(path, 'DELETE', { impactRevision: impact.impactRevision, revokeAndDelete: false })
+}
+
+/** Keep the real first /complete pending until a local-only deletion is confirmed. */
+export async function verifyPersonalPublicationDeletion({
+  cloud,
+  control,
+  apiProxy,
+  prepareSource,
+  report,
+}) {
+  const name = 'author-publication-delete-race-e2e'
+  const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(status.ready && status.deviceId, 'The publication fixture requires the local Runtime')
+  await waitForPersonalPluginConnection(control, status.deviceId)
+  await prepareSource(name)
+  const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
+  assert.ok(marketplace?.path, 'The real personal source marketplace is unavailable')
+  const sourcePath = join(marketplace.path, 'plugins', name)
+  const original = await sourceFiles(sourcePath)
+  assert.equal(await accountPlugin(cloud, name), undefined)
+  await control.command('uninstallInstalledPlugin', 'body', {
+    value: `${name}@wework-personal`,
+  })
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', testId('plugins-search-input'))
+  await control.command('click', testId('plugins-distribution-tab-personal'))
+  await control.command('fill', testId('plugins-search-input'), { value: name })
+  await refreshPluginInventory(control)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
+  )
+  const previousRule = apiProxy.rule
+  const start = apiProxy.requests.length
+  apiProxy.rule = entry =>
+    entry.method === 'POST' && /^\/api\/plugins\/submissions\/\d+\/complete$/.test(entry.path)
+      ? 'pause-request'
+      : previousRule(entry)
+  let completing
+  await control.command('holdLocalExecutorRequests', 'body', {
+    value: JSON.stringify({
+      method: 'executor.plugins.personal.package',
+      phase: 'after-response',
+      maxHeldCount: 1,
+    }),
+  })
+  try {
+    await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    await until(
+      async () => JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body')),
+      state => state?.heldCount === 1,
+      'First publication did not reach real package creation before deletion preflight'
+    )
+    await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
+    await control.command(
+      'clickWhenEnabled',
+      '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
+    )
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+        /本地插件源码|local source/i.test(snapshot.text),
+      'Deletion preflight did not show the unpublished local source'
+    )
+    await control.command('releaseLocalExecutorRequestHold', 'body')
+    completing = await until(
+      () => apiProxy.requests.slice(start).find(entry => entry.fault === 'pause-request'),
+      entry => typeof entry?.release === 'function',
+      'First private publication did not issue its real /complete request'
+    )
+    const listing = async () =>
+      (await pluginApi(cloud, '/plugins/marketplace')).items.find(item => item.name === name)
+    assert.equal(await listing(), undefined, 'The paused publication was already visible')
+    await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+    await control.command('waitFor', `${testId('plugin-delete-confirm-button')}:disabled`, {
+      stableMs: 250,
+    })
+    assert.deepEqual(
+      await sourceFiles(sourcePath),
+      original,
+      'Deletion removed an in-flight source'
+    )
+    assert.equal(completing.released, undefined)
+    assert.equal(await listing(), undefined)
+    report.waitedForComplete = true
+    assert.equal(completing.release(), true, 'The real publication request was not released')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+        /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+      'Deletion did not refresh cloud impact after the in-flight publication settled'
+    )
+    const published = await listing()
+    assert.ok(published?.latestReleaseId, 'Deletion did not recheck the newly published release')
+    assert.equal(await accountPlugin(cloud, name), undefined, 'Cancellation installed the plugin')
+    assert.deepEqual(await sourceFiles(sourcePath), original)
+    report.revalidatedPluginId = published.id
+    await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+    await control.command('waitFor', testId('delete-personal-plugin-dialog'), { visible: false })
+    assert.equal(await pathExists(sourcePath), false, 'Confirmed deletion retained author source')
+    assert.equal(await listing(), undefined, 'Confirmed deletion left the published plugin')
+    assert.equal(await accountPlugin(cloud, name), undefined)
+    const rows = await cloud.queryDatabase('SELECT status FROM plugins WHERE id=%s', [published.id])
+    assert.deepEqual(
+      rows.map(row => row.status),
+      ['deleted']
+    )
+    assert.equal(
+      apiProxy.requests
+        .slice(start)
+        .some(
+          entry =>
+            entry.method === 'POST' &&
+            entry.path === `/api/plugins/marketplace/${published.id}/install`
+        ),
+      false,
+      'Cancelled publication continued with an account installation'
+    )
+    report.deletedSourceAndCloud = true
+    console.log(`[personal-plugin-publication-delete] PASS ${JSON.stringify(report)}`)
+  } finally {
+    apiProxy.rule = previousRule
+    if (completing && !completing.released && !completing.cancelled) completing.release()
+    await control.command('releaseLocalExecutorRequestHold', 'body')
+  }
+}
+
+export async function verifyInstalledPersonalPluginDeletion({
+  cloud,
+  control,
+  prepareSource,
+  report,
+}) {
+  const name = 'author-installed-delete-e2e'
+  const localId = `${name}@wework-personal`
+  await prepareSource(name)
+  await control.command('uninstallInstalledPlugin', 'body', { value: localId })
+  await openPersonalPlugin(control, { name, id: localId }, { refresh: true })
+  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+  await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+  const listing = await until(
+    async () =>
+      (await pluginApi(cloud, '/plugins/marketplace')).items.find(item => item.name === name),
+    item => Boolean(item?.latestReleaseId),
+    'The installed-detail deletion fixture did not publish its private release'
+  )
+  const installed = await waitForAuthorCloudInstall(cloud, listing)
+  const source = await snapshotPersonalSource(control, listing)
+  await control.command('click', testId('plugin-detail-back-button'))
+  await control.command('clickWhenEnabled', testId(`plugins-installed-strip-item-${localId}`))
+  await control.command('clickWhenEnabled', testId(`plugin-detail-actions-${localId}`))
+  await control.command('clickWhenEnabled', testId(`plugin-detail-delete-${localId}`))
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+      /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+    'Installed-detail deletion did not resolve its omitted cloud identity'
+  )
+  await assertPersonalSourceUnchanged(source)
+  assert.ok(await accountPlugin(cloud, name), 'Cloud membership disappeared before confirmation')
+  report.confirmedCloudImpact = true
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await control.command('waitFor', testId('delete-personal-plugin-dialog'), { visible: false })
+  assert.equal(
+    await pathExists(source.sourcePath),
+    false,
+    'Installed-detail deletion retained source'
+  )
+  assert.equal(
+    await accountPlugin(cloud, name),
+    undefined,
+    'Installed-detail deletion retained membership'
+  )
+  await until(
+    () =>
+      materializedPlugin(
+        cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME,
+        installed.metadata.labels.id
+      ),
+    item => !item,
+    'Installed-detail deletion left an active cloud device plugin'
+  )
+  const rows = await cloud.queryDatabase('SELECT status FROM plugins WHERE id=%s', [listing.id])
+  assert.deepEqual(
+    rows.map(row => row.status),
+    ['deleted']
+  )
+  report.deletedSourceAndCloud = true
+  console.log(`[personal-plugin-installed-delete] PASS ${JSON.stringify(report)}`)
+}
 
 async function sourceFiles(root, directory = root) {
   const metadata = await lstat(directory)
@@ -33,7 +265,7 @@ async function sourceFiles(root, directory = root) {
   return files
 }
 
-async function snapshotPersonalSource(control, plugin) {
+export async function snapshotPersonalSource(control, plugin) {
   const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
   assert.ok(marketplace?.path, 'The real personal marketplace is unavailable')
   const sourcePath = join(marketplace.path, 'plugins', plugin.name)
@@ -117,11 +349,14 @@ async function openPersonalPluginDetail(control, plugin) {
   await control.command('waitFor', 'button[data-testid^="plugin-detail-actions-"]')
 }
 
-async function uninstallPersonalPluginInUi(control, plugin, options) {
+export async function uninstallPersonalPluginInUi(control, plugin, options) {
   await openPersonalPlugin(control, plugin, options)
   await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
   await control.command('click', 'button[data-testid^="plugin-detail-actions-"]')
-  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-uninstall-"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[role="menuitem"][data-testid^="plugin-detail-uninstall-"]'
+  )
   await control.command('waitFor', testId('uninstall-plugin-dialog'))
   await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
   await control.command(
@@ -158,6 +393,82 @@ async function assertSharedRelease(owner, plugin, access) {
   assert.equal(current.latestReleaseId, plugin.latestReleaseId)
   assert.equal(current.version, plugin.version)
   assert.deepEqual(await pluginApi(owner, `/plugins/marketplace/${plugin.id}/access`), access)
+}
+
+export async function waitForAuthorCloudInstall(cloud, plugin) {
+  return until(
+    () => accountPlugin(cloud, plugin.name),
+    item =>
+      item?.spec.pluginId === Number(plugin.id) &&
+      item.spec.releaseId === plugin.latestReleaseId &&
+      item.status?.devices?.some(
+        receipt =>
+          receipt.deviceId === CLOUD_DEVICE_ID &&
+          receipt.state === 'installed' &&
+          receipt.actualReleaseId === plugin.latestReleaseId
+      ),
+    `The cloud device did not install the author's release for ${plugin.name}`
+  )
+}
+
+export async function verifyUnlinkedOldPersonalPackageReinstall({
+  cloud,
+  request,
+  plugin,
+  oldPackage,
+  newPackage,
+  version,
+}) {
+  const installed = await accountPlugin(cloud, plugin.name)
+  assert.ok(installed, 'The old-package reinstall fixture has no account install')
+  const next = await uploadPersonalVersionFixture({
+    request,
+    backendUrl: cloud.backendUrl,
+    packageBytes: newPackage,
+    pluginSlug: plugin.name,
+    version,
+    targets: [],
+  })
+  const completed = await request(`/plugins/submissions/${next.submissionId}/complete`, 'POST')
+  assert.equal(completed.submission.status, 'approved')
+  assert.notEqual(completed.plugin.latestReleaseId, plugin.latestReleaseId)
+  await pluginApi(cloud, `/plugins/installed/${installed.metadata.labels.id}`, 'DELETE')
+  const home = cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME
+  await until(
+    () => materializedPlugin(home, installed.metadata.labels.id),
+    item => !item,
+    'The cloud device did not remove the old-package reinstall fixture'
+  )
+  const path = `/plugins/marketplace/${plugin.id}`
+  await deletePersonalPluginListing(request, plugin.id)
+  const response = await fetch(`${cloud.backendUrl}/api/plugins/submissions/init`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      slug: plugin.name,
+      displayName: plugin.displayName,
+      version: plugin.version,
+      filename: `${plugin.name}.zip`,
+      sha256: digest(oldPackage),
+      sizeBytes: oldPackage.length,
+      listingType: 'plugin',
+      visibility: 'personal',
+      privateFirstInstall: true,
+      restoreDeleted: true,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  assert.equal(response.status, 409, 'The old package did not resolve the retained plugin')
+  const { detail } = await response.json()
+  assert.equal(detail.code, 'PRIVATE_PLUGIN_REINSTALL_REQUIRED')
+  assert.equal(detail.pluginId, Number(plugin.id))
+  assert.equal(detail.releaseId, next.releaseId)
+  assert.equal(await accountPlugin(cloud, plugin.name), undefined)
+  await request(`${path}/install?restore_deleted=true`, 'POST')
+  const restored = await waitForAuthorCloudInstall(cloud, completed.plugin)
+  assert.equal(restored.metadata.labels.id, installed.metadata.labels.id)
+  assert.equal((await materializedPlugin(home, restored.metadata.labels.id))?.version, version)
+  return restored
 }
 
 export async function disconnectPersonalPluginRuntime(control, cloud, plugin) {
@@ -260,12 +571,38 @@ export async function verifyAuthorSourceUninstall({
     true,
     'The author source was not installed before uninstall'
   )
-  await uninstallPersonalPluginInUi(control, plugin, { refresh: true, expectedVersion: version })
-  await until(
-    () => pathExists(cache),
-    exists => !exists,
-    'Author local runtime cache survived uninstall'
+  const beforeUninstall = await collectLocalPluginCacheDiagnostics(
+    codexHome,
+    plugin.name,
+    'wework-personal'
   )
+  const uninstallStartedAt = new Date().toISOString()
+  try {
+    await uninstallPersonalPluginInUi(control, plugin, { refresh: true, expectedVersion: version })
+    await until(
+      () => pathExists(cache),
+      exists => !exists,
+      'Author local runtime cache survived uninstall'
+    )
+  } finally {
+    await writeFile(
+      join(resultDir, 'author-source-uninstall-cache.json'),
+      `${JSON.stringify(
+        {
+          uninstallStartedAt,
+          capturedAt: new Date().toISOString(),
+          before: beforeUninstall,
+          after: await collectLocalPluginCacheDiagnostics(
+            codexHome,
+            plugin.name,
+            'wework-personal'
+          ),
+        },
+        null,
+        2
+      )}\n`
+    )
+  }
   await assertPersonalSourceUnchanged(source)
   await assertSharedRelease(cloudEnvironment, plugin, access)
   await assertAccountIdentity(recipientCloud, plugin, recipient)
@@ -321,16 +658,24 @@ export async function verifyAuthorSourceUninstall({
     )
     await assertPersonalSourceUnchanged(source)
     await assertSharedRelease(cloudEnvironment, plugin, access)
-    assert.equal(
-      await accountPlugin(cloudEnvironment, plugin.name),
-      undefined,
-      'Reinstalling author source created a cloud account install'
-    )
+    const cloudInstall = await waitForAuthorCloudInstall(cloudEnvironment, plugin)
+    const installedId = cloudInstall.metadata.labels.id
     const state = JSON.parse(
       await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })
     )
     assert.equal(state.backend.connected, false, 'Author reinstall reconnected the Runtime Socket')
+    assert.equal(state.rendererConnected, false, 'Author reinstall reconnected the renderer')
+    await assertAccountIdentity(recipientCloud, plugin, recipient)
     await captureVerificationScreenshot(control, 'personal-plugin-author-offline-reinstall.png')
+    // The following version submission uses the editable source without account membership.
+    await pluginApi(cloudEnvironment, `/plugins/installed/${installedId}`, 'DELETE')
+    await assertAccountIdentity(cloudEnvironment, plugin, null)
+    await until(
+      () =>
+        materializedPlugin(cloudEnvironment.remoteExecutorEnv.WEGENT_EXECUTOR_HOME, installedId),
+      item => !item,
+      'Cleaning up the disconnected reinstall left the package on the cloud device'
+    )
   } finally {
     await restorePersonalPluginRuntime(control, deviceId)
   }

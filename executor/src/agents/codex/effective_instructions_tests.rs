@@ -25,22 +25,25 @@ fn source_question_channels_follow_scoped_provider_guidance_without_vendor_rules
         assert!(!instructions.contains("DingTalk"));
         assert!(!instructions.contains("wework_stand_in.reply"));
     }
-    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(!codex_has_full_access(&request));
 }
 
 #[test]
-fn task_recovery_routing_reaches_native_start_fork_and_resume_instructions() {
+fn host_control_routing_reaches_native_start_fork_resume_and_turn_policy() {
     let request = ExecutionRequest::default();
     let launch = CodexLaunchConfig::default();
     for params in [
         thread_start_params(&request, &launch),
         thread_fork_params("source", None, &request, &launch),
         thread_resume_params("source", &request, &launch),
+        effective_instructions::turn_context_for_test(&request),
     ] {
         let instructions = params["developerInstructions"].as_str().unwrap();
         assert!(instructions.contains("Standalone Wework tasks are conversations"));
         assert!(instructions.contains("conversations skill and wework_control"));
         assert!(instructions.contains("Discover those tools before claiming they are unavailable"));
+        assert!(instructions.contains("subscribe_connection_events with wait_for_event:true"));
+        assert!(instructions.contains("Do not use CLI watch commands or status polling to wait."));
     }
     let skill = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/conversations/SKILL.md");
     assert!(skill.contains("`include_archived: true`"));
@@ -69,6 +72,48 @@ fn execution_context_discards_stale_context_and_requires_complete_runtime_identi
             .as_str()
             .unwrap()
             .contains("stale execution"));
+    }
+}
+
+#[test]
+fn connected_assistant_turns_receive_a_fresh_clock_separate_from_source_times() {
+    let launch = CodexLaunchConfig::default();
+    for kind in [
+        "stand_in_identity",
+        "stand_in_coordinator",
+        "connection_work",
+    ] {
+        let mut request = ExecutionRequest {
+            prompt: json!("At 2026-11-19T23:30:00+08:00: please finish tomorrow."),
+            ..Default::default()
+        };
+        request.extra.insert("origin".into(), json!({"type":kind}));
+        request.extra.insert(
+            "additionalContext".into(),
+            json!({"wework.execution":{"kind":"application","value":"An old turn clock"}}),
+        );
+
+        let before = chrono::Utc::now().timestamp();
+        let turn = turn_start_params(
+            "thread",
+            &request,
+            &launch,
+            vec![json!({"type":"text","text":request.prompt})],
+        );
+        let context = turn["additionalContext"]["wework.execution"]["value"]
+            .as_str()
+            .unwrap();
+        let timestamp = context
+            .lines()
+            .next()
+            .unwrap()
+            .strip_prefix("Wework local time at turn start: ")
+            .unwrap();
+        let clock = chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
+        assert!((before..=chrono::Utc::now().timestamp()).contains(&clock.timestamp()));
+        assert!(context.contains("from that message's send date and source timezone"));
+        assert!(!context.contains("An old turn clock"));
+        assert_eq!(turn["input"][0]["text"], request.prompt);
     }
 }
 
@@ -383,5 +428,29 @@ fn backend_tasks_retain_inline_artifact_rules_while_wework_keeps_them_deferred()
             );
             assert!(instructions.contains(host_skills::INSTRUCTIONS));
         }
+    }
+}
+
+#[test]
+fn application_and_source_context_stay_separate_from_codex_turn_input() {
+    let mut request = ExecutionRequest {
+        prompt: json!("Verify the main build"),
+        ..Default::default()
+    };
+    let context = json!({
+        "cloudCollaboration":{"kind":"application","value":"Current Issue reference"},
+        "source":{"kind":"untrusted","value":"Quoted Issue content"}
+    });
+    request
+        .extra
+        .insert("additionalContext".into(), context.clone());
+    let launch = CodexLaunchConfig::default();
+    let params = turn_start_params("thread", &request, &launch, turn_input(&request.prompt));
+    assert_eq!(
+        params["input"],
+        json!([{"type":"text","text":"Verify the main build","text_elements":[]}])
+    );
+    for key in ["cloudCollaboration", "source"] {
+        assert_eq!(params["additionalContext"][key], context[key]);
     }
 }

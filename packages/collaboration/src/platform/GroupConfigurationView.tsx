@@ -1,17 +1,21 @@
+import { useRef } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
-import { DialogForm } from '../controls/DialogForm'
-import { GroupRulesSection } from './GroupRulesSection'
-import { GroupCreationDialog } from './GroupCreationDialog'
-import { GroupConfigurationError as ErrorMessage } from './GroupConfigurationFeedback'
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
-import { GroupSettingsSection } from './GroupSettingsSection'
-import { GroupParticipantsEditor } from './GroupParticipantsEditor'
+import { DialogForm } from '../controls/DialogForm'
 import { GroupTemplateActions } from '../templates/GroupTemplateActions'
 import { templateMessages } from '../templates/messages'
+import { GroupConfigurationError as ErrorMessage } from './GroupConfigurationFeedback'
+import { GroupCreationDialog } from './GroupCreationDialog'
+import { GroupParticipantsEditor } from './GroupParticipantsEditor'
+import { GroupRulesSection } from './GroupRulesSection'
+import { GroupSettingsSection } from './GroupSettingsSection'
 import { PanelFeedback } from './usePanelData'
 import type { GroupConfigurationModel } from './WorkspaceResourceConfiguration'
 
@@ -83,9 +87,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
 
   const [pendingDraftExit, setPendingDraftExit] = useState(false)
   const closeGroup = () => (onDetailClose ? onDetailClose() : setSelectedGroupId(null))
-  const copyDialogRef = useDialogKeyboard<HTMLElement>(() => {
-    if (!agentActionBusy) setCopyAgentOpen(false)
-  }, copyAgentOpen)
+  const copyDialogRef = useRef<HTMLElement>(null)
 
   const content = (
     <>
@@ -157,14 +159,15 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
           {detailPresentation === 'page' ? (
             <div className="collaboration-resource-heading flex-wrap gap-y-3">
               <div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-link-button collaboration-group-back"
                   data-testid="collaboration-group-detail-back"
                   onClick={() => (dirty && !saving ? setPendingDraftExit(true) : closeGroup())}
                 >
                   ← {messages.backToGroups}
-                </button>
+                </ControlButton>
                 <h2>{selectedGroup.name}</h2>
                 {selectedGroup.owner_type === 'workspace' ? <p>{messages.workspaceOwned}</p> : null}
               </div>
@@ -240,7 +243,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
               <div className="collaboration-group-profile-fields">
                 <label>
                   <span>{messages.groupName}</span>
-                  <input
+                  <ControlInput
                     data-testid="collaboration-group-detail-name"
                     value={draftName}
                     disabled={!canManage}
@@ -249,7 +252,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 </label>
                 <label>
                   <span>{messages.groupDescription}</span>
-                  <textarea
+                  <ControlTextarea
                     data-testid="collaboration-group-detail-description"
                     value={draftDescription}
                     disabled={!canManage}
@@ -325,7 +328,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 <label>
                   <span>{messages.requiredEnvironmentTags}</span>
                   <div className="collaboration-group-environment-tag-input">
-                    <input
+                    <ControlInput
                       data-testid="collaboration-group-environment-tag-input"
                       value={environmentTagInput}
                       disabled={!canManage}
@@ -337,7 +340,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                         addRequiredEnvironmentTag()
                       }}
                     />
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-secondary-button"
                       data-testid="collaboration-group-environment-tag-add"
@@ -345,7 +349,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                       onClick={addRequiredEnvironmentTag}
                     >
                       {locale === 'zh-CN' ? '添加' : 'Add'}
-                    </button>
+                    </ControlButton>
                   </div>
                 </label>
                 {draftRequiredEnvironmentTags.length ? (
@@ -354,7 +358,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                       <span key={tag}>
                         {tag}
                         {canManage ? (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             aria-label={`${messages.remove} ${tag}`}
                             data-testid={`collaboration-group-environment-tag-remove-${tag}`}
@@ -365,7 +370,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                             }
                           >
                             {messages.remove}
-                          </button>
+                          </ControlButton>
                         ) : null}
                       </span>
                     ))}
@@ -395,7 +400,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
               <ErrorMessage message={error} />
               {canManage && commands.updateCollaborationGroup ? (
                 <div className="collaboration-resource-form-actions collaboration-group-save-actions">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-link-button collaboration-resource-remove"
                     data-testid="collaboration-group-detail-delete"
@@ -408,7 +414,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                     }
                   >
                     {messages.deleteGroup}
-                  </button>
+                  </ControlButton>
                   <span
                     className="collaboration-group-save-status"
                     role="status"
@@ -426,7 +432,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                           ? '配置已保存'
                           : 'Configuration saved'}
                   </span>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-secondary-button"
                     data-testid="collaboration-group-detail-discard"
@@ -434,8 +441,9 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                     onClick={() => restoreGroupDraft(selectedGroup)}
                   >
                     {locale === 'zh-CN' ? '放弃修改' : 'Discard changes'}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="submit"
                     className="collaboration-primary-button"
                     data-testid="collaboration-group-detail-save"
@@ -448,7 +456,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                     }
                   >
                     {saving ? (locale === 'zh-CN' ? '保存中…' : 'Saving…') : messages.saveGroup}
-                  </button>
+                  </ControlButton>
                 </div>
               ) : null}
             </div>
@@ -463,7 +471,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 <p>{messages.collaborationGroupHint}</p>
               </div>
               {canManage ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={
                     workspace
@@ -474,7 +483,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                   onClick={() => setFormOpen(true)}
                 >
                   {messages.createGroup}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}
@@ -525,16 +534,18 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                           </div>
                         </div>
                         <div className="collaboration-resource-actions">
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             className="collaboration-secondary-button"
                             data-testid={`collaboration-group-manage-${group.id}`}
                             onClick={() => setSelectedGroupId(group.id)}
                           >
                             {messages.manageGroup}
-                          </button>
+                          </ControlButton>
                           {canManage ? (
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               className="collaboration-link-button collaboration-resource-remove"
                               data-testid={`collaboration-group-remove-${group.id}`}
@@ -550,7 +561,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                                 : group.owner_type === 'project'
                                   ? messages.deleteProjectGroup
                                   : messages.removeFromProject}
-                            </button>
+                            </ControlButton>
                           ) : null}
                         </div>
                       </article>
@@ -586,7 +597,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                           </span>
                         </div>
                         {canManage ? (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             className="collaboration-secondary-button"
                             data-testid={`collaboration-group-add-${group.id}`}
@@ -598,7 +610,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                             }}
                           >
                             {locale === 'zh-CN' ? '添加到项目' : 'Add to project'}
-                          </button>
+                          </ControlButton>
                         ) : null}
                       </article>
                     ))}
@@ -629,14 +641,20 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
             }
           }}
         >
-          <section
-            className="collaboration-dialog collaboration-resource-dialog collaboration-group-copy-agent-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={messages.copyAgentTitle}
-            ref={copyDialogRef}
-            tabIndex={-1}
-            data-testid="collaboration-group-copy-agent-dialog"
+          <DialogSurface
+            onClose={() => {
+              if (!agentActionBusy) setCopyAgentOpen(false)
+            }}
+            active={copyAgentOpen}
+            render={
+              <section
+                className="collaboration-dialog collaboration-resource-dialog collaboration-group-copy-agent-dialog"
+                aria-label={messages.copyAgentTitle}
+                ref={copyDialogRef}
+                tabIndex={-1}
+                data-testid="collaboration-group-copy-agent-dialog"
+              />
+            }
           >
             <h2>{messages.copyAgentTitle}</h2>
             {copyableAgents.length ? (
@@ -644,7 +662,8 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 {copyableAgents.map(agent => {
                   const agentId = collaborationGroupAgentId(agent)
                   return (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       key={agentId}
                       disabled={agentActionBusy}
@@ -669,7 +688,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                         <strong>{agent.name}</strong>
                         <small>{messages.copyAgentHint}</small>
                       </span>
-                    </button>
+                    </ControlButton>
                   )
                 })}
               </div>
@@ -677,16 +696,17 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
               <div className="collaboration-resource-empty">{messages.noCopyableAgents}</div>
             )}
             <footer>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-secondary-button"
                 disabled={agentActionBusy}
                 onClick={() => setCopyAgentOpen(false)}
               >
                 {messages.cancel}
-              </button>
+              </ControlButton>
             </footer>
-          </section>
+          </DialogSurface>
         </div>
       ) : null}
     </>

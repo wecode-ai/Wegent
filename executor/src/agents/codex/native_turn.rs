@@ -28,6 +28,7 @@ pub(crate) fn completed_native_codex_turn(thread_id: &str, turn: &Value) -> Code
         quota_recovery: None,
         thread_id: thread_id.to_owned(),
         outcome,
+        error_type: state.error_type.clone(),
         response_item_id: state.response_item_id().map(str::to_owned),
         response_value_origin: state.response_value_origin(),
         goal_status: None,

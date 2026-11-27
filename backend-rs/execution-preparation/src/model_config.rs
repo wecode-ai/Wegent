@@ -1,0 +1,954 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `model_resolver.replace_placeholders_with_sources` /
+//! `resolve_value_from_source` (`app/services/chat/config/model_resolver.py`),
+//! used by `_process_model_config_placeholders` to resolve `${…}` in the
+//! Model CRD's `api_key` and `default_headers`.
+//!
+//! A placeholder is `${source.path}` (`${task_data.user.name}`) or `${path}`
+//! (which defaults to the `agent_config` source). The value renders like Python
+//! `str(value)` — `True`/`False` for booleans, the number's text, and `""` for
+//! a missing path or `None`. Arrays/objects are not modeled (they do not appear
+//! in the recorded header/API-key placeholders) and render as `""`.
+use serde_json::{Map, Value};
+
+/// Apply request-scoped options to a direct image or video execution model.
+pub fn apply_generation_params(
+    model: &mut Map<String, Value>,
+    params: Option<&Value>,
+) -> Result<(), String> {
+    let Some(params) = params else {
+        return Ok(());
+    };
+    let selected = |key: &str| params.get(key).filter(|value| !value.is_null());
+    let truthy = |key: &str| selected(key).filter(|value| crate::json_compat::python_truthy(value));
+    match model
+        .get("modelType")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image" => {
+            let unsupported: Vec<_> = ["resolution", "ratio", "duration", "generation_mode_id"]
+                .into_iter()
+                .filter(|key| selected(key).is_some())
+                .collect();
+            if !unsupported.is_empty() {
+                return Err(format!(
+                    "Image generation does not support options: {}",
+                    unsupported.join(", ")
+                ));
+            }
+            if let Some(size) = truthy("size") {
+                let mut image = model
+                    .get("imageConfig")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                image.insert("size".into(), size.clone());
+                model.insert("imageConfig".into(), Value::Object(image));
+            }
+        }
+        "video" => {
+            if selected("size").is_some() {
+                return Err("Video generation does not support option: size".to_owned());
+            }
+            let mut video = model
+                .get("videoConfig")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let capabilities = video.get("capabilities").cloned().unwrap_or_default();
+            for (key, capability, field) in [
+                ("resolution", "resolutions", "value"),
+                ("ratio", "aspect_ratios", "value"),
+                ("duration", "durations_sec", ""),
+                ("generation_mode_id", "generation_modes", "id"),
+            ] {
+                let Some(value) = truthy(key) else { continue };
+                if capabilities[capability].as_array().is_some_and(|allowed| {
+                    !allowed.is_empty()
+                        && !allowed.iter().any(|option| {
+                            let candidate = if field.is_empty() {
+                                option
+                            } else if key == "resolution"
+                                && !crate::json_compat::python_truthy(&option[field])
+                            {
+                                &option["label"]
+                            } else {
+                                &option[field]
+                            };
+                            candidate == value
+                        })
+                }) {
+                    return Err(format!("Unsupported video {key}: {value}"));
+                }
+                if key == "generation_mode_id" {
+                    model.insert(key.into(), value.clone());
+                } else {
+                    video.insert(key.into(), value.clone());
+                }
+            }
+            model.insert("videoConfig".into(), Value::Object(video));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// `replace_placeholders_with_sources`: replace every `${…}` in `template`.
+pub fn replace_placeholders_with_sources(template: &str, sources: &Map<String, Value>) -> String {
+    let bytes = template.as_bytes();
+    let mut out = String::with_capacity(template.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'$'
+            && bytes.get(index + 1) == Some(&b'{')
+            && let Some(end) = template[index + 2..].find('}')
+        {
+            let spec = &template[index + 2..index + 2 + end];
+            out.push_str(&resolve_value_from_source(sources, spec));
+            index = index + 2 + end + 1;
+            continue;
+        }
+        // Copy one UTF-8 character.
+        let ch = template[index..].chars().next().expect("char");
+        out.push(ch);
+        index += ch.len_utf8();
+    }
+    out
+}
+
+/// `resolve_value_from_source`: navigate `source.path` and render the value.
+pub fn resolve_value_from_source(sources: &Map<String, Value>, source_spec: &str) -> String {
+    let (source_name, path) = match source_spec.split_once('.') {
+        Some((source_name, path)) => (source_name, path),
+        None => ("agent_config", source_spec),
+    };
+    let Some(mut current) = sources.get(source_name) else {
+        return String::new();
+    };
+    for key in path.split('.') {
+        current = match current {
+            Value::Object(map) => match map.get(key) {
+                Some(value) => value,
+                None => return String::new(),
+            },
+            Value::Array(items) => match key.parse::<usize>() {
+                Ok(index) if index < items.len() => &items[index],
+                _ => return String::new(),
+            },
+            _ => return String::new(),
+        };
+    }
+    python_str(current)
+}
+
+/// Python `str(value)` for the scalars the placeholders carry.
+pub fn python_str(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.clone(),
+        // Arrays/objects would render as a Python repr; not modeled.
+        Value::Array(_) | Value::Object(_) => String::new(),
+    }
+}
+
+/// `_process_model_config_placeholders`: the documented reachable half. The
+/// `api_key` `${...}` is left for the credential resolver; the `default_headers`
+/// `${{...}}` sources are substituted, the empty `wegent-agent-*` headers
+/// dropped, and the non-ASCII identity values base64-encoded.
+pub fn process_model_config_placeholders(
+    model_config: &mut Map<String, Value>,
+    user_id: i64,
+    user_name: &str,
+    agent_config: &Value,
+    task_id: i64,
+    team: &super::resolution::KindRow,
+) {
+    let user_info = serde_json::json!({"id": user_id, "name": user_name, "user_name": user_name});
+    let task_data = serde_json::json!({
+        "task_id": task_id,
+        "team_name": team.name,
+        "team_namespace": team.namespace,
+        "user": user_info,
+        "team": {"name": team.name, "namespace": team.namespace},
+    });
+    let mut sources: Map<String, Value> = Map::new();
+    sources.insert("agent_config".into(), agent_config.clone());
+    sources.insert("model_config".into(), Value::Object(model_config.clone()));
+    sources.insert("task_data".into(), task_data);
+    sources.insert("user".into(), user_info);
+    sources.insert(
+        "env".into(),
+        model_config
+            .get("default_headers")
+            .cloned()
+            .unwrap_or(Value::Object(Map::new())),
+    );
+
+    if let Some(api_key) = model_config.get("api_key").and_then(Value::as_str)
+        && api_key.contains("${")
+    {
+        let replaced = replace_placeholders_with_sources(api_key, &sources);
+        if !replaced.is_empty() {
+            model_config.insert("api_key".into(), Value::String(replaced));
+        }
+    }
+
+    let Some(headers) = model_config
+        .get("default_headers")
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let mut processed = Map::new();
+    for (key, value) in headers {
+        match value {
+            Value::String(text) if text.contains("${") => {
+                processed.insert(
+                    key.clone(),
+                    Value::String(replace_placeholders_with_sources(text, &sources)),
+                );
+            }
+            other => {
+                processed.insert(key.clone(), other.clone());
+            }
+        }
+    }
+    model_config.insert(
+        "default_headers".into(),
+        strip_and_encode_wegent_headers(processed),
+    );
+}
+
+/// `strip_empty_wegent_headers` + `encode_wegent_header_values`.
+pub fn strip_and_encode_wegent_headers(headers: Map<String, Value>) -> Value {
+    const MARKER: &str = "wegent-agent-";
+    let mut result = Map::new();
+    for (key, value) in headers {
+        let identity = key.to_lowercase().contains(MARKER);
+        if identity {
+            let empty = match &value {
+                Value::Null => true,
+                Value::String(text) => text.trim().is_empty(),
+                _ => false,
+            };
+            if empty {
+                continue;
+            }
+        }
+        let value = match (&value, identity) {
+            (Value::String(text), true) => Value::String(encode_wegent_header_value(text)),
+            _ => value,
+        };
+        result.insert(key, value);
+    }
+    Value::Object(result)
+}
+
+/// `_encode_wegent_header_value`: `b64:`-prefix non-ASCII values.
+fn encode_wegent_header_value(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_string();
+    }
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(value.as_bytes());
+    format!("b64:{encoded}")
+}
+
+/// `_extract_model_config`'s failure: `modelConfig` has no usable `env`.
+#[derive(Debug)]
+pub enum ModelConfigError {
+    /// `Model config has no env configuration`.
+    NoEnv,
+    /// `Model API key is masked and unavailable for execution`.
+    MaskedApiKey,
+    /// `GIT_TOKEN_AES_KEY` / `GIT_TOKEN_AES_IV` cannot decrypt a stored key.
+    CryptoConfiguration,
+}
+
+impl std::fmt::Display for ModelConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoEnv => write!(f, "Model config has no env configuration"),
+            Self::MaskedApiKey => {
+                write!(f, "Model API key is masked and unavailable for execution")
+            }
+            Self::CryptoConfiguration => {
+                write!(f, "Model API key encryption configuration is invalid")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ModelConfigError {}
+
+/// `_extract_model_config`: the flat model config from a Model CRD's `spec`.
+///
+/// Produces the recorded keys in order (`api_key`, `base_url`, `model_id`,
+/// `model`, `default_headers`, `api_format`, `protocol`, `context_window`,
+/// `max_output_tokens`, `modelType`, `videoConfig`, `think_config`,
+/// `temperature`, plus the conditional `supports_developer_role` and
+/// `modelCapabilities`). The caller appends `model_name` / `model_namespace`
+/// (`get_model_config_for_bot`) and resolves the `api_key` placeholder through
+/// the deployment adapter and the placeholder engine.
+///
+/// Not modeled: `codex_catalog_model_id`; no recorded create case reaches it.
+pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, ModelConfigError> {
+    let model_config = model_spec
+        .get("modelConfig")
+        .cloned()
+        .unwrap_or(Value::Object(Map::new()));
+    let env = model_config
+        .get("env")
+        .filter(|value| is_non_empty_object(value))
+        .ok_or(ModelConfigError::NoEnv)?;
+
+    let env_str = |key: &str| {
+        env.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let raw_api_key = env_str("api_key");
+    if raw_api_key == "***" {
+        return Err(ModelConfigError::MaskedApiKey);
+    }
+    let api_key = wegent_identity::repository_credentials::decrypt_model_api_key(&raw_api_key)
+        .map_err(|_| ModelConfigError::CryptoConfiguration)?;
+    let base_url = env
+        .get("base_url")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("https://api.openai.com/v1")
+        .to_string();
+    let model_id = env
+        .get("model_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("gpt-4")
+        .to_string();
+    let model_type = env
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai")
+        .to_string();
+
+    // `default_headers`: Model `DEFAULT_HEADERS`, then the Model env, then
+    // `settings.EXECUTOR_ENV.DEFAULT_HEADERS`, then the deployment
+    // `DEFAULT_HEADERS` variable. The recorded create case resolves the
+    // deployment header template, so the fallback is required.
+    let default_headers = model_config
+        .get("DEFAULT_HEADERS")
+        .and_then(headers_value)
+        .or_else(|| env.get("DEFAULT_HEADERS").and_then(headers_value))
+        .or_else(|| {
+            default_headers_from_executor_env(
+                crate::config::env_or_dotenv("EXECUTOR_ENV").as_deref(),
+            )
+        })
+        .or_else(|| default_headers_from_json(std::env::var("DEFAULT_HEADERS").ok().as_deref()))
+        .unwrap_or(Value::Object(Map::new()));
+
+    let mut api_format = model_spec
+        .get("apiFormat")
+        .or_else(|| model_config.get("apiFormat"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mut protocol = model_spec
+        .get("protocol")
+        .or_else(|| model_config.get("protocol"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let env_model = model_type.to_lowercase();
+    if protocol.is_null() {
+        match env_model.as_str() {
+            "openai" => protocol = Value::String("openai".to_string()),
+            "claude" => protocol = Value::String("claude".to_string()),
+            _ => {}
+        }
+    }
+    if api_format.is_null() {
+        match protocol.as_str() {
+            Some("openai-responses") => api_format = Value::String("responses".to_string()),
+            Some("openai") => api_format = Value::String("chat/completions".to_string()),
+            _ => {}
+        }
+    }
+
+    let mut result = Map::new();
+    result.insert("api_key".into(), Value::String(api_key));
+    result.insert("base_url".into(), Value::String(base_url));
+    result.insert("model_id".into(), Value::String(model_id));
+    result.insert("model".into(), Value::String(model_type));
+    result.insert("default_headers".into(), default_headers);
+    result.insert("api_format".into(), api_format);
+    result.insert("protocol".into(), protocol);
+    result.insert(
+        "context_window".into(),
+        model_config
+            .get("context_window")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    result.insert(
+        "max_output_tokens".into(),
+        model_config
+            .get("max_output_tokens")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    result.insert(
+        "modelType".into(),
+        model_spec.get("modelType").cloned().unwrap_or(Value::Null),
+    );
+    if let Some(image) = model_spec
+        .get("imageConfig")
+        .filter(|value| !value.is_null())
+    {
+        result.insert("imageConfig".into(), image.clone());
+    }
+    result.insert(
+        "videoConfig".into(),
+        model_spec
+            .get("videoConfig")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    result.insert(
+        "think_config".into(),
+        env.get("thinking_config")
+            .or_else(|| env.get("thinkingConfig"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    result.insert(
+        "temperature".into(),
+        env.get("temperature").cloned().unwrap_or(Value::Null),
+    );
+    // `supports_developer_role` (`model_resolver.py:1210,1238-1240`): emitted
+    // only when the env value is not `None`; `false` is a legitimate value, so
+    // this must not use a truthiness check.
+    if let Some(supports) = env
+        .get("supports_developer_role")
+        .filter(|value| !value.is_null())
+    {
+        result.insert("supports_developer_role".into(), supports.clone());
+    }
+    if let Some(capabilities) = model_spec
+        .get("modelCapabilities")
+        .filter(|value| is_non_empty_object(value))
+        .or_else(|| {
+            model_config
+                .get("modelCapabilities")
+                .filter(|value| is_non_empty_object(value))
+        })
+    {
+        result.insert("modelCapabilities".into(), capabilities.clone());
+    }
+    Ok(result)
+}
+
+/// `get_bot_system_prompt`: the Ghost's `spec.systemPrompt`, the team member
+/// prompt appended, wrapped in `<base_prompt>` tags.
+pub fn wrap_base_prompt(system_prompt: &str, team_member_prompt: Option<&str>) -> String {
+    let mut combined = system_prompt.to_string();
+    if let Some(member) = team_member_prompt.filter(|value| !value.is_empty()) {
+        if combined.is_empty() {
+            combined = member.to_string();
+        } else {
+            combined = format!("{combined}\n\n{member}");
+        }
+    }
+    if combined.is_empty() {
+        return String::new();
+    }
+    format!("<base_prompt>\n{combined}\n</base_prompt>")
+}
+
+/// `build_agent_config_for_bot`: the bot's inline `agent_config` when its `env`
+/// already carries `model` and `api_key` and no override is forced; otherwise
+/// the resolved Model CRD's `modelConfig`, with `protocol` / `apiFormat`
+/// promoted from the Model spec.
+///
+/// `resolved_model_spec` is the Model CRD `spec` for the bot's modelRef (or the
+/// task's `model_id` override); `None` means the model did not resolve and the
+/// raw agent config is returned unchanged.
+pub fn build_agent_config(
+    raw_agent_config: &Value,
+    force_override: bool,
+    override_model_name: Option<&str>,
+    resolved_model_spec: Option<&Value>,
+) -> Value {
+    if inline_agent_config_ready(raw_agent_config, force_override, override_model_name) {
+        return raw_agent_config.clone();
+    }
+
+    let Some(spec) = resolved_model_spec else {
+        return raw_agent_config.clone();
+    };
+    let Some(mut model_config) = spec
+        .get("modelConfig")
+        .filter(|value| is_non_empty_object(value))
+        .cloned()
+    else {
+        return raw_agent_config.clone();
+    };
+
+    for key in ["protocol", "apiFormat"] {
+        if let Some(value) = spec.get(key).filter(|value| is_truthy(value))
+            && let Some(map) = model_config.as_object_mut()
+        {
+            map.insert(key.to_string(), value.clone());
+        }
+    }
+    model_config
+}
+
+/// `build_agent_config_for_bot`'s short-circuit: the bot's inline
+/// `agent_config.env` already carries `model` and `api_key`, and no override is
+/// forced. A ready inline config returns before `_resolve_model_for_bot`, so it
+/// is also the predicate that decides whether the bot entry re-reads the Model.
+pub fn inline_agent_config_ready(
+    raw_agent_config: &Value,
+    force_override: bool,
+    override_model_name: Option<&str>,
+) -> bool {
+    !(force_override && override_model_name.is_some())
+        && raw_agent_config
+            .get("env")
+            .and_then(|env| env.get("model"))
+            .is_some_and(is_truthy)
+        && raw_agent_config
+            .get("env")
+            .and_then(|env| env.get("api_key"))
+            .is_some_and(is_truthy)
+}
+
+/// Python truthiness for the scalars the config carries.
+use brz_json::adapters::python_truthy as is_truthy;
+
+/// Whether `value` is a JSON object with at least one key.
+fn is_non_empty_object(value: &Value) -> bool {
+    value.as_object().is_some_and(|map| !map.is_empty())
+}
+
+/// A `DEFAULT_HEADERS` value: an object, or a JSON string of an object.
+fn headers_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(_) => is_non_empty_object(value).then(|| value.clone()),
+        Value::String(text) => default_headers_from_json(Some(text)),
+        _ => None,
+    }
+}
+
+/// `settings.EXECUTOR_ENV`'s `DEFAULT_HEADERS`, which may itself be a JSON
+/// object or a JSON string of an object.
+fn default_headers_from_executor_env(configured: Option<&str>) -> Option<Value> {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let parsed: Value = serde_json::from_str(configured).ok()?;
+    parsed.get("DEFAULT_HEADERS").and_then(headers_value)
+}
+
+/// `get_default_headers_from_env`'s `DEFAULT_HEADERS` variable: a JSON object.
+fn default_headers_from_json(configured: Option<&str>) -> Option<Value> {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    serde_json::from_str::<Value>(configured)
+        .ok()
+        .filter(is_non_empty_object)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sources() -> Map<String, Value> {
+        match json!({
+            "agent_config": {"env": {"user": "alice"}},
+            "task_data": {"user": {"name": "alice"}, "team": {"name": "test-team", "namespace": "test-namespace"}},
+            "env": {"session-id": 123456789_i64},
+            "user": {"id": 6527, "name": "alice", "user_name": "alice"},
+        }) {
+            Value::Object(map) => map,
+            _ => Map::new(),
+        }
+    }
+
+    #[test]
+    fn replaces_named_and_default_sources() {
+        let sources = sources();
+        assert_eq!(
+            replace_placeholders_with_sources("${task_data.user.name}", &sources),
+            "alice"
+        );
+        assert_eq!(
+            replace_placeholders_with_sources("${user.user_name}", &sources),
+            "alice"
+        );
+        assert_eq!(
+            replace_placeholders_with_sources("${task_data.team.name}", &sources),
+            "test-team"
+        );
+    }
+
+    #[test]
+    fn renders_scalars_like_python_str() {
+        let sources = sources();
+        assert_eq!(
+            replace_placeholders_with_sources("${env.session-id}", &sources),
+            "123456789"
+        );
+        // A missing source, a missing path and `null` render empty.
+        assert_eq!(replace_placeholders_with_sources("${nope.x}", &sources), "");
+        assert_eq!(
+            replace_placeholders_with_sources("${task_data.missing}", &sources),
+            ""
+        );
+    }
+
+    #[test]
+    fn leaves_text_without_placeholders_unchanged() {
+        let sources = sources();
+        assert_eq!(
+            replace_placeholders_with_sources("plain-key", &sources),
+            "plain-key"
+        );
+        // An unterminated `${` is left as literal text.
+        assert_eq!(replace_placeholders_with_sources("a${b", &sources), "a${b");
+    }
+
+    #[test]
+    fn extract_model_config_matches_the_recorded_projection() {
+        let spec = json!({
+            "apiFormat": null,
+            "protocol": "claude",
+            "modelType": null,
+            "videoConfig": null,
+            "modelCapabilities": {"supportsImage": true, "supportsVideo": true},
+            "modelConfig": {
+                "env": {
+                    "model": "claude",
+                    "api_key": "sk-test-api-key",
+                    "base_url": "https://model.example.test",
+                    "model_id": "qwen3.7-plus",
+                    "small_model": "qwen3.7-plus",
+                    "thinking_config": {"effort": "high", "thinking": {"type": "adaptive"}},
+                },
+                "context_window": 991000,
+                "max_output_tokens": 64000,
+                "DEFAULT_HEADERS": {"x-runtime-source": "agent"},
+            },
+        });
+        let config = extract_model_config(&spec).expect("config");
+        let keys: Vec<&str> = config.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "api_key",
+                "base_url",
+                "model_id",
+                "model",
+                "default_headers",
+                "api_format",
+                "protocol",
+                "context_window",
+                "max_output_tokens",
+                "modelType",
+                "videoConfig",
+                "think_config",
+                "temperature",
+                "modelCapabilities",
+            ]
+        );
+        assert_eq!(config["model_id"], json!("qwen3.7-plus"));
+        assert_eq!(config["model"], json!("claude"));
+        assert_eq!(config["api_format"], Value::Null);
+        assert_eq!(config["protocol"], json!("claude"));
+        assert_eq!(config["context_window"], json!(991000));
+        assert_eq!(
+            config["default_headers"]["x-runtime-source"],
+            json!("agent")
+        );
+        assert_eq!(
+            config["modelCapabilities"],
+            json!({"supportsImage": true, "supportsVideo": true})
+        );
+    }
+
+    /// `supports_developer_role` is emitted whenever the env value is present
+    /// and not JSON `null` (`model_resolver.py:1210,1238-1240`); `false` is a
+    /// legitimate capability value, not an absent one.
+    #[test]
+    fn extract_model_config_keeps_an_explicit_false_supports_developer_role() {
+        let spec = json!({
+            "modelConfig": {
+                "env": {
+                    "model": "claude",
+                    "api_key": "sk-x",
+                    "supports_developer_role": false,
+                },
+            },
+        });
+        let config = extract_model_config(&spec).expect("config");
+        assert_eq!(config.get("supports_developer_role"), Some(&json!(false)));
+        assert_eq!(config["supports_developer_role"], json!(false));
+
+        // A true value keeps its boolean type too.
+        let enabled = json!({
+            "modelConfig": {"env": {"model": "claude", "supports_developer_role": true}},
+        });
+        assert_eq!(
+            extract_model_config(&enabled).expect("config")["supports_developer_role"],
+            json!(true)
+        );
+
+        // An absent key, or a JSON null, must not add the field at all.
+        for env in [
+            json!({"model": "claude"}),
+            json!({"model": "claude", "supports_developer_role": null}),
+        ] {
+            let config =
+                extract_model_config(&json!({"modelConfig": {"env": env}})).expect("config");
+            assert!(!config.contains_key("supports_developer_role"));
+        }
+    }
+
+    #[test]
+    fn inline_agent_config_wins_without_a_forced_override() {
+        let raw = json!({"env": {"model": "claude", "api_key": "sk-x"}});
+        assert_eq!(build_agent_config(&raw, false, None, None), raw);
+        // A forced override ignores the inline env.
+        let spec = json!({"modelConfig": {"env": {"model": "openai"}}});
+        assert_eq!(
+            build_agent_config(&raw, true, Some("other-model"), Some(&spec)),
+            json!({"env": {"model": "openai"}})
+        );
+    }
+
+    /// `build_agent_config_for_bot` returns the inline config before
+    /// `_resolve_model_for_bot`; the recorded create case's Bot has no
+    /// `agent_config` at all, so its Model is resolved a second time.
+    #[test]
+    fn a_ready_inline_agent_config_skips_the_bot_model_resolution() {
+        let ready = json!({"env": {"model": "claude", "api_key": "sk-x"}});
+        assert!(inline_agent_config_ready(&ready, false, None));
+        assert!(!inline_agent_config_ready(
+            &ready,
+            true,
+            Some("other-model")
+        ));
+        assert!(!inline_agent_config_ready(&json!({}), false, None));
+        assert!(!inline_agent_config_ready(
+            &json!({"env": {"model": "claude"}}),
+            false,
+            None
+        ));
+        assert!(!inline_agent_config_ready(
+            &json!({"env": {"model": "claude", "api_key": ""}}),
+            false,
+            None
+        ));
+    }
+
+    #[test]
+    fn resolved_model_config_promotes_protocol_and_api_format() {
+        let raw = json!({"env": {}});
+        let spec = json!({
+            "protocol": "claude",
+            "apiFormat": "responses",
+            "modelConfig": {"env": {"model": "claude", "api_key": "sk-x"}},
+        });
+        assert_eq!(
+            build_agent_config(&raw, false, None, Some(&spec)),
+            json!({
+                "env": {"model": "claude", "api_key": "sk-x"},
+                "protocol": "claude",
+                "apiFormat": "responses",
+            })
+        );
+        // A missing model spec returns the raw config.
+        assert_eq!(build_agent_config(&raw, false, None, None), raw);
+    }
+
+    #[test]
+    fn a_bot_without_inline_agent_config_uses_the_resolved_model_config() {
+        // Recorded `metadata.bot[0].agent_config`: the Bot CRD has no
+        // `agent_config`, so the resolved Model CRD `modelConfig` is used.
+        let spec = json!({
+            "modelConfig": {
+                "env": {"model": "claude", "api_key": "${DEPLOYMENT_USER_API_KEY}"},
+                "context_window": 991000,
+                "max_output_tokens": 64000,
+            }
+        });
+        assert_eq!(
+            build_agent_config(&Value::Null, false, None, Some(&spec)),
+            json!({
+                "env": {"model": "claude", "api_key": "${DEPLOYMENT_USER_API_KEY}"},
+                "context_window": 991000,
+                "max_output_tokens": 64000,
+            })
+        );
+        // Without a resolved Model the raw (absent) config is kept.
+        assert_eq!(
+            build_agent_config(&Value::Null, false, None, None),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn extract_model_config_requires_env() {
+        assert!(matches!(
+            extract_model_config(&json!({"modelConfig": {}})),
+            Err(ModelConfigError::NoEnv)
+        ));
+    }
+
+    #[test]
+    fn extract_model_config_rejects_a_masked_api_key() {
+        let error = extract_model_config(&json!({
+            "modelConfig": {"env": {"api_key": "***"}}
+        }))
+        .unwrap_err();
+        assert!(matches!(error, ModelConfigError::MaskedApiKey));
+    }
+
+    #[test]
+    fn extract_model_config_keeps_placeholder_keys_for_the_credential_resolver() {
+        let config = extract_model_config(&json!({
+            "modelConfig": {
+                "env": {
+                    "api_key": "${DEPLOYMENT_USER_API_KEY}",
+                    "model": "claude"
+                }
+            }
+        }))
+        .expect("config");
+        assert_eq!(config["api_key"], json!("${DEPLOYMENT_USER_API_KEY}"));
+    }
+
+    #[test]
+    fn default_headers_read_the_deployment_executor_env_template() {
+        // Recorded deployment template: `EXECUTOR_ENV.DEFAULT_HEADERS` with the
+        // `x-runtime-*` placeholders resolved later by the placeholder engine.
+        let executor_env = json!({
+            "DEFAULT_HEADERS": {
+                "x-runtime-source": "agent",
+                "x-runtime-user": "${task_data.user.name}",
+                "x-runtime-session-id": "${task_data.task_id}",
+            }
+        })
+        .to_string();
+        assert_eq!(
+            default_headers_from_executor_env(Some(&executor_env)),
+            Some(json!({
+                "x-runtime-source": "agent",
+                "x-runtime-user": "${task_data.user.name}",
+                "x-runtime-session-id": "${task_data.task_id}",
+            }))
+        );
+        // The setting may store DEFAULT_HEADERS as a JSON string.
+        let stringified = json!({"DEFAULT_HEADERS": "{\"x-runtime-action\":\"wegent\"}"});
+        assert_eq!(
+            default_headers_from_executor_env(Some(&stringified.to_string())),
+            Some(json!({"x-runtime-action": "wegent"}))
+        );
+        assert_eq!(default_headers_from_executor_env(Some("{}")), None);
+        assert_eq!(default_headers_from_executor_env(Some("not json")), None);
+        assert_eq!(
+            default_headers_from_json(Some(r#"{"x-runtime-executor":"chat"}"#)),
+            Some(json!({"x-runtime-executor": "chat"}))
+        );
+        assert_eq!(default_headers_from_json(Some("[]")), None);
+    }
+
+    #[test]
+    fn base_prompt_wraps_and_appends_the_member_prompt() {
+        assert_eq!(
+            wrap_base_prompt("ghost", None),
+            "<base_prompt>\nghost\n</base_prompt>"
+        );
+        assert_eq!(
+            wrap_base_prompt("ghost", Some("member")),
+            "<base_prompt>\nghost\n\nmember\n</base_prompt>"
+        );
+        assert_eq!(wrap_base_prompt("", None), "");
+    }
+
+    #[test]
+    fn boolean_placeholders_render_python_style() {
+        let mut sources = Map::new();
+        sources.insert("env".to_string(), json!({"flag": true}));
+        assert_eq!(
+            replace_placeholders_with_sources("${env.flag}", &sources),
+            "True"
+        );
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn image_applies_size_and_rejects_video_options() {
+        let mut model = Map::from_iter([
+            ("modelType".into(), json!("image")),
+            ("imageConfig".into(), json!({"quality": "high"})),
+        ]);
+        apply_generation_params(&mut model, Some(&json!({"size":"1024x1024"}))).unwrap();
+        assert_eq!(
+            model["imageConfig"],
+            json!({"size":"1024x1024","quality":"high"})
+        );
+        assert!(apply_generation_params(&mut model, Some(&json!({"duration":5}))).is_err());
+    }
+
+    #[test]
+    fn video_applies_supported_options_and_rejects_invalid_selections() {
+        let mut model = Map::from_iter([
+            ("modelType".into(), json!("video")),
+            (
+                "videoConfig".into(),
+                json!({"capabilities":{
+                    "resolutions":[{"label":"1080p"}],
+                    "aspect_ratios":[{"value":"16:9"}],
+                    "durations_sec":[5],
+                    "generation_modes":[{"id":"text-to-video"}]
+                }}),
+            ),
+        ]);
+        let selected = json!({
+            "resolution":"1080p","ratio":"16:9","duration":5,
+            "generation_mode_id":"text-to-video"
+        });
+        apply_generation_params(&mut model, Some(&selected)).unwrap();
+        for key in ["resolution", "ratio", "duration"] {
+            assert_eq!(model["videoConfig"][key], selected[key]);
+        }
+        assert_eq!(model["generation_mode_id"], selected["generation_mode_id"]);
+        for invalid in [
+            json!({"size":"1024x1024"}),
+            json!({"resolution":"4k"}),
+            json!({"ratio":"1:1"}),
+            json!({"duration":10}),
+            json!({"generation_mode_id":"image-to-video"}),
+        ] {
+            assert!(apply_generation_params(&mut model, Some(&invalid)).is_err());
+        }
+    }
+}

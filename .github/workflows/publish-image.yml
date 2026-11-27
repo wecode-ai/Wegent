@@ -103,6 +103,11 @@ jobs:
           echo "New version: $NEW_VERSION"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify release tag revision
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: bash .github/scripts/check-release-tag-revision.sh "v$VERSION"
+
   # ============================================================================
   # Backend Image Build (parallel AMD64 + ARM64)
   # ============================================================================
@@ -375,6 +380,8 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
+          docker run --rm --entrypoint /bin/sh "$image" -ec \
+            'test -s /app/connection-runtime/connection-runtime.json; /app/connection-runtime/node/node --version'
 
       - name: Validate Remote Docker Worktree persistence (amd64)
         env:
@@ -431,6 +438,8 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
+          docker run --rm --entrypoint /bin/sh "$image" -ec \
+            'test -s /app/connection-runtime/connection-runtime.json; /app/connection-runtime/node/node --version'
 
   # ============================================================================
   # Device Multi-arch Manifest
@@ -977,6 +986,54 @@ jobs:
           path: executor/dist/wegent-executor-linux-amd64
           retention-days: 1
 
+  build-executor-connection-runtime-linux-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export the connection runtime (Linux amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/device/Dockerfile
+          target: connection-runtime-export
+          platforms: linux/amd64
+          build-args: DEVICE_BASE_IMAGE=ubuntu:22.04
+          outputs: type=local,dest=${{ runner.temp }}/executor-connection-runtime
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-connection-runtime-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-connection-runtime-amd64,mode=max,ignore-error=true
+
+      - name: Archive the connection runtime
+        run: |
+          tar -C "$RUNNER_TEMP/executor-connection-runtime" \
+            -czf "$RUNNER_TEMP/connection-runtime-linux-amd64.tar.gz" connection-runtime
+
+      - name: Upload the connection runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: connection-runtime-linux-amd64
+          path: ${{ runner.temp }}/connection-runtime-linux-amd64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   build-executor-local-linux-arm64:
     needs: prepare-release
     runs-on: ubuntu-22.04-arm
@@ -1146,6 +1203,7 @@ jobs:
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
       - build-executor-local-linux-amd64
+      - build-executor-connection-runtime-linux-amd64
       - build-executor-local-linux-arm64
       - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
@@ -1166,6 +1224,21 @@ jobs:
           path: ./executor-binaries
           merge-multiple: true
 
+      - name: Download the connection runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: connection-runtime-linux-amd64
+          path: ${{ runner.temp }}/executor-connection-runtime
+
+      - name: Package the Linux amd64 Executor runtime
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+        run: |
+          bash .github/scripts/package-executor-runtime-linux-amd64.sh \
+            executor-binaries/wegent-executor-linux-amd64 \
+            "$RUNNER_TEMP/executor-connection-runtime/connection-runtime-linux-amd64.tar.gz" \
+            "$VERSION" "$(git rev-parse HEAD)" executor-binaries
+
       - name: Create and push tag
         shell: bash
         run: |
@@ -1176,8 +1249,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git fetch --tags --force
+          bash .github/scripts/check-release-tag-revision.sh "v$VERSION"
 
-          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
             echo "Tag v${VERSION} already exists, skipping tag creation"
           else
             git tag -a "v${VERSION}" -m "Release version ${VERSION}"
@@ -1215,6 +1289,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-notes.outputs.tag }}
+          target_commitish: ${{ env.GIT_REF }}
           name: Release ${{ steps.release-notes.outputs.tag }}
           body: ${{ steps.release-notes.outputs.body }}
           draft: false
@@ -1224,6 +1299,8 @@ jobs:
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
             ./executor-binaries/wegent-executor-linux-amd64
+            ./executor-binaries/wegent-executor-runtime-linux-amd64.tar.gz
+            ./executor-binaries/wegent-executor-runtime-linux-amd64.tar.gz.sha256
             ./executor-binaries/wegent-executor-linux-arm64
             ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh

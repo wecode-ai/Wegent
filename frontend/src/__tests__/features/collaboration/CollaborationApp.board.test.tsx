@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import {
   baseBoardStatusGroupingFlag,
@@ -13,6 +13,8 @@ import {
   type CollaborationProject,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
+
+import { sdkSelectValue } from '../../../../../packages/collaboration/src/test/selectControl'
 
 const statuses = [
   { id: 'inbox', name: '收集箱', color: 'gray' as const },
@@ -423,7 +425,7 @@ describe('CollaborationApp shared project board', () => {
         failure === 'runner' ? '请到项目设置 → 执行环境添加或授权设备' : 'Card move failed'
       expect(await screen.findByText(operationMessage, { exact: false })).toBeVisible()
       expect(screen.getByText(migrationMessage)).toBeVisible()
-      expect(screen.getAllByRole('alert')).toHaveLength(2)
+      expect(within(screen.getByTestId('collaboration-root')).getAllByRole('alert')).toHaveLength(2)
 
       fireEvent.click(screen.getByTestId('board-base-migration-retry'))
       await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(2))
@@ -432,7 +434,7 @@ describe('CollaborationApp shared project board', () => {
       await act(async () => finishRetry(savedProject))
       expect(screen.queryByTestId('board-base-migration-retry')).not.toBeInTheDocument()
       expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
-      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(within(screen.getByTestId('collaboration-root')).getAllByRole('alert')).toHaveLength(1)
       expect(updateIssue).toHaveBeenCalledTimes(1)
       expect(screen.getByTestId('cloud-todo-column-inbox')).toContainElement(card)
     }
@@ -473,7 +475,11 @@ describe('CollaborationApp shared project board', () => {
     const card = await screen.findByTestId('collaboration-issue-issue-1')
     await dragCardTo(card, screen.getByTestId('cloud-todo-column-dropzone-in_progress'))
     await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent('请到项目设置 → 执行环境添加或授权设备')
+      expect(
+        screen
+          .getByText('请到项目设置 → 执行环境添加或授权设备', { exact: false })
+          .closest('[role="alert"]')
+      ).toHaveTextContent('请到项目设置 → 执行环境添加或授权设备')
     )
     expect(update).toHaveBeenCalledTimes(1)
     expect(update).toHaveBeenCalledWith(current.id, {
@@ -500,14 +506,10 @@ describe('CollaborationApp shared project board', () => {
       expect(updateProject).not.toHaveBeenCalled()
       expect(notify).not.toHaveBeenCalled()
       expect(screen.queryByText('保存失败，请重试')).not.toBeInTheDocument()
-      fireEvent.change(screen.getByTestId('cloud-board-group-filter'), {
-        target: { value: 'assignee-1' },
-      })
+      await sdkSelectValue(screen.getByTestId('cloud-board-group-filter'), 'assignee-1')
       expect(screen.getByTestId('collaboration-issue-issue-1')).toBeInTheDocument()
       expect(screen.queryByTestId('collaboration-issue-issue-2')).not.toBeInTheDocument()
-      fireEvent.change(screen.getByTestId('cloud-board-group-filter'), {
-        target: { value: '' },
-      })
+      await sdkSelectValue(screen.getByTestId('cloud-board-group-filter'), '')
       expect(screen.getByTestId('collaboration-issue-issue-2')).toBeInTheDocument()
     }
   )
@@ -1034,11 +1036,15 @@ describe('CollaborationApp shared project board', () => {
       const sort = await screen.findByTestId(`cloud-board-sort-by-${lane}`)
       fireEvent.click(sort)
       fireEvent.click(screen.getByTestId(`cloud-board-sort-by-${lane}-manual`))
-      fireEvent.click(sort)
-      await dragCardTo(
-        screen.getByTestId('collaboration-issue-second'),
-        screen.getByTestId('collaboration-issue-issue-1')
-      )
+      const moving = screen
+        .getByTestId('collaboration-issue-second')
+        .querySelector<HTMLElement>('[data-board-transfer-item]')!
+      moving.focus()
+      for (const key of [' ', 'ArrowUp', ' ']) {
+        await act(async () => {
+          fireEvent.keyDown(moving, { key, code: key === ' ' ? 'Space' : key })
+        })
+      }
       await waitFor(() =>
         expect(update).toHaveBeenCalledWith('second', {
           version: second.version,

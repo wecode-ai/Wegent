@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { savedConversationProvider } from '@/features/workbench/runtimeModelSelection'
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
@@ -37,36 +42,37 @@ export function useStandInActiveModelProvider({
     enabled && address && threadId
       ? JSON.stringify([address.deviceId, address.taskId, threadId])
       : ''
-  const [attempt, setAttempt] = useState(0)
-  const [resolved, setResolved] = useState<{ key: string; provider?: string; failed?: boolean }>()
-  const provider =
-    storedProvider ?? (resolved?.key === key ? resolved.provider : null) ?? savedProvider
-  const pending = Boolean(key && !provider)
-  const failed = pending && resolved?.key === key && Boolean(resolved.failed)
-  const refresh = useCallback(() => setAttempt(value => value + 1), [])
   const deviceId = address?.deviceId
   const taskId = address?.taskId
   const readTask = api?.readTask
-
-  useEffect(() => {
-    if (!key || savedProvider || !readTask || !deviceId || !taskId || !threadId) return
-    let cancelled = false
-    void readTask(deviceId, taskId, { resolveActiveProvider: true })
-      .then(result => {
-        if (cancelled) return
-        const provider =
-          result.success && result.task?.threadId === threadId
-            ? activeModelProviderFromHandle(result.task.runtimeHandle, threadId)
+  const resource = useMemo(
+    () =>
+      createAsyncResource<string | null>(
+        key,
+        async () => {
+          const result = await readTask!.call(api, deviceId!, taskId!, {
+            resolveActiveProvider: true,
+          })
+          const task = result.task
+          return result.success && task && task.threadId === threadId
+            ? activeModelProviderFromHandle(task.runtimeHandle, threadId)
             : null
-        setResolved(provider ? { key, provider } : { key, failed: true })
-      })
-      .catch(() => {
-        if (!cancelled) setResolved({ key, failed: true })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [readTask, key, deviceId, taskId, threadId, savedProvider, attempt])
-
-  return { provider, pending, failed, refresh }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, readTask, key, deviceId, taskId, threadId]
+  )
+  const canRead = Boolean(key && !savedProvider && readTask && deviceId && taskId && threadId)
+  const query = useSyncExternalStore(
+    canRead ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const provider = storedProvider ?? query.data ?? savedProvider
+  const pending = Boolean(key && !provider)
+  const failed = pending && query.settled && !query.data
+  const refresh = useCallback(() => {
+    if (canRead) void resource.reload()
+  }, [resource, canRead])
+  return { provider, pending, failed, refreshing: pending && query.status === 'loading', refresh }
 }

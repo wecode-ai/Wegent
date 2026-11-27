@@ -1,5 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, type ReactNode } from 'react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+} from '@testing-library/react'
+import type { ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import {
@@ -13,11 +20,39 @@ const mocks = vi.hoisted(() => ({
   apiBaseUrl: 'https://cloud.example/api',
   historyAvailable: true,
   runtimeSend: vi.fn(),
+  runtimeApiSend: vi.fn(),
+  runtimeApiInterruptSend: vi.fn(),
+  runtimeApiCancel: vi.fn(),
+  runtimeApiTranscript: vi.fn(),
   panel: vi.fn(),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({ state: { user: { id: mocks.userId } }, openRuntimeTask: vi.fn() }),
+  useWorkbench: () => ({
+    state: {
+      user: { id: mocks.userId },
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Local device',
+          status: 'online',
+          is_default: true,
+          device_type: 'local',
+          bind_shell: 'claudecode',
+        },
+      ],
+    },
+    services: {
+      runtimeWorkApi: {
+        sendRuntimeMessage: mocks.runtimeApiSend,
+        interruptAndSendRuntimeMessage: mocks.runtimeApiInterruptSend,
+        cancelRuntimeTask: mocks.runtimeApiCancel,
+        getRuntimeTranscript: mocks.runtimeApiTranscript,
+      },
+    },
+    openRuntimeTask: vi.fn(),
+  }),
 }))
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useCloudConnection: () => ({ isConnected: true, apiBaseUrl: mocks.apiBaseUrl }),
@@ -28,13 +63,19 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     composerHeader?: ReactNode
     readOnly?: boolean
     active?: boolean
+    assistantSend?(input: {
+      message: string
+      clientUserMessageId: string
+      attachmentIds?: number[]
+      interruptWhenBusy?: boolean
+      runtimeOptions?: {
+        modelId?: string
+        attachments?: import('@/types/api').Attachment[]
+      }
+    }): Promise<{ sent: boolean; error?: string | null }>
     onHistorySourceAvailabilityChange?(value: boolean): void
   }) => {
     mocks.panel(props)
-    const { onHistorySourceAvailabilityChange } = props
-    useEffect(() => {
-      onHistorySourceAvailabilityChange?.(mocks.historyAvailable)
-    }, [onHistorySourceAvailabilityChange])
     return (
       <div data-testid="native-private-panel">
         {!props.readOnly && props.active !== false && (
@@ -58,12 +99,39 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   },
 }))
 
+function reportNativeHistory(previousCalls: number) {
+  if (mocks.panel.mock.calls.length === previousCalls) return
+  const props = mocks.panel.mock.lastCall?.[0] as
+    | { onHistorySourceAvailabilityChange?(available: boolean): void }
+    | undefined
+  act(() => props?.onHistorySourceAvailabilityChange?.(mocks.historyAvailable))
+}
+
+function render(element: ReactElement) {
+  const previousCalls = mocks.panel.mock.calls.length
+  const view = renderView(element)
+  reportNativeHistory(previousCalls)
+  return {
+    ...view,
+    rerender(next: ReactElement) {
+      const previousCalls = mocks.panel.mock.calls.length
+      view.rerender(next)
+      reportNativeHistory(previousCalls)
+    },
+  }
+}
+
 function fixture(overrides: Partial<PrivateDiscussionPaneProps> = {}) {
-  const create = vi.fn(async () => ({ id: 'comment-1' }))
+  const createAssistantPublication = vi.fn(async () => ({ id: 'comment-1' }))
   const api = {
     projects: { get: vi.fn(async () => project()) },
     issues: { get: vi.fn(async () => issue()) },
-    comments: { create },
+    comments: {
+      create: vi.fn(() => {
+        throw new Error('Assistant conclusions must use the publication service')
+      }),
+      createAssistantPublication,
+    },
   } as unknown as SharedWorkspaceApi
   return {
     props: {
@@ -84,7 +152,7 @@ function fixture(overrides: Partial<PrivateDiscussionPaneProps> = {}) {
       onPublished: vi.fn(),
       ...overrides,
     } satisfies PrivateDiscussionPaneProps,
-    create,
+    createAssistantPublication,
   }
 }
 
@@ -99,10 +167,228 @@ beforeEach(() => {
   mocks.userId = 7
   mocks.apiBaseUrl = 'https://cloud.example/api'
   mocks.historyAvailable = true
+  mocks.runtimeApiSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
+  mocks.runtimeApiInterruptSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
 })
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('renders an unavailable interaction when the runtime address is incomplete', () => {
+    const { props } = fixture()
+    props.conversation.address = { deviceId: 'device-1', taskId: '' }
+    expect(() => render(<PrivateDiscussionPane {...props} />)).not.toThrow()
+    expect(screen.getByTestId('collaboration-exp-private-unavailable')).toHaveTextContent(
+      'private.sourceUnavailable'
+    )
+    expect(mocks.panel).not.toHaveBeenCalled()
+  })
+
+  it('sends the bound Issue discussion through the shared assistant interaction contract', async () => {
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Continue with evidence',
+        clientUserMessageId: 'durable-request',
+        runtimeOptions: { modelId: 'model-1' },
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith({
+      address: props.conversation.address,
+      message: 'Continue with evidence',
+      clientUserMessageId: 'durable-request',
+      modelId: 'model-1',
+      conversationContext: 'private_discussion',
+      queueIfBusy: true,
+      attachments: [],
+    })
+  })
+
+  it('sends as the verified local conversation owner instead of the signed-in profile', async () => {
+    const localProject = project({ project_store: 'local', current_user_id: 7 })
+    const { props } = fixture({ project: localProject, participationViewer: [0, 7] })
+    props.conversation.ownerUserId = 0
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Continue the verified local turn',
+        clientUserMessageId: 'local-owner-request',
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledWith({
+      address: props.conversation.address,
+      message: 'Continue the verified local turn',
+      clientUserMessageId: 'local-owner-request',
+      conversationContext: 'private_discussion',
+      queueIfBusy: true,
+      attachments: [],
+    })
+  })
+
+  it('forwards interrupt intent to the Runtime interrupt-and-send operation', async () => {
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Replace the current direction',
+        clientUserMessageId: 'interrupt-request',
+        interruptWhenBusy: true,
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiInterruptSend).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Replace the current direction' })
+    )
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
+  it('reports queued acceptance to the native composer', async () => {
+    mocks.runtimeApiSend.mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      status: 'queued',
+    })
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    await expect(
+      panelProps.assistantSend({
+        message: 'Queue this follow-up',
+        clientUserMessageId: 'queued-request',
+      })
+    ).resolves.toEqual({ sent: true, queued: true })
+  })
+
+  it('resolves a deferred attachment before sending the private discussion', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const remoteSource = new File(['remote'], 'deferred.png', { type: 'image/png' })
+    const localSource = new File(['local'], 'local.png', { type: 'image/png' })
+    const uploads: Array<(value: import('@/types/api').Attachment) => void> = []
+    const upload = vi.fn(
+      () =>
+        new Promise<import('@/types/api').Attachment>(resolve => {
+          uploads.push(resolve)
+        })
+    )
+    const remote = prepareAttachmentFile(
+      remoteSource.name,
+      remoteSource.type,
+      async () => remoteSource,
+      upload
+    )
+    const local = prepareAttachmentFile(
+      localSource.name,
+      localSource.type,
+      async () => localSource,
+      upload
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    const sending = panelProps.assistantSend({
+      message: 'Send the deferred image',
+      clientUserMessageId: 'deferred-attachment-request',
+      runtimeOptions: { attachments: [remote, local] },
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2))
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+
+    uploads[0]({
+      id: 42,
+      filename: remoteSource.name,
+      file_size: remoteSource.size,
+      mime_type: remoteSource.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+    })
+    uploads[1]({
+      id: 43,
+      filename: localSource.name,
+      file_size: localSource.size,
+      mime_type: localSource.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+      local_path: '/tmp/deferred.png',
+    })
+    await expect(sending).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        attachmentIds: [42],
+        attachments: [expect.objectContaining({ local_path: '/tmp/deferred.png' })],
+      })
+    )
+  })
+
+  it('reports attachment preparation failures without sending the private discussion', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'failed.png', { type: 'image/png' })
+    const pending = prepareAttachmentFile(
+      source.name,
+      source.type,
+      async () => source,
+      async () => {
+        throw new Error('attachment staging failed')
+      }
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    await expect(
+      panelProps.assistantSend({
+        message: 'This must stay failed',
+        clientUserMessageId: 'failed-attachment-request',
+        runtimeOptions: { attachments: [pending] },
+      })
+    ).resolves.toEqual({ sent: false, error: 'attachment staging failed' })
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
+  it('drops a pending local attachment after it resolves to a remote ID', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'remote.png', { type: 'image/png' })
+    let finishUpload!: (value: import('@/types/api').Attachment) => void
+    const pending = prepareAttachmentFile(
+      source.name,
+      source.type,
+      async () => source,
+      () =>
+        new Promise(resolve => {
+          finishUpload = resolve
+        })
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    const sending = panelProps.assistantSend({
+      message: 'Send the uploaded image',
+      clientUserMessageId: 'remote-attachment-request',
+      runtimeOptions: { attachments: [pending] },
+    })
+    await waitFor(() => expect(finishUpload).toBeTypeOf('function'))
+    finishUpload({
+      id: 44,
+      filename: source.name,
+      file_size: source.size,
+      mime_type: source.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+    })
+
+    await expect(sending).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ attachmentIds: [44], attachments: [] })
+    )
+  })
+
   it('uses task context and the original source history without a second embedded pane heading', () => {
     const onClose = vi.fn()
     const { props } = fixture({
@@ -129,7 +415,7 @@ describe('private discussion pane', () => {
 
   it('keeps source history read-only and continues the same native address and ordinary draft', () => {
     const onContinue = vi.fn()
-    const { props, create } = fixture({ onContinue })
+    const { props, createAssistantPublication } = fixture({ onContinue })
     const view = render(<PrivateDiscussionPane {...props} />)
     fireEvent.change(screen.getByTestId('native-private-draft'), {
       target: { value: 'My unsent private draft' },
@@ -150,12 +436,12 @@ describe('private discussion pane', () => {
       })
     )
     expect(mocks.runtimeSend).not.toHaveBeenCalled()
-    expect(create).not.toHaveBeenCalled()
+    expect(createAssistantPublication).not.toHaveBeenCalled()
   })
 
   it('replaces native messages with the inline preview and restores focus and both drafts on return', () => {
     const onConclusionViewChange = vi.fn()
-    const { props, create } = fixture({ onConclusionViewChange })
+    const { props, createAssistantPublication } = fixture({ onConclusionViewChange })
     render(<PrivateDiscussionPane {...props} />)
     fireEvent.change(screen.getByTestId('native-private-draft'), {
       target: { value: 'Ordinary input stays private' },
@@ -171,34 +457,40 @@ describe('private discussion pane', () => {
     expect(screen.getByTestId('collaboration-exp-conclusion-open')).toHaveFocus()
     expect(onConclusionViewChange).toHaveBeenLastCalledWith(false)
     expect(openConclusion()).toHaveValue('My manually edited conclusion')
-    expect(create).not.toHaveBeenCalled()
+    expect(createAssistantPublication).not.toHaveBeenCalled()
     expect(mocks.runtimeSend).not.toHaveBeenCalled()
   })
 
   it('allows an empty current discussion to review and explicitly publish a manually entered body', async () => {
     mocks.historyAvailable = false
-    const { props, create } = fixture()
+    const { props, createAssistantPublication } = fixture()
     props.conversation.historySource = undefined
     render(<PrivateDiscussionPane {...props} />)
     expect(screen.getByTestId('native-private-draft')).toBeInTheDocument()
     expect(openConclusion()).toHaveValue('')
     expect(screen.getByTestId('collaboration-exp-conclusion-publish')).toBeDisabled()
-    expect(create).not.toHaveBeenCalled()
+    expect(createAssistantPublication).not.toHaveBeenCalled()
     fireEvent.change(screen.getByTestId('collaboration-exp-conclusion-text'), {
       target: { value: 'Only my confirmed text' },
     })
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
     await waitFor(() =>
-      expect(create).toHaveBeenCalledExactlyOnceWith(issue().id, 'Only my confirmed text', {
-        clientMessageId: expect.any(String),
-      })
+      expect(createAssistantPublication).toHaveBeenCalledExactlyOnceWith(
+        issue().id,
+        'Only my confirmed text',
+        {
+          clientMessageId: expect.any(String),
+          projectId: project().id,
+          assistantSource: props.conversation.address,
+        }
+      )
     )
     await waitFor(() => expect(screen.getByTestId('native-private-draft')).toBeInTheDocument())
   })
 
   it('retains the preview and draft when publication fails', async () => {
-    const { props, create } = fixture()
-    create.mockRejectedValueOnce(new Error('offline'))
+    const { props, createAssistantPublication } = fixture()
+    createAssistantPublication.mockRejectedValueOnce(new Error('offline'))
     render(<PrivateDiscussionPane {...props} />)
     fireEvent.change(openConclusion(), { target: { value: 'Keep the unsubmitted conclusion' } })
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
@@ -213,7 +505,7 @@ describe('private discussion pane', () => {
   })
 
   it('keeps a successful publication refresh error visible without republishing the accepted body', async () => {
-    const { props, create } = fixture({
+    const { props, createAssistantPublication } = fixture({
       onPublished: vi.fn(async () => {
         throw new Error('refresh failed')
       }),
@@ -226,12 +518,12 @@ describe('private discussion pane', () => {
     )
     expect(screen.getByTestId('collaboration-exp-conclusion-text')).toHaveValue('')
     expect(screen.getByTestId('collaboration-exp-conclusion-publish')).toBeDisabled()
-    expect(create).toHaveBeenCalledTimes(1)
+    expect(createAssistantPublication).toHaveBeenCalledTimes(1)
   })
 
   it('invalidates an outstanding permission check when returning to discussion', async () => {
     let resolveProject!: (value: ReturnType<typeof project>) => void
-    const { props, create } = fixture()
+    const { props, createAssistantPublication } = fixture()
     vi.mocked(props.api.projects.get).mockImplementationOnce(
       () => new Promise(resolve => (resolveProject = resolve))
     )
@@ -240,7 +532,7 @@ describe('private discussion pane', () => {
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-back'))
     await act(async () => resolveProject(project()))
-    expect(create).not.toHaveBeenCalled()
+    expect(createAssistantPublication).not.toHaveBeenCalled()
     expect(openConclusion()).toHaveValue('Never admitted while closed')
     expect(screen.getByRole('alert')).toHaveTextContent('private.errors.stale')
   })
@@ -248,7 +540,7 @@ describe('private discussion pane', () => {
   it('does not let a late refresh completion close a newly opened preview', async () => {
     let finishRefresh!: () => void
     const onPublished = vi.fn(() => new Promise<void>(resolve => (finishRefresh = resolve)))
-    const { props, create } = fixture({ onPublished })
+    const { props, createAssistantPublication } = fixture({ onPublished })
     render(<PrivateDiscussionPane {...props} />)
     fireEvent.change(openConclusion(), { target: { value: 'First accepted conclusion' } })
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
@@ -259,7 +551,7 @@ describe('private discussion pane', () => {
     expect(screen.getByTestId('collaboration-exp-conclusion-text')).toHaveValue(
       'A different unsent conclusion'
     )
-    expect(create).toHaveBeenCalledTimes(1)
+    expect(createAssistantPublication).toHaveBeenCalledTimes(1)
   })
 
   it('does not reuse local reader identities after the current profile changes', () => {
@@ -275,10 +567,43 @@ describe('private discussion pane', () => {
   })
 
   it.each([0, 7])(
+    'continues authorized local owner %s through its Runtime identity while retaining the profile actor',
+    async owner => {
+      const localProject = project({ project_store: 'local', current_user_id: 7 })
+      const { props, createAssistantPublication } = fixture({
+        project: localProject,
+        participationViewer: [0, 7],
+      })
+      props.conversation.ownerUserId = owner
+      render(<PrivateDiscussionPane {...props} />)
+      const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+      await expect(
+        panelProps.assistantSend({
+          message: 'Continue the existing local discussion',
+          clientUserMessageId: 'native-owner-request',
+        })
+      ).resolves.toEqual({ sent: true })
+      expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith({
+        address: props.conversation.address,
+        message: 'Continue the existing local discussion',
+        clientUserMessageId: 'native-owner-request',
+        conversationContext: 'private_discussion',
+        queueIfBusy: true,
+        attachments: [],
+      })
+      expect(createAssistantPublication).not.toHaveBeenCalled()
+      expect(props.project.current_user_id).toBe(7)
+    }
+  )
+
+  it.each([0, 7])(
     'reads local owner %s and publishes as the current profile actor',
     async owner => {
       const localProject = project({ project_store: 'local', current_user_id: 7 })
-      const { props, create } = fixture({ project: localProject, participationViewer: [0, 7] })
+      const { props, createAssistantPublication } = fixture({
+        project: localProject,
+        participationViewer: [0, 7],
+      })
       props.conversation.ownerUserId = owner
       vi.mocked(props.api.projects.get).mockResolvedValue(localProject)
       render(<PrivateDiscussionPane {...props} />)
@@ -288,7 +613,7 @@ describe('private discussion pane', () => {
         target: { value: 'Confirmed local conclusion' },
       })
       fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
-      await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(createAssistantPublication).toHaveBeenCalledTimes(1))
       await waitFor(() => expect(props.onPublished).toHaveBeenCalledTimes(1))
     }
   )
@@ -313,7 +638,10 @@ describe('private discussion pane', () => {
     'retains a local native-owner draft when fresh actor changes to %s',
     async actor => {
       const localProject = project({ project_store: 'local', current_user_id: 7 })
-      const { props, create } = fixture({ project: localProject, participationViewer: [0, 7] })
+      const { props, createAssistantPublication } = fixture({
+        project: localProject,
+        participationViewer: [0, 7],
+      })
       props.conversation.ownerUserId = 0
       vi.mocked(props.api.projects.get).mockResolvedValue({
         ...localProject,
@@ -328,7 +656,7 @@ describe('private discussion pane', () => {
       await waitFor(() =>
         expect(screen.getByRole('alert')).toHaveTextContent('private.errors.stale')
       )
-      expect(create).not.toHaveBeenCalled()
+      expect(createAssistantPublication).not.toHaveBeenCalled()
       expect(screen.getByTestId('collaboration-exp-conclusion-text')).toHaveValue(
         'Keep my local conclusion'
       )
@@ -336,7 +664,7 @@ describe('private discussion pane', () => {
   )
 
   it('opens the exact existing current task; ordinary messages never create a shared comment', async () => {
-    const { props, create } = fixture()
+    const { props, createAssistantPublication } = fixture()
     render(<PrivateDiscussionPane {...props} />)
     expect(mocks.panel).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -351,11 +679,11 @@ describe('private discussion pane', () => {
     })
     fireEvent.click(screen.getByTestId('native-private-send'))
     expect(mocks.runtimeSend).toHaveBeenCalledWith('Private context and attachment discussion')
-    expect(create).not.toHaveBeenCalled()
+    expect(createAssistantPublication).not.toHaveBeenCalled()
   })
 
   it('publishes only confirmed edited text and restores both drafts after a full component restart', async () => {
-    const { props, create } = fixture()
+    const { props, createAssistantPublication } = fixture()
     const first = render(<PrivateDiscussionPane {...props} />)
     fireEvent.change(screen.getByTestId('native-private-draft'), {
       target: { value: 'Unsent private draft' },
@@ -373,11 +701,17 @@ describe('private discussion pane', () => {
     )
     fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
     await waitFor(() =>
-      expect(create).toHaveBeenCalledWith('EXP-1', 'Confirmed edited conclusion', {
-        clientMessageId: expect.any(String),
-      })
+      expect(createAssistantPublication).toHaveBeenCalledWith(
+        'EXP-1',
+        'Confirmed edited conclusion',
+        {
+          clientMessageId: expect.any(String),
+          projectId: project().id,
+          assistantSource: props.conversation.address,
+        }
+      )
     )
-    expect(create).toHaveBeenCalledTimes(1)
+    expect(createAssistantPublication).toHaveBeenCalledTimes(1)
     await waitFor(() =>
       expect(screen.queryByTestId('collaboration-exp-conclusion-form')).not.toBeInTheDocument()
     )

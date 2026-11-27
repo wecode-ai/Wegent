@@ -68,9 +68,16 @@ Codex's recognizable visual grammar is:
   four-card quick-start row is intentional and must not expand into a dashboard;
 - soft rounded shapes are systematic, not decorative;
 - borders are low-contrast hairlines and elevation is restrained;
-- one strong action is allowed; surrounding actions remain quiet;
-- information appears progressively instead of every option being visible at
-  equal weight.
+- buttons on the same surface must use the shared recipes in section 6.1.
+  Actions of equal importance use the same variant and size within a group.
+  When there is a clear next step, give that action the strongest emphasis;
+- organize each view around the user's current task. Show the work item and
+  the context needed to act on it together. For example, an issue detail view
+  should open with the issue and its status; choosing Edit reveals its fields;
+- ask only for information the current task requires. Reuse known values,
+  group fields that users decide together, and reveal occasional settings
+  when relevant. Keep essential choices visible and advanced options easy
+  to find.
 
 A normal screenshot should first read as work content, then structure, then
 controls. It must not first read as green, colorful, card-heavy, glossy, or
@@ -167,9 +174,10 @@ font size is allowed only when it derives from the shared typography tokens,
 such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
-The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
-`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+The primary Electron UI weight is `445`. Ordinary UI and conversation text
+inherit it. Task and collaboration sidebar labels use the shared font family,
+size, and weight. Emphasis and headings use `500`. Use `600` sparingly and
+avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
@@ -473,7 +481,7 @@ may reveal on hover/focus but must remain keyboard accessible.
   not duplicate Search as a primary-navigation list row.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
-- Overflowing sidebar lists use a quiet theme-aware `4px` overlay thumb inside an
+- Overflowing sidebar lists use a quiet theme-aware `6px` overlay thumb inside an
   `8px` drag target inset `3px` from the sidebar edge. Show it while the pointer
   is anywhere in the sidebar, a sidebar control has visible keyboard focus, or
   the scrollbar is being dragged; hide it when those interactions end. Scrollbars
@@ -735,6 +743,63 @@ in [任务动态评论框交互规范](../docs/zh/wegent/user-guide/coding/issue
 and its [English version](../docs/en/wegent/user-guide/coding/issue-comment-interaction.md).
 Do not claim pinned scrolling is verified from a static screenshot or CSS declaration alone.
 
+#### Desktop task image preview
+
+The Codex image viewer places a light translucent layer over the conversation,
+with zoom, image actions and close controls across the titlebar and a movable
+dark editing toolbar at the bottom. Keep the image itself unrounded in the
+full-screen editor. Read-only conversations expose the viewer without edit
+actions. Opening the image in Files passes the originating image editor and any
+draft attachment ID to the existing attachment preview panel. The editor
+resolves current permission and conversation scope from the original owner.
+
+Markup opened from a composer thumbnail saves an edited PNG in the same draft
+attachment slot in either viewer. Positional comments travel with that
+attachment and are numbered in image order when the composer sends a message
+or starts a goal. Other edit submissions enter the owning conversation as
+independent messages, including when the owner is a temporary chat.
+Markup has its own drawing tools and undo history. The pen and both erasers use
+the pointer samples coalesced by Chromium. The pen uses stylus pressure or
+pointer speed and draws tapered segments with round joins. The preview and PNG
+export use the same aspect-preserving coordinates, paths and per-mark erasures. Export
+composites erased marks over the source image without modifying its pixels
+outside the remaining marks. The message carries any instructions entered in the viewer.
+The standalone comment mode and the comment tool in markup show an unnumbered
+pin until the user saves it. Sending includes a localized image heading with
+numbered image-relative coordinates in the user message. Comment-only
+submissions use the original image. After the conversation accepts the message
+and the image is available for dispatch, remove only the admitted composer
+attachment group from its draft.
+Erase uploads the original and a black-and-white selection mask. Background
+removal and resizing send the image with the selected edit instruction.
+
+```mermaid
+sequenceDiagram
+    participant Viewer as Desktop image preview
+    participant Panel as Files panel
+    participant Pane as Owning conversation pane
+    participant Runtime as Selected executor and model
+    opt Open in side panel
+        Viewer->>Panel: Pass image, originating editor and draft attachment ID
+    end
+    Viewer->>Viewer: Normalize pointer samples and saved comment positions
+    alt Save markup on a composer attachment
+        Viewer->>Pane: Export PNG and save position comments on the draft attachment
+        Pane->>Pane: Replace the original draft attachment after staging
+        Pane->>Pane: Admit images, numbered coordinates and composer text on send or Goal
+    else Submit an image edit
+        Viewer->>Pane: Submit edit instruction and pending attachments
+        Pane->>Pane: Admit message or queue entry and preserve unrelated draft contents
+        opt Comment-only send from a composer attachment
+            Pane->>Pane: Retain the source image for dispatch and remove its admitted attachment group from the draft
+        end
+        Pane->>Pane: Stage original image, marks or selection
+    end
+    Pane->>Pane: Display image and coordinate text in the user message
+    Pane->>Runtime: Dispatch through task transport
+    Runtime-->>Pane: Render response and any generated image
+```
+
 ### 6.3 Navigation and list rows
 
 - A compact navigation row follows the `30px` sidebar recipe.
@@ -795,7 +860,7 @@ Dialogs use:
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;
 - default width `520px`;
-- named widths `380`, `400`, `420`, `600`, `680`, and `800px` only when the
+- named widths `380`, `400`, `445`, `600`, `680`, and `800px` only when the
   content role warrants them;
 - a close control at `16px` from the top/right using a `16px` icon;
 - a stable header/content/footer structure with scrolling in the content region.
@@ -1579,8 +1644,9 @@ component-level validation outlines to override the native-outline reset.
   `IssueMainCommentComposer` owns the main textarea, settings/attachment/send
   toolbar, keyboard and paste behavior, and mention selection. Both hosts use
   `ComposerAttachmentBadges` and `AttachmentImageView` for document/text cards,
-  upload thumbnails and the image lightbox. Image loading, local file access and
-  downloading are host services; hosts do not render separate preview UI.
+  upload thumbnails and image resource lifecycle. The desktop host supplies the
+  native task image lightbox through the shared image services. The browser uses
+  the shared lightbox.
   Card replies share the same queue presentation, scheduler and dispatcher.
   Persist and execute a reply only after its owning card's session becomes idle;
   a busy card must not block a different idle card. A persisted reply is removed
@@ -2194,10 +2260,24 @@ implementation and WCAG conflict.
 - 进程浏览器关闭时，进行中的 DOM 快照读取必须随原生窗口或渲染器销毁立即结算，
   返回既有的窗口不存在状态；活窗口的读取错误仍须上抛。执行脚本前注册生命周期
   监听，并在所有结算路径移除监听，不得以超时、重试或等待渲染器响应代替关闭事件。
+- 进程查看器窗口可见时每秒采样，窗口不可见时停止采样（最小化，macOS 上也包括被完全遮挡），回到窗口立即补采；
+  置顶但失焦时继续刷新，便于边操作边观察。
+- 退出的进程变灰并在原父进程下保留 5 秒，运行时长停在退出时刻，不计入分组和顶部汇总；
+  采集失败或采样间隔超过保留时长时不得把进程误报为已退出。
+- 子进程的每一级缩进处画一条贯穿行高的竖向引导线，层级关系不只依赖缩进。
 - Process Explorer snapshots must settle when their native window closes or its
   renderer is destroyed, preserving the existing absent-window result. Register
   lifecycle listeners before executing renderer code, remove them after every
   settlement, and propagate failures from a live window.
+- Sample the process explorer every second while its window is visible, stop
+  sampling while the window is not visible (minimized, and on macOS also fully
+  covered), and read once on return. A
+  pinned window keeps refreshing without focus so it can be watched while working.
+- An exited process fades to grey and stays under its parent for 5 seconds with
+  uptime frozen at exit, excluded from group and header totals. Failed reads and
+  sampling gaps longer than the linger window must not report exits.
+- Draw one full-height vertical guide at every indentation level of a child
+  process, so the hierarchy does not rely on indentation alone.
 
   ```mermaid
   sequenceDiagram

@@ -1,506 +1,402 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
-import { runnerModelKey } from '@wegent/collaboration'
-import type { CollaborationProject } from '@wegent/collaboration'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { expect, test, vi } from 'vitest'
+import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
+import {
+  STAND_IN_DINGTALK_PROVIDER,
+  type PersonalStandInSettings,
+  type StandInIdentity,
+} from '@/api/personalStandIn'
+import { DingTalkDelegationControls } from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RuntimeWorkListResponse } from '@/types/api'
-import type { StandInExecutorApi } from '@/api/standIn'
-import i18n from '@/i18n'
+import { useState } from 'react'
+import { personalStandInFixture } from './personalStandInSettings.testFixtures'
+import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { StandInImConnections } from './StandInImConnections'
 
-vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
-  useProjectWorktreeAvailabilityProbe: () => null,
-}))
-vi.mock('@/features/automations/AutomationsPage', () => ({
-  AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
-}))
-vi.mock('@/features/dsh-runtime/dshExtensions', () => ({
-  getDshExtensionHost: () => ({ backend: { scope: () => ({ request: async () => [] }) } }),
-}))
-
-function fixture() {
-  const work = {
-    chats: [],
-    projects: [
-      {
-        project: { id: 17, key: 'repo', name: 'Repository' },
-        deviceWorkspaces: [
-          { id: 1, deviceId: 'mac', workspacePath: '/repo', available: true, tasks: [] },
-        ],
-      },
-    ],
-  } as RuntimeWorkListResponse
-  return {
-    settings: {
-      userId: 7,
-      executionDeviceId: 'mac',
-      version: 0,
-      roles: [],
-      primary: {
-        enabled: true,
-        prompt: 'Review my work',
-        preferences: 'Keep replies concise',
-        connections: [
+function openPrimaryProfile(
+  selfLearningEnabled?: boolean,
+  imSessionApi?: WorkbenchServices['imSessionApi'],
+  cloudDefinitionRevision?: string
+) {
+  const { settings } = personalStandInFixture()
+  settings.cloudDefinitionRevision = cloudDefinitionRevision
+  const { services } = standInOverviewFixture().props
+  const model: RunnerModel = {
+    runtime: 'codex',
+    provider: 'fixture',
+    model_id: 'other-model',
+    local_model_id: 'other-model',
+    label: 'Other model',
+    account_label: 'Fixture',
+    is_default: false,
+  }
+  if (services.standInApi) {
+    services.standInApi.catalog = async () => ({ models: [model] })
+  }
+  settings.primary = {
+    enabled: true,
+    selfLearningEnabled,
+    prompt: 'Ask for evidence',
+    preferences: 'Private context',
+  }
+  const onSave = vi
+    .fn<(value: PersonalStandInSettings) => Promise<void>>()
+    .mockResolvedValue(undefined)
+  render(
+    <AppPreferencesContext.Provider
+      value={{
+        preferences: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
+        loaded: true,
+      }}
+    >
+      <StandInPrimaryProfile
+        settings={settings}
+        saving={false}
+        error={null}
+        onSave={onSave}
+        onClose={() => {}}
+        localDeviceId={settings.executionDeviceId}
+        services={services}
+        devices={[]}
+        projects={[]}
+        onSelectDevice={() => {}}
+        shortcuts={[
           {
-            providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
-            id: 'group',
-            name: 'Design team',
-            kind: 'group' as const,
-            profile: 'corp',
-            policy: { automatic: true, askBeforeAct: true },
+            id: 'im',
+            testId: 'stand-in-im-channels-toggle',
+            label: 'Chat channels',
+            content: (
+              <StandInImConnections
+                services={{ ...services, imSessionApi }}
+                deviceId={settings.executionDeviceId}
+                name="Assistant"
+              />
+            ),
           },
-        ],
-      },
-    } as PersonalStandInSettings,
-    saving: false,
-    error: null,
-    onSave: vi.fn(async () => {}),
-    onClose: vi.fn(),
-    onSelectDevice: vi.fn(),
-    localDeviceId: 'mac',
-    projects: [],
-    devices: [
-      { id: 1, device_id: 'mac', name: 'Mac', status: 'online' as const },
-      { id: 2, device_id: 'remote', name: 'Remote', status: 'online' as const },
-    ],
-    services: {
-      standInApi: {
-        catalog: async () => ({
-          models: [{ runtime: 'codex', provider: 'local', model_id: 'profile-model' }],
-        }),
-      },
-      modelApi: { listModels: async () => ({ data: [] }) },
-      runtimeWorkApi: { listRuntimeWork: vi.fn(async () => work) },
-    } as unknown as WorkbenchServices,
+        ]}
+      />
+    </AppPreferencesContext.Provider>
+  )
+  return {
+    model,
+    save: () => {
+      fireEvent.click(screen.getByTestId('stand-in-primary-save'))
+      return onSave.mock.calls[0]?.[0].primary
+    },
   }
 }
 
-it('distinguishes a pending save from a disabled unchanged save', () => {
-  const props = fixture()
-  const view = render(<StandInPrimaryProfile {...props} saving />)
-  const save = screen.getByTestId('stand-in-primary-save')
-  expect(save).toHaveTextContent('保存中')
-  expect(save).toHaveAttribute('aria-busy', 'true')
-  view.rerender(<StandInPrimaryProfile {...props} />)
-  expect(save).toHaveTextContent('保存设置')
-  expect(save).not.toHaveAttribute('aria-busy', 'true')
-  expect(save).toBeDisabled()
-})
-
-it('keeps the editor default scope without treating an unsaved default as configured', async () => {
-  const props = fixture()
-  props.settings.primary!.connections = []
-  const user = userEvent.setup({ delay: null })
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent('0')
-  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
-  const all = screen.getByTestId('stand-in-all-projects')
-  expect(all).toBeChecked()
-  expect(all).toBeDisabled()
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  expect(all).toBeChecked()
-  expect(all).toBeDisabled()
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
-})
-
-it('does not persist a default source scope when saving only preferences', async () => {
-  const props = fixture()
-  const user = userEvent.setup({ delay: null })
-  render(<StandInPrimaryProfile {...props} />)
-  await user.type(screen.getByTestId('stand-in-preferences'), ' Additional preferences')
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({
-      primary: expect.objectContaining({ collaboration: undefined }),
-    })
-  )
-})
-
-it('protects an unfinished invalid project tag and permits saving after explicit recovery', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
-  const input = screen.getByTestId('stand-in-connection-tags-input')
-  const invalid = 'x'.repeat(33)
-  await user.type(input, invalid)
-  expect(await screen.findByRole('alert')).toHaveTextContent('标签名称不能超过 32 个字符')
-  expect(screen.getByTestId('stand-in-primary-save')).toBeVisible()
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
-  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
-  await user.click(await screen.findByTestId('stand-in-project-tags-keep-editing'))
-  expect(input).toHaveValue(invalid)
-  expect(props.onClose).not.toHaveBeenCalled()
-  expect(props.onSave).not.toHaveBeenCalled()
-  await user.clear(input)
-  await waitFor(() => expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled())
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({
-      primary: expect.objectContaining({
-        collaboration: expect.objectContaining({
-          tags: [],
-          allProjects: true,
-          policy: expect.objectContaining({ immediate: false }),
-        }),
-      }),
-    })
-  )
-})
-
-it('requires confirmation before disabling intake with an unfinished tag', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
-  const input = screen.getByTestId('stand-in-connection-tags-input')
-  await user.type(input, 'x'.repeat(33))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
-    'aria-checked',
-    'true'
-  )
-  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
-  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
-    'aria-checked',
-    'false'
-  )
-  expect(screen.getByTestId('stand-in-connection-tags-input')).toHaveValue('')
-  expect(screen.queryByText('标签名称不能超过 32 个字符')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-project-tags-draft-help')).not.toBeInTheDocument()
-})
-
-it('confirms closing a changed profile with an unfinished tag only once', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
-  await user.type(screen.getByTestId('stand-in-connection-tags-input'), 'x'.repeat(33))
-  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
-  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
-  expect(props.onClose).toHaveBeenCalledOnce()
-  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
-  expect(props.onSave).not.toHaveBeenCalled()
-})
-
-it.each([false, true])(
-  'distinguishes an empty primary scope from a saved paused scope: %s',
-  async savedScope => {
-    const props = fixture()
-    props.settings.primary = {
-      ...props.settings.primary!,
-      connections: [],
-      ...(savedScope
-        ? {
-            collaboration: {
-              enabled: false,
-              allProjects: true,
-              projects: [],
-              excludedProjects: [],
-              tags: [],
-            },
-          }
-        : {}),
+test.each([true, false])(
+  'DingTalk verifies exact read access before the enable action with a prepared scope: %s',
+  async prepareScope => {
+    const { services } = standInOverviewFixture().props
+    const api = services.standInApi!
+    const identity = {
+      profile: 'org:alice',
+      accountId: 'fixture-binding',
+      accountName: 'Alice',
+      organizationId: 'org',
+      organizationName: 'Studio',
     }
-    const user = userEvent.setup()
-    render(<StandInPrimaryProfile {...props} />)
-    await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-    expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent(
-      `已配置 ${savedScope ? 1 : 0}`
-    )
-    if (savedScope)
-      expect(screen.getByTestId('stand-in-add-projects-connection-status')).toHaveTextContent(
-        '未开启接收'
+    let permissionsGranted = false
+    const checked = vi.fn()
+    api.connectionReadiness = async (device, provider, profile, sources) => {
+      if (sources) checked(device, provider, profile, sources)
+      return {
+        status: sources && !permissionsGranted ? 'permissions_required' : 'ready',
+        identity,
+        permissions: {
+          read: sources && permissionsGranted ? 'verified' : 'unchecked',
+          reply: 'unverified',
+        },
+      }
+    }
+    api.searchConnectionResources = vi.fn(async () => ({
+      items: [
+        {
+          providerId: STAND_IN_DINGTALK_PROVIDER,
+          id: 'friend',
+          kind: 'direct',
+          profile: identity.profile,
+          accountId: identity.accountId,
+          name: 'Friend',
+        },
+        {
+          providerId: STAND_IN_DINGTALK_PROVIDER,
+          id: 'other',
+          kind: 'direct',
+          profile: identity.profile,
+          accountId: 'other-binding',
+          name: 'Other',
+        },
+      ],
+    }))
+    const save = vi.fn()
+    const model = {
+      runtime: 'codex' as const,
+      source: 'native' as const,
+      provider: 'test',
+      model_id: 'model',
+    }
+    function TestSetup() {
+      const [saved, setSaved] = useState<StandInIdentity>({
+        enabled: false,
+        prompt: '',
+        preferences: '',
+      })
+      return (
+        <DingTalkDelegationControls
+          settings={{
+            saved,
+            modelSelection: { identity: model },
+            primaryStopped: false,
+            async onSave(next) {
+              save(next)
+              const delegated = next.delegation?.action === 'enable'
+              setSaved({
+                ...next,
+                delegation: next.delegation && {
+                  ...next.delegation,
+                  action: undefined,
+                  authorized: delegated,
+                  paused: !delegated,
+                },
+              })
+              return true
+            },
+          }}
+          api={api}
+          provider={{
+            id: STAND_IN_DINGTALK_PROVIDER,
+            displayName: 'DingTalk',
+            resourceKinds: ['direct', 'group'],
+            availability: { status: 'ready' },
+            dependencies: [],
+          }}
+          deviceId="device"
+          localDeviceId="device"
+          disabled={false}
+        />
       )
-    expect(props.onSave).not.toHaveBeenCalled()
+    }
+    render(<TestSetup />)
+    expect(await screen.findByTestId('stand-in-dingtalk-account')).toHaveTextContent(
+      'Alice · Studio'
+    )
+    expect(screen.getByTestId('stand-in-delegation-enable')).toBeDisabled()
+    const query = await screen.findByTestId('stand-in-dingtalk-query')
+    fireEvent.change(query, { target: { value: 'Friend' } })
+    fireEvent.click(screen.getByTestId('stand-in-dingtalk-search'))
+    fireEvent.click(await screen.findByTestId('stand-in-dingtalk-result-friend'))
+    expect(api.searchConnectionResources).toHaveBeenCalledExactlyOnceWith(
+      'device',
+      STAND_IN_DINGTALK_PROVIDER,
+      'direct',
+      'Friend',
+      undefined,
+      undefined,
+      identity.profile
+    )
+    expect(screen.queryByTestId('stand-in-dingtalk-result-other')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-selected'))
+
+    if (prepareScope) {
+      fireEvent.click(screen.getByTestId('stand-in-dingtalk-save-scope'))
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('stand-in-dingtalk-save-scope')).toBeDisabled()
+        expect(screen.getByTestId('stand-in-delegation-enable')).toBeEnabled()
+      })
+      expect(save).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          enabled: false,
+          connections: [expect.objectContaining({ id: 'friend', accountId: identity.accountId })],
+          delegation: expect.objectContaining({ action: 'prepare', profile: identity.profile }),
+        })
+      )
+    }
+    expect(checked).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('stand-in-delegation-enable'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('所选会话缺少读取权限')
+    expect(save).toHaveBeenCalledTimes(prepareScope ? 1 : 0)
+    expect(checked).toHaveBeenCalledExactlyOnceWith(
+      'device',
+      STAND_IN_DINGTALK_PROVIDER,
+      identity.profile,
+      [{ id: 'friend', kind: 'direct' }]
+    )
+    permissionsGranted = true
+    fireEvent.click(screen.getByTestId('stand-in-delegation-enable'))
+    expect(await screen.findByTestId('stand-in-delegation-toggle-pause')).toBeEnabled()
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        delegation: expect.objectContaining({ action: 'enable', organizationId: 'org' }),
+      })
+    )
   }
 )
 
-it('explains an environment load failure and recovers without losing profile edits', async () => {
-  const props = fixture()
-  const listRuntimeWork = vi.mocked(props.services.runtimeWorkApi!.listRuntimeWork)
-  listRuntimeWork.mockRejectedValueOnce(new Error('internal failure'))
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  expect(await screen.findByRole('alert')).toHaveTextContent('未能加载所选设备的项目和工作目录')
-  await user.type(screen.getByTestId('stand-in-preferences'), ' draft')
-  await user.click(screen.getByTestId('stand-in-primary-environment-retry'))
-  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
-  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
-    'Review my work\n\nKeep replies concise draft'
+test('shows DingTalk component recovery when readiness reports it unavailable', async () => {
+  const { services } = standInOverviewFixture().props
+  const api = services.standInApi!
+  api.connectionReadiness = async () => ({
+    status: 'component_unavailable',
+    code: 'connection_cli_unavailable',
+  })
+  render(
+    <DingTalkDelegationControls
+      settings={{
+        saved: { enabled: false, prompt: '', preferences: '' },
+        modelSelection: { identity: null },
+        primaryStopped: false,
+        onSave: async () => true,
+      }}
+      api={api}
+      provider={{
+        id: STAND_IN_DINGTALK_PROVIDER,
+        displayName: 'DingTalk',
+        resourceKinds: ['direct', 'group'],
+        availability: { status: 'ready' },
+        dependencies: [],
+      }}
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+    />
   )
-  expect(props.onSave).not.toHaveBeenCalled()
+  expect(await screen.findByTestId('stand-in-dingtalk-open-updates')).toBeEnabled()
+  expect(screen.getByTestId('stand-in-delegation-enable')).toBeDisabled()
 })
 
-it('keeps existing identity and execution settings without a global processing switch', () => {
-  const props = fixture()
-  render(<StandInPrimaryProfile {...props} />)
-  expect(screen.queryByTestId('stand-in-primary-enabled')).not.toBeInTheDocument()
+test('a model change keeps the unified instructions for a profile without learning', async () => {
+  const { model, save } = openPrimaryProfile()
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Ask for evidence\n\nPrivate context'
+  )
+  const environment = screen.getByTestId('stand-in-primary-execution-toggle')
+  expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+  fireEvent.click(environment)
+  expect(screen.getByTestId('stand-in-path-advanced')).toHaveAttribute('aria-current', 'page')
+  expect(screen.queryByTestId('stand-in-preferences')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('model-selector-button'))
+  const modelOption = `model-option-${runnerModelKey(model)}`
+  if (!screen.queryByTestId(modelOption)) {
+    fireEvent.click(await screen.findByTestId('model-group-codex-provider:fixture'))
+  }
+  fireEvent.click(await screen.findByTestId(modelOption))
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
-  expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
-  expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-processing-mode')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
-  expect(props.onSave).not.toHaveBeenCalled()
+  expect(save()).toMatchObject({
+    prompt: '',
+    preferences: 'Ask for evidence\n\nPrivate context',
+    model: { model_id: model.model_id },
+  })
 })
 
-it('consumes a menu calendar deep link once and returns to the connection list on normal navigation', async () => {
-  const props = fixture()
+test('saves a confirmed task permission with the primary profile', async () => {
   const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} initialCalendar />)
-  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
-  expect(screen.queryByText('返回连接')).not.toBeInTheDocument()
-  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
-  await user.click(screen.getByTestId('stand-in-connections-back'))
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
-  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  const { save } = openPrimaryProfile()
+  await user.click(screen.getByTestId('stand-in-primary-execution-toggle'))
+  const trigger = screen.getByTestId('permission-mode-menu-button')
+  expect(trigger).toHaveTextContent('只读')
+
+  await user.click(trigger)
+  await user.click(screen.getByTestId('permission-mode-full-access'))
+  await user.click(screen.getByTestId('command-approval-confirm-option-ai'))
+  await user.click(screen.getByTestId('full-access-confirm-submit'))
+  expect(save()).toMatchObject({
+    taskPermissions: { permissionMode: 'full-access', commandApproval: 'ai' },
+  })
 })
 
-it('provides clickable paths through all three primary settings levels and re-enters a source', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await screen.findByTestId('stand-in-path-connections')
-  await user.click(screen.getByTestId('stand-in-time-connections'))
-  expect(await screen.findByTestId('stand-in-path-source')).toHaveTextContent('日历')
-  await user.click(screen.getByTestId('stand-in-path-connections'))
-  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-path-settings'))
-  expect(screen.getByTestId('stand-in-preferences')).toBeVisible()
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(screen.getByTestId('stand-in-time-connections'))
-  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+test('chat channels are listed directly without sessions and returning keeps the profile draft', async () => {
+  const { save } = openPrimaryProfile(undefined, {
+    bindStandIn: async (_sessionKey, binding) => binding,
+    listPrivateSessions: async () => ({ total: 0, items: [] }),
+  })
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'Edited private context' },
+  })
+  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
+  expect(screen.getByTestId('stand-in-path-tool')).toHaveTextContent('Chat channels')
+  for (const channel of ['dingtalk', 'telegram', 'discord', 'weibo']) {
+    expect(screen.getByTestId(`stand-in-im-channel-${channel}`)).toBeVisible()
+  }
+  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-preferences')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  expect(await screen.findByTestId('stand-in-im-empty')).toBeVisible()
+  fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Edited private context')
+  expect(save()).toMatchObject({ preferences: 'Edited private context' })
 })
 
-it('protects an unsaved mailbox when returning from the primary connections header', async () => {
-  const props = fixture()
-  const provider = '@wegent/dsh-connection-runtime/email'
-  const api = {
-    connectionProviders: async () => ({
+test('a connected channel shows its status beside the other channel entries', async () => {
+  const { settings } = personalStandInFixture()
+  openPrimaryProfile(undefined, {
+    bindStandIn: async (_sessionKey, binding) => binding,
+    listPrivateSessions: async () => ({
+      total: 1,
       items: [
-        { id: provider, displayName: '邮箱', dependencies: [], availability: { status: 'ready' } },
+        {
+          session_key: 'telegram-session',
+          channel_type: 'telegram',
+          channel_label: 'Telegram',
+          channel_id: 1,
+          conversation_id: 'test-chat',
+          sender_id: 'test-sender',
+          display_name: 'Example conversation',
+          last_seen_at: '2025-01-01T00:00:00Z',
+          mode: 'stand_in',
+          stand_in: { deviceId: settings.executionDeviceId, roleId: null },
+        },
       ],
     }),
-  } as unknown as StandInExecutorApi
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} api={api} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(await screen.findByTestId(`stand-in-add-${provider}-connection`))
-  await user.click(screen.getByTestId('stand-in-email-add'))
-  fireEvent.change(screen.getByTestId('stand-in-email-email'), {
-    target: { value: 'owner@example.com' },
   })
-  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
-  await user.click(screen.getByTestId('stand-in-connections-back'))
-  expect(screen.getByTestId('stand-in-email-discard')).toBeVisible()
-  await user.click(screen.getByTestId('stand-in-email-discard-cancel-button'))
-  expect(screen.getByTestId('stand-in-email-email')).toHaveValue('owner@example.com')
-  await user.click(screen.getByTestId('stand-in-connections-back'))
-  await user.click(screen.getByTestId('stand-in-email-discard'))
-  expect(screen.queryByTestId('stand-in-email-connections')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
-  expect(screen.getByTestId('stand-in-primary-connections-open')).toBeVisible()
-  expect(props.onSave).not.toHaveBeenCalled()
-})
-
-it('does not save changed instructions when the user discards the draft', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.type(screen.getByTestId('stand-in-preferences'), ' changed')
-  await user.click(screen.getByTestId('stand-in-primary-cancel'))
-  expect(props.onSave).not.toHaveBeenCalled()
-  expect(props.onClose).not.toHaveBeenCalled()
-  await user.click(screen.getByTestId('stand-in-primary-discard'))
-  expect(props.onClose).toHaveBeenCalledOnce()
-  expect(props.onSave).not.toHaveBeenCalled()
-})
-
-it('clears a paused primary draft when source activation is reverted before Save', async () => {
-  const props = fixture()
-  props.settings.primary.enabled = false
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
-  const source = screen.getByTestId('stand-in-source-collaboration')
-  await user.click(source)
-  expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled()
-  await user.click(source)
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
-  expect(props.onSave).not.toHaveBeenCalled()
-})
-
-it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  expect(screen.getAllByRole('textbox')).toHaveLength(1)
-  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
-    'Review my work\n\nKeep replies concise'
-  )
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  const connections = screen.getByTestId('stand-in-connection-settings')
-  expect(within(connections).getByText('Design team')).toBeInTheDocument()
-  expect(within(connections).queryByRole('combobox')).not.toBeInTheDocument()
-  expect(within(connections).queryByRole('checkbox')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
-  await user.type(screen.getByTestId('stand-in-preferences'), '; ask before sending')
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({
-      primary: expect.objectContaining({
-        prompt: '',
-        preferences: 'Review my work\n\nKeep replies concise; ask before sending',
-      }),
-    })
+  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
+  expect(await screen.findByText('已连接当前助理')).toBeVisible()
+  expect(screen.getByTestId('stand-in-im-channel-dingtalk')).toBeVisible()
+  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  expect(screen.getByTestId('stand-in-im-connect-telegram-session')).toHaveTextContent(
+    'Example conversation'
   )
 })
 
-it('returns from connections without discarding the profile draft', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.type(screen.getByTestId('stand-in-preferences'), '; keep this draft')
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
-  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
-    'Review my work\n\nKeep replies concise; keep this draft'
-  )
-  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
-  expect(props.onSave).not.toHaveBeenCalled()
-  expect(props.onClose).not.toHaveBeenCalled()
+test('turning on learning alone preserves the existing Ghost and private preferences', () => {
+  const { save } = openPrimaryProfile()
+  fireEvent.click(screen.getByTestId('stand-in-self-learning-toggle'))
+  expect(save()).toMatchObject({
+    selfLearningEnabled: true,
+    prompt: 'Ask for evidence',
+    preferences: 'Private context',
+  })
 })
 
-it('persists real project and model selections and protects unsaved changes when switching devices', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.selectOptions(screen.getByTestId('stand-in-device'), 'remote')
-  expect(props.onSelectDevice).toHaveBeenCalledWith('remote')
-  await waitFor(() =>
-    expect(props.services.runtimeWorkApi.listRuntimeWork).toHaveBeenCalledWith({ deviceId: 'mac' })
-  )
-  await user.click(screen.getByTestId('project-work-button'))
-  await user.click(await screen.findByTestId('project-option-17'))
-  expect(screen.getByTestId('stand-in-device')).toBeDisabled()
-  await user.click(screen.getByTestId('model-selector-button'))
-  await user.click(
-    await screen.findByTestId(
-      `model-option-${runnerModelKey({ runtime: 'codex', provider: 'local', model_id: 'profile-model' })}`
-    )
-  )
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({
-      primary: expect.objectContaining({
-        workspace: expect.objectContaining({ workspacePath: '/repo' }),
-        model: expect.objectContaining({ model_id: 'profile-model' }),
-        modelOptions: expect.objectContaining({ modelSelection: 'model' }),
-      }),
-    })
-  )
+test('editing private preferences preserves the independently learned Ghost, including after learning is disabled', () => {
+  const { save } = openPrimaryProfile(false)
+  expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue('Ask for evidence')
+  const preferences = screen.getByTestId('stand-in-preferences')
+  expect(preferences).toHaveValue('Private context')
+  fireEvent.change(preferences, { target: { value: 'Edited private context' } })
+  expect(save()).toMatchObject({
+    prompt: 'Ask for evidence',
+    preferences: 'Edited private context',
+  })
 })
 
-it.each([
-  ['zh-CN', '搜索项目'],
-  ['en', 'Search projects'],
-])('names the project search in %s', async (language, name) => {
-  const previous = i18n.language
-  await i18n.changeLanguage(language)
-  const view = render(<StandInPrimaryProfile {...fixture()} />)
-  try {
-    await userEvent.setup().click(screen.getByTestId('project-work-button'))
-    expect(await screen.findByRole('searchbox', { name })).toHaveFocus()
-  } finally {
-    view.unmount()
-    await i18n.changeLanguage(previous)
-  }
-})
-
-it('dismisses the project menu before asking to discard an unsaved workspace', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('project-work-button'))
-  await user.click(await screen.findByTestId('project-option-17'))
-  const trigger = screen.getByTestId('project-work-button')
-  await user.click(trigger)
-  await user.keyboard('{Escape}')
-  expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
-  expect(trigger).toHaveFocus()
-  expect(trigger).toHaveTextContent('Repository')
-  expect(props.onClose).not.toHaveBeenCalled()
-  expect(props.onSave).not.toHaveBeenCalled()
-  await user.keyboard('{Escape}')
-  expect(await screen.findByTestId('stand-in-primary-discard')).toBeInTheDocument()
-  expect(props.onClose).not.toHaveBeenCalled()
-})
-
-it('shows existing local connection names on a remote device while limiting new selections', async () => {
-  const props = fixture()
-  props.settings.executionDeviceId = 'remote'
-  props.settings.primary!.collaboration = {
-    enabled: true,
-    allProjects: false,
-    projects: [{ id: 'local-project', store: 'local' }],
-    excludedProjects: [],
-    tags: [],
-  }
-  const projects = [
-    { id: 'local-project', name: 'Local review project', project_store: 'local' },
-    { id: 'cloud-project', name: 'Cloud review project', project_store: 'backend' },
-  ] as CollaborationProject[]
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} projects={projects} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  const row = screen.getByTestId('stand-in-connection-project-local-local-project')
-  expect(row).toHaveTextContent('Local review project')
-  await user.click(row)
-  expect(screen.getByRole('checkbox', { name: 'Local review project' })).toBeChecked()
-  expect(screen.getByRole('checkbox', { name: 'Cloud review project' })).not.toBeChecked()
-  await user.click(screen.getByRole('checkbox', { name: 'Local review project' }))
-  expect(screen.queryByRole('checkbox', { name: 'Local review project' })).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({
-      primary: expect.objectContaining({
-        collaboration: expect.objectContaining({ projects: [] }),
-      }),
-    })
-  )
-})
-
-it('marks first-time collaboration edits pending against the fixed default scope', async () => {
-  const props = fixture()
-  const user = userEvent.setup()
-  render(<StandInPrimaryProfile {...props} />)
-  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
-  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  expect(screen.getByTestId('stand-in-connections-pending')).toBeVisible()
-  await user.click(screen.getByTestId('stand-in-source-collaboration'))
-  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
-  await user.click(screen.getByTestId('stand-in-primary-cancel'))
-  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
-  expect(props.onClose).toHaveBeenCalledExactlyOnceWith()
+test('a migrated default assistant keeps its shared instructions when private preferences change', () => {
+  const { save } = openPrimaryProfile(undefined, undefined, 'cloud-revision')
+  expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue('Ask for evidence')
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'Edited private context' },
+  })
+  expect(save()).toMatchObject({
+    prompt: 'Ask for evidence',
+    preferences: 'Edited private context',
+  })
 })

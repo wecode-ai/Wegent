@@ -105,6 +105,10 @@ status, version, created_at, updated_at
 
 现有 `loop_items` 作为云 TODO 使用。它通过 `cloud_project_id` 指向 `cloud_projects`，并使用 `sequence_number` 生成 `WEG-18` 形式的展示编号。
 
+云端创建事项统一使用 `POST /api/v1/loop-items`。请求通过 `issue` 提交事项字段，可通过 `project_id` 指定项目。看板创建沿用目标项目的提供方、权限和自动化规则。从独立事项弹窗创建并选择项目时，事项和项目关联在同一事务提交。
+
+Rust 将看板创建转发给项目事项提供方，使用 60 秒请求期限，读取响应也受该期限约束。创建请求不会自动重试，以免提供方已写入事项时重复创建。
+
 固定状态如下：
 
 ```text
@@ -377,3 +381,33 @@ HTTP transcript 响应必须保留 Runtime 的 `turns`、`running`、`origin`、
 里程碑复用 `loop_items` 的 `resource_type=milestone`，Issue 的关联保存于 `metadata.milestone_id`。本地通过 Executor IPC 和 SQLite 事务持久化，云端里程碑管理 API 由 Rust 实现；现有 Python Issue API 负责关联字段的创建和更新。同项目校验与删除使用同一里程碑记录的事务锁，更新和删除均校验版本。无需新增表或数据库迁移。外部 GitHub/GitLab/钉钉 Issue provider 不包含在此支持范围内。
 
 已完成 Issue 归档后继续计入里程碑的总数和完成数，未完成 Issue 归档后仍计入未完成数，归档与恢复均不改变交付进度；界面单独标明已归档数量，可从里程碑详情进入现有归档箱查看。
+
+## 协作指标 collab-v2
+
+项目 `GET /api/v1/cloud-projects/{project_id}/collaboration-metrics` 与个人 `GET /api/v1/collaboration-metrics/me` 以 `definition_version=collab-v2` 返回聚合和原始凭据。一次读取在 REPEATABLE READ 事务中解析当前项目权限、有效成员、可见根 Issue 与证据，所有指标共用 UTC `as_of` 及 `[as_of-7days, as_of)`；上海时区仅用于展示。接口不提供历史 asOf 查询，因为当前权限、成员与状态不能冒充历史快照。W-0064 承担指标 UI 接入。
+
+完成样本按根 Issue 最近一次有效完成事件的精确时间选取；重开未完成、取消、删除与子任务不计。MySQL 秒级 `completed_at` 只筛选两端各扩一秒的候选记录，精确事件时间决定真实窗口，响应窗口始终七天。项目完成一项计一；发布交付、完成阶段和正式评审的有效参与者各加一，同一用户多角色或多助理去重。助理通过其已授权用户记录贡献，未知映射单列，不依据评论、提及或可变负责人猜测。已退出成员保留个人历史，项目人均分子仅包含期末有效成员的参与数，分母包含零贡献成员；返回成员快照。
+
+已发布交付直接读取真实 delivery 记录，以其 Issue 校验项目和可见性，不读取交付正文或私人 transcript。活动区间、固定业务环节验收、人力日历、交接与补充正式贡献通过 `POST /api/v1/cloud-projects/{project_id}/collaboration-metrics/evidence` 的结构化回执入库。回执只包含受控事实字段与同一可见 Issue 的来源记录 ID，由当前 Developer 或管理员提交，记录提交人、服务端时间和回执 ID。这是带来源的事实采集接口，不能把旧 Run 墙钟时间自动视为 AI 活动；尚无活动回执时 `sample=0, partial=true`。采集方必须依据真实事件明确活动、排队、批准、离线和父会话等候，不上传私人过程文本。
+
+回执复用现有 Issue 活动存储。`issue_id + key` 是稳定身份，相同 revision 和内容重放返回原回执；修改必须递增 revision，且只能由原提交人或管理员进行。固定业务环节 `key=unit_id`，不得按 Run 或子 Agent 拆分环节；身份和活动起点不能随修订更换。删除最新回执不恢复旧版本；每次读取重新验证来源存续和当前 Issue 权限。失效来源只返回缺失数量，不返回其内容，相关比率取消确定值并标记部分数据。
+
+AI 时长按窗口裁剪区间，先按 Issue 和稳定 run_id 在各 Run 内扣除明确等待，再对同一 Agent 的活动取并集，不同 Agent 再求和；失败、取消前的真实活动保留，开放区间截止 asOf 并标 partial。每人的日历、可用时长及有效成员时段保留于分母明细；缺失、重叠、不足以裁剪的日历或零分母不产生比率。400h/40h=10 仅表示运行时长比，不表示效率或节省工时。
+
+环节仅在 `accepted_version=content_version` 且 acceptedAt 落入窗口时计入 AI、mixed、human、unknown。必要批准或验收不会改变 AI 分类，实质人工修改应记录 mixed；有 unknown 或失效证据时独立交付占比为空。交付周期保留完整历时并计算 P50/P90，不剔除夜间周末。交接从材料齐备、依赖解除的 readyAt 计至实际 startedAt，受理不结束排队；未启动请求单列积压和最长等待，判断、外部等待与队列分别保留。
+
+```mermaid
+flowchart LR
+    Access[当前权限与有效成员] --> Snapshot[同一数据库读取快照]
+    Issues[可见根 Issue 与完成事件] --> Snapshot
+    Delivery[真实已发布交付] --> Snapshot
+    Receipt[带来源的版本化结构化回执] --> Snapshot
+    Snapshot --> Completion[完成量与多人参与]
+    Snapshot --> Activity[按 Agent 并集的活动与人力基准]
+    Snapshot --> Accepted[版本绑定的固定环节验收]
+    Snapshot --> Handoff[完整交付周期与真实启动等待]
+    Completion --> Response[同一 asOf 的聚合和可重算凭据]
+    Activity --> Response
+    Accepted --> Response
+    Handoff --> Response
+```

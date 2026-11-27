@@ -46,6 +46,7 @@ test('rebuilds input edits reported only as a directory-self notification', asyn
 })
 
 const checkouts = ['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout']
+const nativeBuildTimeout = 5_000
 
 test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [checkout, input])))(
   'builds changes under %s with %s inputs, recovers from failure, and ignores output',
@@ -190,7 +191,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     expect(build).toHaveBeenCalledTimes(3)
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
     await saveSource('three')
-    await expect.poll(() => published).toBe('three')
+    await expect.poll(() => published, { timeout: nativeBuildTimeout }).toBe('three')
     // Use one handle so completing the save does not truncate the file again.
     const handle = await open(source, 'r+')
     try {
@@ -203,15 +204,17 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
         size: statSync(source).size,
         subscriptions: nativeWatcher.getWatched(),
       })
-      await expect.poll(() => published).toBe('')
+      await expect.poll(() => published, { timeout: nativeBuildTimeout }).toBe('')
       await handle.writeFile('four')
-      await expect.poll(() => published).toBe('four')
+      await expect.poll(() => published, { timeout: nativeBuildTimeout }).toBe('four')
     } finally {
       await handle.close()
     }
     expect(build).toHaveBeenCalledTimes(6)
     expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
-  }
+  },
+  // Several real file operations and rebuilds share this test's deadline.
+  20_000
 )
 
 test('observes new nested directories and their recreation', async () => {

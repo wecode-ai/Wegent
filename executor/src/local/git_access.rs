@@ -413,7 +413,10 @@ mod tests {
         let url = format!("http://{address}/repository.git");
         let config = root.path().join("native.gitconfig");
         std::fs::write(&config, "").unwrap();
-        let env = HashMap::from([("GIT_CONFIG_GLOBAL".into(), config.display().to_string())]);
+        let env = HashMap::from([
+            ("GIT_CONFIG_GLOBAL".into(), config.display().to_string()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ]);
         let failure = preflight(&url, None, &env, 5.0).await.unwrap_err();
         assert_eq!(failure.code, "credentials-required");
         assert_eq!(failure.domain, address.to_string());

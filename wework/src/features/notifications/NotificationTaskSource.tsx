@@ -1,75 +1,52 @@
-import { StandInTelemetryAgent } from '@/telemetry/StandInTelemetryAgent'
-import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
+import { useTelemetryEnabled } from '@/telemetry/client'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import {
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import {
+  NotificationTaskContext,
+  NotificationTaskRegistryContext,
+} from './NotificationTaskSourceContext'
+import { createNotificationTaskRegistry } from './notificationTaskRegistry'
 
 export function NotificationTaskSourceProvider({ children }: { children: ReactNode }) {
-  const [sources, setSources] = useState<Map<string, { source: TaskSource; active: boolean }>>(
-    () => new Map()
+  const [registry] = useState(createNotificationTaskRegistry)
+  const cloud = useContext(CloudConnectionContext)
+  const preferences = useAppPreferencesState()
+  const sessionConsent = useSessionTelemetryConsent()
+  const enabled = useTelemetryEnabled()
+  const policy =
+    sessionConsent === false ||
+    (preferences?.loaded &&
+      preferences.preferences.telemetryConsentAsked === true &&
+      preferences.preferences.telemetryEnabled !== true)
+      ? false
+      : enabled
+        ? true
+        : null
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      registry.subscribe(listener, {
+        mainWindow: getDesktopWindowLabel() === 'main',
+        backendUrl: cloud?.apiBaseUrl ?? 'local',
+        userId: cloud?.user?.id,
+        policy,
+      }),
+    [registry, cloud?.apiBaseUrl, cloud?.user?.id, policy]
   )
-  const registerTaskSource = useCallback(
-    (id: string, source: TaskSource | null, active: boolean) => {
-      setSources(current => {
-        const next = new Map(current)
-        if (source) next.set(id, { source, active })
-        else next.delete(id)
-        return next
-      })
-    },
-    []
-  )
-  const taskSource =
-    [...sources.values()].find(entry => entry.active)?.source ??
-    sources.values().next().value?.source ??
-    null
-  const value = useMemo(
-    () => ({ taskSource, registerTaskSource }),
-    [registerTaskSource, taskSource]
-  )
+  const taskSource = useSyncExternalStore(subscribe, registry.getSnapshot, registry.getSnapshot)
+  const value = useMemo(() => ({ taskSource }), [taskSource])
   return (
-    <NotificationTaskContext.Provider value={value}>
-      <StandInTelemetryAgent />
-      {children}
-    </NotificationTaskContext.Provider>
+    <NotificationTaskRegistryContext.Provider value={registry}>
+      <NotificationTaskContext.Provider value={value}>{children}</NotificationTaskContext.Provider>
+    </NotificationTaskRegistryContext.Provider>
   )
-}
-
-export function NotificationTaskSourceBridge({ active, id }: { active: boolean; id: string }) {
-  const context = useContext(NotificationTaskContext)
-  const registerTaskSource = context?.registerTaskSource
-  const { runtimeTaskReminders, services, state, refreshWorkLists } = useWorkbench()
-  const currentAddress = state?.currentRuntimeTask
-  const userId = state?.user?.id
-  const devices = state?.devices
-
-  useEffect(() => {
-    if (!registerTaskSource) return
-    registerTaskSource(
-      id,
-      runtimeTaskReminders
-        ? {
-            ...runtimeTaskReminders,
-            services,
-            devices,
-            currentAddress,
-            userId,
-            refresh: refreshWorkLists,
-          }
-        : null,
-      active
-    )
-    return () => registerTaskSource(id, null, active)
-  }, [
-    active,
-    id,
-    registerTaskSource,
-    runtimeTaskReminders,
-    services,
-    devices,
-    currentAddress,
-    userId,
-    refreshWorkLists,
-  ])
-
-  return null
 }

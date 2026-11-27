@@ -160,6 +160,8 @@ export interface CloudLoopItem {
   execution_last_event_seq?: number | null
   can_approve?: boolean
   assignment_history?: Array<{
+    by_agent_id?: string
+    by_agent_name?: string
     by_user_id: number
     to_type: 'user' | 'agent' | 'team' | 'group' | null
     to_id: string | null
@@ -965,7 +967,9 @@ export function createDeliveryApi(client: HttpClient) {
     },
     findCloudContextForTask(task: RuntimeTaskAddress): Promise<CloudTaskContext> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
-      return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`)
+      return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`, {
+        expectedErrorStatuses: [404],
+      })
     },
     getMilestonesCacheScope() {
       return client.getCacheScope?.() ?? client
@@ -1017,7 +1021,7 @@ export function createDeliveryApi(client: HttpClient) {
         personal_task?: boolean
       }
     ): Promise<CloudLoopItem> {
-      return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
+      return client.post('/v1/loop-items', { project_id: String(projectId), issue: data })
     },
     updateLoopItem(
       itemId: string,
@@ -1041,6 +1045,7 @@ export function createDeliveryApi(client: HttpClient) {
       > & {
         version: number
         automation_rule_id?: string | null
+        notify_assignee?: boolean
         position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {

@@ -5,19 +5,20 @@
 use super::super::*;
 
 #[test]
-fn visible_user_request_skips_nested_application_context_from_referenced_conversations() {
-    let content = concat!(
-        "<application_context>\n",
-        "[referencedConversations]\n",
-        "[{\"role\":\"user\",\"content\":\"<application_context>\\n",
-        "[source]\\nstate\\n</application_context>\\n\\nOriginal question\"}]\n",
-        "</application_context>\n\n",
-        "Continue with the referenced conversation"
+fn transcript_preserves_structured_terminal_error_type_for_turns_and_messages() {
+    let projection = project_transcript(
+        &json!({"id": "thread", "turns": [{
+            "id": "turn", "status": "failed", "error": {
+                "message": "connection interrupted", "codexErrorInfo": "serverOverloaded"
+            }, "items": []
+        }]}),
+        "device",
+        true,
     );
-
+    assert_eq!(projection.turns[0]["errorType"], "server_overloaded");
     assert_eq!(
-        normalized_user_request_content(content),
-        "Continue with the referenced conversation"
+        projection.messages.last().unwrap()["errorType"],
+        "server_overloaded"
     );
 }
 
@@ -156,6 +157,19 @@ fn transcript_merges_completed_command_timing_into_function_call_block() {
     assert_eq!(blocks[0]["timestamp"], 1_780_000_001_250_i64);
     assert_eq!(blocks[0]["completedAt"], 1_780_000_016_119_i64);
     assert_eq!(blocks[0]["tool_input"]["cmd"], "sleep 15");
+}
+
+#[test]
+fn transcript_preserves_pending_mcp_tool_with_null_result() {
+    let thread = json!({"id": "thread", "turns": [{
+        "id": "turn", "status": "inProgress", "items": [{
+            "id": "call", "type": "mcpToolCall", "server": "node_repl", "tool": "js",
+            "arguments": {}, "status": "inProgress", "result": null, "error": null
+        }]
+    }]});
+
+    let messages = transcript_messages(&thread, "device");
+    assert_eq!(messages[0]["blocks"][0]["status"], "pending");
 }
 
 #[test]
@@ -560,4 +574,147 @@ fn canonical_turn_retains_artifacts_from_segments_before_guidance() {
         projection.turns[0]["fileChanges"]["files"][0]["path"],
         "src/one.rs"
     );
+}
+
+#[test]
+fn transcript_keeps_channel_commentary_out_of_final_content() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {
+                    "id": "prompt",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Continue"}]
+                },
+                {
+                    "id": "progress",
+                    "type": "agentMessage",
+                    "channel": "commentary",
+                    "text": "Working on it"
+                },
+                {
+                    "id": "final",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Done"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let progress = messages
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["content"] == "Working on it")
+        .expect("commentary process block");
+
+    assert_eq!(progress["type"], "text");
+    assert!(messages.iter().all(|message| !message["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Working on it")));
+}
+
+#[test]
+fn transcript_keeps_unphased_text_after_guidance_in_the_process_area() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {
+                    "id": "prompt",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Continue"}]
+                },
+                {
+                    "id": "initial",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Initial answer"
+                },
+                {
+                    "id": "guidance",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Use the cloud path"}]
+                },
+                {
+                    "id": "progress",
+                    "type": "agentMessage",
+                    "text": "Connecting the cloud path"
+                },
+                {
+                    "id": "final",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Done"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let progress = messages
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["content"] == "Connecting the cloud path")
+        .expect("unphased guidance progress block");
+
+    assert_eq!(progress["type"], "text");
+    assert!(messages.iter().all(|message| !message["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Connecting the cloud path")));
+}
+
+#[test]
+fn transcript_keeps_unphased_final_after_guidance_as_the_reply() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {
+                    "id": "prompt",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Continue"}]
+                },
+                {
+                    "id": "initial",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Initial answer"
+                },
+                {
+                    "id": "guidance",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Finish the work"}]
+                },
+                {
+                    "id": "final",
+                    "type": "agentMessage",
+                    "text": "Parent complete"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let final_message = messages
+        .iter()
+        .find(|message| message["content"] == "Parent complete")
+        .expect("unphased final reply");
+
+    assert_eq!(final_message["role"], "assistant");
+    assert!(!final_message["blocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|block| block["content"] == "Parent complete"));
 }

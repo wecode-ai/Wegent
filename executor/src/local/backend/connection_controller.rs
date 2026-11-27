@@ -25,7 +25,10 @@ use crate::{
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
 
-use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
+use super::{
+    LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SessionGatewayProfile,
+    SocketIoTransport,
+};
 
 mod local_sync;
 mod plugin_route;
@@ -228,16 +231,18 @@ impl LocalBackendConnectionController {
                     transport.clone(),
                     handler.clone(),
                     event_hub.clone(),
+                    Some(Arc::clone(&self.connection_snapshot)),
                 )
                 .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             } else {
-                LocalBackendRunner::new_for_app_sidecar(
+                LocalBackendRunner::new_with_default_runtime_work_handler(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
+                    SessionGatewayProfile::AppSidecar,
+                    Some(Arc::clone(&self.connection_snapshot)),
                 )
             }
-            .with_connection_status(Arc::clone(&self.connection_status))
-            .with_connection_snapshot(Arc::clone(&self.connection_snapshot));
+            .with_connection_status(Arc::clone(&self.connection_status));
             let handler = runner
                 .capability_sync_handler
                 .as_ref()
@@ -251,7 +256,7 @@ impl LocalBackendConnectionController {
             self.plugin_auth
                 .socket(Some(transport.clone()), cloud_plugin_auth);
             if state.plugin_broker.is_none() {
-                match crate::plugin_account_auth::broker::start(
+                match crate::plugin_account_auth::broker::start_native(
                     self.plugin_auth.clone(),
                     crate::config::paths::executor_home(),
                     self.connection_status.clone(),
@@ -488,6 +493,7 @@ fn normalized_connection(connection: &ConnectionConfig) -> Option<ConnectionConf
         backend_url: backend_url.to_owned(),
         socket_url: resolved_socket_url(connection),
         auth_token: auth_token.to_owned(),
+        authenticated_user_id: connection.authenticated_user_id,
         runtime_auth_token: runtime_auth_token.to_owned(),
     })
 }
@@ -520,6 +526,18 @@ fn connection_profile_from_params(
     let runtime_auth_token =
         optional_connection_field(params.get("runtime_auth_token"), "runtime_auth_token")?;
     let registration_device_type = optional_registration_device_type(params.get("device_type"))?;
+    let authenticated_user_id = match params
+        .get("authenticated_user_id")
+        .filter(|id| !id.is_null())
+    {
+        Some(id) => Some(id.as_i64().filter(|id| *id > 0).ok_or_else(|| {
+            AppIpcError::new(
+                "bad_request",
+                "authenticated_user_id must be a positive integer",
+            )
+        })?),
+        None => None,
+    };
     match (
         backend_url,
         socket_url,
@@ -527,7 +545,7 @@ fn connection_profile_from_params(
         runtime_auth_token,
         registration_device_type,
     ) {
-        (None, None, None, None, None) => Ok(None),
+        (None, None, None, None, None) if authenticated_user_id.is_none() => Ok(None),
         (
             Some(backend_url),
             socket_url,
@@ -542,6 +560,7 @@ fn connection_profile_from_params(
                     .trim_end_matches('/')
                     .to_owned(),
                 auth_token,
+                authenticated_user_id,
                 runtime_auth_token: runtime_auth_token.unwrap_or_default(),
             },
             registration_device_type,
@@ -669,6 +688,7 @@ mod tests {
                 backend_url: "https://backend.example.com".to_owned(),
                 socket_url: String::new(),
                 auth_token: "wg-token".to_owned(),
+                authenticated_user_id: None,
                 runtime_auth_token: "runtime-wg-token".to_owned(),
             },
             ..DeviceConfig::default()
@@ -703,6 +723,7 @@ mod tests {
             connection: ConnectionConfig {
                 backend_url: "http://127.0.0.1:9".to_owned(),
                 auth_token: "old-token".to_owned(),
+                authenticated_user_id: Some(7),
                 ..ConnectionConfig::default()
             },
             ..DeviceConfig::default()
@@ -713,6 +734,7 @@ mod tests {
             .configure_backend(json!({
                 "backend_url": "http://127.0.0.1:9",
                 "auth_token": "old-token",
+                "authenticated_user_id": 7,
             }))
             .await
             .unwrap();
@@ -726,14 +748,26 @@ mod tests {
             .configure_backend(json!({
                 "backend_url": "http://127.0.0.1:9",
                 "auth_token": "new-token",
+                "authenticated_user_id": 8,
             }))
             .await
             .unwrap();
         assert_eq!(changed["changed"], true);
+        let snapshot = controller.connection_snapshot();
+        assert_eq!(
+            snapshot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .authenticated_user_id,
+            Some(8)
+        );
         assert!(controller.device_route_id.lock().unwrap().is_none());
 
         *controller.device_route_id.lock().unwrap() = Some("app-record-71".to_owned());
         controller.configure_backend(json!({})).await.unwrap();
+        assert!(snapshot.lock().unwrap().is_none());
         assert!(controller.device_route_id.lock().unwrap().is_none());
     }
 
@@ -818,6 +852,7 @@ mod tests {
                 backend_url: format!("http://{address}"),
                 socket_url: String::new(),
                 auth_token: "wg-token".to_owned(),
+                authenticated_user_id: None,
                 runtime_auth_token: "runtime-wg-token".to_owned(),
             },
             ..DeviceConfig::default()

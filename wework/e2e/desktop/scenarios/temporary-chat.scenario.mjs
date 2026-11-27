@@ -8,7 +8,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryChatFilePreview } from '../modules/temporary-chat-file-preview.mjs'
 
-import { selectE2EModel } from '../modules/shared.mjs'
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  MODEL_PROVIDER_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   assertTemporaryChatMessages,
@@ -28,6 +33,9 @@ const ACTIVE_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-workbench-main"
 const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
 const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
+const MAIN_MODEL_SELECTOR = `${ACTIVE_SURFACE} [data-testid="desktop-floating-composer-card"] [data-testid="model-selector-button"]`
+const SIDE_MODEL_ID = 'gpt-5.6-sol'
+const SIDE_MODEL_LABEL = 'GPT 5.6 Sol'
 const SOURCE_PROMPT = 'TEMPORARY_CHAT_SOURCE_CONVERSATION'
 const SOURCE_COMPLETION = 'TEMPORARY_CHAT_SOURCE_COMPLETE'
 const INITIAL_PROMPT = 'TEMPORARY_CHAT_INITIAL_MESSAGE'
@@ -41,6 +49,17 @@ const ATTACHMENT_TEXT = JSON.stringify({
   cardInstanceId: '501435'.repeat(20),
   content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
+
+async function selectSideChatModel(control) {
+  const mainModel = await control.command('getText', MAIN_MODEL_SELECTOR)
+  assert.ok(mainModel.includes(DEFAULT_MODEL_LABEL), 'The source conversation must start on Luna')
+  await selectE2EModel(control, SIDE_MODEL_ID, SIDE_MODEL_LABEL, SIDE_CHAT, MODEL_PROVIDER_ID)
+  assert.equal(
+    await control.command('getText', MAIN_MODEL_SELECTOR),
+    mainModel,
+    'Switching the temporary-chat model changed the main conversation model'
+  )
+}
 
 async function assertComposerBottomSpacing(control, timeoutMs, expanded = false) {
   const sideSelector = `${SIDE_CHAT} [data-testid="project-chat-composer"]`
@@ -368,7 +387,13 @@ async function waitForRuntimeSource(control, taskId, timeoutMs) {
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastTask = snapshot.workbench?.currentRuntimeTask ?? null
-    if (lastTask?.taskId === taskId && lastTask.hasRuntimeHandle) return lastTask
+    if (
+      lastTask?.taskId === taskId &&
+      lastTask.hasRuntimeHandle &&
+      typeof lastTask.workspacePath === 'string' &&
+      lastTask.workspacePath.length > 0
+    )
+      return lastTask
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
@@ -454,6 +479,7 @@ export function createDesktopScenario({
   let active = false
   let followUpRequestCount = 0
   let recoveredModelHistory = null
+  let initialModel
   const filePreview = createTemporaryChatFilePreview(workspacePath)
   let releaseSource
   let releaseFollowUp
@@ -498,6 +524,7 @@ export function createDesktopScenario({
       ].find(([prompt]) => input.includes(prompt))
       if (!match) return false
       const [prompt, completion] = match
+      if (prompt === INITIAL_PROMPT) initialModel = body.model
       if (prompt === RECOVERY_PROMPT) {
         recoveredModelHistory = JSON.stringify(body.input ?? body.messages ?? [])
       }
@@ -547,7 +574,7 @@ export function createDesktopScenario({
       const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', MAIN_COMPOSER, { timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, ACTIVE_SURFACE)
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_SURFACE)
 
       const knownRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -575,6 +602,7 @@ export function createDesktopScenario({
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       await assertComposerBottomSpacing(control, uiTimeoutMs)
+      await selectSideChatModel(control)
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('dropFile', SIDE_COMPOSER, {
@@ -592,6 +620,11 @@ export function createDesktopScenario({
         text: INITIAL_COMPLETION,
         timeoutMs: taskTimeoutMs,
       })
+      assert.equal(
+        initialModel,
+        SIDE_MODEL_ID,
+        'The first temporary-chat message did not use the selected model'
+      )
       await assertSideChatBottomAnchored(control)
       const [scrollMetrics] = JSON.parse(await control.command('getElementMetrics', SIDE_SCROLL))
       const [firstUserMetrics] = JSON.parse(

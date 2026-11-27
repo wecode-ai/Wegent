@@ -35,7 +35,6 @@ from app.models.plugin_marketplace import (
     PluginUpstream,
     is_featured_rank,
     unset_datetime,
-    unset_id,
     unset_str,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -49,7 +48,6 @@ from app.schemas.installed_plugin import (
     PluginAccessUpdateRequest,
     PluginCopyResponse,
     PluginDeleteImpactResponse,
-    PluginDeviceInstallationItem,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
     PluginReleaseItem,
@@ -68,9 +66,12 @@ from app.services.marketplace_submission_upload import (
 )
 from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_device_identity import (
-    coalesce_plugin_device_rows,
-    plugin_device_id,
     plugin_device_rows,
+)
+from app.services.plugin_installation_views import (
+    device_has_materialized_release,
+    device_installation_item,
+    enrich_plugin_installations,
 )
 from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import (
@@ -322,72 +323,7 @@ class PluginMarketplaceService:
         *,
         device_id: str | None = None,
     ) -> InstalledPluginListResponse:
-        installed_by_id = {
-            int(item.metadata["labels"]["id"]): item
-            for item in response.items
-            if str((item.metadata.get("labels") or {}).get("id", "")).isdigit()
-        }
-        device_rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id.in_(installed_by_id.keys())
-            )
-            .order_by(PluginDeviceInstallation.device_id)
-            .all()
-            if installed_by_id
-            else []
-        )
-        coalesced_rows = coalesce_plugin_device_rows(db, device_rows)
-        for (_, canonical_id), row in coalesced_rows.items():
-            item = installed_by_id.get(row.installed_kind_id)
-            if not item:
-                continue
-            item.status.devices.append(
-                PluginDeviceInstallationItem(
-                    deviceId=(
-                        device_id
-                        if device_id
-                        and plugin_device_id(db, row.user_id, device_id) == canonical_id
-                        else canonical_id
-                    ),
-                    desiredReleaseId=row.desired_release_id,
-                    actualReleaseId=unset_id(row.actual_release_id),
-                    state=row.state,
-                    errorCode=unset_str(row.error_code),
-                    errorMessage=unset_str(row.error_message),
-                    attemptCount=row.attempt_count,
-                    lastSyncAt=unset_datetime(row.last_sync_at),
-                    updatedAt=row.updated_at,
-                )
-            )
-        rows_by_install = {
-            installed_id: row
-            for (installed_id, canonical_id), row in coalesced_rows.items()
-            if device_id
-            and plugin_device_id(db, row.user_id, device_id) == canonical_id
-        }
-        for item in response.items:
-            plugin_id = item.spec.pluginId
-            if not plugin_id:
-                continue
-            installed_id = self._installed_item_id(item)
-            if device_id and installed_id:
-                device_row = rows_by_install.get(installed_id)
-                if not self._device_has_materialized_release(device_row):
-                    item.spec.installState = (
-                        "failed"
-                        if device_row and device_row.state == "failed"
-                        else "not_installed"
-                    )
-                    continue
-                if device_row.actual_release_id != item.spec.releaseId:
-                    item.spec.installState = "update_available"
-                    continue
-                item.spec.installState = "installed"
-            plugin = db.get(Plugin, plugin_id)
-            if plugin and plugin.latest_release_id != item.spec.releaseId:
-                item.spec.installState = "update_available"
-        return response
+        return enrich_plugin_installations(db, response, device_id=device_id)
 
     def list_plugins(
         self,
@@ -546,15 +482,24 @@ class PluginMarketplaceService:
         plugin_id: int,
         release_id: int | None = None,
         commit: bool = True,
+        restore_deleted: bool = False,
     ) -> InstalledPlugin:
         if commit:
+            if restore_deleted:
+                # Repair may retain leases after a no-op or release all locks on commit.
+                # Fence it here, then reacquire the catalog below before installation.
+                self.lock_private_plugin_for_install(db, user_id, plugin_id)
             self.reconcile_stale_installed_catalog_refs(
                 db, user_id=user_id, plugin_id=plugin_id
             )
         # Catalog repair may have committed its own transaction.
         from app.services.plugin_write_identity import acquire_installation_write_lock
 
-        plugin = db.get(Plugin, plugin_id)
+        plugin = (
+            self.lock_private_plugin_for_install(db, user_id, plugin_id)
+            if restore_deleted
+            else db.get(Plugin, plugin_id)
+        )
         if plugin is None:
             raise HTTPException(404, "Marketplace plugin not found")
         kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
@@ -566,19 +511,28 @@ class PluginMarketplaceService:
                 db, user_id=user_id, plugin=plugin
             ),
         )
+        reclaimed_keys = (
+            self._restore_private_plugin_for_install(db, plugin)
+            if restore_deleted
+            else []
+        )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
         if release_id is not None:
-            if not existing and release_id != plugin.latest_release_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="New installs must use the latest marketplace release",
-                )
-            if existing:
+            if existing and (
+                existing.is_active
+                or plugin.visibility != "personal"
+                or plugin.owner_user_id != user_id
+            ):
                 raise HTTPException(
                     status_code=400,
                     detail="Use PUT /plugins/installed/{id} to upgrade an installed plugin",
                 )
-        release = self._installable_release(db, plugin, None)
+            if release_id != plugin.latest_release_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="New installs must use the latest marketplace release",
+                )
+        release = self._installable_release(db, plugin, release_id)
         installed = existing
         payload = (
             self._installed_release_payload(installed, plugin=plugin, release=release)
@@ -599,10 +553,39 @@ class PluginMarketplaceService:
             db.add(installed)
         if commit:
             db.commit()
+            for key in reclaimed_keys:
+                self._delete_submission_object_best_effort(key)
         else:
             db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
+
+    def lock_private_plugin_for_install(
+        self, db: Session, user_id: int, plugin_id: int
+    ) -> Plugin:
+        """Acquire the catalog row before any installation lease on restore."""
+        plugin = self._lock_plugin(db, plugin_id)
+        if (
+            not plugin
+            or plugin.owner_user_id != user_id
+            or plugin.visibility != "personal"
+        ):
+            raise HTTPException(404, "Owned private plugin not found")
+        return plugin
+
+    def _restore_private_plugin_for_install(
+        self, db: Session, plugin: Plugin
+    ) -> list[str]:
+        if plugin.status not in {"deleted", "published"}:
+            raise HTTPException(404, "Owned private plugin not found")
+        if plugin.status == "published":
+            return []
+        self._installable_release(db, plugin, None)
+        reclaimed_keys = self._require_private_first_install(db, plugin)
+        plugin.status = "published"
+        plugin.allow_copy = False
+        plugin.updated_at = datetime.now()
+        return reclaimed_keys
 
     def update_release(
         self,
@@ -611,6 +594,7 @@ class PluginMarketplaceService:
         user_id: int,
         installed_id: int,
         release_id: int,
+        expected_current_release_id: int | None = None,
         commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
@@ -622,6 +606,11 @@ class PluginMarketplaceService:
                 status_code=409, detail="Legacy plugin cannot use release update"
             )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        if expected_current_release_id is not None and (
+            spec.get("releaseId") != expected_current_release_id
+            or release_id != plugin.latest_release_id
+        ):
+            raise HTTPException(409, "PLUGIN_UPDATE_RELEASE_CHANGED")
         release = self._installable_release(db, plugin, release_id)
         payload = self._installed_release_payload(
             installed, plugin=plugin, release=release
@@ -909,6 +898,55 @@ class PluginMarketplaceService:
                 },
             )
 
+    @staticmethod
+    def _can_start_private_first_install(plugin: Plugin) -> bool:
+        return plugin.visibility == "personal" and (
+            plugin.status == "deleted"
+            or (
+                plugin.status not in {"published", "unpublished"}
+                and not plugin.latest_release_id
+            )
+        )
+
+    def _require_private_first_install(self, db: Session, plugin: Plugin) -> list[str]:
+        """Check first private publication while holding the catalog row lock."""
+        if self._can_start_private_first_install(plugin) and not self._plugin_grants(
+            db, plugin.id, for_update=True
+        ):
+            processing = (
+                db.query(PluginRelease)
+                .filter(
+                    PluginRelease.plugin_id == plugin.id,
+                    PluginRelease.status == "processing",
+                )
+                .populate_existing()
+                .all()
+            )
+            reclaimed_keys = []
+            for release in processing:
+                if not (release.scan_report_json or {}).get("pendingAccess"):
+                    continue
+                reclaimed, storage_key = self._discard_reclaimable_submission_release(
+                    db, release=release, lock_submission=True
+                )
+                if not reclaimed:
+                    break
+                if storage_key:
+                    reclaimed_keys.append(storage_key)
+            else:
+                return reclaimed_keys
+        raise self._private_first_install_conflict()
+
+    @staticmethod
+    def _private_first_install_conflict() -> HTTPException:
+        return HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRIVATE_FIRST_INSTALL_CONFLICT",
+                "message": "This plugin already has a release or sharing in progress",
+            },
+        )
+
     def init_submission(
         self,
         db: Session,
@@ -933,6 +971,10 @@ class PluginMarketplaceService:
                 ),
             )
         visibility = "personal"
+        if request.privateFirstInstall and (request.targets or request.allowCopy):
+            raise HTTPException(
+                status_code=422, detail="First private install cannot grant access"
+            )
         catalog_namespace = catalog_namespace_for_visibility(
             visibility, owner_user_id=user_id
         )
@@ -950,40 +992,54 @@ class PluginMarketplaceService:
             }
         reclaimed_storage_key: str | None = None
         try:
-            plugin = (
-                db.query(Plugin)
-                .filter(
-                    Plugin.catalog_namespace == catalog_namespace,
-                    Plugin.slug == request.slug,
-                )
-                .first()
+            plugin = ensure_catalog_plugin(
+                db,
+                {
+                    "catalog_namespace": catalog_namespace,
+                    "slug": request.slug,
+                    "name": request.slug,
+                    "display_name": request.displayName.strip() or request.slug,
+                    "listing_type": request.listingType,
+                    "source_type": "submission",
+                    "source_provider": "user",
+                    "owner_user_id": user_id,
+                    "keywords_json": [],
+                    "interface_json": {},
+                    "visibility": visibility,
+                    "status": "draft",
+                },
             )
-            if plugin and plugin.owner_user_id != user_id:
+            if plugin.owner_user_id != user_id:
                 raise HTTPException(
                     status_code=409, detail="Plugin slug is already owned"
                 )
-            if plugin and plugin.listing_type != request.listingType:
+            if (
+                request.privateFirstInstall
+                and not self._can_start_private_first_install(plugin)
+            ):
+                raise self._private_first_install_conflict()
+            # Resolve a reinstall before validating a new publication's metadata.
+            if (
+                request.privateFirstInstall
+                and request.restoreDeleted
+                and plugin.status == "deleted"
+                and plugin.latest_release_id
+            ):
+                latest = self._installable_release(db, plugin, None)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "PRIVATE_PLUGIN_REINSTALL_REQUIRED",
+                        "message": "Reinstall the existing verified private release",
+                        "pluginId": plugin.id,
+                        "releaseId": latest.id,
+                    },
+                )
+            if plugin.listing_type != request.listingType:
                 raise HTTPException(
                     status_code=409, detail="Plugin listing type cannot be changed"
                 )
-            if not plugin:
-                plugin = Plugin(
-                    catalog_namespace=catalog_namespace,
-                    slug=request.slug,
-                    name=request.slug,
-                    display_name=request.displayName.strip() or request.slug,
-                    listing_type=request.listingType,
-                    source_type="submission",
-                    source_provider="user",
-                    owner_user_id=user_id,
-                    keywords_json=[],
-                    interface_json={},
-                    visibility=visibility,
-                    status="draft",
-                )
-                db.add(plugin)
-                db.flush()
-            elif plugin.status == "published" and plugin.visibility != "personal":
+            if plugin.status == "published" and plugin.visibility != "personal":
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -1009,6 +1065,8 @@ class PluginMarketplaceService:
                     )
                 )
                 if not reclaimed:
+                    if request.privateFirstInstall and duplicate.status != "ready":
+                        raise self._private_first_install_conflict()
                     raise HTTPException(
                         status_code=409, detail="Plugin version already exists"
                     )
@@ -1027,6 +1085,11 @@ class PluginMarketplaceService:
                     "filename": request.filename,
                     "requestedVisibility": visibility,
                     **({"pendingAccess": pending_access} if pending_access else {}),
+                    **(
+                        {"privateFirstInstall": True}
+                        if request.privateFirstInstall
+                        else {}
+                    ),
                     **(
                         {
                             "taskBinding": {
@@ -1068,6 +1131,7 @@ class PluginMarketplaceService:
             releaseId=release.id,
             uploadUrl=upload_url,
             expiresAt=expires_at,
+            privateFirstInstall=True if request.privateFirstInstall else None,
         )
 
     def _discard_reclaimable_submission_release(
@@ -1075,12 +1139,14 @@ class PluginMarketplaceService:
         db: Session,
         *,
         release: PluginRelease,
+        lock_submission: bool = False,
     ) -> tuple[bool, str | None]:
-        submission = (
-            db.query(PluginSubmission)
-            .filter(PluginSubmission.release_id == release.id)
-            .first()
+        query = db.query(PluginSubmission).filter(
+            PluginSubmission.release_id == release.id
         )
+        if lock_submission:
+            query = query.with_for_update().populate_existing()
+        submission = query.first()
         if not submission:
             return False, None
         timeout_seconds = (
@@ -1207,12 +1273,17 @@ class PluginMarketplaceService:
             raise HTTPException(status_code=409, detail="Submission is not uploading")
         if submission.status == "uploading":
             submission.status = "scanning"
-            release_id = submission.release_id
-            db.commit()
-        else:
-            release_id = submission.release_id
+        plugin_id = submission.plugin_id
+        release_id = submission.release_id
+        db.commit()
+
+        plugin = self._lock_plugin(db, plugin_id)
+        submission = self._owned_submission(db, user_id, submission_id, for_update=True)
+        if submission.status == "approved":
+            return self._submission_item(submission)
+        if submission.status != "scanning":
+            raise HTTPException(status_code=409, detail="Submission is not scanning")
         release = db.get(PluginRelease, release_id)
-        plugin = db.get(Plugin, submission.plugin_id)
         if not release or not plugin:
             raise HTTPException(
                 status_code=404, detail="Submission resources not found"
@@ -1220,7 +1291,13 @@ class PluginMarketplaceService:
         staging_key = release.storage_key
         final_key: str | None = None
         final_object_created = False
+        reclaimed_shares: list[str] = []
         try:
+            private_first_install = (release.scan_report_json or {}).get(
+                "privateFirstInstall"
+            )
+            if private_first_install:
+                reclaimed_shares = self._require_private_first_install(db, plugin)
             package = plugin_package_storage.get(release.storage_key)
             self._validate_uploaded_package(release, package)
             parsed, security_report = self._analyze_package(package)
@@ -1266,6 +1343,9 @@ class PluginMarketplaceService:
             release.scan_report_json = scanned_report
             if submission.purpose == "restricted_share":
                 plugin.visibility = "personal"
+                if private_first_install and plugin.status == "deleted":
+                    # The deleted release is historical; promote the confirmed package.
+                    plugin.latest_release_id = 0
                 self._finalize_release(db, plugin=plugin, release=release)
                 submission.status = "approved"
                 submission.reviewed_at = datetime.now()
@@ -1306,7 +1386,15 @@ class PluginMarketplaceService:
                 failed_release.scan_status = "failed"
                 failed_release.scan_report_json = {"error": str(exc)[:1000]}
             db.commit()
+            if (
+                isinstance(exc, HTTPException)
+                and isinstance(exc.detail, dict)
+                and exc.detail.get("code") == "PRIVATE_FIRST_INSTALL_CONFLICT"
+            ):
+                self._delete_submission_object_best_effort(staging_key)
             raise
+        for storage_key in reclaimed_shares:
+            self._delete_submission_object_best_effort(storage_key)
         db.refresh(submission)
         if submission.status == "approved":
             self._notify_release_available(db, submission.release_id)
@@ -2121,7 +2209,7 @@ class PluginMarketplaceService:
         installed_for_device = bool(
             installed
             and installed.is_active
-            and (not device_id or self._device_has_materialized_release(device_row))
+            and (not device_id or device_has_materialized_release(device_row))
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
@@ -2183,7 +2271,7 @@ class PluginMarketplaceService:
                 )
             ),
             currentDeviceInstallation=(
-                self._device_installation_item(device_row).model_copy(
+                device_installation_item(device_row).model_copy(
                     update={"deviceId": device_id or device_row.device_id}
                 )
                 if device_row and installed and installed.is_active
@@ -2233,10 +2321,6 @@ class PluginMarketplaceService:
             self._resolved_interface_cache.popitem(last=False)
         return resolved or None
 
-    def _installed_item_id(self, item: InstalledPlugin) -> int | None:
-        value = (item.metadata.get("labels") or {}).get("id")
-        return int(value) if str(value).isdigit() else None
-
     def _device_installation(
         self,
         db: Session,
@@ -2248,26 +2332,6 @@ class PluginMarketplaceService:
             return None
         return plugin_device_rows(db, installed.user_id, device_id).get(
             installed_kind_id
-        )
-
-    def _device_has_materialized_release(
-        self, row: PluginDeviceInstallation | None
-    ) -> bool:
-        return bool(row and row.actual_release_id)
-
-    def _device_installation_item(
-        self, row: PluginDeviceInstallation
-    ) -> PluginDeviceInstallationItem:
-        return PluginDeviceInstallationItem(
-            deviceId=row.device_id,
-            desiredReleaseId=row.desired_release_id,
-            actualReleaseId=unset_id(row.actual_release_id),
-            state=row.state,
-            errorCode=unset_str(row.error_code),
-            errorMessage=unset_str(row.error_message),
-            attemptCount=row.attempt_count,
-            lastSyncAt=unset_datetime(row.last_sync_at),
-            updatedAt=row.updated_at,
         )
 
     def _installed_payload(self, plugin: Plugin, release: PluginRelease) -> dict:
@@ -2572,7 +2636,10 @@ class PluginMarketplaceService:
         user_id: int,
         request: PluginAccessUpdateRequest,
     ) -> tuple[PluginAccessResponse, list[tuple[int, int]]]:
-        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        # Keep access validation and grant writes in the same catalog lifecycle.
+        plugin = self._owned_plugin(
+            db, plugin_id=plugin_id, user_id=user_id, for_update=True
+        )
         requested_targets = request.targets if request.scope == "restricted" else []
         targets = self._validated_access_targets(
             db,
@@ -2646,7 +2713,9 @@ class PluginMarketplaceService:
         revoke_and_delete: bool,
     ) -> list[tuple[int, int]]:
         """Remove an owned personal listing and deactivate every installation."""
-        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        plugin = self._owned_plugin(
+            db, plugin_id=plugin_id, user_id=user_id, for_update=True
+        )
         from app.services.plugin_publication_service import (
             plugin_publication_service,
         )
@@ -2800,16 +2869,33 @@ class PluginMarketplaceService:
             expiresAt=expires_at,
         )
 
-    def _owned_plugin(self, db: Session, *, plugin_id: int, user_id: int) -> Plugin:
-        plugin = db.get(Plugin, plugin_id)
+    def _lock_plugin(self, db: Session, plugin_id: int) -> Plugin | None:
+        return (
+            db.query(Plugin)
+            .filter(Plugin.id == plugin_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+
+    def _owned_plugin(
+        self, db: Session, *, plugin_id: int, user_id: int, for_update: bool = False
+    ) -> Plugin:
+        plugin = (
+            self._lock_plugin(db, plugin_id)
+            if for_update
+            else db.get(Plugin, plugin_id)
+        )
         if not plugin or plugin.owner_user_id != user_id:
             raise HTTPException(status_code=404, detail="Owned plugin not found")
         if plugin.status != "published" or plugin.visibility != "personal":
             raise HTTPException(status_code=409, detail="Plugin is not shareable")
         return plugin
 
-    def _plugin_grants(self, db: Session, plugin_id: int) -> list[ResourceMember]:
-        return (
+    def _plugin_grants(
+        self, db: Session, plugin_id: int, *, for_update: bool = False
+    ) -> list[ResourceMember]:
+        query = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type.in_(
@@ -2821,8 +2907,8 @@ class PluginMarketplaceService:
                 ),
             )
             .order_by(ResourceMember.entity_type, ResourceMember.entity_display_name)
-            .all()
         )
+        return (query.with_for_update() if for_update else query).all()
 
     def _validated_access_targets(
         self,
@@ -2958,7 +3044,7 @@ class PluginMarketplaceService:
         entity_type: str,
         entity_id: str,
     ) -> None:
-        plugin = db.get(Plugin, plugin_id)
+        plugin = self._lock_plugin(db, plugin_id)
         if not plugin:
             raise HTTPException(status_code=404, detail="Plugin not found")
         approved = MemberStatus.APPROVED.value

@@ -1,334 +1,375 @@
-import { describe, expect, it, vi } from "vitest";
+import { reorderLocalQueuedMessages } from '@wegent/chat-core/conversation-queue'
+import { describe, expect, it, vi } from 'vitest'
 import {
   RuntimeConversationQueue,
   runtimeQueuedMessageRequest,
   type RuntimeConversationQueuePort,
-} from "./runtimeConversationQueue";
-import type { RuntimePaneQueuedMessage } from "@wegent/chat-core/conversation-queue";
+} from './runtimeConversationQueue'
+import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-queue'
 
 const message = (id: string): RuntimePaneQueuedMessage => ({
   id,
   content: `Message ${id}`,
-  status: "queued",
-  createdAt: "2026-09-17T00:00:00Z",
-});
+  status: 'queued',
+  createdAt: '2026-09-17T00:00:00Z',
+})
 function setup() {
-  let revision = 0;
-  const queue = new RuntimeConversationQueue<number>();
+  let revision = 0
+  const queue = new RuntimeConversationQueue<number>()
   const port: RuntimeConversationQueuePort<number> = {
     send: vi.fn().mockResolvedValue({ sent: true }),
     guide: vi.fn().mockResolvedValue({ sent: true }),
     lifecycle: () => revision,
-    lifecycleChanged: (previous) => previous !== revision,
-    isBusyError: (error) => error === "busy",
-    sendFailedText: "Send failed",
-    guidanceFailedText: "Guide failed",
-  };
-  return { queue, port, transition: () => revision++ };
+    lifecycleChanged: previous => previous !== revision,
+    isBusyError: error => error === 'busy',
+    sendFailedText: 'Send failed',
+    guidanceFailedText: 'Guide failed',
+  }
+  return { queue, port, transition: () => revision++ }
 }
 const applied = (id: string) => ({
   guidanceId: `server-${id}`,
   clientGuidanceId: id,
   message: `Message ${id}`,
   appliedAtMs: 1,
-});
+})
 
-describe("shared PC and Web conversation queue", () => {
-  it.each(["before", "after"])(
-    "drains successive replies when each turn returns to the same idle state (%s send acknowledgement)",
-    async (acknowledgement) => {
-      let phase = "idle";
-      const queue = new RuntimeConversationQueue<string>();
+describe('shared PC and Web conversation queue', () => {
+  it.each(['before', 'after'])(
+    'drains successive replies when each turn returns to the same idle state (%s send acknowledgement)',
+    async acknowledgement => {
+      let phase = 'idle'
+      const queue = new RuntimeConversationQueue<string>()
       const port: RuntimeConversationQueuePort<string> = {
         ...setup().port,
         lifecycle: () => phase,
-        lifecycleChanged: (previous) => previous !== phase,
-      };
-      for (const id of ["one", "two", "three"]) queue.enqueue(message(id));
+        lifecycleChanged: previous => previous !== phase,
+      }
+      for (const id of ['one', 'two', 'three']) queue.enqueue(message(id))
 
-      for (const [index, id] of ["one", "two", "three"].entries()) {
-        let accept!: (result: { sent: boolean }) => void;
-        vi.mocked(port.send).mockReturnValueOnce(
-          new Promise((resolve) => (accept = resolve)),
-        );
-        const sending = queue.pump(port, false);
-        expect(port.send).toHaveBeenCalledTimes(index + 1);
-        expect(port.send).toHaveBeenLastCalledWith(message(id));
-        await queue.pump(port, false);
-        expect(port.send).toHaveBeenCalledTimes(index + 1);
+      for (const [index, id] of ['one', 'two', 'three'].entries()) {
+        let accept!: (result: { sent: boolean }) => void
+        vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+        const sending = queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        expect(port.send).toHaveBeenLastCalledWith(message(id))
+        await queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
 
-        if (acknowledgement === "before") {
-          accept({ sent: true });
-          await sending;
-          await queue.pump(port, false);
-          expect(port.send).toHaveBeenCalledTimes(index + 1);
+        if (acknowledgement === 'before') {
+          accept({ sent: true })
+          await sending
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
         }
-        phase = "running";
-        await queue.pump(port, true);
-        expect(port.send).toHaveBeenCalledTimes(index + 1);
-        phase = "idle";
-        if (acknowledgement === "after") {
-          await queue.pump(port, false);
-          expect(port.send).toHaveBeenCalledTimes(index + 1);
-          accept({ sent: true });
-          await sending;
+        phase = 'running'
+        await queue.pump(port, true)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        phase = 'idle'
+        if (acknowledgement === 'after') {
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
+          accept({ sent: true })
+          await sending
         }
       }
-      expect(queue.getSnapshot()).toEqual([]);
-    },
-  );
+      expect(queue.getSnapshot()).toEqual([])
+    }
+  )
 
-  it("rejects direct sends while waiting for the accepted turn to enter the lifecycle", async () => {
-    const { queue, port, transition } = setup();
-    let accept!: (result: { sent: boolean }) => void;
-    vi.mocked(port.send).mockReturnValueOnce(
-      new Promise((resolve) => (accept = resolve)),
-    );
-    queue.enqueue(message("one"));
-    queue.enqueue(message("two"));
+  it('rejects direct sends while waiting for the accepted turn to enter the lifecycle', async () => {
+    const { queue, port, transition } = setup()
+    let accept!: (result: { sent: boolean }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+    queue.enqueue(message('one'))
+    queue.enqueue(message('two'))
 
-    const sending = queue.send("one", port);
-    expect(port.send).toHaveBeenCalledWith(message("one"));
-    await expect(queue.send("two", port)).resolves.toBe(false);
-    expect(port.send).toHaveBeenCalledTimes(1);
+    const sending = queue.send('one', port)
+    expect(port.send).toHaveBeenCalledWith(message('one'))
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    expect(port.send).toHaveBeenCalledTimes(1)
 
-    accept({ sent: true });
-    await sending;
-    await expect(queue.send("two", port)).resolves.toBe(false);
-    transition();
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenLastCalledWith(message("two"));
-  });
+    accept({ sent: true })
+    await sending
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    transition()
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenLastCalledWith(message('two'))
+  })
 
-  it("waits while busy and dispatches FIFO once per confirmed lifecycle transition", async () => {
-    const { queue, port, transition } = setup();
-    queue.enqueue(message("one"));
-    queue.enqueue(message("two"));
-    await queue.pump(port, true);
-    expect(port.send).not.toHaveBeenCalled();
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenCalledWith(message("one"));
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenCalledTimes(1);
-    transition();
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenLastCalledWith(message("two"));
-    expect(queue.getSnapshot()).toEqual([]);
-  });
-  it.each(["response", "exception"])(
-    "keeps a busy %s queued without retry loops until a state change",
-    async (kind) => {
-      const { queue, port, transition } = setup();
-      if (kind === "response")
+  it('waits while busy and dispatches FIFO once per confirmed lifecycle transition', async () => {
+    const { queue, port, transition } = setup()
+    queue.enqueue(message('one'))
+    queue.enqueue(message('two'))
+    await queue.pump(port, true)
+    expect(port.send).not.toHaveBeenCalled()
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledWith(message('one'))
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledTimes(1)
+    transition()
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenLastCalledWith(message('two'))
+    expect(queue.getSnapshot()).toEqual([])
+  })
+  it.each(['response', 'exception'])(
+    'keeps a busy %s queued without retry loops until a state change',
+    async kind => {
+      const { queue, port, transition } = setup()
+      if (kind === 'response')
         vi.mocked(port.send).mockResolvedValueOnce({
           sent: false,
-          error: "busy",
-        });
-      else vi.mocked(port.send).mockRejectedValueOnce(new Error("busy"));
-      queue.enqueue(message("one"));
-      await queue.pump(port, false);
+          error: 'busy',
+        })
+      else vi.mocked(port.send).mockRejectedValueOnce(new Error('busy'))
+      queue.enqueue(message('one'))
+      await queue.pump(port, false)
       expect(queue.getSnapshot()[0]).toMatchObject({
-        status: "queued",
+        status: 'queued',
         error: undefined,
-      });
-      await queue.pump(port, false);
-      expect(port.send).toHaveBeenCalledTimes(1);
-      transition();
-      await queue.pump(port, false);
-      expect(queue.getSnapshot()).toEqual([]);
-    },
-  );
-  it("retries a busy send when the lifecycle settled before the rejection arrived", async () => {
-    const { queue, port, transition } = setup();
-    let rejectBusy!: (result: { sent: boolean; error: string }) => void;
-    vi.mocked(port.send).mockReturnValueOnce(
-      new Promise((resolve) => (rejectBusy = resolve)),
-    );
-    queue.enqueue(message("one"));
+      })
+      await queue.pump(port, false)
+      expect(port.send).toHaveBeenCalledTimes(1)
+      transition()
+      await queue.pump(port, false)
+      expect(queue.getSnapshot()).toEqual([])
+    }
+  )
+  it('retries a busy send when the lifecycle settled before the rejection arrived', async () => {
+    const { queue, port, transition } = setup()
+    let rejectBusy!: (result: { sent: boolean; error: string }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (rejectBusy = resolve)))
+    queue.enqueue(message('one'))
 
-    const sending = queue.pump(port, false);
-    transition();
-    rejectBusy({ sent: false, error: "busy" });
-    await sending;
+    const sending = queue.pump(port, false)
+    transition()
+    rejectBusy({ sent: false, error: 'busy' })
+    await sending
 
     expect(queue.getSnapshot()[0]).toMatchObject({
-      status: "queued",
+      status: 'queued',
       error: undefined,
-    });
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenCalledTimes(2);
-    expect(queue.getSnapshot()).toEqual([]);
-  });
-  it("prevents duplicate dispatch and editing or removing an in-flight message", async () => {
-    const { queue, port } = setup();
-    let finish!: (result: { sent: boolean }) => void;
+    })
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledTimes(2)
+    expect(queue.getSnapshot()).toEqual([])
+  })
+  it('prevents duplicate dispatch and editing or removing an in-flight message', async () => {
+    const { queue, port } = setup()
+    let finish!: (result: { sent: boolean }) => void
     vi.mocked(port.send).mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    );
-    queue.enqueue(message("one"));
-    const sending = queue.pump(port, false);
-    await queue.pump(port, false);
-    queue.cancel("one");
-    expect(queue.take("one")).toBeNull();
-    expect(port.send).toHaveBeenCalledTimes(1);
-    finish({ sent: true });
-    await sending;
-    expect(queue.getSnapshot()).toEqual([]);
-  });
-  it("retains non-busy failures for editing and restores the original attachment and model payload", async () => {
-    const { queue, port } = setup();
-    vi.mocked(port.send).mockRejectedValueOnce(new Error("Device offline"));
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    queue.enqueue(message('one'))
+    const sending = queue.pump(port, false)
+    await queue.pump(port, false)
+    queue.cancel('one')
+    expect(queue.take('one')).toBeNull()
+    expect(port.send).toHaveBeenCalledTimes(1)
+    finish({ sent: true })
+    await sending
+    expect(queue.getSnapshot()).toEqual([])
+  })
+  it('retains non-busy failures for editing and restores the original attachment and model payload', async () => {
+    const { queue, port } = setup()
+    vi.mocked(port.send).mockRejectedValueOnce(new Error('Device offline'))
     const pending = {
-      ...message("one"),
-      modelId: "chosen-model",
-      modelOptions: { reasoningEffort: "high" },
-      attachments: [{ id: 3, filename: "a.png" }],
-    };
-    queue.enqueue(pending);
-    await queue.pump(port, false);
+      ...message('one'),
+      modelId: 'chosen-model',
+      modelOptions: { reasoningEffort: 'high' },
+      attachments: [{ id: 3, filename: 'a.png' }],
+    }
+    queue.enqueue(pending)
+    await queue.pump(port, false)
     expect(queue.getSnapshot()[0]).toMatchObject({
-      status: "failed",
-      error: "Device offline",
-    });
-    await queue.pump(port, false);
-    expect(port.send).toHaveBeenCalledTimes(1);
-    expect(queue.take("one")).toMatchObject({ ...pending, status: "failed" });
-    expect(queue.getSnapshot()).toEqual([]);
-  });
-  it("keeps accepted guidance visible until applied and handles an applied event before the response", async () => {
-    const { queue, port } = setup();
-    queue.enqueue(message("one"));
-    await queue.guide("one", port, true);
+      status: 'failed',
+      error: 'Device offline',
+    })
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledTimes(1)
+    expect(queue.take('one')).toMatchObject({ ...pending, status: 'failed' })
+    expect(queue.getSnapshot()).toEqual([])
+  })
+  it('keeps accepted guidance visible until applied and handles an applied event before the response', async () => {
+    const { queue, port } = setup()
+    queue.enqueue(message('one'))
+    await queue.guide('one', port, true)
     expect(queue.getSnapshot()[0]).toMatchObject({
-      status: "sending",
-      deliveryMode: "guidance",
-    });
-    expect(queue.applyGuidance(applied("unrelated"))).toBeNull();
-    expect(queue.applyGuidance(applied("one"))?.id).toBe("one");
-    queue.enqueue(message("two"));
+      status: 'sending',
+      deliveryMode: 'guidance',
+    })
+    expect(queue.applyGuidance(applied('unrelated'))).toBeNull()
+    expect(queue.applyGuidance(applied('one'))?.id).toBe('one')
+    queue.enqueue(message('two'))
     vi.mocked(port.guide).mockImplementationOnce(async () => {
-      queue.applyGuidance(applied("two"));
-      return { sent: true };
-    });
-    await queue.guide("two", port, true);
-    expect(queue.getSnapshot()).toEqual([]);
-  });
-  it("exposes rejected guidance and reconciles applied guidance recovered from canonical history", async () => {
-    const { queue, port } = setup();
-    queue.enqueue(message("one"));
+      queue.applyGuidance(applied('two'))
+      return { sent: true }
+    })
+    await queue.guide('two', port, true)
+    expect(queue.getSnapshot()).toEqual([])
+  })
+  it('exposes rejected guidance and reconciles applied guidance recovered from canonical history', async () => {
+    const { queue, port } = setup()
+    queue.enqueue(message('one'))
     vi.mocked(port.guide).mockResolvedValueOnce({
       sent: false,
-      error: "Question closed",
-    });
-    await queue.guide("one", port, true);
+      error: 'Question closed',
+    })
+    await queue.guide('one', port, true)
     expect(queue.getSnapshot()[0]).toMatchObject({
-      status: "failed",
-      error: "Question closed",
+      status: 'failed',
+      error: 'Question closed',
       deliveryMode: undefined,
-    });
-    await queue.guide("one", port, true);
-    queue.reconcileGuidance(new Set(["one"]));
-    expect(queue.getSnapshot()).toEqual([]);
-  });
+    })
+    await queue.guide('one', port, true)
+    queue.reconcileGuidance(new Set(['one']))
+    expect(queue.getSnapshot()).toEqual([])
+  })
   it.each([
     undefined,
-    { startNewSession: true, expectedThreadId: "submitted-thread" },
-    { startNewSession: false, expectedThreadId: "submitted-thread" },
-  ])("preserves the submitted session boundary: %j", (boundary) => {
+    { startNewSession: true, expectedThreadId: 'submitted-thread' },
+    { startNewSession: false, expectedThreadId: 'submitted-thread' },
+  ])('preserves the submitted session boundary: %j', boundary => {
     const request = runtimeQueuedMessageRequest(
       {
-        address: { deviceId: "device", taskId: "task" },
+        address: { deviceId: 'device', taskId: 'task' },
         ...(boundary
           ? {
               startNewSession: !boundary.startNewSession,
-              expectedThreadId: "stale-context",
+              expectedThreadId: 'stale-context',
             }
           : {}),
       },
-      { ...message("session-boundary"), ...boundary },
-    );
+      { ...message('session-boundary'), ...boundary }
+    )
 
     if (boundary) {
-      expect(request).toMatchObject(boundary);
+      expect(request).toMatchObject(boundary)
     } else {
-      expect(request).not.toHaveProperty("startNewSession");
-      expect(request).not.toHaveProperty("expectedThreadId");
+      expect(request).not.toHaveProperty('startNewSession')
+      expect(request).not.toHaveProperty('expectedThreadId')
     }
-  });
+  })
 
-  it.each([undefined, "private_discussion"] as const)(
-    "preserves queued conversation scope %s even when the active pane has the opposite scope",
-    (conversationContext) => {
+  it.each(['Cloud responsibilities', '', undefined])(
+    'uses the queued assistant instructions instead of later pane state (%j)',
+    assistantPrompt => {
+      const request = runtimeQueuedMessageRequest(
+        { address: { deviceId: 'device', taskId: 'task' }, assistantPrompt: 'Later instructions' },
+        { ...message('assistant'), assistantPrompt }
+      )
+      expect(request.assistantPrompt).toBe(assistantPrompt)
+    }
+  )
+
+  it.each([undefined, 'private_discussion'] as const)(
+    'preserves queued conversation scope %s even when the active pane has the opposite scope',
+    conversationContext => {
       const request = runtimeQueuedMessageRequest(
         {
-          address: { deviceId: "device", taskId: "task" },
-          conversationContext: conversationContext
-            ? undefined
-            : "private_discussion",
+          address: { deviceId: 'device', taskId: 'task' },
+          conversationContext: conversationContext ? undefined : 'private_discussion',
         },
         {
-          ...message("source-context"),
+          ...message('source-context'),
           conversationContext,
-          origin: { source: "manual", external_id: "source-intent" },
-          cloudProjectId: "source-project",
+          origin: { source: 'manual', external_id: 'source-intent' },
+          cloudProjectId: 'source-project',
           additionalContext: {
-            source: { value: "source-intent", kind: "application" },
+            source: { value: 'source-intent', kind: 'application' },
           },
-        },
-      );
-      expect(request.conversationContext).toBe(conversationContext);
+        }
+      )
+      expect(request.conversationContext).toBe(conversationContext)
       expect(request).toMatchObject({
-        clientUserMessageId: "source-context",
-        cloudProjectId: "source-project",
-        origin: { source: "manual", external_id: "source-intent" },
+        clientUserMessageId: 'source-context',
+        cloudProjectId: 'source-project',
+        origin: { source: 'manual', external_id: 'source-intent' },
         additionalContext: {
-          source: { value: "source-intent", kind: "application" },
+          source: { value: 'source-intent', kind: 'application' },
         },
-      });
-    },
-  );
+      })
+    }
+  )
 
-  it("addresses remote and local attachments correctly and freezes the submitted model selection", () => {
+  it('addresses remote and local attachments correctly and freezes the submitted model selection', () => {
     const request = runtimeQueuedMessageRequest(
       {
-        address: { deviceId: "device", taskId: "task" },
-        modelId: "changed-after-enqueue",
-        modelSelection: { modelName: "changed-after-enqueue", options: {} },
+        address: { deviceId: 'device', taskId: 'task' },
+        modelId: 'changed-after-enqueue',
+        modelSelection: { modelName: 'changed-after-enqueue', options: {} },
       },
       {
-        ...message("one"),
-        modelId: "original",
-        modelType: "user",
+        ...message('one'),
+        modelId: 'original',
+        modelType: 'user',
         modelOptions: {
-          weworkCloudModelNamespace: "team",
-          weworkCloudModelResourceUserId: "42",
+          weworkCloudModelNamespace: 'team',
+          weworkCloudModelResourceUserId: '42',
         },
         attachments: [
-          { id: 3, filename: "cloud.txt" },
+          { id: 3, filename: 'cloud.txt' },
           {
             id: -1,
-            filename: "local.txt",
-            local_path: "/repo/local.txt",
-            text_content: "ui-only",
+            filename: 'local.txt',
+            local_path: '/repo/local.txt',
+            text_content: 'ui-only',
           },
         ],
-      },
-    );
+      }
+    )
     expect(request).toMatchObject({
-      clientUserMessageId: "one",
+      clientUserMessageId: 'one',
       modelSelection: {
-        modelName: "original",
-        modelType: "user",
+        modelName: 'original',
+        modelType: 'user',
         options: {
-          weworkCloudModelNamespace: "team",
-          weworkCloudModelResourceUserId: "42",
+          weworkCloudModelNamespace: 'team',
+          weworkCloudModelResourceUserId: '42',
         },
       },
       attachmentIds: [3],
-      attachments: [{ id: -1, local_path: "/repo/local.txt" }],
-    });
-    expect(request.attachments?.[0].text_content).toBeUndefined();
-  });
-});
+      attachments: [{ id: -1, local_path: '/repo/local.txt' }],
+    })
+    expect(request.attachments?.[0].text_content).toBeUndefined()
+  })
+})
+
+it('reorders adjacent local drafts in both directions without moving server or in-flight slots', () => {
+  const sending = { ...message('sending'), status: 'sending' as const }
+  const server = { ...message('server'), runtimeQueued: true }
+  const failed = { ...message('failed'), status: 'failed' as const }
+  const first = message('one')
+  const second = message('two')
+  const hidden = { ...message('hidden'), awaitingGuidanceAcceptance: true }
+  const input = [sending, first, server, hidden, second, failed]
+  const reordered = reorderLocalQueuedMessages(input, 'one', 'two')
+  expect(reordered).toEqual([sending, second, server, hidden, first, failed])
+  expect(input).toEqual([sending, first, server, hidden, second, failed])
+  expect(reordered[0]).toBe(sending)
+  expect(reordered[2]).toBe(server)
+  expect(reordered[3]).toBe(hidden)
+  expect(reordered[5]).toBe(failed)
+  expect(reorderLocalQueuedMessages(reordered, 'one', 'two')).toEqual(input)
+})
+
+it('rejects missing, unchanged, nonqueued and runtime-owned reorder targets', () => {
+  const input = [
+    message('one'),
+    { ...message('server'), runtimeQueued: true },
+    { ...message('failed'), status: 'failed' as const },
+  ]
+  for (const [source, target] of [
+    ['missing', 'one'],
+    ['one', 'missing'],
+    ['one', 'one'],
+    ['server', 'one'],
+    ['one', 'server'],
+    ['failed', 'one'],
+    ['one', 'failed'],
+  ]) {
+    expect(reorderLocalQueuedMessages(input, source, target)).toBe(input)
+  }
+})

@@ -1,3 +1,4 @@
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type {
   Attachment,
   LocalDeviceApp,
@@ -32,12 +33,17 @@ import {
   type ComposerFollowUpBehavior,
 } from './composerTextareaTypes'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
-import { ProjectComposerBody } from '@wegent/collaboration/composer'
+import {
+  ComposerErrorBanner,
+  PROJECT_CHAT_WORK_BAR_CLASS,
+  ProjectComposerBody,
+} from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 interface ProjectChatComposerProps {
   composerScopeKey?: string
@@ -66,6 +72,7 @@ interface ProjectChatComposerProps {
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
   modelSelectorOpenSignal?: number
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   isModelSelectionReady: boolean
@@ -112,6 +119,7 @@ interface ProjectChatComposerProps {
   showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
@@ -158,6 +166,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       selectedModel,
       activeModel,
       selectedModelOptions,
+      permissionControls,
       modelSelectorOpenSignal,
       onModelSelectorOpenChange,
       isModelSelectionReady,
@@ -198,11 +207,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
-      projectPhrases = [],
+      projectPhrases,
       showProjectWorkBar = true,
       showExecutionTools = true,
       showModelSelector,
       isStreaming = false,
+      showPauseButton,
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
@@ -255,7 +265,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           : [],
       [projectWork]
     )
-    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    const handleQuickPhraseSelect = useStableEvent((phrase: QuickPhrase) => {
       if (!composerRef.current) return
       setPhraseError(null)
       applyQuickPhrase(phrase, composerRef.current, {
@@ -273,6 +283,26 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             applyWorkspacePathTransfer(getLiveValue(), transfer, onChange, onFileSelect)
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
+      }
+    })
+
+    const previousAdmission = useRef('')
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const admission = {
+        composerScopeKey,
+        disabled,
+        submitDisabled,
+        isModelSelectionReady,
+        hasText: Boolean(value.trim()),
+        attachmentCount: attachments.length,
+        uploadingCount: uploadingFiles.size,
+        requireText,
+        allowEmptySubmit,
+      }
+      const key = JSON.stringify(admission)
+      if (previousAdmission.current !== key) {
+        previousAdmission.current = key
+        logRuntimeTaskCreateStage('composer-admission', admission)
       }
     }
 
@@ -345,8 +375,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2"
-                buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+                className={PROJECT_CHAT_WORK_BAR_CLASS}
               />
             ))
           }
@@ -385,7 +414,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectExternalMention={onSelectExternalMention}
               onSelectCloudProject={onSelectCloudProject}
-              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}
               models={models}
@@ -417,6 +445,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
+              permissionControls={permissionControls}
               showModelSelector={showModelSelector}
               models={models}
               selectedModel={selectedModel}
@@ -443,6 +472,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               goalDraftActive={goalDraftActive}
               onCancelGoalDraft={onCancelGoalDraft}
               isStreaming={isStreaming}
+              showPauseButton={showPauseButton}
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={

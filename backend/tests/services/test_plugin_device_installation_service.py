@@ -28,6 +28,99 @@ def mysql_error(code: int) -> OperationalError:
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_alias", [None, "runtime-current", "electron-current"])
+async def test_empty_other_device_targets_never_start_a_write(
+    test_db, test_user, monkeypatch, source_alias
+):
+    current = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        namespace="default",
+        name="runtime-current",
+        is_active=True,
+        json={"spec": {"deviceType": "app", "appDeviceId": "electron-current"}},
+    )
+    test_db.add(current)
+    test_db.commit()
+    devices = (
+        [] if source_alias is None else [{"device_id": f"app-record-{current.id}"}]
+    )
+    monkeypatch.setattr(
+        module.device_service, "get_all_devices", AsyncMock(return_value=devices)
+    )
+    write = AsyncMock(
+        side_effect=AssertionError("Empty target set acquired a write lease")
+    )
+    monkeypatch.setattr(module, "run_plugin_operation", write)
+
+    await PluginDeviceInstallationService().ensure_pending_for_all_devices(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=17,
+        desired_release_id=9,
+        exclude_device_id=source_alias,
+    )
+
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_intent", ["uninstalled", "upgraded"])
+async def test_pending_retry_reloads_a_newer_account_intent(
+    test_db, test_user, monkeypatch, plugin_write_sessions, new_intent
+):
+    installed, release = _device_install(test_db, test_user.id)
+    user_id, installed_id, release_id = test_user.id, installed.id, release.id
+    monkeypatch.setattr(
+        module.device_service,
+        "get_all_devices",
+        AsyncMock(return_value=[{"device_id": "other"}]),
+    )
+    service = PluginDeviceInstallationService()
+    prepare = service._ensure_pending_for_devices
+    attempts = []
+
+    def concurrent_intent(db, **kwargs):
+        attempts.append(db)
+        if len(attempts) == 1:
+            with plugin_write_operations.get_db_session() as writer:
+                module.acquire_plugin_write_lock(
+                    writer, user_id, installed_id=installed_id
+                )
+                current = writer.get(Kind, installed_id)
+                if new_intent == "uninstalled":
+                    current.is_active = False
+                else:
+                    current.json = {
+                        **current.json,
+                        "spec": {**current.json["spec"], "releaseId": release_id + 1},
+                    }
+                writer.commit()
+            raise PluginWriteError(
+                "plugin_write_busy"
+                if new_intent == "uninstalled"
+                else "plugin_write_conflict"
+            )
+        return prepare(db, **kwargs)
+
+    monkeypatch.setattr(service, "_ensure_pending_for_devices", concurrent_intent)
+    await service.ensure_pending_for_all_devices(
+        test_db,
+        user_id=user_id,
+        installed_kind_id=installed_id,
+        desired_release_id=release_id,
+    )
+
+    assert len(attempts) == 2
+    assert attempts[0] is not attempts[1]
+    assert test_db.query(PluginDeviceInstallation).count() == 0
+    current = test_db.get(Kind, installed_id)
+    assert current.is_active == (new_intent != "uninstalled")
+    if new_intent == "upgraded":
+        assert current.json["spec"]["releaseId"] == release_id + 1
+
+
 def test_record_sync_response_retries_entire_mysql_deadlock_transaction(monkeypatch):
     service = PluginDeviceInstallationService()
     db = Mock()
@@ -477,20 +570,32 @@ async def test_all_device_materialization_waits_in_its_own_worker_session(monkey
     assert sessions[0].threads[0] != loop_thread
 
 
-def test_first_device_materialization_holds_the_installation_lease(
+def test_first_device_materialization_holds_only_its_installation_lease(
     test_db, test_user, plugin_write_backend, monkeypatch
 ):
     installed, _ = _device_install(test_db, test_user.id)
+    other = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="independent-plugin",
+        json=installed.json,
+        is_active=True,
+    )
+    test_db.add(other)
     test_db.query(PluginDeviceInstallation).delete(synchronize_session=False)
     test_db.commit()
+    installation_keys = {
+        f"wegent:plugin-write:{test_user.id}:{item.name}" for item in (installed, other)
+    }
     service = PluginDeviceInstallationService()
     original = service._ensure_desired_install_pending
 
     def materialize(*args, **kwargs):
-        assert (
-            f"wegent:plugin-write:{test_user.id}:{installed.name}"
-            in plugin_write_backend.values
-        )
+        current = kwargs["installed"]
+        assert installation_keys.intersection(plugin_write_backend.values) == {
+            f"wegent:plugin-write:{test_user.id}:{current.name}"
+        }
         return original(*args, **kwargs)
 
     monkeypatch.setattr(service, "_ensure_desired_install_pending", materialize)
@@ -498,9 +603,9 @@ def test_first_device_materialization_holds_the_installation_lease(
         service.ensure_pending_for_device(
             test_db, user_id=test_user.id, device_id="first-device"
         )
-        == 1
+        == 2
     )
-    assert test_db.query(PluginDeviceInstallation).count() == 1
+    assert test_db.query(PluginDeviceInstallation).count() == 2
 
 
 def test_local_ack_skips_installations_activated_after_scope_acquisition(

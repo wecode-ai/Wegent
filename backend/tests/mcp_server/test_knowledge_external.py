@@ -4,7 +4,6 @@
 
 """Tests for external knowledge MCP tools."""
 
-import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,6 +31,13 @@ from app.services.knowledge.external_document_access import (
     verify_document_download_token,
 )
 from app.services.rag.remote_gateway import RemoteRagGatewayError
+
+
+async def _call_tool(name: str, **arguments) -> dict:
+    response = await getattr(knowledge_external, name)(
+        **arguments, response_format="structured"
+    )
+    return response.structuredContent
 
 
 def _set_external_user(user):
@@ -148,14 +154,15 @@ def _make_attachment(
 async def test_list_knowledge_bases_rejects_missing_group_name(test_user):
     token = _set_external_user(test_user)
     try:
-        result = await knowledge_external.wegent_kb_list_knowledge_bases(
+        result = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             scope=ResourceScope.GROUP.value,
             group_name="  ",
         )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "group_name is required when scope is group",
         "code": "bad_request",
     }
@@ -165,73 +172,75 @@ async def test_list_knowledge_bases_rejects_missing_group_name(test_user):
 async def test_list_knowledge_bases_rejects_invalid_input_types(test_user):
     token = _set_external_user(test_user)
     try:
-        invalid_scope = await knowledge_external.wegent_kb_list_knowledge_bases(
+        invalid_scope = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             scope=1,
         )
-        invalid_group_name = await knowledge_external.wegent_kb_list_knowledge_bases(
+        invalid_group_name = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             group_name=1,
         )
-        invalid_query = await knowledge_external.wegent_kb_list_knowledge_bases(
+        invalid_query = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             query=1,
         )
-        invalid_owner_user_ids_type = (
-            await knowledge_external.wegent_kb_list_knowledge_bases(
-                owner_user_ids="1",
-            )
+        invalid_owner_user_ids_type = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
+            owner_user_ids="1",
         )
-        invalid_owner_user_ids_item = (
-            await knowledge_external.wegent_kb_list_knowledge_bases(
-                owner_user_ids=[test_user.id, "2"],
-            )
+        invalid_owner_user_ids_item = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
+            owner_user_ids=[test_user.id, "2"],
         )
-        invalid_owner_user_ids_count = (
-            await knowledge_external.wegent_kb_list_knowledge_bases(
-                owner_user_ids=list(
-                    range(knowledge_external.MAX_KNOWLEDGE_BASE_OWNER_USER_IDS + 1)
-                ),
-            )
+        invalid_owner_user_ids_count = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
+            owner_user_ids=list(
+                range(knowledge_external.MAX_KNOWLEDGE_BASE_OWNER_USER_IDS + 1)
+            ),
         )
-        invalid_limit = await knowledge_external.wegent_kb_list_knowledge_bases(
+        invalid_limit = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             limit=knowledge_external.MAX_KNOWLEDGE_BASE_LIST_LIMIT + 1,
         )
-        invalid_offset = await knowledge_external.wegent_kb_list_knowledge_bases(
+        invalid_offset = await _call_tool(
+            "wegent_kb_list_knowledge_bases",
             offset=-1,
         )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(invalid_scope) == {
+    assert invalid_scope == {
         "error": "scope must be a string",
         "code": "bad_request",
     }
-    assert json.loads(invalid_group_name) == {
+    assert invalid_group_name == {
         "error": "group_name must be a string",
         "code": "bad_request",
     }
-    assert json.loads(invalid_query) == {
+    assert invalid_query == {
         "error": "query must be a string",
         "code": "bad_request",
     }
-    assert json.loads(invalid_owner_user_ids_type) == {
+    assert invalid_owner_user_ids_type == {
         "error": "owner_user_ids must be a list of integers",
         "code": "bad_request",
     }
-    assert json.loads(invalid_owner_user_ids_item) == {
+    assert invalid_owner_user_ids_item == {
         "error": "owner_user_ids must be a list of integers",
         "code": "bad_request",
     }
-    assert json.loads(invalid_owner_user_ids_count) == {
+    assert invalid_owner_user_ids_count == {
         "error": (
             "owner_user_ids must contain at most "
             f"{knowledge_external.MAX_KNOWLEDGE_BASE_OWNER_USER_IDS} items"
         ),
         "code": "bad_request",
     }
-    assert json.loads(invalid_limit) == {
+    assert invalid_limit == {
         "error": f"limit must be between 1 and {knowledge_external.MAX_KNOWLEDGE_BASE_LIST_LIMIT}",
         "code": "bad_request",
     }
-    assert json.loads(invalid_offset) == {
+    assert invalid_offset == {
         "error": "offset must be greater than or equal to 0",
         "code": "bad_request",
     }
@@ -279,14 +288,15 @@ async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_nam
             mock_db = MagicMock()
             session_local.return_value = mock_db
 
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 scope=ResourceScope.GROUP.value,
                 group_name=" team-a ",
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert [item["knowledge_base_id"] for item in payload["items"]] == [2, 1]
     assert payload["total"] == 2
     assert payload["total_returned"] == 2
@@ -327,14 +337,15 @@ async def test_list_knowledge_bases_paginates_before_counting_documents(test_use
             mock_db = MagicMock()
             session_local.return_value = mock_db
 
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 limit=1,
                 offset=1,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 3
     assert payload["total_returned"] == 1
     assert payload["has_more"] is True
@@ -386,7 +397,8 @@ async def test_list_knowledge_bases_filters_by_owner_user_ids_in_sql_query(
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 scope=ResourceScope.ORGANIZATION.value,
                 query="match",
                 owner_user_ids=[owner.id],
@@ -394,7 +406,7 @@ async def test_list_knowledge_bases_filters_by_owner_user_ids_in_sql_query(
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 1
     assert payload["total_returned"] == 1
     assert payload["has_more"] is False
@@ -427,13 +439,14 @@ async def test_list_knowledge_bases_sql_filters_do_not_expand_access(
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 owner_user_ids=[owner.id],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 0
     assert payload["items"] == []
 
@@ -481,7 +494,8 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
                 return_value={52: 7},
             ) as get_counts,
         ):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 scope=ResourceScope.ORGANIZATION.value,
                 query="page",
                 limit=1,
@@ -490,7 +504,7 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 3
     assert payload["total_returned"] == 1
     assert payload["has_more"] is True
@@ -533,14 +547,15 @@ async def test_list_knowledge_bases_sql_query_escapes_like_wildcards(
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 scope=ResourceScope.ORGANIZATION.value,
                 query="%_",
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 1
     assert [item["knowledge_base_id"] for item in payload["items"]] == [61]
 
@@ -564,13 +579,14 @@ async def test_list_knowledge_bases_empty_owner_user_ids_is_unfiltered(
                 return_value=([second, first], 2),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
                 owner_user_ids=[],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 2
     assert [item["knowledge_base_id"] for item in payload["items"]] == [32, 31]
 
@@ -606,11 +622,13 @@ async def test_list_knowledge_bases_falls_back_when_creator_resolver_fails(
                 return_value=([kb], 1),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases()
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
+            )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total"] == 1
     assert payload["items"][0]["creator"] == {
         "user_id": test_user.id,
@@ -678,11 +696,13 @@ async def test_list_knowledge_bases_returns_namespace_fields(test_db, test_user)
                 ),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases()
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
+            )
     finally:
         _reset_external_user(token)
 
-    items = {item["knowledge_base_id"]: item for item in json.loads(result)["items"]}
+    items = {item["knowledge_base_id"]: item for item in result["items"]}
     assert items[1]["namespace_level"] == "personal"
     assert items[1]["namespace_display_name"] == "personal"
     assert items[2]["namespace_level"] == "personal"
@@ -740,11 +760,13 @@ async def test_list_knowledge_bases_counts_all_documents(test_db, test_user):
                 return_value=([kb], 1),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_knowledge_bases()
+            result = await _call_tool(
+                "wegent_kb_list_knowledge_bases",
+            )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["items"][0]["document_count"] == 2
 
 
@@ -810,14 +832,15 @@ async def test_list_nodes_recursive_counts_nested_nodes_and_sorts(test_db, test_
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=10,
                 recursive=True,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_returned"] == 4
     assert [item["node_id"] for item in payload["items"]] == [
         f"folder:{child_folder.id}",
@@ -866,14 +889,15 @@ async def test_list_nodes_recursive_rejects_large_root_before_loading_tree(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=14,
                 recursive=True,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["code"] == "result_too_large"
 
 
@@ -940,7 +964,8 @@ async def test_list_nodes_recursive_folder_scope_ignores_unrelated_nodes(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=15,
                 folder_id=target_folder.id,
                 recursive=True,
@@ -948,7 +973,7 @@ async def test_list_nodes_recursive_folder_scope_ignores_unrelated_nodes(
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_returned"] == 1
     assert payload["items"][0]["node_id"] == f"document:{target_doc.id}"
 
@@ -1005,7 +1030,8 @@ async def test_list_nodes_recursive_folder_scope_returns_nested_subtree(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=17,
                 folder_id=parent_folder.id,
                 recursive=True,
@@ -1013,7 +1039,7 @@ async def test_list_nodes_recursive_folder_scope_returns_nested_subtree(
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_returned"] == 2
     assert payload["items"][0]["node_id"] == f"folder:{child_folder.id}"
     assert payload["items"][0]["children"][0]["node_id"] == f"document:{nested_doc.id}"
@@ -1050,11 +1076,11 @@ async def test_list_nodes_includes_inactive_documents_by_default(test_db, test_u
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(knowledge_base_id=12)
+            result = await _call_tool("wegent_kb_list_nodes", knowledge_base_id=12)
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_returned"] == 1
     assert payload["items"][0]["node_id"] == f"document:{inactive_doc.id}"
     assert payload["items"][0]["index_status"] == DocumentIndexStatus.QUEUED.value
@@ -1155,14 +1181,15 @@ async def test_list_nodes_returns_document_capability_metadata(test_db, test_use
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=18,
                 limit=4,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     nodes_by_name = {item["name"]: item for item in payload["items"]}
     assert nodes_by_name["Folder"]["creator"] is None
     assert nodes_by_name["Folder"]["content_readable"] is False
@@ -1223,13 +1250,14 @@ async def test_list_nodes_reports_protected_document_as_not_downloadable(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=19,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["items"][0]["downloadable"] is False
     assert payload["items"][0]["previewable"] is False
 
@@ -1277,13 +1305,14 @@ async def test_list_nodes_keeps_document_downloadable_for_exempt_external_user(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=20,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["items"][0]["downloadable"] is True
     assert payload["items"][0]["previewable"] is True
 
@@ -1319,14 +1348,15 @@ async def test_list_nodes_can_filter_inactive_documents(test_db, test_user):
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=13,
                 include_inactive=False,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_returned"] == 0
     assert payload["items"] == []
 
@@ -1375,7 +1405,8 @@ async def test_list_nodes_direct_paginates_folders_before_documents(test_db, tes
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=16,
                 limit=2,
                 offset=1,
@@ -1383,7 +1414,7 @@ async def test_list_nodes_direct_paginates_folders_before_documents(test_db, tes
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["total_available"] == 4
     assert payload["total_returned"] == 2
     assert payload["has_more"] is True
@@ -1397,30 +1428,33 @@ async def test_list_nodes_direct_paginates_folders_before_documents(test_db, tes
 async def test_list_nodes_rejects_invalid_limit_and_bool_values(test_user):
     token = _set_external_user(test_user)
     try:
-        invalid_recursive = await knowledge_external.wegent_kb_list_nodes(
+        invalid_recursive = await _call_tool(
+            "wegent_kb_list_nodes",
             knowledge_base_id=1,
             recursive="false",
         )
-        invalid_include_inactive = await knowledge_external.wegent_kb_list_nodes(
+        invalid_include_inactive = await _call_tool(
+            "wegent_kb_list_nodes",
             knowledge_base_id=1,
             include_inactive=1,
         )
-        invalid_limit = await knowledge_external.wegent_kb_list_nodes(
+        invalid_limit = await _call_tool(
+            "wegent_kb_list_nodes",
             knowledge_base_id=1,
             limit=knowledge_external.MAX_DIRECT_NODE_LIMIT + 1,
         )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(invalid_recursive) == {
+    assert invalid_recursive == {
         "error": "recursive must be a boolean",
         "code": "bad_request",
     }
-    assert json.loads(invalid_include_inactive) == {
+    assert invalid_include_inactive == {
         "error": "include_inactive must be a boolean",
         "code": "bad_request",
     }
-    assert json.loads(invalid_limit) == {
+    assert invalid_limit == {
         "error": f"limit must be between 1 and {knowledge_external.MAX_DIRECT_NODE_LIMIT}",
         "code": "bad_request",
     }
@@ -1466,7 +1500,8 @@ async def test_get_document_content_returns_parsed_text_payload(test_db, test_us
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_content(
+            result = await _call_tool(
+                "wegent_kb_get_document_content",
                 document_id=document.id,
                 offset=6,
                 limit=8,
@@ -1474,7 +1509,7 @@ async def test_get_document_content_returns_parsed_text_payload(test_db, test_us
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["document_id"] == document.id
     assert payload["node_id"] == f"document:{document.id}"
     assert payload["knowledge_base_id"] == 21
@@ -1532,13 +1567,14 @@ async def test_get_document_content_returns_empty_payload_when_text_unavailable(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_content(
+            result = await _call_tool(
+                "wegent_kb_get_document_content",
                 document_id=document.id,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["content"] == ""
     assert payload["content_available"] is False
     assert payload["total_length"] == 0
@@ -1593,13 +1629,14 @@ async def test_get_document_content_ignores_non_attachment_context(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_content(
+            result = await _call_tool(
+                "wegent_kb_get_document_content",
                 document_id=document.id,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["content"] == ""
     assert payload["content_available"] is False
     assert payload["total_length"] == 0
@@ -1609,29 +1646,32 @@ async def test_get_document_content_ignores_non_attachment_context(
 async def test_get_document_content_rejects_invalid_arguments(test_user):
     token = _set_external_user(test_user)
     try:
-        invalid_document = await knowledge_external.wegent_kb_get_document_content(
+        invalid_document = await _call_tool(
+            "wegent_kb_get_document_content",
             document_id=0,
         )
-        invalid_offset = await knowledge_external.wegent_kb_get_document_content(
+        invalid_offset = await _call_tool(
+            "wegent_kb_get_document_content",
             document_id=1,
             offset=-1,
         )
-        invalid_limit = await knowledge_external.wegent_kb_get_document_content(
+        invalid_limit = await _call_tool(
+            "wegent_kb_get_document_content",
             document_id=1,
             limit=knowledge_external.MAX_DOCUMENT_READ_LIMIT + 1,
         )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(invalid_document) == {
+    assert invalid_document == {
         "error": "document_id must be a positive integer",
         "code": "bad_request",
     }
-    assert json.loads(invalid_offset) == {
+    assert invalid_offset == {
         "error": "offset must be greater than or equal to 0",
         "code": "bad_request",
     }
-    assert json.loads(invalid_limit) == {
+    assert invalid_limit == {
         "error": f"limit must be between 1 and {knowledge_external.MAX_DOCUMENT_READ_LIMIT}",
         "code": "bad_request",
     }
@@ -1709,14 +1749,15 @@ async def test_get_document_download_returns_short_lived_header_token(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_download(
+            result = await _call_tool(
+                "wegent_kb_get_document_download",
                 document_id=document.id,
                 disposition="inline",
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["document_id"] == document.id
     assert payload["node_id"] == f"document:{document.id}"
     assert payload["resource_url"] == (
@@ -1771,14 +1812,15 @@ async def test_get_document_download_rejects_protected_knowledge_base(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_download(
+            result = await _call_tool(
+                "wegent_kb_get_document_download",
                 document_id=document.id,
                 disposition="attachment",
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "Document download is disabled",
         "code": "DOCUMENT_DOWNLOAD_DISABLED",
     }
@@ -1827,14 +1869,15 @@ async def test_get_document_download_allows_product_exempt_external_user(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_get_document_download(
+            result = await _call_tool(
+                "wegent_kb_get_document_download",
                 document_id=document.id,
                 disposition="attachment",
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     token_payload = verify_document_download_token(
         payload["headers"][DOWNLOAD_TOKEN_HEADER]
     )
@@ -1887,24 +1930,24 @@ async def test_get_document_download_rejects_inline_for_non_previewable_file(
                 return_value=(kb, True),
             ),
         ):
-            inline_result = await knowledge_external.wegent_kb_get_document_download(
+            inline_result = await _call_tool(
+                "wegent_kb_get_document_download",
                 document_id=document.id,
                 disposition="inline",
             )
-            attachment_result = (
-                await knowledge_external.wegent_kb_get_document_download(
-                    document_id=document.id,
-                    disposition="attachment",
-                )
+            attachment_result = await _call_tool(
+                "wegent_kb_get_document_download",
+                document_id=document.id,
+                disposition="attachment",
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(inline_result) == {
+    assert inline_result == {
         "error": "Document file is not previewable",
         "code": "unsupported_media_type",
     }
-    assert json.loads(attachment_result)["downloadable"] is True
+    assert attachment_result["downloadable"] is True
 
 
 @pytest.mark.asyncio
@@ -1944,14 +1987,15 @@ async def test_list_nodes_recursive_attaches_disconnected_cycle_once(
                 return_value=(kb, True),
             ),
         ):
-            result = await knowledge_external.wegent_kb_list_nodes(
+            result = await _call_tool(
+                "wegent_kb_list_nodes",
                 knowledge_base_id=11,
                 recursive=True,
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     all_node_ids = []
 
     def collect(nodes):
@@ -1998,14 +2042,15 @@ async def test_search_content_filters_inaccessible_and_invalid_knowledge_base_id
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query=" payment ",
                 knowledge_base_ids=[1, 999, -1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["searched_knowledge_base_ids"] == [1]
     assert payload["ignored_knowledge_base_ids"] == [999, -1]
     assert payload["warnings"] == [knowledge_external.IGNORED_KNOWLEDGE_BASES_WARNING]
@@ -2018,13 +2063,14 @@ async def test_search_content_rejects_missing_knowledge_base_ids(test_user):
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "_query_content") as query_content:
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "knowledge_base_ids is required",
         "code": "bad_request",
     }
@@ -2043,14 +2089,15 @@ async def test_search_content_applies_search_rate_limit(test_user):
             ),
             patch.object(knowledge_external, "_query_content") as query_content,
         ):
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "Rate limit exceeded",
         "code": "rate_limited",
     }
@@ -2069,14 +2116,15 @@ async def test_search_content_fails_closed_when_rate_limit_unavailable(test_user
             ),
             patch.object(knowledge_external, "_query_content") as query_content,
         ):
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "Rate limit service unavailable",
         "code": "rate_limit_unavailable",
     }
@@ -2088,14 +2136,15 @@ async def test_search_content_rejects_empty_knowledge_base_ids(test_user):
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "_query_content") as query_content:
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[],
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "knowledge_base_ids must not be empty",
         "code": "bad_request",
     }
@@ -2107,14 +2156,15 @@ async def test_search_content_rejects_query_above_length_limit(test_user):
     token = _set_external_user(test_user)
     try:
         with patch.object(knowledge_external, "_query_content") as query_content:
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="x" * (knowledge_external.MAX_SEARCH_QUERY_LENGTH + 1),
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": f"query must be at most {knowledge_external.MAX_SEARCH_QUERY_LENGTH} characters",
         "code": "bad_request",
     }
@@ -2134,14 +2184,15 @@ async def test_search_content_rejects_too_many_unique_knowledge_base_ids(test_us
             ) as get_kb,
             patch.object(knowledge_external, "_query_content") as query_content,
         ):
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=too_many_ids,
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": f"knowledge_base_ids must contain at most {knowledge_external.MAX_SEARCH_KNOWLEDGE_BASE_IDS} items",
         "code": "bad_request",
     }
@@ -2172,7 +2223,8 @@ async def test_search_content_deduplicates_ids_before_enforcing_limit(test_user)
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1]
                 * (knowledge_external.MAX_SEARCH_KNOWLEDGE_BASE_IDS + 1),
@@ -2180,7 +2232,7 @@ async def test_search_content_deduplicates_ids_before_enforcing_limit(test_user)
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["searched_knowledge_base_ids"] == [1]
     get_kb.assert_called_once()
     query_content.assert_awaited_once()
@@ -2202,14 +2254,15 @@ async def test_search_content_returns_not_found_when_no_requested_kb_is_accessib
             patch.object(knowledge_external, "_query_content") as query_content,
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[999],
             )
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "No accessible knowledge bases found",
         "code": "not_found",
     }
@@ -2220,7 +2273,8 @@ async def test_search_content_returns_not_found_when_no_requested_kb_is_accessib
 async def test_search_content_rejects_non_integer_max_results(test_user):
     token = _set_external_user(test_user)
     try:
-        result = await knowledge_external.wegent_kb_search_content(
+        result = await _call_tool(
+            "wegent_kb_search_content",
             query="payment",
             knowledge_base_ids=[1],
             max_results="10",
@@ -2228,7 +2282,7 @@ async def test_search_content_rejects_non_integer_max_results(test_user):
     finally:
         _reset_external_user(token)
 
-    assert json.loads(result) == {
+    assert result == {
         "error": "max_results must be an integer",
         "code": "bad_request",
     }
@@ -2265,14 +2319,15 @@ async def test_search_content_reads_document_id_from_metadata(test_user):
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["records"][0]["document_id"] == 9
 
 
@@ -2307,14 +2362,15 @@ async def test_search_content_reads_document_id_from_numeric_doc_ref(test_user):
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["records"][0]["document_id"] == 9
 
 
@@ -2349,14 +2405,15 @@ async def test_search_content_reads_document_id_from_prefixed_doc_ref(test_user)
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["records"][0]["document_id"] == 9
 
 
@@ -2391,14 +2448,15 @@ async def test_search_content_ignores_non_numeric_doc_ref(test_user):
             patch.object(knowledge_external, "_query_content", query_content),
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["records"][0]["document_id"] is None
 
 
@@ -2434,20 +2492,87 @@ async def test_search_content_queries_the_gateway_by_reference(
             ) as build_spec,
         ):
             session_local.return_value = MagicMock()
-            result = await knowledge_external.wegent_kb_search_content(
+            result = await _call_tool(
+                "wegent_kb_search_content",
                 query="payment",
                 knowledge_base_ids=[1],
             )
     finally:
         _reset_external_user(token)
 
-    payload = json.loads(result)
+    payload = result
     assert payload["searched_knowledge_base_ids"] == [1]
     build_spec.assert_called_once()
     assert build_spec.call_args.kwargs["db"] is session_local.return_value
     assert build_spec.call_args.kwargs["route_mode"] == "rag_retrieval"
     assert "knowledge_base_configs" not in build_spec.call_args.kwargs
     gateway.query.assert_awaited_once_with(runtime_spec, db=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deduplicate", [False, True])
+async def test_search_content_forwards_document_mode_and_reports_returned_counts(
+    test_user, deduplicate
+):
+    kb = _make_kb(1, test_user.id, "Payments", datetime(2026, 1, 6))
+    query_content = AsyncMock(
+        return_value={
+            "total": 9,
+            "records": [
+                {"content": "one", "knowledge_base_id": 1, "document_id": 7},
+                {"content": "two", "knowledge_base_id": 1, "document_id": 8},
+                {"content": "unknown", "knowledge_base_id": 1},
+            ],
+        }
+    )
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal"),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+            patch.object(knowledge_external, "_query_content", query_content),
+            patch.object(
+                knowledge_external.RagRuntimeResolver,
+                "build_query_runtime_spec",
+            ) as build_spec,
+        ):
+            result = await _call_tool(
+                "wegent_kb_search_content",
+                query="payment",
+                knowledge_base_ids=[1],
+                deduplicate_by_document=deduplicate,
+            )
+    finally:
+        _reset_external_user(token)
+
+    assert build_spec.call_args.kwargs["deduplicate_by_document"] is deduplicate
+    assert result["total"] == 9
+    assert result["total_returned"] == 3
+    assert result["returned_document_count"] == 2
+    assert result["deduplicate_by_document"] is deduplicate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["true", 1, None])
+async def test_search_content_rejects_non_boolean_document_mode(test_user, value):
+    token = _set_external_user(test_user)
+    try:
+        result = await _call_tool(
+            "wegent_kb_search_content",
+            query="payment",
+            knowledge_base_ids=[1],
+            deduplicate_by_document=value,
+        )
+    finally:
+        _reset_external_user(token)
+    assert result == {
+        "error": "deduplicate_by_document must be a boolean",
+        "code": "bad_request",
+    }
 
 
 @pytest.mark.asyncio

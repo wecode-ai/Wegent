@@ -74,7 +74,7 @@ on:
         options: [linux, macos-runtimes, frontend]
         default: linux
       macos_runtime_source_run:
-        description: Optional upstream Wework CI run whose successful macOS producer supplies the native binaries.
+        description: Optional successful Wework CI run with both native macOS binaries (ci:all for pull requests).
         type: string
         default: ""
       promote_macos_build:
@@ -98,6 +98,9 @@ jobs:
     name: Detect Cache Changes
     if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.prebuild == 'linux')
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       docker: ${{ steps.classify.outputs.docker }}
       executor_rust: ${{ steps.classify.outputs.executor_rust }}
@@ -117,11 +120,20 @@ jobs:
         id: classify
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            # A superseding push cancels the entire warmup. Include inputs
+            # from cancelled runs until a main push successfully warms them.
+            BEFORE_SHA="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci-cache-warmup.yml/runs" \
+              -f branch=main -f event=push -f status=success -F per_page=1 \
+              --jq '.workflow_runs[0].head_sha // empty')"
+          fi
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] ||
             [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]] ||
-            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null ||
+            ! git merge-base --is-ancestor "$BEFORE_SHA" "$GITHUB_SHA"; then
             .github/scripts/classify-ci-cache-warmup.sh --all
           else
             git diff --name-only "$BEFORE_SHA...$GITHUB_SHA" |
@@ -386,7 +398,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/scripts/resolve-backend-rs-e2e-dependencies.sh', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -553,7 +565,7 @@ jobs:
         env:
           COMPONENT: ${{ matrix.component }}
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/scripts/resolve-backend-rs-e2e-dependencies.sh', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           case "$COMPONENT" in
             executor) SOURCE_DIGEST="$EXECUTOR_SOURCE_DIGEST" .github/scripts/resolve-executor-e2e-runtime.sh ;;

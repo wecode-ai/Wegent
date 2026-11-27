@@ -43,7 +43,7 @@ export function createDesktopScenario(options) {
       join(resultDir, 'records.json'),
       JSON.stringify([{ id: 'archive-record', value: JSON.stringify(records) }])
     )
-  async function rpc(method, params) {
+  async function rpc(method, params, { errorCode } = {}) {
     if (!socket) {
       const { io } = createRequire(
         new URL('../../../../packages/chat-core/package.json', import.meta.url)
@@ -71,6 +71,11 @@ export function createDesktopScenario(options) {
       device_id: deviceId,
       timeout_seconds: workbenchReadyTimeoutMs / 1000,
     })
+    if (errorCode) {
+      assert.equal(ack.ok, false, `${method} must be denied`)
+      assert.equal(ack.error?.code, errorCode, ack.error?.message)
+      return
+    }
     if (
       method === 'runtime.connections.catalog' &&
       ack.error?.code === 'connection_host_unavailable'
@@ -78,6 +83,133 @@ export function createDesktopScenario(options) {
       return null
     assert.equal(ack.ok, true, `${method}: ${ack.error?.message}`)
     return ack.result
+  }
+  async function backend(path, { method = 'GET', body, status } = {}) {
+    const response = await fetch(`${cloud.backendUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${cloud.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      ...(body && { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(uiTimeoutMs),
+    })
+    const raw = await response.text()
+    if (status) assert.equal(response.status, status, `${method} ${path}: ${raw}`)
+    else assert.ok(response.ok, `${method} ${path}: ${raw}`)
+    return raw && JSON.parse(raw)
+  }
+  async function createCancellationBinding(taskId) {
+    await backend('/api/admin/setup-complete', { method: 'POST', body: {} })
+    const owner = await backend('/api/users/me')
+    const workspace = await backend('/api/v1/workspaces', {
+      method: 'POST',
+      body: { name: 'Remote event cancellation' },
+    })
+    const project = await backend(`/api/v1/workspaces/${workspace.id}/projects`, {
+      method: 'POST',
+      body: {
+        name: 'Remote event cancellation',
+        task_provider: 'local',
+        visibility: 'private',
+      },
+    })
+    const issue = await backend(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Cancel the release-document watch' },
+    })
+    const task = { deviceId, taskId }
+    const bind = () =>
+      backend(`/api/v1/loop-items/${issue.id}/tasks`, { method: 'POST', body: task })
+    await bind()
+    const path = '/api/v1/runtime-tasks/cloud-context'
+    const query = new URLSearchParams({ device_id: deviceId, task_id: taskId })
+    const context = await backend(`${path}?${query}`)
+    assert.equal(context.task_user_id, owner.id)
+    assert.equal(context.task_id, taskId)
+    assert.equal(context.device_id, deviceId)
+    assert.equal(String(context.loop_item_id), String(issue.id))
+    assert.equal(String(context.cloud_project_id), String(project.id))
+    return {
+      bind,
+      origin: {
+        type: 'board_task',
+        projectStore: 'cloud',
+        cloudProjectId: String(project.id),
+        loopItemId: String(issue.id),
+      },
+      unbind: async () => {
+        await backend(path, { method: 'DELETE', body: task, status: 204 })
+        await backend(`${path}?${query}`, { status: 404 })
+      },
+    }
+  }
+  async function verifyCloudCancellation(control, address, binding, readTask) {
+    const key = `${MARKER}_cancel`
+    const snapshot = async () => {
+      const result = await backend('/api/runtime-observations/command', {
+        method: 'POST',
+        body: { action: 'get_task_subscriptions', deviceId, taskId: address.taskId },
+      })
+      assert.equal(result.subscriptions.length, 1)
+      return result.subscriptions[0].subscription
+    }
+    const cancel = options =>
+      rpc(
+        'runtime.connections.subscriptions.cancel',
+        { taskId: address.taskId, subscriptionKey: key },
+        options
+      )
+    const active = async () =>
+      (await readTask()).task.runtimeHandle.connectionEventSubscriptions?.some(
+        item => item.subscription_key === key && item.status === 'armed'
+      )
+    const initial = await snapshot()
+    assert.equal(initial.status, 'armed')
+    assert.equal(initial.subscriptionKey, key)
+    const requestsBefore = modelRequests
+    await binding.unbind()
+    try {
+      await cancel({ errorCode: 'permission_denied' })
+      assert.equal(await active(), true)
+      assert.equal(
+        (await snapshot()).status,
+        'armed',
+        'Denied cancellation must preserve the watch'
+      )
+    } finally {
+      await binding.bind()
+    }
+
+    await open(control, address)
+    const status = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-status"]`
+    await control.command('waitFor', status, {
+      text: '等待事件，到达后自动继续',
+    })
+    await control.command(
+      'clickWhenEnabled',
+      `${status} [data-testid="cancel-connection-event-subscription"]`
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-cancel-feedback"]`,
+      { text: '已取消' }
+    )
+    await control.command('waitFor', status, { visible: false })
+    const cancelled = await waitForValue(
+      snapshot,
+      subscription => subscription.status === 'cancelled',
+      'The Cancel watch button must cancel the real Backend subscription',
+      uiTimeoutMs
+    )
+    assert.equal(cancelled.id, initial.id)
+    assert.equal(cancelled.subscriptionKey, key)
+    assert.ok(!(await active()), 'The cancelled watch must leave the active Runtime projection')
+
+    const receipt = await cancel()
+    assert.equal(receipt.subscription.subscription_key, key)
+    assert.equal(receipt.subscription.status, 'cancelled')
+    assert.equal(modelRequests, requestsBefore, 'Cancellation must not invoke the model')
   }
   const open = async (control, address) => {
     await control.command('navigate', 'body', {
@@ -180,7 +312,7 @@ export function createDesktopScenario(options) {
       const catalog = await rpc('runtime.runner.catalog', {})
       const selectedModel = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
       assert.ok(selectedModel)
-      for (const story of ['ordinary', 'goal', 'pause']) {
+      for (const story of ['ordinary', 'goal', 'pause', 'cancel']) {
         phase = story
         const taskId = `remote-event-${phase}-${randomUUID()}`
         const address = {
@@ -189,17 +321,20 @@ export function createDesktopScenario(options) {
           workspacePath,
           runtime: 'codex',
         }
+        const binding = phase === 'cancel' ? await createCancellationBinding(taskId) : null
         const prompt = `${MARKER}_${phase} 请订阅发布文档变化，在原会话继续处理。`
         const created = await rpc('runtime.tasks.create', {
           taskId,
           workspacePath,
           runtime: 'codex',
           message: prompt,
+          ...(binding && { cloudProjectId: binding.origin.cloudProjectId, origin: binding.origin }),
           executionRequest: {
             task_id: taskId,
             subtask_id: `${taskId}-initial`,
             prompt,
             new_session: true,
+            ...(binding && { auth_token: cloud.authToken }),
             bot: [{ shell_type: 'Codex' }],
             model_config: {
               model_id: selectedModel.local_model_id,
@@ -242,6 +377,11 @@ export function createDesktopScenario(options) {
           'The real source must complete a collection before stable waiting is shown',
           workbenchReadyTimeoutMs
         )
+        if (binding) {
+          assert.deepEqual(before.task.runtimeHandle.origin, binding.origin)
+          await verifyCloudCancellation(control, address, binding, readTask)
+          continue
+        }
         const nativeTurns = async () => {
           const result = await rpc('runtime.tasks.transcript', { address, refresh: true })
           await writeFile(

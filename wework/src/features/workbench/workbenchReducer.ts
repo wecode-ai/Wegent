@@ -10,7 +10,6 @@ import type {
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeTaskPinRequest,
-  RuntimeProjectWork,
   RuntimeWorkListResponse,
   User,
   UserPreferences,
@@ -21,11 +20,9 @@ import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
   runtimeProjectUiId,
-  standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
-  findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
   mergeRuntimeTaskAddresses,
   mergeRuntimeTaskHandles,
@@ -35,17 +32,24 @@ import {
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
-import {
-  normalizeRuntimeTaskSummary,
-  mergeRuntimeTaskSnapshotMetadata,
-  shouldReplaceRuntimeTaskProjection,
-} from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 import { removeRuntimeProject, type RuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
+import {
+  keepDevicesOnTransientEmpty,
+  reuseSnapshot,
+  updateRuntimeWorkDeviceStatus,
+  mergeRuntimeWorkPreservingTaskOrder,
+  upsertOptimisticRuntimeTask,
+  removeOptimisticRuntimeTask,
+  reconcileCurrentRuntimeTaskAddress,
+  resolveCurrentProjectAfterRefresh,
+  reconcileProjectWorkspaceSelection,
+  upsertOpenedRuntimeWorkspace,
+  findRuntimeProjectByWorkspace,
+  upsertPreparedRuntimeWorkspace,
+} from './workbenchInventoryState'
 type WorkbenchDeviceStatus = DeviceInfo['status']
-
-const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
 
 export function isRuntimeProjectSelectionRemoved(
   state: Pick<WorkbenchState, 'currentProject' | 'currentRuntimeTask' | 'runtimeWork'>,
@@ -222,831 +226,6 @@ export type WorkbenchAction =
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
 
-function keepDevicesOnTransientEmpty(
-  currentDevices: DeviceInfo[],
-  nextDevices: DeviceInfo[]
-): DeviceInfo[] {
-  if (nextDevices.length > 0) return nextDevices
-  if (currentDevices.length > 0) return currentDevices
-  return nextDevices
-}
-
-function updateRuntimeWorkDeviceStatus(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string,
-  status: WorkbenchDeviceStatus,
-  device?: DeviceInfo
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    const matchesDevice =
-      workspace.deviceId === deviceId ||
-      workspace.remoteHostId === deviceId ||
-      Boolean(
-        device &&
-        (workbenchDeviceMatchesId(device, workspace.deviceId) ||
-          (workspace.remoteHostId && workbenchDeviceMatchesId(device, workspace.remoteHostId)))
-      )
-    if (!matchesDevice) return workspace
-    return {
-      ...workspace,
-      deviceStatus: status,
-      available: status !== 'offline',
-    }
-  }
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
-function mergeRuntimeWorkPreservingTaskOrder(
-  current: RuntimeWorkListResponse | null | undefined,
-  next: RuntimeWorkListResponse | null
-): RuntimeWorkListResponse | null {
-  const normalizedCurrent = current ? normalizeRuntimeWorkTasks(current) : null
-  const normalizedNext = next ? normalizeRuntimeWorkTasks(next) : null
-  if (!normalizedCurrent || !normalizedNext) return normalizedNext
-
-  const nextProjectTaskKeys = new Map(
-    normalizedNext.projects.map(projectWork => [
-      runtimeProjectUiId(projectWork.project),
-      collectRuntimeTaskKeys(projectWork.deviceWorkspaces),
-    ])
-  )
-  const nextChatTaskKeys = collectRuntimeTaskKeys(normalizedNext.chats)
-
-  const mergeProjectWorkspace = (
-    projectWork: RuntimeProjectWork,
-    workspace: RuntimeDeviceWorkspace
-  ): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingProjectRuntimeWorkspace(
-      normalizedCurrent,
-      projectWork,
-      workspace
-    )
-    if (!currentWorkspace) return workspace
-    const resolvedTaskKeys =
-      nextProjectTaskKeys.get(runtimeProjectUiId(projectWork.project)) ?? new Set<string>()
-    return {
-      ...workspace,
-      tasks: mergeRuntimeTasks(
-        currentWorkspace.tasks,
-        workspace.tasks,
-        workspace.deviceId,
-        resolvedTaskKeys
-      ),
-    }
-  }
-
-  const mergeChatWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingChatRuntimeWorkspace(normalizedCurrent, workspace)
-    if (!currentWorkspace) return workspace
-    return {
-      ...workspace,
-      tasks: mergeRuntimeTasks(
-        currentWorkspace.tasks,
-        workspace.tasks,
-        workspace.deviceId,
-        nextChatTaskKeys
-      ),
-    }
-  }
-
-  const projects = preserveMissingOptimisticProjects(
-    normalizedCurrent.projects,
-    normalizedNext.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
-        mergeProjectWorkspace(project, workspace)
-      ),
-    })),
-    nextProjectTaskKeys
-  )
-  const chats = preserveMissingOptimisticWorkspaces(
-    normalizedCurrent.chats,
-    normalizedNext.chats.map(mergeChatWorkspace),
-    nextChatTaskKeys
-  )
-  const merged = {
-    ...normalizedNext,
-    projects,
-    chats,
-  }
-
-  return {
-    ...merged,
-    totalTasks: countRuntimeWorkTasks(merged),
-  }
-}
-
-function normalizeRuntimeWorkTasks(runtimeWork: RuntimeWorkListResponse): RuntimeWorkListResponse {
-  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    tasks: workspace.tasks.map(normalizeRuntimeTaskSummary),
-  })
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
-    })),
-    chats: runtimeWork.chats.map(normalizeWorkspace),
-  }
-}
-
-function findMatchingProjectRuntimeWorkspace(
-  runtimeWork: RuntimeWorkListResponse,
-  projectWork: RuntimeProjectWork,
-  target: RuntimeDeviceWorkspace
-): RuntimeDeviceWorkspace | null {
-  const projectKey = runtimeProjectUiId(projectWork.project)
-  const currentProject = runtimeWork.projects.find(
-    project => runtimeProjectUiId(project.project) === projectKey
-  )
-  return (
-    currentProject?.deviceWorkspaces.find(workspace =>
-      runtimeWorkspaceMatches(workspace, target)
-    ) ?? null
-  )
-}
-
-function findMatchingChatRuntimeWorkspace(
-  runtimeWork: RuntimeWorkListResponse,
-  target: RuntimeDeviceWorkspace
-): RuntimeDeviceWorkspace | null {
-  return runtimeWork.chats.find(workspace => runtimeWorkspaceMatches(workspace, target)) ?? null
-}
-
-function runtimeWorkspaceMatches(
-  current: RuntimeDeviceWorkspace,
-  target: RuntimeDeviceWorkspace
-): boolean {
-  if (current.deviceId !== target.deviceId || current.workspacePath !== target.workspacePath) {
-    return false
-  }
-  if (
-    current.workspaceKind &&
-    target.workspaceKind &&
-    current.workspaceKind !== target.workspaceKind
-  ) {
-    return false
-  }
-  if (
-    current.projectId != null &&
-    target.projectId != null &&
-    current.projectId !== target.projectId
-  ) {
-    return false
-  }
-  if (current.worktreeId && target.worktreeId && current.worktreeId !== target.worktreeId) {
-    return false
-  }
-  return true
-}
-
-function mergeRuntimeTasks(
-  currentTasks: RuntimeDeviceWorkspace['tasks'],
-  nextTasks: RuntimeDeviceWorkspace['tasks'],
-  deviceId: string,
-  resolvedTaskKeys: ReadonlySet<string>
-) {
-  const nextById = new Map(nextTasks.map(task => [task.taskId, task]))
-  const merged = currentTasks
-    .map(task => {
-      const nextTask = nextById.get(task.taskId)
-      if (nextTask) {
-        return shouldReplaceRuntimeTaskProjection(task, nextTask)
-          ? mergeRuntimeTaskSnapshotMetadata(nextTask, task)
-          : mergeRuntimeTaskListState(task, nextTask)
-      }
-      if (
-        isFreshOptimisticRuntimeTask(task) &&
-        !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
-      ) {
-        return task
-      }
-      return null
-    })
-    .filter((task): task is RuntimeDeviceWorkspace['tasks'][number] => Boolean(task))
-  const mergedIds = new Set(merged.map(task => task.taskId))
-  nextById.forEach(task => {
-    if (!mergedIds.has(task.taskId)) {
-      merged.push(task)
-    }
-  })
-  return merged
-}
-
-function mergeRuntimeTaskListState(
-  current: RuntimeTaskSummary,
-  next: RuntimeTaskSummary
-): RuntimeTaskSummary {
-  return {
-    ...mergeRuntimeTaskSnapshotMetadata(current, next),
-    ...(next.threadId ? { threadId: next.threadId } : {}),
-    ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
-    ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
-    ...(next.sidebarOrder === undefined ? {} : { sidebarOrder: next.sidebarOrder }),
-  }
-}
-
-function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating' || task.optimistic === true
-}
-
-function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  if (!isOptimisticRuntimeTask(task)) return false
-  const rawTimestamp = task.updatedAt ?? task.createdAt
-  const timestamp = typeof rawTimestamp === 'number' ? rawTimestamp : Date.parse(rawTimestamp ?? '')
-  return Number.isNaN(timestamp) || Date.now() - timestamp < OPTIMISTIC_TASK_PRESERVE_MS
-}
-
-function runtimeTaskKey(deviceId: string, task: Pick<RuntimeTaskSummary, 'taskId'>): string {
-  return `${deviceId}\0${task.taskId}`
-}
-
-function collectRuntimeTaskKeys(workspaces: RuntimeDeviceWorkspace[]): Set<string> {
-  const keys = new Set<string>()
-  workspaces.forEach(workspace => {
-    workspace.tasks.forEach(task => {
-      keys.add(runtimeTaskKey(workspace.deviceId, task))
-    })
-  })
-  return keys
-}
-
-function optimisticWorkspaceOnly(
-  workspace: RuntimeDeviceWorkspace,
-  resolvedTaskKeys: ReadonlySet<string>
-): RuntimeDeviceWorkspace | null {
-  const tasks = workspace.tasks.filter(
-    task =>
-      isFreshOptimisticRuntimeTask(task) &&
-      !resolvedTaskKeys.has(runtimeTaskKey(workspace.deviceId, task))
-  )
-  return tasks.length > 0 ? { ...workspace, tasks } : null
-}
-
-function preserveMissingOptimisticWorkspaces(
-  currentWorkspaces: RuntimeDeviceWorkspace[],
-  nextWorkspaces: RuntimeDeviceWorkspace[],
-  resolvedTaskKeys: ReadonlySet<string>
-): RuntimeDeviceWorkspace[] {
-  const mergedWorkspaces = [...nextWorkspaces]
-  currentWorkspaces.forEach(currentWorkspace => {
-    if (mergedWorkspaces.some(workspace => runtimeWorkspaceMatches(workspace, currentWorkspace))) {
-      return
-    }
-    const optimisticWorkspace = optimisticWorkspaceOnly(currentWorkspace, resolvedTaskKeys)
-    if (optimisticWorkspace) {
-      mergedWorkspaces.push(optimisticWorkspace)
-    }
-  })
-  return mergedWorkspaces
-}
-
-function preserveMissingOptimisticProjects(
-  currentProjects: RuntimeProjectWork[],
-  nextProjects: RuntimeProjectWork[],
-  resolvedTaskKeysByProject: ReadonlyMap<number, ReadonlySet<string>>
-): RuntimeProjectWork[] {
-  const mergedProjects = [...nextProjects]
-  currentProjects.forEach(currentProject => {
-    const projectId = runtimeProjectUiId(currentProject.project)
-    const resolvedTaskKeys = resolvedTaskKeysByProject.get(projectId) ?? new Set<string>()
-    const existingIndex = mergedProjects.findIndex(
-      project => runtimeProjectUiId(project.project) === projectId
-    )
-    if (existingIndex < 0) {
-      const optimisticWorkspaces = currentProject.deviceWorkspaces
-        .map(workspace => optimisticWorkspaceOnly(workspace, resolvedTaskKeys))
-        .filter((workspace): workspace is RuntimeDeviceWorkspace => Boolean(workspace))
-      if (optimisticWorkspaces.length > 0) {
-        mergedProjects.push({
-          ...currentProject,
-          deviceWorkspaces: optimisticWorkspaces,
-          totalTasks: countRuntimeTasks(optimisticWorkspaces),
-        })
-      }
-      return
-    }
-
-    const deviceWorkspaces = preserveMissingOptimisticWorkspaces(
-      currentProject.deviceWorkspaces,
-      mergedProjects[existingIndex].deviceWorkspaces,
-      resolvedTaskKeys
-    )
-    mergedProjects[existingIndex] = {
-      ...mergedProjects[existingIndex],
-      deviceWorkspaces,
-      totalTasks: countRuntimeTasks(deviceWorkspaces),
-    }
-  })
-
-  return mergedProjects.map(project => ({
-    ...project,
-    totalTasks: countRuntimeTasks(project.deviceWorkspaces),
-  }))
-}
-
-function upsertRuntimeTask(
-  workspace: RuntimeDeviceWorkspace,
-  task: RuntimeTaskSummary
-): RuntimeDeviceWorkspace {
-  return {
-    ...workspace,
-    tasks: [task, ...workspace.tasks.filter(item => item.taskId !== task.taskId)],
-  }
-}
-
-function upsertRuntimeWorkspace(
-  workspaces: RuntimeDeviceWorkspace[],
-  workspace: RuntimeDeviceWorkspace
-): RuntimeDeviceWorkspace[] {
-  const task = workspace.tasks[0]
-  if (!task) return workspaces
-  const matchesDevice = (item: RuntimeDeviceWorkspace) => item.deviceId === workspace.deviceId
-  // Executor snapshots own task state and grouping, even if creation finishes later.
-  if (
-    workspaces.some(
-      item =>
-        matchesDevice(item) &&
-        item.tasks.some(
-          current =>
-            current.taskId === task.taskId && !shouldReplaceRuntimeTaskProjection(current, task)
-        )
-    )
-  ) {
-    return workspaces
-  }
-  // A task can move from its source directory to a prepared worktree during creation.
-  const remainingWorkspaces = workspaces.map(item =>
-    matchesDevice(item)
-      ? { ...item, tasks: item.tasks.filter(current => current.taskId !== task.taskId) }
-      : item
-  )
-  const nextWorkspace = upsertRuntimeTask(workspace, task)
-  const existingIndex = remainingWorkspaces.findIndex(item =>
-    runtimeWorkspaceMatches(item, workspace)
-  )
-  if (existingIndex < 0) return [nextWorkspace, ...remainingWorkspaces]
-
-  return remainingWorkspaces.map((item, index) => {
-    if (index !== existingIndex) return item
-    return upsertRuntimeTask(
-      {
-        ...item,
-        ...workspace,
-        tasks: item.tasks,
-      },
-      task
-    )
-  })
-}
-
-function countRuntimeTasks(workspaces: RuntimeDeviceWorkspace[]): number {
-  return workspaces.reduce((total, workspace) => total + workspace.tasks.length, 0)
-}
-
-function countRuntimeWorkTasks(runtimeWork: RuntimeWorkListResponse): number {
-  return (
-    runtimeWork.projects.reduce(
-      (total, project) => total + countRuntimeTasks(project.deviceWorkspaces),
-      0
-    ) + countRuntimeTasks(runtimeWork.chats)
-  )
-}
-
-function upsertOptimisticRuntimeTask(
-  current: RuntimeWorkListResponse | null | undefined,
-  project: ProjectWithTasks | null,
-  workspace: RuntimeDeviceWorkspace,
-  task: RuntimeTaskSummary
-): RuntimeWorkListResponse {
-  const currentRuntimeWork = current ?? {
-    projects: [],
-    chats: [],
-    totalTasks: 0,
-  }
-  const workspaceWithTask = {
-    ...workspace,
-    tasks: [task],
-  }
-
-  if (!project) {
-    const nextRuntimeWork = {
-      ...currentRuntimeWork,
-      chats: upsertRuntimeWorkspace(currentRuntimeWork.chats, workspaceWithTask),
-    }
-    return {
-      ...nextRuntimeWork,
-      totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
-    }
-  }
-
-  const projectId = project.id
-  let matchedProject = false
-  const projects = currentRuntimeWork.projects.map(projectWork => {
-    if (runtimeProjectUiId(projectWork.project) !== projectId) return projectWork
-    matchedProject = true
-    const deviceWorkspaces = upsertRuntimeWorkspace(projectWork.deviceWorkspaces, workspaceWithTask)
-    return {
-      ...projectWork,
-      deviceWorkspaces,
-      totalTasks: countRuntimeTasks(deviceWorkspaces),
-    }
-  })
-
-  if (!matchedProject) {
-    projects.unshift({
-      project: {
-        key: `project:${project.id}`,
-        id: project.id,
-        name: project.name,
-        description: project.description,
-        color: project.color,
-      },
-      deviceWorkspaces: [workspaceWithTask],
-      totalTasks: 1,
-    })
-  }
-
-  const nextRuntimeWork = {
-    ...currentRuntimeWork,
-    projects,
-  }
-  return {
-    ...nextRuntimeWork,
-    totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
-  }
-}
-
-function removeOptimisticRuntimeTask(
-  current: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress
-): RuntimeWorkListResponse | null {
-  if (!current) return null
-
-  const removeFromWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    tasks: workspace.tasks.filter(
-      task =>
-        task.taskId !== address.taskId ||
-        !isOptimisticRuntimeTask(task) ||
-        workspace.deviceId !== address.deviceId
-    ),
-  })
-  const projects = current.projects.map(project => {
-    const deviceWorkspaces = project.deviceWorkspaces.map(removeFromWorkspace)
-    return {
-      ...project,
-      deviceWorkspaces,
-      totalTasks: countRuntimeTasks(deviceWorkspaces),
-    }
-  })
-  const chats = current.chats.map(removeFromWorkspace)
-  const nextRuntimeWork = {
-    ...current,
-    projects,
-    chats,
-  }
-  return {
-    ...nextRuntimeWork,
-    totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
-  }
-}
-
-function findRuntimeTaskAddressByTaskId(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  taskId: string,
-  deviceId?: string
-): RuntimeTaskAddress | null {
-  if (!runtimeWork) return null
-
-  let match: RuntimeTaskAddress | null = null
-  const workspaces = [
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-    ...runtimeWork.chats,
-  ]
-
-  for (const workspace of workspaces) {
-    if (deviceId && workspace.deviceId !== deviceId) continue
-    const task = workspace.tasks.find(task => task.taskId === taskId)
-    if (!task) continue
-
-    const address = {
-      deviceId: workspace.deviceId,
-      taskId,
-      ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
-      ...(task.workspacePath ? { workspacePath: task.workspacePath } : {}),
-      ...(task.taskId ? { taskId: task.taskId } : {}),
-      ...(task.threadId ? { threadId: task.threadId } : {}),
-      ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
-    }
-    if (match && match.deviceId !== address.deviceId) {
-      return null
-    }
-    match = address
-  }
-
-  return match
-}
-
-function reconcileCurrentRuntimeTaskAddress(
-  currentRuntimeTask: RuntimeTaskAddress | null,
-  devices: DeviceInfo[],
-  runtimeWork: RuntimeWorkListResponse | null | undefined
-): RuntimeTaskAddress | null {
-  if (!currentRuntimeTask) return null
-  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
-    runtimeWork,
-    currentRuntimeTask.taskId,
-    currentRuntimeTask.deviceId
-  )
-  if (hydratedCurrentDeviceTask) {
-    const runtimeHandle = mergeRuntimeTaskHandles(
-      currentRuntimeTask.runtimeHandle,
-      hydratedCurrentDeviceTask.runtimeHandle
-    )
-    return {
-      ...currentRuntimeTask,
-      workspacePath: hydratedCurrentDeviceTask.workspacePath,
-      ...(hydratedCurrentDeviceTask.threadId
-        ? { threadId: hydratedCurrentDeviceTask.threadId }
-        : {}),
-      ...(hydratedCurrentDeviceTask.workspacePath
-        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
-        : {}),
-      ...(runtimeHandle ? { runtimeHandle } : {}),
-    }
-  }
-  if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
-    return currentRuntimeTask
-  }
-  return (
-    findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
-  )
-}
-
-function resolveCurrentProjectAfterRefresh(
-  currentProject: ProjectWithTasks | null,
-  projects: ProjectWithTasks[],
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  currentRuntimeTask: RuntimeTaskAddress | null
-): ProjectWithTasks | null {
-  const taskProject = findRuntimeTaskProjectWork(runtimeWork, currentRuntimeTask)
-  if (taskProject) {
-    return (
-      projects.find(project => project.id === runtimeProjectUiId(taskProject.project)) ??
-      runtimeProjectToProject(taskProject)
-    )
-  }
-  if (!currentProject) return null
-
-  const backendProject = projects.find(project => project.id === currentProject.id)
-  if (backendProject) return backendProject
-
-  const runtimeProject = runtimeWork?.projects.find(
-    projectWork => runtimeProjectUiId(projectWork.project) === currentProject.id
-  )
-  return runtimeProject ? runtimeProjectToProject(runtimeProject) : null
-}
-
-function reconcileProjectWorkspaceSelection(
-  state: WorkbenchState,
-  runtimeWork: RuntimeWorkListResponse | null | undefined
-): number | null {
-  if (state.currentRuntimeTask || !state.currentProject || state.selectedDeviceWorkspaceId == null)
-    return state.selectedDeviceWorkspaceId
-  const nextProject = runtimeWork?.projects.find(
-    item => runtimeProjectUiId(item.project) === state.currentProject?.id
-  )
-  if (
-    !nextProject ||
-    nextProject.deviceWorkspaces.some(workspace => workspace.id === state.selectedDeviceWorkspaceId)
-  )
-    return state.selectedDeviceWorkspaceId
-  const previousProject = state.runtimeWork?.projects.find(
-    item => runtimeProjectUiId(item.project) === state.currentProject?.id
-  )
-  const previousWorkspace = previousProject?.deviceWorkspaces.find(
-    workspace => workspace.id === state.selectedDeviceWorkspaceId
-  )
-  if (previousWorkspace?.worktreeId || previousWorkspace?.workspaceKind === 'worktree')
-    return state.selectedDeviceWorkspaceId
-  return getDefaultProjectDeviceWorkspaceId(runtimeWork, state.currentProject.id)
-}
-
-function runtimeWorkspaceFromMapping(
-  mapping: DeviceWorkspaceResponse,
-  devices: DeviceInfo[]
-): RuntimeDeviceWorkspace {
-  const device = devices.find(item => item.device_id === mapping.deviceId)
-  return {
-    id: mapping.id,
-    projectId: mapping.projectId,
-    deviceId: mapping.deviceId,
-    deviceName: device?.name ?? null,
-    deviceStatus: device?.status ?? null,
-    workspacePath: mapping.workspacePath,
-    workspaceKind: mapping.label ?? 'workspace',
-    label: mapping.label,
-    repoUrl: mapping.repoUrl,
-    repoRootFingerprint: mapping.repoRootFingerprint,
-    mapped: true,
-    available: device ? device.status !== 'offline' : true,
-    tasks: [],
-  }
-}
-
-function runtimeWorkspaceLabel(workspacePath: string, label?: string | null): string {
-  const trimmedLabel = label?.trim()
-  if (trimmedLabel) return trimmedLabel
-  return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
-}
-
-function runtimeWorkspaceFromOpenedWorkspace(
-  deviceId: string,
-  workspacePath: string,
-  label: string,
-  devices: DeviceInfo[]
-): RuntimeDeviceWorkspace {
-  const device = devices.find(item => item.device_id === deviceId)
-  return {
-    id: null,
-    projectId: null,
-    deviceId,
-    deviceName: device?.name ?? null,
-    deviceStatus: device?.status ?? null,
-    available: device ? device.status !== 'offline' : true,
-    workspacePath,
-    workspaceKind: 'workspace',
-    label,
-    workspaceSource: 'local',
-    mapped: true,
-    tasks: [],
-  }
-}
-
-function upsertOpenedRuntimeWorkspace(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  devices: DeviceInfo[],
-  deviceId: string,
-  workspacePath: string,
-  label?: string | null
-): RuntimeWorkListResponse {
-  const currentRuntimeWork = runtimeWork ?? {
-    projects: [],
-    chats: [],
-    totalTasks: 0,
-  }
-  const normalizedDeviceId = deviceId.trim()
-  const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
-  if (
-    findRuntimeProjectByWorkspace(currentRuntimeWork, normalizedDeviceId, normalizedWorkspacePath)
-  ) {
-    return currentRuntimeWork
-  }
-  const projectLabel = runtimeWorkspaceLabel(normalizedWorkspacePath, label)
-  const nextWorkspace = runtimeWorkspaceFromOpenedWorkspace(
-    normalizedDeviceId,
-    normalizedWorkspacePath,
-    projectLabel,
-    devices
-  )
-  const projectKey = standaloneRuntimeProjectKey(normalizedWorkspacePath)
-  const remainingProjects = currentRuntimeWork.projects
-    .map(projectWork => ({
-      ...projectWork,
-      deviceWorkspaces: projectWork.deviceWorkspaces.filter(
-        workspace =>
-          !(
-            workspace.deviceId === normalizedDeviceId &&
-            normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
-          )
-      ),
-    }))
-    .filter(projectWork => projectWork.deviceWorkspaces.length > 0)
-  const projects = [
-    {
-      project: {
-        key: projectKey,
-        stateDeviceId: normalizedDeviceId,
-        name: projectLabel,
-      },
-      deviceWorkspaces: [nextWorkspace],
-      totalTasks: 0,
-    },
-    ...remainingProjects,
-  ]
-  const nextRuntimeWork = {
-    ...currentRuntimeWork,
-    projects,
-    chats: currentRuntimeWork.chats.filter(
-      workspace =>
-        !(
-          workspace.deviceId === normalizedDeviceId &&
-          normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
-        )
-    ),
-  }
-
-  return {
-    ...nextRuntimeWork,
-    totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
-  }
-}
-
-function findRuntimeProjectByWorkspace(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string,
-  workspacePath: string
-): RuntimeProjectWork | null {
-  const normalizedDeviceId = deviceId.trim()
-  const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
-  if (!normalizedDeviceId || !normalizedWorkspacePath) return null
-
-  return (
-    runtimeWork?.projects.find(projectWork =>
-      projectWork.deviceWorkspaces.some(
-        workspace =>
-          workspace.deviceId === normalizedDeviceId &&
-          normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
-      )
-    ) ?? null
-  )
-}
-
-function upsertPreparedRuntimeWorkspace(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  projects: ProjectWithTasks[],
-  devices: DeviceInfo[],
-  mapping: DeviceWorkspaceResponse
-): RuntimeWorkListResponse {
-  const project = projects.find(item => item.id === mapping.projectId)
-  const projectRef = {
-    key: `project:${mapping.projectId}`,
-    id: mapping.projectId,
-    name: project?.name ?? '',
-    description: project?.description,
-    color: project?.color,
-  }
-  const currentRuntimeWork = runtimeWork ?? {
-    projects: [],
-    chats: [],
-    totalTasks: 0,
-  }
-  const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
-  const hasProject = currentRuntimeWork.projects.some(
-    item => runtimeProjectUiId(item.project) === mapping.projectId
-  )
-  const projectsWithTarget = hasProject
-    ? currentRuntimeWork.projects.map(item => {
-        if (runtimeProjectUiId(item.project) !== mapping.projectId) return item
-        const workspaces = item.deviceWorkspaces.filter(
-          workspace =>
-            !(
-              workspace.deviceId === mapping.deviceId &&
-              workspace.workspacePath === mapping.workspacePath
-            )
-        )
-        return {
-          ...item,
-          project: {
-            ...item.project,
-            ...projectRef,
-          },
-          deviceWorkspaces: [...workspaces, nextWorkspace],
-        }
-      })
-    : ([
-        {
-          project: projectRef,
-          deviceWorkspaces: [nextWorkspace],
-        },
-        ...currentRuntimeWork.projects,
-      ] as RuntimeProjectWork[])
-
-  return {
-    ...currentRuntimeWork,
-    projects: projectsWithTarget,
-    chats: currentRuntimeWork.chats.filter(
-      workspace =>
-        !(
-          workspace.deviceId === mapping.deviceId &&
-          workspace.workspacePath === mapping.workspacePath
-        )
-    ),
-  }
-}
-
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   const next = reduceWorkbenchState(state, action)
   if (state.currentProject !== next.currentProject || action.type.startsWith('project_')) {
@@ -1139,11 +318,11 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
     }
     case 'lists_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const mergedRuntimeWork =
+      const projects = reuseSnapshot(state.projects, action.projects)
+      const runtimeWork =
         action.runtimeWork === undefined
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
-      const runtimeWork = mergedRuntimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
         devices,
@@ -1151,15 +330,18 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       )
       const refreshedState = {
         ...state,
-        projects: action.projects,
+        projects,
         devices,
         runtimeWork,
         currentRuntimeTask,
-        currentProject: resolveCurrentProjectAfterRefresh(
+        currentProject: reuseSnapshot(
           state.currentProject,
-          action.projects,
-          runtimeWork,
-          currentRuntimeTask
+          resolveCurrentProjectAfterRefresh(
+            state.currentProject,
+            projects,
+            runtimeWork,
+            currentRuntimeTask
+          )
         ),
         standaloneDeviceId:
           state.standaloneWorkspacePath || action.standaloneDeviceId === undefined
@@ -1174,16 +356,16 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         state,
         runtimeWork
       )
-      debugRuntimeSidebarState('reducer-lists-refreshed', {
+      debugRuntimeSidebarState('reducer-lists-refreshed', () => ({
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork ?? null),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
         mergedTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
-      })
-      return refreshedState
+      }))
+      return reuseSnapshot(state, refreshedState)
     }
     case 'devices_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      return {
+      return reuseSnapshot(state, {
         ...state,
         user: userForNavigationRefresh(state.user, action.user),
         isBootstrapping: action.user ? false : state.isBootstrapping,
@@ -1201,36 +383,35 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
           action.standaloneWorkspacePath === undefined
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
-      }
+      })
     }
     case 'runtime_work_refreshed': {
-      const mergedRuntimeWork = mergeRuntimeWorkPreservingTaskOrder(
-        state.runtimeWork,
-        action.runtimeWork
-      )
-      const runtimeWork = mergedRuntimeWork
+      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
         state.devices,
         runtimeWork
       )
-      debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
+      debugRuntimeSidebarState('reducer-runtime-work-refreshed', () => ({
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
         mergedTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
-      })
-      return {
+      }))
+      return reuseSnapshot(state, {
         ...state,
         runtimeWork,
-        currentProject: resolveCurrentProjectAfterRefresh(
+        currentProject: reuseSnapshot(
           state.currentProject,
-          state.projects,
-          runtimeWork,
-          currentRuntimeTask
+          resolveCurrentProjectAfterRefresh(
+            state.currentProject,
+            state.projects,
+            runtimeWork,
+            currentRuntimeTask
+          )
         ),
         currentRuntimeTask,
         selectedDeviceWorkspaceId: reconcileProjectWorkspaceSelection(state, runtimeWork),
-      }
+      })
     }
     case 'runtime_task_pin_changed': {
       return {

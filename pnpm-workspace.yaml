@@ -60,8 +60,14 @@ minimumReleaseAgeExclude:
   - "@file-viewer/renderer-typst@2.1.26"
   - "@deepseek-ai/dsh-client-ui-slots@0.2.0-rc.2"
   - "@deepseek-ai/dsh-invariants@0.2.0-rc.2"
+  - '@ui-sdk/core@0.1.0-beta.10'
+  - '@ui-sdk/react@0.1.0-beta.10'
 patchedDependencies:
   "@file-viewer/renderer-drawing@2.1.26": patches/@file-viewer__renderer-drawing@2.1.26.patch
+  '@file-viewer/renderer-text@2.1.26': patches/@file-viewer__renderer-text@2.1.26.patch
+  # Preserve Diff ranges on repeated visibility notifications and synchronize layout metrics.
+  '@pierre/diffs@1.6.4': patches/@pierre__diffs@1.6.4.patch
+  '@ui-sdk/core@0.1.0-beta.10': patches/@ui-sdk__core@0.1.0-beta.10.patch
   # Batch accessibility row layout without changing terminal text or character alignment.
   "@xterm/xterm@6.0.0": patches/@xterm__xterm@6.0.0.patch
   mermaid@11.15.0: patches/mermaid@11.15.0.patch

@@ -1599,13 +1599,7 @@ def _runtime_task_create_payload(
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
 
-    runtime = request.runtime
-    bots = getattr(execution_request, "bot", [])
-    if request.wegent_team_id is not None and bots:
-        runtime = {
-            "Codex": "codex",
-            "ClaudeCode": "claude_code",
-        }.get(bots[0].get("shell_type"), runtime)
+    runtime = _runtime_execution_runtime(request, execution_request)
     payload: dict[str, Any] = {
         "runtime": runtime,
         "message": request.message,
@@ -2502,6 +2496,7 @@ def _runtime_send_response(
         return RuntimeSendResponse(
             accepted=False,
             taskId=str(result.get("taskId") or local_task_id),
+            code=result.get("code"),
             error=str(result.get("error") or "Runtime send failed"),
         )
     return RuntimeSendResponse(
@@ -2509,6 +2504,9 @@ def _runtime_send_response(
         taskId=str(result.get("taskId") or local_task_id),
         status=result.get("status"),
         queuePosition=result.get("queuePosition"),
+        turnId=result.get("turnId") or result.get("turn_id"),
+        guidanceId=result.get("guidanceId") or result.get("guidance_id"),
+        code=result.get("code"),
         error=result.get("error"),
     )
 
@@ -4336,10 +4334,7 @@ def _build_team_runtime_execution_request(
     )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
-    message = _message_with_application_context(
-        request.message,
-        request.additional_context,
-    )
+    message = request.message
     task = _transient_runtime_team_task(
         task_id=task_id,
         user_id=user.id,
@@ -4492,10 +4487,7 @@ def _build_direct_wework_runtime_execution_request(
         ),
         model_config=model_config,
         system_prompt=(request.project_instructions or "").strip(),
-        prompt=_message_with_application_context(
-            request.message,
-            request.additional_context,
-        ),
+        prompt=request.message,
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
@@ -4507,6 +4499,7 @@ def _build_direct_wework_runtime_execution_request(
         preload_skills=list(request.additional_skills),
         attachments=[],
         auth_token=auth_token,
+        backend_url=settings.BACKEND_INTERNAL_URL,
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,
             user_name=user.user_name,
@@ -4575,6 +4568,8 @@ def _apply_runtime_create_request(
     execution_request.cloud_project_id = (
         str(request.cloud_project_id) if request.cloud_project_id is not None else None
     )
+    execution_request.prompt = _runtime_message(request, execution_request)
+    execution_request.additional_context = request.additional_context or {}
     execution_request.origin = request.origin
     if request.attachments:
         execution_request.attachments = list(request.attachments)
@@ -4582,7 +4577,27 @@ def _apply_runtime_create_request(
         execution_request.ephemeral = request.ephemeral
 
 
-def _message_with_application_context(
+def _runtime_execution_runtime(
+    request: RuntimeTaskCreateRequest, execution_request: Any
+) -> str:
+    bots = getattr(execution_request, "bot", [])
+    if request.wegent_team_id is not None and bots:
+        return {"Codex": "codex", "ClaudeCode": "claude_code"}.get(
+            bots[0].get("shell_type"), request.runtime
+        )
+    return request.runtime
+
+
+def _runtime_message(request: RuntimeTaskCreateRequest, execution_request: Any) -> str:
+    runtime = _runtime_execution_runtime(request, execution_request)
+    if runtime in ("claude", "claudecode", "claude_code"):
+        return _claude_message_with_application_context(
+            request.message, request.additional_context
+        )
+    return request.message
+
+
+def _claude_message_with_application_context(
     message: str, context: Optional[dict[str, dict[str, Any]]]
 ) -> str:
     entries: list[str] = []

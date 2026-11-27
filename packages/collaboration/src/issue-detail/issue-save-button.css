@@ -17,8 +17,6 @@
 
 .issue-save-actions .issue-save-options {
   display: flex;
-  min-width: 28px;
-  height: auto;
   align-items: center;
   justify-content: center;
   border-left: 1px solid rgb(var(--color-bg-base) / 20%);
@@ -27,9 +25,7 @@
   padding: 0 6px;
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .issue-save-actions
-  button:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .issue-save-actions button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }

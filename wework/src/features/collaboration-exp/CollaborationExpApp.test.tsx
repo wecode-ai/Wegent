@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SharedWorkspaceApi, WorkspaceTaskBinding } from '@wegent/collaboration'
@@ -252,6 +252,7 @@ function createApi() {
       })),
     },
     taskBindings: { list: vi.fn(async () => bindings) },
+    comments: { list: vi.fn(async () => []), create: vi.fn() },
     activity: {
       subscribe: vi.fn(async () => ({
         snapshot: { currentUserId: '7', messages },
@@ -265,12 +266,13 @@ function createApi() {
 }
 
 function Harness({ active = true }: { active?: boolean }) {
-  const [search, setSearch] = useState(window.location.search)
-  useEffect(() => {
-    const receive = () => setSearch(window.location.search)
-    window.addEventListener('popstate', receive)
-    return () => window.removeEventListener('popstate', receive)
-  }, [])
+  const search = useSyncExternalStore(
+    notify => {
+      window.addEventListener('popstate', notify)
+      return () => window.removeEventListener('popstate', notify)
+    },
+    () => window.location.search
+  )
   return <CollaborationExpApp active={active} search={search} />
 }
 
@@ -920,7 +922,7 @@ describe('CollaborationExpApp integration', () => {
     const summary = await screen.findByTestId('collaboration-exp-issue-summary')
     fireEvent.keyDown(summary, { key: 'Escape' })
     expect(screen.queryByTestId('collaboration-exp-issue-summary')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
     expect(new URLSearchParams(window.location.search).has('inspector')).toBe(false)
     fireEvent.click(trigger)
     fireEvent.click(await screen.findByTestId('collaboration-exp-issue-summary-project'))

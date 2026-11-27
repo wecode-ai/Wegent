@@ -4,20 +4,27 @@
 use super::*;
 
 #[test]
-fn unconfigured_user_mcp_is_removed_from_runtime_and_persisted_config() {
+fn unconfigured_mcps_are_removed_from_runtime_and_persisted_config() {
     let home = tempfile::tempdir().unwrap();
+    let connector = json!({"name": "connector", "type": "http",
+        "url": "${{backend_api_url}}/mcp/connectors/sse",
+        "headers": {"Authorization": "Bearer ${{task_token}}"}});
     let mut request = ExecutionRequest {
+        auth_token: Some("synthetic-task-token".to_owned()),
         mcp_servers: vec![
             json!({"name": "custom-example", "type": "http", "url": "${{task_data.user_mcps.example.services.docs.credentials.url}}"}),
             json!({"name": "web", "type": "http", "url": "https://example.test/web"}),
+            connector.clone(),
         ],
         ..Default::default()
     };
     let mut runtime = Map::new();
-    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(prepare(home.path(), &request, &mut runtime).unwrap());
     assert!(runtime.contains_key("mcp_servers.web"));
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
+    assert!(!runtime.contains_key("mcp_servers.connector"));
 
+    request.backend_url = Some("https://first.example/api/".to_owned());
     request.extra.insert("task_data".to_owned(), json!({
         "user_mcps": {"example": {"services": {"docs": {
             "enabled": true, "credentials": {"url": "https://example.test/docs?token=synthetic-secret"}
@@ -29,25 +36,56 @@ fn unconfigured_user_mcp_is_removed_from_runtime_and_persisted_config() {
         runtime["mcp_servers.custom-example"]["url"],
         "https://example.test/docs?token=synthetic-secret"
     );
+    assert_eq!(
+        runtime["mcp_servers.connector"]["url"],
+        "https://first.example/api/mcp/connectors/sse"
+    );
     let path = home.path().join("config.toml");
     assert!(!fs::read_to_string(&path)
         .unwrap()
         .contains("synthetic-secret"));
 
     request.extra.clear();
+    request.backend_url = None;
     request.mcp_servers.clear();
     let mut runtime = Map::new();
-    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(prepare(home.path(), &request, &mut runtime).unwrap());
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
+    assert!(!runtime.contains_key("mcp_servers.connector"));
     assert!(runtime.contains_key("mcp_servers.web"));
-    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert!(persisted["mcp_servers"].get("custom-example").is_none());
+    assert!(persisted["mcp_servers"].get("connector").is_none());
+
+    request.backend_url = Some("https://second.example/deployment/api/".to_owned());
+    request.auth_token = Some("synthetic-next-token".to_owned());
+    request.mcp_servers = vec![connector];
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.connector"]["url"],
+        "https://second.example/deployment/api/mcp/connectors/sse"
+    );
+    assert_eq!(
+        runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+        "Bearer synthetic-next-token"
+    );
+    assert!(runtime.contains_key("mcp_servers.web"));
+    let persisted = fs::read_to_string(path).unwrap();
+    assert!(!persisted.contains("second.example"));
+    assert!(!persisted.contains("synthetic-next-token"));
 }
 
 #[test]
 fn remote_mcp_with_empty_command_connects_by_url() {
     for command in [json!(""), json!(" \t"), Value::Null] {
-        for server_type in [None, Some("http"), Some("streamable-http"), Some("sse")] {
+        for server_type in [
+            None,
+            Some("http"),
+            Some("streamable-http"),
+            Some("streamable_http"),
+            Some("sse"),
+        ] {
             let home = tempfile::tempdir().unwrap();
             let mut server = json!({
                 "name": "remote", "command": command, "args": [], "env": {},
@@ -66,7 +104,9 @@ fn remote_mcp_with_empty_command_connects_by_url() {
                 "url": "https://example.test/mcp", "http_headers": {"X-Test": "remote"},
                 "default_tools_approval_mode": "approve"
             });
-            assert_eq!(runtime["mcp_servers.remote"], expected);
+            let mut runtime_expected = expected.clone();
+            runtime_expected["required"] = json!(false);
+            assert_eq!(runtime["mcp_servers.remote"], runtime_expected);
             assert!(!runtime.contains_key("mcp_servers.remote.env"));
             let content = fs::read_to_string(home.path().join("config.toml")).unwrap();
             let persisted: Value = toml_edit::de::from_str(&content).unwrap();
@@ -97,6 +137,77 @@ fn explicit_transport_is_authoritative_and_invalid_stdio_is_rejected() {
             "MCP definition requires url"
         );
     }
+}
+
+#[test]
+fn native_transports_normalize_consumed_values_before_context_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let request = ExecutionRequest {
+        mcp_servers: vec![
+            json!({"name":"http", "type":"http", "command":"unused",
+                "args":["${{backend_api_url}}"], "url":" https://example.test/mcp "}),
+            json!({"name":"stdio", "type":"stdio", "command":" node ",
+                "args":["run.js", 42, true, null, [], {"unused":"${{backend_url}}"}],
+                "url":"${{backend_api_url}}/unused"}),
+        ],
+        ..Default::default()
+    };
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.http"]["url"],
+        "https://example.test/mcp"
+    );
+    assert_eq!(runtime["mcp_servers.stdio"]["command"], "node");
+    assert_eq!(
+        runtime["mcp_servers.stdio"]["args"],
+        json!(["run.js", "42", "true"])
+    );
+    let mut resumed = Map::new();
+    prepare(home.path(), &ExecutionRequest::default(), &mut resumed).unwrap();
+    assert_eq!(resumed, runtime);
+}
+
+#[test]
+fn templated_mcp_metadata_resolves_before_merging_and_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let request = ExecutionRequest {
+        auth_token: Some("synthetic-token".into()),
+        mcp_servers: vec![json!({
+            "name": "docs-${{task_data.region}}",
+            "type": "${{task_data.transport}}",
+            "command": "",
+            "args": ["${{backend_url}}"],
+            "url": "https://example.test/mcp",
+            "headers": {"Authorization": "Bearer ${{task_token}}"},
+            "defaultToolsApprovalMode": "prompt"
+        })],
+        extra: Map::from_iter([(
+            "task_data".into(),
+            json!({"region":"eu", "transport":"http"}),
+        )]),
+        ..Default::default()
+    };
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["url"],
+        "https://example.test/mcp"
+    );
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["http_headers"]["Authorization"],
+        "Bearer synthetic-token"
+    );
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["default_tools_approval_mode"],
+        "prompt"
+    );
+    assert!(runtime["mcp_servers.docs-eu"].get("command").is_none());
+    let saved = fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(!saved.contains("synthetic-token"));
+    let mut resumed = Map::new();
+    prepare(home.path(), &request, &mut resumed).unwrap();
+    assert_eq!(runtime, resumed);
 }
 
 #[test]
@@ -147,8 +258,13 @@ fn stable_config_retains_omitted_services_and_refreshes_context() {
         assert_eq!(before.ino(), after.ino());
     }
     request.auth_token = None;
-    assert!(prepare(home.path(), &request, &mut Map::new()).is_err());
-    assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(runtime.is_empty());
+    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(persisted["model"], "my-model");
+    assert!(persisted["mcp_servers"].get("skill-shell").is_none());
+    assert!(persisted["mcp_servers"].get("skill-http").is_none());
     assert!(!home.path().join("mcp.json").exists());
 }
 
@@ -174,6 +290,14 @@ fn same_name_replaces_transport_and_keeps_other_settings_including_inline_tables
         prepare(home.path(), &request, &mut Map::new()).unwrap();
         let config: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(config["mcp_servers"]["replace"], json!({"url":"https://new.example", "default_tools_approval_mode":"approve"}));
+        request.mcp_servers = vec![json!({"name":"replace", "url":"${{backend_api_url}}/mcp/connectors/sse"})];
+        let mut runtime = Map::new();
+        prepare(home.path(), &request, &mut runtime).unwrap();
+        assert!(!runtime.contains_key("mcp_servers.replace"));
+        assert!(runtime.contains_key("mcp_servers.keep"));
+        let config: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(config["mcp_servers"].get("replace").is_none());
+        assert_eq!(config["mcp_servers"]["keep"], json!({"command":"keep"}));
     }
 }
 
@@ -181,18 +305,184 @@ fn same_name_replaces_transport_and_keeps_other_settings_including_inline_tables
 fn invalid_config_or_request_is_not_overwritten() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("config.toml");
-    for content in ["[broken", "mcp_servers = 42", "[mcp_servers]\nbad = 42"] {
-        fs::write(&path, content).unwrap();
-        assert!(prepare(home.path(), &ExecutionRequest::default(), &mut Map::new()).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), content);
-    }
+    let content = "[broken";
+    fs::write(&path, content).unwrap();
+    assert!(prepare(home.path(), &ExecutionRequest::default(), &mut Map::new()).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    fs::write(&path, "model = 'keep'\nmcp_servers = 42").unwrap();
+    let mut runtime = Map::new();
+    let request = ExecutionRequest {
+        mcp_servers: vec![json!({"name":"healthy", "command":"node"})],
+        ..Default::default()
+    };
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+    assert_eq!(runtime["mcp_servers.healthy"]["required"], false);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "model = 'keep'\nmcp_servers = 42"
+    );
+    fs::write(
+        &path,
+        "model = 'keep'\n[mcp_servers]\nbad = 42\nkeep = {command='keep', env_vars=['PATH', {name='CONFIG', source='local'}]}",
+    )
+    .unwrap();
+    let mut runtime = Map::new();
+    prepare(home.path(), &ExecutionRequest::default(), &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.bad"));
+    assert_eq!(runtime["mcp_servers.keep"]["command"], "keep");
+    assert_eq!(
+        runtime["mcp_servers.keep"]["env_vars"],
+        json!(["PATH", {"name":"CONFIG", "source":"local"}])
+    );
     fs::write(&path, "model = 'keep'").unwrap();
     let request = ExecutionRequest {
         mcp_servers: vec![json!({"name":"bad", "command":"node", "env":{"TOKEN":false}})],
         ..Default::default()
     };
-    assert!(prepare(home.path(), &request, &mut Map::new()).is_err());
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.bad"));
     assert_eq!(fs::read_to_string(&path).unwrap(), "model = 'keep'");
+}
+
+#[test]
+fn invalid_mcp_approval_modes_preserve_healthy_native_services() {
+    for field in ["default_tools_approval_mode", "defaultToolsApprovalMode"] {
+        for mode in ["auto", "prompt", "writes", "approve"] {
+            let home = tempfile::tempdir().unwrap();
+            let path = home.path().join("config.toml");
+            fs::write(
+                &path,
+                toml_edit::ser::to_document(&json!({
+                    "model": "keep",
+                    "mcp_servers": {
+                        "saved-bad": {"command":"node", "default_tools_approval_mode":"invalid"},
+                        "bad-tool-mode": {"command":"node", "tools":{"read":{"approval_mode":"invalid"}}},
+                        "bad-tool-budget": {"command":"node", "tools":{"read":{"output_token_limit":0}}},
+                        "healthy-tools": {"command":"node", "tools":{"read":{"approval_mode":mode, "output_token_limit":100}}}
+                    }
+                }))
+                .unwrap()
+                .to_string(),
+            )
+            .unwrap();
+            let request = ExecutionRequest {
+                mcp_servers: vec![
+                    json!({"name":"bad", "command":"node", (field):"invalid"}),
+                    json!({"name":"healthy", "command":"node", (field):mode}),
+                ],
+                ..Default::default()
+            };
+            let mut runtime = Map::new();
+            assert!(prepare(home.path(), &request, &mut runtime).unwrap());
+            assert!(!runtime.contains_key("mcp_servers.bad"));
+            assert!(!runtime.contains_key("mcp_servers.saved-bad"));
+            assert!(!runtime.contains_key("mcp_servers.bad-tool-mode"));
+            assert!(!runtime.contains_key("mcp_servers.bad-tool-budget"));
+            assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+            assert_eq!(runtime["mcp_servers.healthy"]["required"], false);
+            assert_eq!(
+                runtime["mcp_servers.healthy"]["default_tools_approval_mode"],
+                mode
+            );
+            assert_eq!(
+                runtime["mcp_servers.healthy-tools"]["tools"]["read"],
+                json!({"approval_mode":mode, "output_token_limit":100})
+            );
+            let persisted: Value =
+                toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(persisted["model"], "keep");
+            assert!(persisted["mcp_servers"].get("bad").is_none());
+            assert!(persisted["mcp_servers"].get("saved-bad").is_none());
+            assert!(persisted["mcp_servers"].get("bad-tool-mode").is_none());
+            assert!(persisted["mcp_servers"].get("bad-tool-budget").is_none());
+            assert_eq!(
+                persisted["mcp_servers"]["healthy"]["default_tools_approval_mode"],
+                mode
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_native_fields_isolate_incoming_and_saved_services() {
+    for (field, value, stdio) in [
+        ("cwd", json!(42), true),
+        ("name", json!(42), true),
+        ("environment_id", json!(42), true),
+        ("startup_timeout_ms", json!(-1), true),
+        ("startup_timeout_ms", json!(1.5), true),
+        ("startup_readiness", json!("invalid"), true),
+        ("tool_input_schema_max_bytes", json!(0), true),
+        ("omit_tools_from", json!(["invalid"]), true),
+        (
+            "env_vars",
+            json!([{ "name": "PATH", "source": "invalid" }]),
+            true,
+        ),
+        (
+            "env_vars",
+            json!([{ "name": "PATH", "unexpected": true }]),
+            true,
+        ),
+        ("tools", json!({"read": {"output_token_limit": -1}}), true),
+        ("auth", json!("invalid"), false),
+        ("http_headers_helper", json!(42), false),
+        ("http_headers_helper", json!(" "), false),
+        ("bearer_token", json!("unsupported"), false),
+        ("oauth", json!(42), false),
+        ("oauth", json!({"callback_port": 65536}), false),
+        ("oauth", json!({"callback_url": 42}), false),
+        ("oauth", json!({"client_id": 42}), false),
+        (
+            "oauth",
+            json!({"token_endpoint_auth_method": "invalid"}),
+            false,
+        ),
+        (
+            "oauth",
+            json!({"authorization_server_issuer": "https://issuer.example"}),
+            false,
+        ),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        let mut bad = if stdio {
+            json!({"command": "node"})
+        } else {
+            json!({"url": "https://example.test/mcp"})
+        };
+        bad[field] = value;
+        fs::write(
+            &path,
+            toml_edit::ser::to_document(
+                &json!({"model": "keep", "mcp_servers": {"saved-bad": bad}}),
+            )
+            .unwrap()
+            .to_string(),
+        )
+        .unwrap();
+        let mut incoming = bad;
+        incoming["name"] = json!("incoming-bad");
+        let request = ExecutionRequest {
+            mcp_servers: vec![incoming, json!({"name": "healthy", "command": "node"})],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        assert!(
+            prepare(home.path(), &request, &mut runtime).unwrap(),
+            "{field}"
+        );
+        assert!(!runtime.contains_key("mcp_servers.saved-bad"), "{field}");
+        if field != "name" {
+            assert!(!runtime.contains_key("mcp_servers.incoming-bad"), "{field}");
+        }
+        assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+        let saved: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["model"], "keep");
+        assert!(saved["mcp_servers"].get("saved-bad").is_none(), "{field}");
+    }
 }
 
 #[test]

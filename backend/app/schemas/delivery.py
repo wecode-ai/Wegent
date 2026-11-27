@@ -78,6 +78,7 @@ class LoopItemUpdate(BaseModel):
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     version: int = Field(ge=1)
+    archived: bool | None = None
     security_level: Literal["open", "related"] | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
@@ -102,6 +103,8 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if "archived" in self.model_fields_set and self.archived is None:
+            raise ValueError("archived cannot be null")
         if "security_level" in self.model_fields_set and self.security_level is None:
             raise ValueError("security_level cannot be null")
         values = [
@@ -117,6 +120,10 @@ class LoopItemUpdate(BaseModel):
         if len(values) > 1:
             raise ValueError("Only one assignee may be selected")
         return self
+
+
+class LoopItemDelete(BaseModel):
+    version: int = Field(ge=1)
 
 
 class LoopItemReorder(BaseModel):
@@ -367,6 +374,28 @@ class LoopItemResponse(BaseModel):
         return value
 
 
+class IssueDetailParticipant(BaseModel):
+    user_id: int
+    user_name: str | None
+    direct: bool
+
+
+class IssueDetailResource(IssueResourceParticipant):
+    team_id: int | None = None
+
+
+class IssueDetailEditContext(BaseModel):
+    participants: list[IssueDetailParticipant]
+    resources: list[IssueDetailResource]
+    archived: bool
+    has_shared_source: bool
+
+
+class LoopItemDetailResponse(LoopItemResponse):
+    edit_context: IssueDetailEditContext | None = None
+    related_issues: list[LoopItemResponse] = Field(default_factory=list)
+
+
 class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
 
@@ -556,6 +585,11 @@ class LoopItemTaskBindingResponse(BaseModel):
     linked_by_user_id: int
     linked_at: datetime
     unlinked_at: datetime | None
+
+    @field_validator("cloud_project_id", mode="before")
+    @classmethod
+    def normalize_missing_project(cls, value: object) -> object:
+        return "" if value is None else value
 
     @field_validator("loop_item_id", "task_title", mode="before")
     @classmethod

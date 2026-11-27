@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 
-import { createWorkbenchHomeMigrationScenario } from '../modules/workbench-home-migration.mjs'
+import { createWorkbenchHomeScenario } from '../modules/workbench-home.mjs'
 import { verifyCustomModelOutputBudget } from '../modules/custom-model-output-budget.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
 
@@ -39,11 +41,42 @@ async function switchMode(control, mode) {
 async function assertMode(control, mode) {
   assert.equal(
     await control.command('getAttribute', `[data-testid="general-workbench-mode-${mode}-button"]`, {
-      value: 'aria-pressed',
+      value: 'aria-checked',
     }),
     'true',
     `Workbench mode did not persist as ${mode}`
   )
+}
+
+export async function verifyGeneralSettingsDialogFocus(control) {
+  await openGeneralSettings(control)
+  await assertMode(control, 'developer')
+  for (const [trigger, safeButton, dialog] of [
+    [
+      'general-external-content-import-button',
+      'external-content-import-close-button',
+      'external-content-import-dialog',
+    ],
+    [
+      'general-workbench-mode-focus-button',
+      'general-workbench-mode-confirm-button-cancel-button',
+      'general-workbench-mode-confirm-button',
+    ],
+  ]) {
+    await control.command('clickWhenEnabled', `[data-testid="${trigger}"]`)
+    await waitForValue(
+      () => control.command('getActiveElementTestId', 'body'),
+      id => id === safeButton,
+      `Opening ${trigger} should focus ${safeButton}`,
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    await control.command('nativePress', `[data-testid="${safeButton}"]`, { key: 'Enter' })
+    await control.command('waitFor', `[data-testid="${dialog}"]`, {
+      visible: false,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await assertMode(control, 'developer')
 }
 
 async function assertHome(control, mode) {
@@ -67,12 +100,12 @@ async function assertHome(control, mode) {
 }
 
 export async function createDesktopScenario(options) {
-  const homeMigration = createWorkbenchHomeMigrationScenario(options)
+  const workbenchHome = createWorkbenchHomeScenario(options)
   return {
-    ...homeMigration,
+    ...workbenchHome,
 
     async verify(control) {
-      await homeMigration.verify(control)
+      await workbenchHome.verify(control)
       await verifyCustomModelOutputBudget(control)
       await openGeneralSettings(control)
       await assertMode(control, 'developer')
@@ -83,7 +116,7 @@ export async function createDesktopScenario(options) {
       )
       await assertHome(control, 'developer')
 
-      await openGeneralSettings(control)
+      await verifyGeneralSettingsDialogFocus(control)
       await switchMode(control, 'focus')
       await openGeneralSettings(control)
       await assertMode(control, 'focus')
@@ -121,7 +154,7 @@ export async function createDesktopScenario(options) {
     },
 
     diagnostics() {
-      return { workbenchMode: true, homeMigration: homeMigration.diagnostics() }
+      return { workbenchMode: true, workbenchHome: workbenchHome.diagnostics() }
     },
   }
 }

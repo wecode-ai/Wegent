@@ -48,7 +48,9 @@ fn prediction_parent_resume_params(
                 .into_iter()
                 .flatten()
                 .filter(|(key, _)| {
-                    key.starts_with("mcp_servers.") || key.starts_with("model_providers.")
+                    *key == "mcp_servers"
+                        || key.starts_with("mcp_servers.")
+                        || key.starts_with("model_providers.")
                 })
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
@@ -354,10 +356,10 @@ mod tests {
         let params =
             prediction_parent_resume_params("source", &ExecutionRequest::default(), Some(&launch));
         assert_eq!(
-            params["config"]["mcp_servers.business.url"],
+            params["config"]["mcp_servers"]["business"]["url"],
             "http://localhost/mcp"
         );
-        assert_eq!(params["config"]["mcp_servers.business.enabled"], true);
+        assert_eq!(params["config"]["mcp_servers"]["business"]["enabled"], true);
         assert_eq!(
             params["config"]["model_providers.new-provider"]["base_url"],
             "http://localhost/official-route"
@@ -641,6 +643,39 @@ done
         assert!(fixture.calls().iter().any(|call| {
             call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
         }));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_cannot_load_a_parent_owned_by_an_isolated_turn() {
+        use futures_util::task::noop_waker;
+        use std::task::{Context, Poll};
+
+        let fixture = Fixture::new("complete");
+        fixture.client.subscribe_notifications().await.unwrap();
+        let admission = fixture
+            .client
+            .admit_isolated_thread("source")
+            .await
+            .unwrap();
+        let (_cancel, receiver) = oneshot::channel();
+        let mut prediction = Box::pin(fixture.predict(None, receiver));
+        let waker = noop_waker();
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(
+            prediction.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        assert!(!fixture.calls().iter().any(|call| {
+            matches!(
+                call["method"].as_str(),
+                Some("thread/resume" | "thread/fork" | "turn/start")
+            )
+        }));
+
+        drop(admission);
+        assert_eq!(prediction.await.unwrap(), json!({"suggestion": "请继续"}));
         fixture.stop().await;
     }
 

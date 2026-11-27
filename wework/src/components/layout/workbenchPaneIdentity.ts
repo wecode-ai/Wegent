@@ -1,4 +1,10 @@
-import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
+import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { findRuntimeTaskProjectWork } from '@/features/workbench/workbenchRuntimeHelpers'
 
@@ -69,4 +75,13 @@ export function resolveRuntimeWorkbenchPane(
     }
   }
   return null
+}
+
+/** Preserve UI ownership only when discovery proves both addresses identify one task. */
+export function workbenchPanesShareTask(
+  previous: WorkbenchPaneIdentity,
+  current: WorkbenchPaneIdentity,
+  devices: DeviceInfo[]
+): boolean {
+  return runtimeTasksShareOwner(previous.currentRuntimeTask, current.currentRuntimeTask, devices)
 }

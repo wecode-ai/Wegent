@@ -23,6 +23,16 @@ immediately after quick phrases. Hover to see the active mode, or click to choos
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
 
+<a id="command-approval"></a>
+
+In a Codex conversation, select **Full access** in the permission menu. Choose how later messages handle risky commands in the confirmation dialog. You can change the choice from the permission menu after enabling Full access.
+
+- **Confirm risky commands manually** (default) shows an approval in the conversation.
+- **Review risky commands with AI** lets Codex decide whether to approve.
+- **Run risky commands automatically** opens a confirmation with all three choices. You can change your selection there. Eligible risky commands can run automatically once enabled.
+
+Wework remembers your last choice and uses it for Full access in new standalone conversations.
+
 Under **Settings → General → General**, choose the Wework feature mode:
 
 - **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git
@@ -39,6 +49,8 @@ cannot be enabled or disabled separately from the plugin management page.
 <a id="settings-controls"></a>
 
 <!-- ui-source: src/components/settings/GeneralSettingsPage.tsx -->
+
+If General shows a preference loading error, choose Retry at the bottom. With experimental features enabled, a failed Smart app list for Fixed tabs has its own Retry; other general controls remain available. Cloud quota issues do not prevent saving local preferences.
 <!-- ui-source: src/components/settings/RuntimeConcurrencySettings.tsx -->
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
@@ -111,6 +123,8 @@ and per-process resource changes around that time.
 <!-- ui-source: src/components/settings/ArchivedConversationsSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/WorktreesSettingsPage.tsx -->
 
+Local and remote archives load independently, so records appear as each source returns, with a loading indicator for pending sources. If one source fails, available records remain visible and you can retry. Delete all and delete project become available after the complete list loads successfully; individual records remain actionable. Switching API sources closes the previous deletion confirmation. If the device refuses a restore or deletion, the record remains visible with an error; deletion can be retried in the confirmation dialog.
+
 1. Open **Settings → Archived → Archived tasks** and search for a conversation by title.
 2. Restore it to continue, or delete it after reviewing the confirmation. Deletion, unlike archival, starts device-side cleanup.
 3. Open **Settings → Coding → Worktrees**, select the device and inspect each repository's worktrees and linked tasks.
@@ -153,6 +167,8 @@ that mode. After saving a change, restart Codex when prompted. Running tasks are
 immediately; new chats use the new network settings. Local device proxy settings stay on the current
 device and are not synced to cloud.
 
+Local and cloud proxies load independently; local settings stay editable when cloud reads are slow or fail. Retry beside a failed local connection resolution only rereads it, without saving or restarting Codex. Failed saves retain the input and saved configuration. Cloud account changes retain local drafts while resetting cloud input and results. Saving new local proxy settings during a restart keeps the restart prompt visible after the earlier restart completes.
+
 ## Node.js execution environment
 
 <!-- ui-source: src/components/settings/ExecutionEnvironmentsSettingsPage.tsx -->
@@ -188,6 +204,7 @@ Open the account menu in the lower-left corner of Wework and select **About** to
 The version shown in the About page is read from the running Electron application package metadata,
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Electron configuration use that value in both places.
+On the About page, **Downloading update** shows the current download progress.
 When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
 Wework finishes downloading the update package before it asks to restart. No restart confirmation
 appears while the download is in progress; the **Update and restart** confirmation appears only
@@ -237,6 +254,8 @@ harness. Under **Settings → Coding → Coding tools** (experimental), you can:
 - Choose Claude Code's default, plan, or bypass permission mode. Bypass mode passes
   `--dangerously-skip-permissions` and should be used only in a controlled environment where its
   risks are understood.
+
+Changes save automatically. Retry beside a detection error to detect again. If saving fails, the draft remains; use Retry beside the save error or edit again to save. Failed writes do not repeat automatically. Edits made during a write are retained when its earlier result arrives.
 
 After entering a task in a local project or development worktree, open the runtime selector in
 the composer to launch a harness. Wework passes the complete prompt according to the selected
@@ -345,6 +364,8 @@ Local custom APIs and cloud Responses models default to ordinary function-tool c
 
 Responses connection tests also validate tool-call arguments. Missing arguments, invalid JSON, or arguments that do not satisfy the probe fail the test; retry from the same editor after correcting the problem.
 
+When continuing an existing Codex conversation, the Wework model proxy removes Responses tool-call item IDs whose prefix identifies a different call type, such as a custom tool call with an `fc_` ID. The original `call_id` still pairs each tool call with its result.
+
 The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, and live Web Search. DeepSeek accepts only `apply_patch` as a custom tool, so Wework retains Code Mode while translating `exec` and freeform tools into function tools at the API boundary and restoring native tool calls from responses. The connection test verifies function-tool calling. Existing configurations without an explicit native-tool selection use the same portable adaptation without re-adding models; legacy Wework-managed Chat Completions configurations still migrate to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
 
 A text-only model can explicitly reference another model that declares image input as its vision proxy. Local-model references are maintained in Wework's local model settings. Cloud-model references must be configured in the Wegent web administration UI; Wework only consumes the `visionSidecarModel` reference returned by the Backend, does not provide cloud-model editing, and never selects a default vision model automatically. Before the primary request, Wework asks the vision model to describe each image and replaces `input_image` with the description text. With a configured proxy, executor generically derives a vision catalog from the current base catalog, so any text model preserves its reasoning, tool, context, and compaction capabilities. Without an explicit reference, the model remains text-only and makes no additional model call. Original media reaches only the vision model and never the text-only primary model. Vision proxies support OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Each turn describes at most eight distinct images, accepts images up to 20 MB, and injects an explicit error message when description fails. Remote vision endpoints must use HTTPS; only `localhost` and loopback IP addresses may use HTTP, and vision requests do not follow redirects so credentials cannot be forwarded to an unauthorized destination.
@@ -378,6 +399,7 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged                                                                       |
 | Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                                                                                                                |
 | Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                                                                                                          |
+| Background visibility, Background blur | After selecting an image, use the sliders to set visibility (0–100) and blur radius (0–20px); unavailable until an image is selected |
 | Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions                                                                                        |
 | UI font, UI font size                    | Enter the interface font and adjust its size                                                                                                                                                                       |
 | Code font, Code font size                | Set the font and size for code/monospace content separately                                                                                                                                                        |
@@ -400,7 +422,7 @@ Open **Settings → Personal → Context**:
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Inject Terminal information             | Toggle terminal context inclusion; does not itself authorize command execution                                                 |
 | Context compaction threshold            | Enter a percentage and blur the field or press Enter; controls the manual-compaction indicator, not automatic model compaction |
-| Codex personality                       | Open the selector and choose a reply style                                                                                     |
+| Interaction style (Codex personality)                       | Open the selector and choose a reply style                                                                                     |
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
 
@@ -419,6 +441,10 @@ Open **Settings → Personal → Context**:
 | Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, event, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Lifecycle events always run asynchronously; configure trusted commands      |
 | Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                    | Fix invalid configuration or missing commands first                         |
 | Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
+
+In the Runtime creation form, **Device** identifies where the task runs and **Model** selects the model it uses.
+
+Runtime profiles, project defaults, and devices load independently; models load when you open the create dialog. Use Retry beside a failed section to reload that data while retaining other sections and form drafts. A successful save closes the create dialog; if the following list refresh fails, retrying only reloads data and does not create another Runtime.
 
 Choose `PostToolUse`, `TurnStarted`, `TurnCompleted` or `ExecutionCompleted`. Tool events match tool names; lifecycle events match status, with `.*` accepting every status. Lifecycle commands always run in the background without making the main agent wait.
 

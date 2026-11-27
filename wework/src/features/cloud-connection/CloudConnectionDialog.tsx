@@ -1,22 +1,19 @@
-import {
-  AlertCircle,
-  ChevronRight,
-  Cloud,
-  Loader2,
-  LogOut,
-  Plus,
-  Server,
-  Settings,
-  X,
-} from 'lucide-react'
-import { useId, useState } from 'react'
-import type { FormEvent } from 'react'
-import { createPortal } from 'react-dom'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Cloud, Loader2, LogOut, Plus, Server, Settings, X } from 'lucide-react'
+import type { FormEvent } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { normalizeCloudBackendUrl } from './cloudConnectionStorage'
 import { useOptionalCloudConnection } from './useCloudConnection'
 
@@ -24,9 +21,9 @@ interface CloudConnectionDialogProps {
   open: boolean
   onlineCloudDeviceCount: number
   onClose: () => void
-  onOpenSettings: () => void
+  onOpenSettings?: () => void
   onAddDevice?: () => void
-  intent?: 'independent-issue'
+  intent?: 'independent-issue' | 'share-issue'
   onConnected?: () => void
 }
 
@@ -50,7 +47,11 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  useEmbeddedBrowserOcclusion('cloud-connection-dialog', open)
+  const bindOverlay = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return
+    setEmbeddedBrowserOcclusion('cloud-connection-dialog', true)
+    return () => setEmbeddedBrowserOcclusion('cloud-connection-dialog', false)
+  }, [])
   const [backendUrl, setBackendUrl] = useState(
     () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
   )
@@ -60,11 +61,7 @@ export function CloudConnectionDialog({
 
   const titleId = useId()
   const descriptionId = useId()
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    onClose,
-    open,
-    '[data-testid="cloud-backend-url-input"]'
-  )
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   if (!open) return null
 
@@ -98,21 +95,28 @@ export function CloudConnectionDialog({
 
   return createPortal(
     <div
+      ref={bindOverlay}
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
       onClick={event => {
         if (!submitting && event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        role="dialog"
-        ref={dialogRef}
-        aria-modal="true"
-        tabIndex={-1}
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        data-testid="cloud-connection-dialog"
-        className="max-h-[calc(100dvh-2rem)] w-full max-w-[460px] overflow-y-auto rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={onClose}
+        active={open}
+        initialFocus={'[data-testid="cloud-backend-url-input"]'}
+        render={
+          <div
+            role="dialog"
+            ref={dialogRef}
+            tabIndex={-1}
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            data-testid="cloud-connection-dialog"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-[460px] overflow-y-auto rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -123,19 +127,24 @@ export function CloudConnectionDialog({
               {t(
                 intent === 'independent-issue'
                   ? 'personalHome.connectForIssueTitle'
-                  : 'workbench.cloud_connection_title'
+                  : intent === 'share-issue'
+                    ? 'taskIssueShare.connectTitle'
+                    : 'workbench.cloud_connection_title'
               )}
             </h2>
             <p id={descriptionId} className="mt-1 text-sm leading-5 text-text-secondary">
               {intent === 'independent-issue'
                 ? t('personalHome.connectForIssueHint')
-                : t(
-                    'workbench.cloud_connection_description',
-                    '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
-                  )}
+                : intent === 'share-issue'
+                  ? t('taskIssueShare.connectHint')
+                  : t(
+                      'workbench.cloud_connection_description',
+                      '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
+                    )}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cloud-connection-close-button"
             onClick={onClose}
@@ -144,7 +153,7 @@ export function CloudConnectionDialog({
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {isConnected ? (
@@ -166,7 +175,9 @@ export function CloudConnectionDialog({
               </div>
             </div>
             <div className="flex justify-between gap-2">
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="cloud-add-device-button"
                 onClick={() => {
@@ -177,9 +188,11 @@ export function CloudConnectionDialog({
               >
                 <Plus className="h-4 w-4" />
                 {t('workbench.cloud_connection_add_device', '添加设备')}
-              </button>
+              </ControlButton>
               <div className="flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-disconnect-button"
                   onClick={() => {
@@ -190,19 +203,23 @@ export function CloudConnectionDialog({
                 >
                   <LogOut className="h-4 w-4" />
                   {t('workbench.cloud_connection_disconnect', '断开')}
-                </button>
-                <button
-                  type="button"
-                  data-testid="cloud-settings-button"
-                  onClick={() => {
-                    onClose()
-                    onOpenSettings()
-                  }}
-                  className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
-                >
-                  <Settings className="h-4 w-4" />
-                  {t('workbench.cloud_connection_settings', '云端设置')}
-                </button>
+                </ControlButton>
+                {onOpenSettings && (
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
+                    type="button"
+                    data-testid="cloud-settings-button"
+                    onClick={() => {
+                      onClose()
+                      onOpenSettings()
+                    }}
+                    className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+                  >
+                    <Settings className="h-4 w-4" />
+                    {t('workbench.cloud_connection_settings', '云端设置')}
+                  </ControlButton>
+                )}
               </div>
             </div>
           </div>
@@ -219,13 +236,13 @@ export function CloudConnectionDialog({
               >
                 {t('workbench.cloud_connection_backend_url', 'Wegent Backend 地址')}
               </label>
-              <input
+              <ControlInput
                 id="cloud-backend-url-input"
                 data-testid="cloud-backend-url-input"
                 value={backendUrl}
                 onChange={event => setBackendUrl(event.target.value)}
                 placeholder="http://localhost:8000"
-                className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
+                className="mt-2 h-11 w-full focus:border-text-secondary"
                 disabled={submitting}
               />
               <p className="mt-1.5 text-xs text-text-secondary">
@@ -236,38 +253,39 @@ export function CloudConnectionDialog({
               </p>
             </div>
 
-            <details className="group rounded-lg border border-border bg-background">
-              <summary
+            <CollapsibleRoot className="group rounded-lg border border-border bg-background">
+              <CollapsibleTrigger
                 data-testid="cloud-connection-advanced-toggle"
                 className="flex h-10 max-md:min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-sm font-medium text-text-secondary hover:text-text-primary"
               >
-                <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
                 {t('workbench.cloud_connection_advanced', '高级配置')}
-              </summary>
-              <div className="border-t border-border px-3 py-3">
-                <label
-                  htmlFor="cloud-socket-url-input"
-                  className="text-sm font-medium text-text-secondary"
-                >
-                  {t('workbench.cloud_connection_socket_url', 'WebSocket 地址（可选）')}
-                </label>
-                <input
-                  id="cloud-socket-url-input"
-                  data-testid="cloud-socket-url-input"
-                  value={socketBaseUrl}
-                  onChange={event => setSocketBaseUrl(event.target.value)}
-                  placeholder="wss://wss-wegent.example.com"
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
-                  disabled={submitting}
-                />
-                <p className="mt-1.5 text-xs text-text-secondary">
-                  {t(
-                    'workbench.cloud_connection_socket_hint',
-                    '留空时使用应用配置，未配置则自动使用 Backend 域名。'
-                  )}
-                </p>
-              </div>
-            </details>
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <div className="border-t border-border px-3 py-3">
+                  <label
+                    htmlFor="cloud-socket-url-input"
+                    className="text-sm font-medium text-text-secondary"
+                  >
+                    {t('workbench.cloud_connection_socket_url', 'WebSocket 地址（可选）')}
+                  </label>
+                  <ControlInput
+                    id="cloud-socket-url-input"
+                    data-testid="cloud-socket-url-input"
+                    value={socketBaseUrl}
+                    onChange={event => setSocketBaseUrl(event.target.value)}
+                    placeholder="wss://wss-wegent.example.com"
+                    className="mt-2 h-11 w-full focus:border-text-secondary"
+                    disabled={submitting}
+                  />
+                  <p className="mt-1.5 text-xs text-text-secondary">
+                    {t(
+                      'workbench.cloud_connection_socket_hint',
+                      '留空时使用应用配置，未配置则自动使用 Backend 域名。'
+                    )}
+                  </p>
+                </div>
+              </CollapsiblePanel>
+            </CollapsibleRoot>
 
             {['restoring', 'connecting'].includes(cloud.status) && (
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-secondary">
@@ -295,22 +313,28 @@ export function CloudConnectionDialog({
                         : 'workbench.cloud_connection_recovery'
                     )}
                   </p>
-                  <details data-testid="cloud-connection-error-details" className="mt-1">
-                    <summary
+                  <CollapsibleRoot data-testid="cloud-connection-error-details" className="mt-1">
+                    <CollapsibleTrigger
                       data-testid="cloud-connection-error-details-toggle"
                       className="inline-flex min-h-11 cursor-pointer items-center text-text-primary md:min-h-7"
                     >
                       {t('workbench.cloud_connection_error_details')}
-                    </summary>
-                    <p className="break-words text-xs text-text-secondary">{error || cloudError}</p>
-                  </details>
+                    </CollapsibleTrigger>
+                    <CollapsiblePanel>
+                      <p className="break-words text-xs text-text-secondary">
+                        {error || cloudError}
+                      </p>
+                    </CollapsiblePanel>
+                  </CollapsibleRoot>
                 </div>
               </div>
             )}
 
             <div className="flex items-center justify-end gap-2">
               {canDisconnect && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-disconnect-button"
                   disabled={submitting}
@@ -322,10 +346,12 @@ export function CloudConnectionDialog({
                 >
                   <LogOut className="h-4 w-4" />
                   {t('workbench.cloud_connection_disconnect', '断开连接')}
-                </button>
+                </ControlButton>
               )}
               <div className={canDisconnect ? 'flex-1' : 'w-full'}>
-                <button
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-testid="cloud-authorization-submit-button"
                   disabled={submitting}
@@ -345,12 +371,12 @@ export function CloudConnectionDialog({
                       {t('workbench.cloud_connection_authorize', '连接')}
                     </>
                   )}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </form>
         )}
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

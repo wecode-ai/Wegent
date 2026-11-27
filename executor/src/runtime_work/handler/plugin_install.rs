@@ -15,7 +15,7 @@ struct LocalPluginInstallTarget {
     codex_home: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LocalPluginUninstallTarget {
     plugin_key: String,
     cache_root: PathBuf,
@@ -89,7 +89,17 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .active_task_ids
             .len();
-        if active_tasks > 0 || self.background_terminal_count() > 0 {
+        let background_terminals = self.background_terminal_count();
+        if active_tasks > 0 || background_terminals > 0 {
+            log_executor_event(
+                "bundled plugin cache synchronization deferred",
+                &[
+                    ("plugin", name),
+                    ("reason", "scheduler_or_background".to_owned()),
+                    ("active_tasks", active_tasks.to_string()),
+                    ("background_terminals", background_terminals.to_string()),
+                ],
+            );
             return Ok(json!({"status": "deferred", "updated": false}));
         }
         let result = self
@@ -111,7 +121,19 @@ impl RuntimeWorkRpcHandler {
                 );
                 Ok(json!({"status": "ready", "updated": changed}))
             }
-            Err(CodexIdleMutationError::Busy { .. }) => {
+            Err(CodexIdleMutationError::Busy {
+                active_turn_count,
+                pending_request_count,
+            }) => {
+                log_executor_event(
+                    "bundled plugin cache synchronization deferred",
+                    &[
+                        ("plugin", name),
+                        ("reason", "codex_busy".to_owned()),
+                        ("active_turns", active_turn_count.to_string()),
+                        ("pending_requests", pending_request_count.to_string()),
+                    ],
+                );
                 Ok(json!({"status": "deferred", "updated": false}))
             }
             Err(CodexIdleMutationError::Update(error)) => {
@@ -155,13 +177,29 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_uninstall_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
-        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
-        super::super::connection_host::assert_dependency_unused(&format!(
-            "{}@{}",
-            target.plugin_key, WEWORK_PERSONAL_MARKETPLACE
-        ))?;
-        let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
+        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
+        super::super::connection_host::assert_dependency_unused(&target.plugin_key)?;
+        // Catalog RPCs can launch copies that outlive their responses. Revoke
+        // first, drain those workers, then remove the cache under the same gate.
+        let _restart_guard = codex_app_server_restart_gate().lock().await;
+        let revoke_target = target.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lock = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+                &revoke_target
+                    .codex_home
+                    .join("plugins/cache/wework-personal"),
+            )?;
+            remove_plugin_config(&revoke_target.codex_home, &revoke_target.plugin_key)
+        })
+        .await
+        .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error.to_string()))?
+        .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
+        self.codex_app_server
+            .drain_local_plugin_cache_refresh()
+            .await
+            .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
+        let plugin_key = target.plugin_key.clone();
         tokio::task::spawn_blocking(move || uninstall_local_plugin_files(&target))
             .await
             .map_err(|error| {

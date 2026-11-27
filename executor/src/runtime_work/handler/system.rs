@@ -4,6 +4,7 @@
 
 use super::codex_config::optional_proxy_url;
 use super::*;
+use crate::runtime_work::worktrees::same_path;
 use ignore::WalkBuilder;
 
 use crate::server::local_decision_proxy::DECISION_PROXY_PROTOCOL_VERSION;
@@ -87,7 +88,9 @@ impl RuntimeWorkRpcHandler {
                 });
                 let error = AppIpcError::new("executor_restarted", error);
                 if store
-                    .update_task(&task_id, |link| apply_local_task_failure(link, &error))
+                    .update_task(&task_id, |link| {
+                        apply_local_task_failure(link, &error);
+                    })
                     .is_some()
                 {
                     failed_task_ids.insert(task_id);
@@ -274,8 +277,21 @@ impl RuntimeWorkRpcHandler {
             ));
         }
 
-        let cancellation_token = string_field(&payload, "cancellationToken")
-            .or_else(|| string_field(&payload, "cancellation_token"));
+        self.search_workspace_at_root(&root, &payload).await
+    }
+
+    pub(super) async fn search_workspace_at_root(
+        &self,
+        root: &Path,
+        payload: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let query = string_field(payload, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(json!({ "files": [] }));
+        }
+
+        let cancellation_token = string_field(payload, "cancellationToken")
+            .or_else(|| string_field(payload, "cancellation_token"));
         let response = self
             .codex_app_server
             .request(
@@ -308,7 +324,7 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or_default();
         if files.is_empty() {
-            let fallback_root = root.clone();
+            let fallback_root = root.to_path_buf();
             let fallback_query = query.clone();
             files = tokio::task::spawn_blocking(move || {
                 search_workspace_without_parent_ignores(&fallback_root, &fallback_query)
@@ -615,16 +631,11 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "preserve_snapshot"))
             .unwrap_or(true);
         let store = self.store.clone();
-        let linked_path = path.clone();
+        let linked_path = normalize_workspace_path(&path);
         let linked = tokio::task::spawn_blocking(move || {
-            store
-                .list_task_summaries(true)
-                .into_iter()
-                .filter(|task| {
-                    normalize_workspace_path(&task.workspace_path)
-                        == normalize_workspace_path(&linked_path)
-                })
-                .collect::<Vec<_>>()
+            store.workspace_task_summaries(&linked_path, |task| {
+                normalize_workspace_path(&task.workspace_path) == linked_path
+            })
         })
         .await
         .map_err(|error| {
@@ -688,19 +699,24 @@ impl RuntimeWorkRpcHandler {
                     .collect::<HashSet<_>>()
             })
             .unwrap_or_default();
-        self.cleanup_worktrees_for_tasks(task_ids, true).await
+        self.cleanup_worktrees_for_tasks(task_ids, None).await
     }
 
     pub(super) async fn cleanup_worktrees_for_tasks(
         &self,
         task_ids: HashSet<String>,
-        include_unlinked_worktrees: bool,
+        archived_workspace: Option<&str>,
     ) -> Result<Value, AppIpcError> {
         if task_ids.is_empty() {
             return Ok(json!({"success": true, "released": []}));
         }
 
-        let tasks = self.store.list_task_summaries(true);
+        let tasks = match archived_workspace {
+            Some(path) => self
+                .store
+                .workspace_task_summaries(path, |task| same_path(&task.workspace_path, path)),
+            None => self.store.list_task_summaries(true),
+        };
         if tasks
             .iter()
             .any(|task| task_ids.contains(&task.local_task_id) && task.running)
@@ -711,16 +727,24 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let worktrees = self.worktrees.clone();
-        let listed_tasks = tasks.clone();
-        let entries = tokio::task::spawn_blocking(move || worktrees.list(&listed_tasks))
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "worktree_list_failed",
-                    format!("Worktree cleanup lookup failed: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let include_unlinked_worktrees = archived_workspace.is_none();
+        let archived_workspace = archived_workspace.map(str::to_owned);
+        let entries = tokio::task::spawn_blocking(move || {
+            if let Some(path) = archived_workspace {
+                return worktrees
+                    .worktree_for_cleanup(Path::new(&path))
+                    .map(|record| record.map(|record| (record, tasks)).into_iter().collect());
+            }
+            worktrees.list(&tasks)
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_list_failed",
+                format!("Worktree cleanup lookup failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
         let mut released = Vec::new();
         let mut shared = Vec::new();
         for (record, linked) in entries.into_iter().filter(|(record, linked)| {

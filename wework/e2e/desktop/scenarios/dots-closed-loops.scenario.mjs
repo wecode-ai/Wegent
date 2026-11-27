@@ -63,6 +63,14 @@ const TASK_TITLES = {
   LAUNCH: 'Changed launch scope to reviewed beta pack',
   REVENUE: 'Updated orders to evidence-backed follow-up plan',
 }
+const WRITES_REQUIRING_APPROVAL = new Set([
+  'dots-CART-2',
+  'dots-LAUNCH-1',
+  'dots-LAUNCH-2',
+  'dots-REVENUE-2',
+  'dots-REVENUE-2-plan',
+  'dots-REVENUE-4',
+])
 
 function latestUserText(body) {
   const item = (body.input ?? []).filter(entry => entry.role === 'user').at(-1)
@@ -79,6 +87,24 @@ function nativeCall(body, id, name, args) {
     searchCallId: `${id}-search`,
     toolCallId: id,
   }).events
+}
+
+export function dotsSilentIntakeEvents(body) {
+  const id = 'dots-intake'
+  if (!requestContainsToolOutput(body, id)) return nativeCall(body, id, 'read_intake', {})
+  if (!requestContainsToolOutput(body, `${id}-ignore`)) {
+    const intakeOutput = readMcpToolOutput(body, id)
+    if (intakeOutput === 'Coordinator batch or tool is no longer available') {
+      return [assistantMessage('Coordinator batch is no longer available.')]
+    }
+    const eventIds = JSON.parse(intakeOutput).snapshot.events.map(item => item.id)
+    if (eventIds.length === 0) return [assistantMessage('No unrelated source work.')]
+    return nativeCall(body, `${id}-ignore`, 'ignore_events', {
+      eventIds,
+      reason: 'These fixture tasks are handled through explicit owner requests.',
+    })
+  }
+  return [assistantMessage('No unrelated source work.')]
 }
 
 export async function revealDotsFollowupHistory(control) {
@@ -131,6 +157,12 @@ export function createDesktopScenario(options) {
     const verifiedSource = `const compareCwd=${comparableDotsPath.toString()};require('assert/strict').equal(compareCwd(require('fs').realpathSync(process.cwd())),compareCwd(require('fs').realpathSync(${JSON.stringify(root)})),'The native default task cwd must retain the selected stories subdirectory');${source}`
     const encoded = Buffer.from(verifiedSource).toString('base64')
     const cmd = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
+    if (WRITES_REQUIRING_APPROVAL.has(id)) {
+      return shellCommandResponse(body, id, `${cmd} ${id}`, undefined, {
+        sandbox_permissions: 'require_escalated',
+        justification: 'Write the requested revision inside the isolated story workspace.',
+      })
+    }
     return shellCommandResponse(body, id, cmd, undefined, { yield_time_ms: 1000 })
   }
 
@@ -211,6 +243,12 @@ export function createDesktopScenario(options) {
         phase === 3 ? 'DOTS_REVENUE_INVALID_AMOUNT' : `DOTS_REVENUE_V${phase}_VERIFIED`
       )
       if (pending) return pending
+      if (phase === 3) {
+        assert.match(
+          checkedCommand.output(key),
+          /^[^\r\n]*Error[^\r\n]*: Invalid amount: not-a-number\r?$/m
+        )
+      }
       if (phase === 2) {
         pending = question(body, `${key}-question`, REVENUE_QUESTION, REVENUE_ANSWER, [
           'Prioritize Cedar O4 pending 30000 cents',
@@ -342,13 +380,29 @@ export function createDesktopScenario(options) {
     console.log(`[dots-closed-loops] verified ${story} revision ${phase}: real task ${taskId}`)
   }
 
-  async function answer(control, title, answerText) {
+  async function openWork(control) {
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await openStandInActivity(control)
     const card = `[data-testid="stand-in-activity-task-${tasks.get(story)}"]`
     await control.command('waitFor', card, { timeoutMs: options.modelResponseTimeoutMs })
     await control.command('click', card)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+  }
+
+  async function approveWrite(control, commandId) {
+    await control.command(
+      'waitFor',
+      `${INPUT_CARD} [data-testid="request-user-input-question-__codex_approval"]`,
+      { text: commandId }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${INPUT_CARD} [data-testid="request-user-input-option-__codex_approval-0"]`
+    )
+  }
+
+  async function answer(control, title, answerText) {
+    await openWork(control)
     await control.command('waitFor', INPUT_CARD, {
       text: title,
       visible: true,
@@ -382,10 +436,7 @@ export function createDesktopScenario(options) {
       !transcript.messages.some(item => item.content?.includes(RESULT(story, phase))),
       'No successful delivery may precede the required business answer'
     )
-    await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await openStandInActivity(control)
-    await control.command('click', card)
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+    await openWork(control)
     await control.command('waitFor', INPUT_CARD, { text: title, visible: true })
     if (story === 'LAUNCH') await assertLaunchUnchanged(root)
     else assert.equal(await readFile(join(root, 'revenue-fixture/followup-plan.md'), 'utf8'), '')
@@ -485,6 +536,7 @@ export function createDesktopScenario(options) {
     }
   }
   return {
+    codexConfigToml: process.platform === 'win32' ? '[windows]\nsandbox = "unelevated"\n' : '',
     diagnostics: () => ({
       story,
       phase,
@@ -549,16 +601,9 @@ export function createDesktopScenario(options) {
           observedReports.set(receipt[1], JSON.stringify(events))
       } else if (latest.includes(REQUEST(story, phase))) events = primary(body)
       else if (JSON.stringify(body.input).includes(WORK(story, phase))) events = worker(body)
-      else if (latest.startsWith('Review this silent intake batch')) {
-        const id = 'dots-intake'
-        if (!has(body, id)) events = nativeCall(body, id, 'read_intake', {})
-        else if (!has(body, `${id}-ignore`))
-          events = nativeCall(body, `${id}-ignore`, 'ignore_events', {
-            eventIds: JSON.parse(readMcpToolOutput(body, id)).snapshot.events.map(item => item.id),
-            reason: 'These fixture tasks are handled through explicit owner requests.',
-          })
-        else events = [assistantMessage('No unrelated source work.')]
-      } else return false
+      else if (latest.startsWith('Review this silent intake batch'))
+        events = dotsSilentIntakeEvents(body)
+      else return false
       const id = `dots-${story}-${phase}-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
@@ -591,6 +636,7 @@ export function createDesktopScenario(options) {
               prompt: '',
               preferences: '',
               model,
+              taskPermissions: { permissionMode: 'workspace-write' },
               workspace: {
                 projectKey: 'dots-closed-loops',
                 workspacePath: root,
@@ -628,6 +674,8 @@ export function createDesktopScenario(options) {
           2,
           'Continue that task: zero quantity must contribute zero. Add the regression and return verified results.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-CART-2')
         await outcome(control)
         assert.match(
           await readFile(join(root, 'cart-fixture/cart.test.mjs'), 'utf8'),
@@ -678,6 +726,7 @@ export function createDesktopScenario(options) {
           'Compare scope-v1.md and scope-v2.md in launch-fixture. Ask for the missing date; leave existing assets unchanged until I answer. Then prepare all three launch assets.'
         )
         await answer(control, LAUNCH_QUESTION, LAUNCH_ANSWER)
+        await approveWrite(control, 'dots-LAUNCH-1')
         await outcome(control)
         for (const file of ['announcement.md', 'launch-checklist.md', 'scope-change-summary.md']) {
           const content = await readFile(join(root, 'launch-fixture', file), 'utf8')
@@ -692,6 +741,8 @@ export function createDesktopScenario(options) {
           2,
           'Continue the same work. Add the explicit sentence No automatic scheduling in this beta to announcement.md, retaining the agreed date and audience.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-LAUNCH-2')
         await outcome(control)
         assert.match(
           await readFile(join(root, 'launch-fixture/announcement.md'), 'utf8'),
@@ -724,7 +775,10 @@ export function createDesktopScenario(options) {
           2,
           'New evidence is in orders.csv: Birch refunded, Cedar pending added. Continue the same analysis, recompute amounts and decline, ask which follow-up to prioritize, and write an internal plan after my answer.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-REVENUE-2')
         await answer(control, REVENUE_QUESTION, REVENUE_ANSWER)
+        await approveWrite(control, 'dots-REVENUE-2-plan')
         await outcome(control)
         const report = await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8')
         for (const fact of [
@@ -760,6 +814,8 @@ export function createDesktopScenario(options) {
           4,
           'The invalid amount has been corrected. Continue the original task and recalculate the report.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-REVENUE-4')
         await outcome(control)
         assert.equal(
           await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8'),
@@ -790,6 +846,7 @@ export function createDesktopScenario(options) {
         )
         await preview(control, 'followup-plan.md', 'No customer has been contacted.')
       } finally {
+        active = false
         if (original) {
           const current = await rpc(control, 'runtime.stand_in.personal.get', {
             userId: STORY_USER,
@@ -803,7 +860,6 @@ export function createDesktopScenario(options) {
           const result = await rpc(control, 'runtime.tasks.archive', { taskId })
           assert.equal(result.accepted, true)
         }
-        active = false
       }
     },
   }

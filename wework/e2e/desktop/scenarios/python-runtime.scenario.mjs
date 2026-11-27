@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
+import { createPluginPythonMcp } from '../modules/plugin-python-mcp.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 import { createPythonDownloadGate } from '../modules/python-download-gate.mjs'
@@ -23,6 +24,7 @@ import {
 export async function createDesktopScenario({
   captureScreenshot,
   electronUserDataDirectory,
+  executorHome,
   resultDir,
   workspacePath,
   uiTimeoutMs,
@@ -35,6 +37,14 @@ export async function createDesktopScenario({
     workspacePath,
     electronUserDataDirectory,
     uiTimeoutMs,
+  })
+  const mcp = createPluginPythonMcp({
+    executorHome,
+    electronUserDataDirectory,
+    localPython,
+    resultDir,
+    uiTimeoutMs,
+    workspacePath,
   })
   const launchDirectory = join(resultDir, 'untrusted-launch-directory')
   const marker = join(resultDir, 'project-python-executed')
@@ -86,7 +96,11 @@ export async function createDesktopScenario({
         'The cold-start fixture already had managed Python data'
       )
     },
-    handleHttp: chat.handleHttp,
+    async handleHttp(request, response, url) {
+      return (
+        (await mcp.handleHttp(request, response, url)) || chat.handleHttp(request, response, url)
+      )
+    },
     async verify(control) {
       await control.command('navigate', 'body', { value: '/settings/execution-environments' })
       await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
@@ -144,24 +158,17 @@ export async function createDesktopScenario({
         !(await readFile(appLog, 'utf8')).includes('python-runtime-uv-download-started'),
         'Login downloaded Python after its last plugin was uninstalled'
       )
+      // Chromium times out a paused proxy CONNECT independently of the download
+      // timeout. Finish workspace and model setup before restoring Python demand.
+      await chat.prepareConversation(control)
       const demandOffset = (await readFile(appLog, 'utf8')).length
-      const restored = await requestExecutor(
-        control,
-        'runtime.codex.plugin.install_local_first',
-        {
-          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
-          pluginName: 'chat-python-plugin',
-        },
-        uiTimeoutMs
-      )
-      assert.equal(restored.localCommitted, true)
-      assert.deepEqual(
-        await requestExecutor(control, 'runtime.python.has_demand', {}, uiTimeoutMs),
-        {
-          demanded: true,
-        }
-      )
       try {
+        await mcp.install(control, cloudEnvironment)
+        assert.deepEqual(
+          await requestExecutor(control, 'runtime.python.has_demand', {}, uiTimeoutMs),
+          { demanded: true },
+          'The synced MCP alone must request managed Python from a cold start'
+        )
         await waitForPythonRuntimeEvent(
           appLog,
           'python-runtime-uv-download-started',
@@ -169,14 +176,42 @@ export async function createDesktopScenario({
           Date.now() + uiTimeoutMs
         )
         await downloadGate.waitForRequest(uiTimeoutMs)
+        const restored = await requestExecutor(
+          control,
+          'runtime.codex.plugin.install_local_first',
+          {
+            marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+            pluginName: 'chat-python-plugin',
+          },
+          uiTimeoutMs
+        )
+        assert.equal(restored.localCommitted, true)
         await chat.start(control)
+        await chat.waitForShellCommandRequest()
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
           text: '托管环境继续准备',
         })
         await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
 
-        downloadGate.release()
-        await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+        const chatLocation = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+        const chatRoute = `${await control.command('getRoute', 'body')}${chatLocation.search}${chatLocation.hash}`
+        const executorLog = join(resultDir, 'executor.log')
+        const mcpLogOffset = (await readFile(executorLog, 'utf8')).length
+        await mcp.verify(control, async () => {
+          await waitForPythonRuntimeEvent(
+            executorLog,
+            'server_name=python_stdio_probe status=starting',
+            mcpLogOffset,
+            Date.now() + uiTimeoutMs
+          )
+          await assertPathMissing(pythonPath, 'The first MCP request must begin during download')
+          observations.push({ phase: 'mcp-first-call-during-download' })
+          downloadGate.release()
+          await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+        })
+        observations.push({ phase: 'mcp-first-call-completed' })
+        console.log('[desktop-e2e] First Python MCP call completed after the blocked download')
+        await control.command('navigate', 'body', { value: chatRoute })
         await chat.verify(control)
       } catch (error) {
         try {
@@ -210,6 +245,13 @@ export async function createDesktopScenario({
       await assertPathMissing(marker, 'Refreshing Python health executed project code')
       await captureScreenshot(control, 'python-runtime-cold-installed.png', 'body')
 
+      const removed = await requestExecutor(
+        control,
+        'runtime.codex.plugin.uninstall_local',
+        { pluginName: 'chat-python-plugin' },
+        uiTimeoutMs
+      )
+      assert.equal(removed.localCommitted, true)
       // A real directory at the launcher's location makes uv's publication fail.
       // Keep the real executable only as a cleanup guard, never substitute a fake Python.
       const backup = `${pythonPath}.e2e-backup`
@@ -226,7 +268,7 @@ export async function createDesktopScenario({
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-waiting-for-login', logOffset)
         await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
-        // The installed Python plugin now requests repair automatically at startup.
+        // The synced MCP is the only remaining Python demand at startup.
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
         await control.command('waitFor', '[data-testid="execution-environment-python"]', {
@@ -275,6 +317,7 @@ export async function createDesktopScenario({
       } finally {
         await rm(backup, { force: true })
       }
+      await mcp.verify(control)
       logOffset = (await readFile(appLog, 'utf8')).length
       await restartDesktopApp()
       await assertManagedPythonSettings(control, electronUserDataDirectory)

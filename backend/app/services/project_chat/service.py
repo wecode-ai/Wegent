@@ -5,6 +5,7 @@
 
 import hashlib
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectChatAgent,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
@@ -30,6 +32,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.issue_activity_comment import AssistantPublicationSource
 from app.schemas.kind import Bot, Shell, Team
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
@@ -568,6 +571,7 @@ class ProjectChatService:
         project_id: str,
         request: ProjectChatAgentCreate,
     ) -> ProjectChatAgentView:
+        started = time.perf_counter()
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -577,6 +581,10 @@ class ProjectChatService:
         )
         from app.services.runner_routing import validate_agent_policies
 
+        logger.info(
+            "Project Agent creation stage=scope elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         validate_agent_policies(
             db,
             user_id=user_id,
@@ -586,6 +594,10 @@ class ProjectChatService:
             runtime=request.runtime,
         )
         if request.runtime == "wegent":
+            logger.info(
+                "Project Agent creation stage=policies elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             self._authorize_team_binding(
                 db,
                 project,
@@ -595,6 +607,10 @@ class ProjectChatService:
             )
             from app.services.project_automation_domain import runnable_wegent_team
 
+            logger.info(
+                "Project Agent creation stage=authorization elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             runnable_wegent_team(
                 db,
                 user_id,
@@ -608,6 +624,10 @@ class ProjectChatService:
             runtime_profile_service.require_owned(
                 db, request.default_runtime_profile_id, user_id
             )
+        logger.info(
+            "Project Agent creation stage=dependencies elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         workspace_binding = ProjectChatWorkspaceBindingView(
             type="standalone",
             status="ready",
@@ -695,6 +715,10 @@ class ProjectChatService:
         }
         db.add(row)
         db.flush()
+        logger.info(
+            "Project Agent creation stage=flushed elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         if request.runtime != "wegent":
             from app.services.collaboration_permissions import (
                 collaboration_permission_service,
@@ -705,7 +729,16 @@ class ProjectChatService:
             )
         self._commit(db)
         db.refresh(row)
-        return self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=persisted elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        result = self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=view elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        return result
 
     def update_agent(
         self,
@@ -942,6 +975,7 @@ class ProjectChatService:
         *,
         user_id: int,
         request: ProjectChatSubscribe,
+        reconcile_ai_state: bool = True,
     ) -> list[ProjectChatMessageView]:
         self._require_scope(
             db,
@@ -973,13 +1007,16 @@ class ProjectChatService:
             )
             rows.reverse()
         reconciled = False
-        for row in rows:
-            reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled
+        if reconcile_ai_state:
+            for row in rows:
+                reconciled = (
+                    self._reconcile_ai_run_projection(db, row=row) or reconciled
+                )
         if reconciled:
             self._commit(db)
             for row in rows:
                 db.refresh(row)
-        return [self.to_view(row, db=db) for row in rows]
+        return [self.to_shared_view(row, db=db, viewer_user_id=user_id) for row in rows]
 
     def send(
         self,
@@ -988,6 +1025,8 @@ class ProjectChatService:
         user_id: int,
         user_name: str,
         request: ProjectChatSend,
+        assistant_source: AssistantPublicationSource | None = None,
+        commit: bool = True,
     ) -> ProjectChatWriteResult:
         project = self._require_scope(
             db,
@@ -996,11 +1035,12 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
-        if request.task_id and any(
-            mention.type == "agent" for mention in request.mentions
-        ):
-            self._require_task_execution(db, user_id, project, request.task_id)
+        self._validate_comment_mentions(
+            db, project, user_id, request.task_id, request.mentions
+        )
+        assistant_source_binding = self._verified_assistant_source(
+            db, user_id=user_id, request=request, source=assistant_source
+        )
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -1011,10 +1051,33 @@ class ProjectChatService:
             .first()
         )
         if existing is not None:
-            if existing.project_id != request.project_id:
+            if existing.project_id != request.project_id or existing.task_id != (
+                request.task_id or ""
+            ):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    "client_message_id already belongs to another project",
+                    "client_message_id already belongs to another conversation",
+                )
+            expected_publication = self._assistant_publication(
+                assistant_source_binding,
+                requires_confirmation=bool(
+                    assistant_source and assistant_source.requires_confirmation
+                ),
+            )
+            if (existing.metadata_json or {}).get(
+                "assistant_publication"
+            ) != expected_publication:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "client_message_id has another publication source",
+                )
+            if (
+                assistant_source_binding is not None
+                and existing.content != request.content
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "client_message_id has different publication content",
                 )
             return ProjectChatWriteResult(self.to_view(existing, db=db), created=False)
 
@@ -1024,6 +1087,11 @@ class ProjectChatService:
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if assistant_source_binding is not None:
+            metadata["assistant_publication"] = self._assistant_publication(
+                assistant_source_binding,
+                requires_confirmation=assistant_source.requires_confirmation,
+            )
         if request.mentions and all(
             mention.type == "user" for mention in request.mentions
         ):
@@ -1091,25 +1159,6 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
-        if request.task_id and request.mentions:
-            from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
-
-            for recipient_id in sorted(
-                {
-                    int(mention.id)
-                    for mention in request.mentions
-                    if mention.type == "user"
-                }
-            ):
-                enqueue_issue_wakeup(
-                    db,
-                    user_id=recipient_id,
-                    payload={
-                        "projectId": request.project_id,
-                        "itemId": request.task_id,
-                        "commentId": message_id,
-                    },
-                )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(
@@ -1120,9 +1169,57 @@ class ProjectChatService:
                 )
                 item.version += 1
                 self._queue_loop_item_change(db, item)
-        self._commit(db)
+        if commit:
+            self._commit(db)
+        else:
+            db.flush()
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
+
+    @staticmethod
+    def _verified_assistant_source(
+        db: Session,
+        *,
+        user_id: int,
+        request: ProjectChatSend,
+        source: AssistantPublicationSource | None,
+    ) -> LoopItemTaskBinding | None:
+        if source is None:
+            return None
+        from app.services.loop_items.task_bindings import active_task_binding_query
+
+        db.query(LoopItem).filter_by(
+            id=request.task_id, cloud_project_id=request.project_id
+        ).with_for_update().one()
+        binding = active_task_binding_query(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            item_id=request.task_id,
+            device_id=source.device_id,
+            task_id=source.task_id,
+            lock=True,
+        ).first()
+        if binding is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Assistant publication source is unavailable"
+            )
+        return binding
+
+    @staticmethod
+    def _assistant_publication(
+        binding: LoopItemTaskBinding | None, *, requires_confirmation: bool = False
+    ) -> dict | None:
+        if binding is None:
+            return None
+        return {
+            "verified": not requires_confirmation,
+            **({"source_verified": True} if requires_confirmation else {}),
+            "published_by": "ai" if requires_confirmation else "human",
+            "binding_id": binding.id,
+            "device_id": binding.device_id,
+            "task_id": binding.task_id,
+        }
 
     def _resolve_reply_context(
         self,
@@ -2595,12 +2692,15 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 
-    def _validate_agent_mentions(
-        self, db: Session, project: LoopItem, request: ProjectChatSend
+    def _validate_comment_mentions(
+        self,
+        db: Session,
+        project: LoopItem,
+        user_id: int,
+        task_id: str | None,
+        mentions: list[ProjectChatMention],
     ) -> None:
-        agent_mentions = [
-            mention for mention in request.mentions if mention.type == "agent"
-        ]
+        agent_mentions = [mention for mention in mentions if mention.type == "agent"]
         if not agent_mentions:
             return
         unknown = [
@@ -2616,6 +2716,8 @@ class ProjectChatService:
                 status.HTTP_409_CONFLICT,
                 "Mentioned AI is not a member of this project chat",
             )
+        if task_id:
+            self._require_task_execution(db, user_id, project, task_id)
 
     @staticmethod
     def _agent_row_or_none(
@@ -2872,13 +2974,57 @@ class ProjectChatService:
 
     @staticmethod
     def to_view(row: ProjectChatMessage, *, db: Session) -> ProjectChatMessageView:
+        import hashlib
+
+        from app.services.project_chat.message_provenance import message_provenance
+
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        publication = metadata.get("assistant_publication")
+        stand_in = metadata.get("stand_in")
+        if (
+            row.sender_type == "agent"
+            and isinstance(stand_in, dict)
+            and stand_in.get("binding_id")
+            and type(stand_in.get("user_id")) is int
+            and stand_in["user_id"] > 0
+        ):
+            publication = {**stand_in, "verified": True}
+        runtime_device_id, runtime_task_id = row.runtime_device_id, row.runtime_task_id
+        if not (runtime_device_id and runtime_task_id):
+            runtime_device_id, runtime_task_id = None, None
+            if isinstance(publication, dict) and (
+                publication.get("verified") is True
+                or publication.get("source_verified") is True
+            ):
+                device_id, task_id = publication.get("device_id"), publication.get(
+                    "task_id"
+                )
+                if isinstance(device_id, str) and isinstance(task_id, str):
+                    runtime_device_id, runtime_task_id = device_id, task_id
         runtime_address = None
-        if row.runtime_device_id and row.runtime_task_id:
+        provenance = message_provenance(db, row)
+        if runtime_device_id and runtime_task_id:
             runtime_address = {
-                "deviceId": row.runtime_device_id,
-                "taskId": row.runtime_task_id,
+                "deviceId": runtime_device_id,
+                "taskId": runtime_task_id,
             }
+        trace_ref = None
+        trace_state = "history-unavailable"
+        if runtime_device_id and runtime_task_id:
+            identity = "\0".join(
+                (
+                    row.project_id,
+                    row.task_id or "",
+                    runtime_device_id,
+                    runtime_task_id,
+                )
+            )
+            trace_ref = hashlib.sha256(identity.encode()).hexdigest()
+            trace_state = "available"
         return ProjectChatMessageView(
+            **provenance,
+            trace_ref=trace_ref,
+            trace_state=trace_state,
             sequence_number=row.id,
             message_id=row.message_id,
             client_message_id=row.client_message_id or None,
@@ -2900,6 +3046,50 @@ class ProjectChatService:
             status=row.status,
             created_at=database_datetime_as_utc(db, row.created_at).isoformat(),
             updated_at=database_datetime_as_utc(db, row.updated_at).isoformat(),
+        )
+
+    @classmethod
+    def to_shared_view(
+        cls, row: ProjectChatMessage, *, db: Session, viewer_user_id: int
+    ) -> ProjectChatMessageView:
+        """Render one member-specific shared view over the internal projection."""
+
+        from app.services.project_chat.message_provenance import (
+            is_private_execution_message,
+            message_runtime_is_shared,
+            message_runtime_owner_id,
+            shared_message_metadata,
+        )
+
+        view = cls.to_view(row, db=db)
+        if message_runtime_owner_id(db, row) == viewer_user_id:
+            return view
+        runtime_shared = message_runtime_is_shared(db, row)
+        private_execution = is_private_execution_message(
+            row.message_type, row.metadata_json
+        )
+        return view.model_copy(
+            update={
+                "content": ("" if private_execution else view.content),
+                "type": (
+                    "agent_chunk"
+                    if private_execution and view.type == "text"
+                    else view.type
+                ),
+                "metadata": shared_message_metadata(
+                    row.metadata_json, include_runtime=runtime_shared
+                ),
+                "runtime_address": view.runtime_address if runtime_shared else None,
+                "trace_state": (
+                    "available"
+                    if runtime_shared and view.runtime_address is not None
+                    else (
+                        "restricted"
+                        if view.trace_ref is not None
+                        else "history-unavailable"
+                    )
+                ),
+            }
         )
 
 

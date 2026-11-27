@@ -95,6 +95,8 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
+- Avoid repeated JSON serialization and deserialization, especially in hot paths. Reuse parsed data and convert to or from JSON only where required.
+- Every algorithm must have time complexity of `O(log n)` or better per operation.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
 - Delete dead code. Do not add compatibility shims or fallback paths without agreement; correct the primary path.
 - Fix defects discovered while working when they are in scope or block correctness.
@@ -121,12 +123,17 @@ Desktop update eligibility uses interval compatibility: a CI-verified A-to-D pac
 The explicit release-gate exception is macOS x64: it adopts successful arm64 version paths with matching source revisions and declared architecture-equivalence evidence, while retaining x64 package hashes. See the scoped maintenance contract for this exception; Windows x64 remains independently verified.
 
 Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. Never weaken assertions, skip scenarios, or tolerate failures to obtain a pass; fix failures instead.
-Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
+Keep unit/component tests to the minimum necessary. Limit them to foundational logic (such as algorithms, parsing, validation, and state transitions) and extreme or failure scenarios that integration/E2E tests cannot cover reliably or economically. A code change or bug fix does not automatically require a new unit test.
+Before adding a test, inspect existing coverage and identify the concrete behavioral risk it uniquely verifies. Reuse or extend an existing test when necessary; do not duplicate integration/E2E coverage, add tests solely to raise coverage numbers, or create a separate regression file for every fix. Routine UI presentation, trivial wrappers, and implementation wiring do not need unit tests. Avoid tests that merely mirror the implementation, assert source text, or check mocked call sequences without an observable contract.
+When a unit regression is justified, use the smallest deterministic case that reproduces the evidenced defect and asserts the required behavior. Preserve required security/permission assertions and meaningful contract coverage.
+Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
 Modify existing E2E tests only when a complete chain of log evidence proves the original test logic is wrong.
 Reuse unified E2E suites, runners, services, and build artifacts. Do not introduce increased total resource usage or substantial execution-time regressions without explicit user acceptance.
 Any change expected to significantly increase CI runtime requires explicit human confirmation before implementation. Explain the cause and estimated runtime impact when requesting confirmation.
 Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
+Synchronize E2E steps on observable conditions or events, such as an element becoming actionable, an operation reaching the expected state, or a response arriving. Do not use fixed-duration sleeps to decide when to proceed. Register event listeners before triggering the action that emits the event.
+Set short, step-specific timeouts on critical E2E waits and assertions, sized for the expected operation. Timeout failures must identify the step and the condition or event it was waiting for so failures surface promptly without waiting for the overall test timeout.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
 DingTalk group chats and message delivery do not require real external E2E tests. Cover these behaviors with protocol-level integration tests and test doubles; do not require production or test-tenant group IDs, staff IDs, robot credentials, or real message delivery for this coverage.
 

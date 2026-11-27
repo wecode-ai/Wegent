@@ -58,10 +58,19 @@ def _thread_agent(
     )
     if root is None:
         raise HTTPException(409, "The comment thread is unavailable")
+    agent_messages = _messages(db, request).filter(
+        ProjectChatMessage.sender_type == "agent",
+        ProjectChatMessage.metadata_json["collaboration_guidance"]
+        .as_boolean()
+        .is_not(True),
+    )
+    addressed_agent = agent_messages.filter_by(
+        message_id=trigger.reply_to_message_id
+    ).first()
+    if addressed_agent is not None:
+        return addressed_agent
     return (
-        _messages(db, request)
-        .filter(
-            ProjectChatMessage.sender_type == "agent",
+        agent_messages.filter(
             or_(
                 ProjectChatMessage.message_id == root_id,
                 ProjectChatMessage.thread_root_message_id == root_id,
@@ -105,6 +114,20 @@ def _session_execution(
 def _execution(
     db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
 ) -> LoopItemExecution | BoundCommentSession:
+    metadata = target.metadata_json or {}
+    if metadata.get("execution_dispatch") == "comment_only":
+        member_activity_id = metadata.get("collaboration_member_activity_id")
+        if member_activity_id:
+            activity = (
+                _messages(db, request)
+                .filter_by(message_id=member_activity_id)
+                .one_or_none()
+            )
+            if activity is None or activity.agent_id != target.agent_id:
+                raise HTTPException(409, "The collaboration session is unavailable")
+            return resolve_collaboration_member_session(db, request, activity)
+        if metadata.get("dispatch_id") and metadata.get("manager_runtime_task_id"):
+            return resolve_collaboration_manager_session(db, request, target)
     if (target.metadata_json or {}).get("dispatch_role") == "manager" and (
         (target.metadata_json or {}).get("dispatch_id") or not target.agent_id
     ):
@@ -622,6 +645,38 @@ async def execute_comment(
     )
     if not execution_authorized(db, authority):
         raise HTTPException(403, "Comment execution authorization is revoked")
+    if (
+        not human_request
+        and execution.runtime_origin_context.get("dispatch_kind")
+        == "collaboration_group"
+    ):
+        from app.services.project_chat.comment_guidance import (
+            guide_collaboration_comment,
+        )
+
+        guided = await guide_collaboration_comment(
+            db,
+            trigger=trigger,
+            runtime_task_id=execution.runtime_task_id,
+            runtime_device_id=execution.runtime_device_id,
+            owner_user_id=execution.executor_owner_user_id,
+            attachments=attachments,
+        )
+        if guided is not None:
+            response = _response(
+                db, request, trigger, execution.agent_id, target.sender_name, execution
+            )
+            response.status = "streaming"
+            response.metadata_json = {
+                **response.metadata_json,
+                "run_status": "running",
+                "runtime_turn_id": guided.get("turnId"),
+                "collaboration_guidance": True,
+            }
+            project_chat_service._commit(db)
+            view = project_chat_service.to_view(response, db=db)
+            push_project_chat_message(view.model_dump(by_alias=True))
+            return [view]
     if queued_reply:
         response = _queue_reply(
             db,

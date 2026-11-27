@@ -1,0 +1,10 @@
+{
+  "order": 6050,
+  "scenario": "./scenarios/inbox-command-approval.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/src/api/local/localServices.ts",
+    "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
+  ],
+  "ci": { "core": { "order": 5050, "shard": 2, "position": 20500 } }
+}

@@ -1,9 +1,11 @@
+import { modelApplicationContextText } from '../modules/application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
+import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -19,6 +21,9 @@ const INITIAL = 'WEWORK_MOBILE_LOCAL_INITIAL'
 const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
+
+const APP_CONTEXT = 'WEWORK_TYPED_APP_CONTEXT'
+const SOURCE_CONTEXT = 'WEWORK_TYPED_SOURCE_CONTEXT'
 
 // Exercise the phone's shared payload through the existing real executor and Codex.
 // Native iOS scheduling and OAuth are outside this desktop checkpoint's coverage.
@@ -36,6 +41,36 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       const text = JSON.stringify(body.input)
       assert.ok(text.includes(INITIAL), 'The mobile task lost its initial native history')
+      const currentInput = (body.input ?? []).filter(
+        item =>
+          item.role === 'user' &&
+          [INITIAL, FOLLOW_UP].some(prompt => JSON.stringify(item.content).includes(prompt))
+      )
+      assert.ok(currentInput.length > 0, 'The typed-context run lost its user input')
+      for (const item of currentInput) {
+        assert.ok(
+          !JSON.stringify(item).includes(APP_CONTEXT),
+          'Application context entered user input'
+        )
+        assert.ok(
+          !JSON.stringify(item).includes(SOURCE_CONTEXT),
+          'Source context entered user input'
+        )
+      }
+      assert.equal(
+        modelApplicationContextText(body, 'cloudCollaboration'),
+        APP_CONTEXT,
+        'Codex did not receive the application context independently'
+      )
+      assert.ok(
+        (body.input ?? []).some(
+          item =>
+            isDetachedResponsesContext(item) &&
+            item.content[1]?.type === 'input_text' &&
+            item.content[1].text === SOURCE_CONTEXT
+        ),
+        'The Responses proxy did not retain the untrusted source context as a separate message'
+      )
       const followUp = text.includes(FOLLOW_UP)
       assert.equal(requests.length, followUp ? 1 : 0, 'The mobile request was duplicated')
       requests.push(followUp ? 'follow-up' : 'initial')
@@ -111,6 +146,10 @@ export function createDesktopScenario(options) {
           runtime: 'codex',
           title: 'Mobile local payload',
           message,
+          additionalContext: {
+            cloudCollaboration: { kind: 'application', value: APP_CONTEXT },
+            source: { kind: 'untrusted', value: SOURCE_CONTEXT },
+          },
           clientUserMessageId,
           turnSeed: newSession ? 1 : 2,
           modelConfig,
@@ -233,6 +272,13 @@ export function createDesktopScenario(options) {
           `Mobile ${suffix} lost or duplicated its user-message identity`
         )
       }
+      assert.deepEqual(
+        second.transcript.messages
+          .filter(message => message.role === 'user')
+          .map(message => message.content),
+        [INITIAL, FOLLOW_UP],
+        'Typed context leaked into the persisted user transcript'
+      )
       assert.deepEqual(requests, ['initial', 'follow-up'])
       await writeFile(
         join(options.resultDir, 'mobile-local-payload.json'),

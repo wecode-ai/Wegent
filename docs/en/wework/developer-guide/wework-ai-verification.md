@@ -20,6 +20,14 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 The independent checkpoint is registered in an existing Core CI shard and does not require earlier scenarios. Local macOS arm64 verification took approximately 52 seconds including startup and cleanup, excluding the shared build. Its result directory contains `idle-executor-requests.json` with method names, timestamps, statuses, and necessary boolean flags only, never request parameters, headers, or query strings. Do not commit logs or screenshots.
 
+## Desktop CPU regression checks
+
+The existing Linux Core CI measures CPU for `idle-executor-requests`, `streaming-conversation-switching`, and `executor-stream-recovery`. The measurement spans the scenario's verification function, including any setup and reloads inside it. For example, the idle scenario's total includes its reload and follow-up verification. CPU time in milliseconds is reported separately for Electron Renderer processes and the main Executor process. Executor child processes are outside the current measurement scope. Both endpoints must identify the same measured processes. Collection failures and process changes are logged as unavailable samples.
+
+Linux Core shards run the idle workbench and Executor stream recovery checkpoints in isolation before starting the shard's parallel checkpoints. This prevents concurrent desktop sessions from inflating the measured processes' CPU time.
+
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks a baseline per checkpoint and runner platform. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
+
 ## Periodic plugin recovery E2E
 
 The `plugin-periodic-reconcile` checkpoint uses real Electron, Executor, Socket.IO, database, and plugin package storage. It discards one real plugin change notification, then verifies timer-driven recovery, persisted acknowledgements, device identity, and unchanged unrelated plugin content. Its isolated instances set `LOCAL_PLUGIN_RECONCILE_INTERVAL=90` and `LOCAL_PLUGIN_RECONCILE_JITTER=18` (seconds), with the existing `LOCAL_HEARTBEAT_INTERVAL=1` configuration preserving the assertion of at least 10 heartbeats. The checkpoint observes production reconciliation ticks and aligns fault injection to the current timer window when fixture setup crosses one, so setup load cannot force a longer interval.
@@ -35,6 +43,8 @@ The plugin account late-response E2E uses a unique `Server-Timing` diagnostic ma
 ## Conversation model restoration diagnostics
 
 When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
+
+The feedback dialog keeps the task selected when it opened. Its preview reads that task's complete transcript independently of pane refreshes during reconnection and conversation switches.
 
 The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
 
@@ -60,7 +70,7 @@ The process-level protocol regression in `executor/tests/codex_app_server_contra
 
 ## Start a session
 
-During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.
+During builds, `prepare-codex-binary.mjs` downloads the locked version with Undici streams, follows redirects, enforces connect, response-header, and response-body timeouts, and honors the `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables. Failed retries remove temporary files; archives are extracted for use only after integrity verification.
 
 ```bash
 pnpm --filter wework ai:verify start
@@ -149,6 +159,21 @@ The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and rest
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
 
+## Record verification video
+
+To keep a video of the verification steps, put FFmpeg with `libx264` on PATH. Use `start --record true` to begin recording when the main window is ready. The first frame is captured before the session path is returned. For an existing session, use `record-start` to begin a clip and `record-stop` to finish it. You can start another clip as needed.
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` saves the video and prints its path. If recording is still active, `stop` saves the video before closing the session and prints the video path. Each clip is a separate MP4 in its session directory under `wework/test-results/ai-verify/`. If frame capture fails mid-recording, the recorder finalizes the frames already captured and reports the saved path with the error.
+
+Recording samples the isolated Electron main window at five frames per second, including across page reloads, without macOS Screen Recording permission. It excludes OS dialogs, native menus, separate windows, and audio. Keep the video with the assertion results and review the footage for sensitive information before sharing it. Keep recordings and session files out of Git.
+
 ## General DevTools access and performance analysis
 
 Isolated verification instances expose authenticated CDP through the Electron main process. Commands remain available while the renderer is paused at a breakpoint. Ordinary application instances do not register this endpoint. Enumerate targets and substitute a returned `id` for `ID`:
@@ -199,6 +224,45 @@ A successful explicit `detach` discards unfinished recording state for that targ
 
 All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.
 
+### Renderer CPU and JS heap benchmark
+
+On macOS, compare the baseline and candidate on the same machine with the same build configuration. The commands launch isolated Electron and the real executor. A test model emits 120 Markdown chunks at 100 ms intervals. The benchmark verifies that the first chunk appears while streaming and waits for the last chunk to appear. The isolated window uses the foreground rendering path without taking desktop focus. The report's `window` records native activity, document visibility, and focus.
+
+```bash
+pnpm --filter wework ai:verify:electron:build
+pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --history --check
+pnpm --filter wework profile:renderer --capture
+pnpm --filter wework profile:renderer --processes
+```
+
+- `--check` fails at idle CPU ≥ 3%, single-task CPU ≥ 15%, ten-concurrent-task CPU ≥ 20%, a main-thread task containing a turn update ≥ 100 ms, or sampled peak JS heap ≥ 200 MB (200,000,000 bytes). With no argument, the command reports measurements. CPU is cumulative CPU time across the isolated window renderer PIDs divided by elapsed wall time, with 100% representing one logical core. The idle window is about seven seconds. The task CPU window runs from the start of the model response until the last chunk is visible. The benchmark samples V8 used heap every second without forcing GC.
+- The benchmark loads 257 synthetic saved tasks. The concurrent phase loads a local project with 480 Issues, including 20 open Issues, and starts ten real Codex tasks. The foreground task first executes 180 read-only commands through the test model to build its tool history. Measurement starts once all ten tasks reach the test model. The foreground task and three background tasks execute another 40 read-only commands in batches while the conversation is active. The test model also streams 765 reasoning summary deltas through the Responses protocol over approximately 39 seconds. The run updates a Goal in the foreground conversation, then switches to Pending, scrolls the list, and updates three background Goals. The report records the phase averages, the highest CPU across sampled windows of at least ten seconds, and the window presentation state. The 20% limit applies to the highest concurrent result.
+- Turn update observation starts before submission and includes the started and settled `runtime.turn.updated` snapshots for the same task. The report's `turnUpdates` records the time of each update and the duration of the Chromium main-thread long task containing it. A duration of 0 means the update fell below Chromium's 50 ms long-task reporting threshold.
+- For an over-budget turn update, use `turnUpdates.frame.scripts` to identify scripts in the long frame, then use CPU sample stacks to identify the event subscriber. Reply prediction task updates and single-entry cache changes revalidate only the affected prediction.
+- Conversation panes subscribe to the current task's lifecycle and retarget when the task changes. The sidebar skips rerendering when its inputs are unchanged, and reorder handles translate their accessible names when the label or language changes.
+- Project sidebars reuse the lifecycle keys for their current task list. Notification and shared Issue question polling keep existing inbox snapshots when their contents are unchanged, avoiding idle rerenders.
+- `--capture` uses the existing performance recording and writes `renderer-performance.json` and raw evidence. The `caller` field on native frames identifies JavaScript that triggered work such as layout. Recording requests a 100 µs V8 sampling interval and marks the idle and both concurrent measurement windows in the trace. Recording adds overhead. Run `--check` separately to verify the limits. All modes save `renderer-threshold-measurements.json` in the test directory printed in the console.
+- The `--check` report's `singleTaskWindow` records user and system CPU counters, system load, and Chromium performance metrics at the measurement boundaries. After a failed performance check, CI runs `--capture --thread-timing` separately with the same packaged app so V8 sampling overhead stays in the diagnostic run. The `renderer-performance-timing.json` artifact records single-task window markers, thread names, and timings for selected events. The `dur` field records wall time, and `tdur` records thread CPU time when available. The `--check` result determines whether the CI gate passes.
+- `--history` completes 16 persisted conversations in sequence and samples the heap after each one, then starts the benchmark task in the same renderer. It uses reproducible test model responses. `historicalTasks` records the conversation count in the report.
+- `--processes` records app process snapshots while idle, mid-stream, and after completion. Inspect `processSamples` for the main process, renderer, GPU, executor, and child processes. The snapshots report OS or Electron CPU samples. Run `--check` separately for threshold verification. Shared memory pages may appear in multiple per-process measurements.
+- To investigate a heap peak, identify the operation from the phase in `heapSamples`. If the heap drops quickly after natural GC, use Allocation sampling in Chromium's Memory panel to find call stacks allocating short-lived objects. Rerun the threshold check with allocation sampling disabled.
+- For long-lived memory growth, switch tasks repeatedly with the same history in an isolated instance, record JS heap usage, and take two heap snapshots in Chromium's Memory panel. Compare object counts and retained sizes, then inspect `Retainers` for reachable paths, including detached DOM, closures, and caches. Detach CDP recording for the target before opening the Memory panel. Keep reports and snapshots local.
+
+macOS desktop CI reuses the packaged app to run `--check` for relevant pull requests and merge groups. Exceeding a limit fails the required **Wework E2E Summary** check, and the measurements are retained with the CI diagnostics.
+
+### Workbench resource budget
+
+These proposed targets describe a steady-state single-window workbench. Profile startup, updates, indexing, embedded browsing, file previews, and local models under their own workloads.
+
+| Scenario | Longer-term target | What to measure |
+| --- | --- | --- |
+| Visible window at idle | About 1–3% renderer CPU and about 5% or less across desktop UI processes | Measure visible and background states after startup settles. Express CPU relative to a logical core and check background wakeups. |
+| One plain-text streaming task | About 8–12% renderer CPU | At ten chunks per second, this gives the renderer 80–120 ms of CPU time per second. Watch first and continuing text presentation, bottom following, and manual reading anchors. |
+| Single-window JS heap | About 100 MB for a new conversation and about 120–160 MB with typical history | Compare the same dataset, cadence, and phase. History stays available from persistent storage. The heap should stabilize after repeated task switches. |
+
+The main process handles windows, IPC and runtime coordination. The GPU process handles compositing and rendering. The executor and task subprocesses handle model connections, commands and tools. Plain-text streaming adds limited data, so document-wide style invalidation and full-page work on each update warrant investigation. For tool-heavy tasks, measure executor and subprocess activity and disk usage separately. Read JS heap, native renderer memory, GPU resources and other process memory as separate measurements. GPU-process CPU measures CPU time. [Electron process metrics](https://www.electronjs.org/docs/latest/api/app#appgetappmetrics) [Chrome DevTools memory diagnostics](https://developer.chrome.com/docs/devtools/memory-problems)
+
 ### Diff preview CPU and workbench memory regressions
 
 The diff preview uses Pierre virtualization. Keep line callbacks, render options, annotations and layout metrics stable; owner refreshes or replacement event handlers must not rebuild unchanged code DOM. Actual option, diff and annotation changes must still render. `FileChangesPatchDiff.test.tsx` checks node identity across repeated refreshes and cleanup on unmount with real Pierre instances.
@@ -206,3 +270,15 @@ The diff preview uses Pierre virtualization. Keep line callbacks, render options
 Define workbench memoized callbacks in independent Hook lexical scopes instead of the Provider's large render scope. Otherwise callbacks whose dependencies change at different rates can retain historical task, lifecycle and work-list snapshots through their shared closures. `workbenchCallbackLifetime.test.tsx` triggers real GC through Inspector, uses weak references to verify snapshot collection and guards against defining `useCallback` directly in the Provider again.
 
 Interpret CPU samples, HTML parsing duration and process memory separately. Heap object sizes do not equal Activity Monitor process memory; one heap snapshot establishes retaining paths, not a memory growth rate. Keep analysis files local and never commit user traces or heap snapshots.
+
+## PR-scoped Bombadil exploration
+
+Use Bombadil 0.7.10 on macOS ARM64 or Linux and set BOMBADIL_BIN to its executable. Preview selection with `pnpm --filter wework ai:verify bombadil --base origin/main --plan true`. Run the same command without --plan, with `--seconds 30`, or explicitly select `--suite appearance` or `--suite workbench`. Obtain the binary from https://github.com/antithesishq/bombadil/releases/tag/v0.7.10.
+
+The base plan uses committed merge-base-to-HEAD paths, including deletions and both sides of renames. Uncommitted work requires an explicit suite. The map in scripts/ai-verify-bombadil.mjs selects appearance changes, workbench/chat/tab changes, and both suites for shared UI or host changes. Unmapped Wework/packages paths are reported as coverage gaps and prevent automatic execution from claiming a pass. Extend the specification and map for new features. Selection is candidate coverage, not correctness evidence.
+
+Each suite owns a fresh real Electron and Executor session. Only explicit Bombadil startup opens an ephemeral loopback debugger; existing Executor Homes and ambiguous page targets are rejected. Setup dismisses the isolated privacy prompt and establishes the feature prerequisites. Suites run serially with a 1–600 second budget each; success, failure and timeout clean up the session. Model execution and cloud authentication are not exercised.
+
+Results under `wework/test-results/bombadil/<timestamp>/` include summary.json, logs and native traces. Failed checks, cleanup failures and zero-action runs cannot pass. Traces can contain screenshots and page content: keep them local, do not commit them, and never upload session.json, credentials or the entire ai-verify directory. Any CI integration needs a bounded budget. Exploration does not replace deterministic regression, permission or release verification.
+
+The Wework Bombadil exploration GitHub Actions workflow is manual-only. Select the PR branch and provide the base ref (origin/main by default) and seconds per suite. Ordinary PRs gain no automatic exploration. The workflow verifies the pinned download SHA-256 and publishes only summary.json to the step summary, never raw traces or authentication directories.

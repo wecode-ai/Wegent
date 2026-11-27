@@ -2,6 +2,10 @@
 use super::stand_in::settings_error;
 use super::*;
 
+#[cfg(test)]
+#[path = "stand_in_issue_collection_tests.rs"]
+mod collection_tests;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn collect_stand_in_issue_events(&self) -> Result<(), AppIpcError> {
         let Some(connection) = self.backend_connection_snapshot()? else {
@@ -18,11 +22,7 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(());
         }
-        let user = self
-            .runtime_http(reqwest::Method::GET, "/users/me", None)
-            .await?["id"]
-            .as_i64()
-            .ok_or_else(|| AppIpcError::new("permission_denied", "Issue event owner is missing"))?;
+        let user = Self::connected_runtime_user(&connection).await?;
         if !settings
             .iter()
             .any(|settings| settings["userId"] == user && settings["lifecycle"]["status"].is_null())
@@ -46,15 +46,32 @@ impl RuntimeWorkRpcHandler {
         for event in page["events"].as_array().into_iter().flatten() {
             let mut payload = event["payload"].clone();
             payload["recipientUserId"] = json!(user);
-            store.queue_stand_in_dispatch(&json!({"backendUrl":connection.backend_url,"deviceId":self.device_id,"userId":user,"notification":payload})).map_err(settings_error)?;
+            let intent_id = store.queue_stand_in_dispatch(&json!({"backendUrl":connection.backend_url,"deviceId":self.device_id,"userId":user,"notification":payload})).map_err(settings_error)?;
             next = event["sequence"].as_i64().ok_or_else(|| {
                 AppIpcError::new("cloud_response_invalid", "Issue event sequence is missing")
             })?;
+            self.log_stand_in_decision(
+                &json!({"userId":user,"projectId":payload["projectId"]}),
+                &json!({"id":payload["itemId"],"human_task_binding":{"assignmentId":payload["assignmentId"]}}),
+                "issue_event_queued",
+                json!({"intentId":intent_id,"sequence":next,"after":cursor,"commentId":payload["commentId"]}),
+            );
         }
         // Queue first: a crash before this checkpoint redelivers the same durable intent.
         store
             .save_stand_in_source(user, &source, &json!({"cursor":next}))
             .map_err(settings_error)?;
+        if next != cursor {
+            log_executor_event(
+                "Stand-in Issue event cursor saved",
+                &[
+                    ("user_id", user.to_string()),
+                    ("device_id", self.device_id.clone()),
+                    ("after", cursor.to_string()),
+                    ("cursor", next.to_string()),
+                ],
+            );
+        }
         Ok(())
     }
 
@@ -142,7 +159,9 @@ impl RuntimeWorkRpcHandler {
         if !settings["lifecycle"]["status"].is_null() {
             return Ok(());
         }
-        let configs = self.stand_in_project_configs(&[settings], project, "cloud");
+        let configs = self
+            .cloud_issue_intake_configs(&[settings], user, project, issue_id)
+            .await?;
         let issue = self
             .runtime_http(
                 reqwest::Method::GET,

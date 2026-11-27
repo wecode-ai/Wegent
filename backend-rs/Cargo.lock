@@ -526,9 +526,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.29"
+version = "0.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a0a88afd4d05fa949b168a17ef2bf17eeb937ac07371140c8fc48dafcf84ceb"
+checksum = "ab7ff7fb5b01bfe2e0ccaee9fa3973f83503b727e74171f46b58ae762bf62196"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -547,9 +547,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.29"
+version = "0.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a11a4293123d420f47e385dbdb0d1dd225d7f7238d062359a84ecc08c4c0f796"
+checksum = "515ba0b01b43a78e3d6235d9be10fcba10e0885afdff26fdc1c1f63a356438c8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -664,9 +664,9 @@ dependencies = [
 
 [[package]]
 name = "brz-socket-io"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "730e25cfb37ec033fa1054e607eef62044726535abb50e3e9694f177c7b140e4"
+checksum = "4476a00a3fcef3f894e95bdf3e37a7389b25b86405d8f88bd2e2210d057cd2fe"
 dependencies = [
  "brz-engineioxide",
  "brz-http-server",
@@ -683,9 +683,9 @@ dependencies = [
 
 [[package]]
 name = "brz-socket-io-macros"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90fe64eaeb843e3e03eefc2df6ef7b6242c44d0f36f4c973aade3c4ae0d48da9"
+checksum = "8f50429f927efc3ee13a0534d43e693f95cce2cd6d59822c15e3ec9e3b71ffcd"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1266,7 +1266,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2818,7 +2818,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4600,6 +4600,91 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-admin-api"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
+name = "wegent-attachment-content"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chardetng",
+ "chrono",
+ "csv",
+ "encoding_rs",
+ "flate2",
+ "libz-sys",
+ "regex",
+ "serde_json",
+ "tokio",
+ "turbojpeg",
+ "wegent-backend-config",
+]
+
+[[package]]
+name = "wegent-attachment-links"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "wegent-backend-config",
+]
+
+[[package]]
+name = "wegent-attachments"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "md-5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-attachment-content",
+ "wegent-attachment-links",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-knowledge-access",
+ "wegent-media",
+ "wegent-python-compat",
+ "wegent-storage",
+ "wegent-task-store",
+]
+
+[[package]]
 name = "wegent-authentication"
 version = "0.1.0"
 dependencies = [
@@ -4643,9 +4728,12 @@ dependencies = [
  "async-trait",
  "brz-mysql",
  "chrono",
+ "futures-util",
  "tokio",
+ "tracing",
  "wegent-backend-config",
  "wegent-backend-test-support",
+ "wegent-http-compat",
 ]
 
 [[package]]
@@ -4658,7 +4746,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bcrypt",
- "brotli",
  "brz-http",
  "brz-http-gateway",
  "brz-http-server",
@@ -4672,13 +4759,9 @@ dependencies = [
  "brz-socket-io",
  "bytes",
  "cbc",
- "chardetng",
  "chrono",
  "chrono-tz",
- "csv",
- "encoding_rs",
  "erased-serde",
- "flate2",
  "futures-util",
  "getrandom 0.2.17",
  "hmac",
@@ -4686,16 +4769,11 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
- "jsonschema",
  "jsonwebtoken",
  "lettre",
- "libz-sys",
- "md-5",
  "pep440_rs",
  "pulldown-cmark",
  "regex",
- "rustpython-ast",
- "rustpython-parser",
  "serde",
  "serde_json",
  "sha1 0.10.7",
@@ -4704,10 +4782,11 @@ dependencies = [
  "tokio-util",
  "toml 0.8.23",
  "tracing",
- "turbojpeg",
- "unicode-normalization",
  "url",
  "wegent-access",
+ "wegent-admin-api",
+ "wegent-attachment-links",
+ "wegent-attachments",
  "wegent-authentication",
  "wegent-backend-config",
  "wegent-backend-persistence",
@@ -4715,30 +4794,85 @@ dependencies = [
  "wegent-backend-users",
  "wegent-capabilities",
  "wegent-celery",
+ "wegent-channel-streaming",
+ "wegent-chat-history",
+ "wegent-connector-apps",
  "wegent-crypto",
+ "wegent-database-migrations",
+ "wegent-device-artifacts",
+ "wegent-device-lifecycle",
+ "wegent-devices",
  "wegent-directory",
+ "wegent-execution-completion",
+ "wegent-execution-emission",
+ "wegent-execution-events",
+ "wegent-execution-knowledge",
+ "wegent-execution-preparation",
+ "wegent-execution-request",
+ "wegent-execution-runtime",
  "wegent-executor-manager",
+ "wegent-git-inbox",
  "wegent-git-repositories",
  "wegent-http-compat",
  "wegent-identity",
  "wegent-job-runtime",
+ "wegent-knowledge",
+ "wegent-knowledge-access",
+ "wegent-knowledge-jobs",
+ "wegent-knowledge-mcp",
+ "wegent-legacy-projects",
+ "wegent-llm-proxy",
+ "wegent-mcp-providers",
+ "wegent-mcp-transport",
  "wegent-media",
+ "wegent-model-decisions",
  "wegent-models",
  "wegent-network-policy",
+ "wegent-notification-inbox",
  "wegent-oidc",
  "wegent-onboarding",
+ "wegent-plugin-catalog",
+ "wegent-plugin-package",
+ "wegent-plugin-runtime",
+ "wegent-plugin-store",
+ "wegent-project-coordination",
+ "wegent-project-notifications",
+ "wegent-project-participation",
+ "wegent-project-polling",
+ "wegent-project-scheduler",
  "wegent-protocol",
  "wegent-python-compat",
  "wegent-remote-workspace",
+ "wegent-resource-library",
+ "wegent-resource-readiness",
  "wegent-resource-store",
+ "wegent-responses-api",
+ "wegent-responses-streaming",
  "wegent-runtime-check",
+ "wegent-runtime-execution",
+ "wegent-runtime-observations",
+ "wegent-runtime-work",
  "wegent-sites",
+ "wegent-skill-market",
+ "wegent-smart-apps",
+ "wegent-socket-adapter",
  "wegent-socket-events",
  "wegent-storage",
+ "wegent-subscriptions",
+ "wegent-task-export-docx",
+ "wegent-task-mutations",
  "wegent-task-store",
+ "wegent-task-views",
+ "wegent-tasks",
+ "wegent-teams",
+ "wegent-terminal",
+ "wegent-video-jobs",
+ "wegent-web-content",
+ "wegent-wework-transcripts",
+ "wegent-workspace-archive",
+ "wegent-workspaces",
  "yaml-rust2",
  "zip",
- "zstd",
 ]
 
 [[package]]
@@ -4828,11 +4962,184 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-channel-streaming"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-execution-events",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-chat-history"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-attachment-links",
+ "wegent-attachments",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-connector-apps"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "hmac",
+ "jsonschema",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-mcp-transport",
+ "wegent-protocol",
+ "wegent-python-compat",
+]
+
+[[package]]
 name = "wegent-crypto"
 version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
+]
+
+[[package]]
+name = "wegent-database-migrations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-mysql",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-identity",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-device-artifacts"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-attachments",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-devices",
+ "wegent-executor-manager",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-socket-events",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-device-identity"
+version = "0.1.0"
+dependencies = [
+ "brz-mysql",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+]
+
+[[package]]
+name = "wegent-device-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "brz-socket-io",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-device-identity",
+ "wegent-devices",
+ "wegent-python-compat",
+ "wegent-socket-events",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-devices"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-socket-events",
+ "wegent-task-store",
 ]
 
 [[package]]
@@ -4848,6 +5155,163 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-execution-completion"
+version = "0.1.0"
+dependencies = [
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-execution-runtime",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-execution-emission"
+version = "0.1.0"
+dependencies = [
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-execution-events",
+ "wegent-execution-runtime",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-socket-events",
+]
+
+[[package]]
+name = "wegent-execution-events"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "wegent-execution-knowledge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-execution-preparation",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-knowledge",
+ "wegent-python-compat",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-execution-preparation"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-capabilities",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-mcp-providers",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-resource-store",
+]
+
+[[package]]
+name = "wegent-execution-request"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "futures-util",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-attachment-links",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-backend-users",
+ "wegent-capabilities",
+ "wegent-connector-apps",
+ "wegent-devices",
+ "wegent-directory",
+ "wegent-execution-knowledge",
+ "wegent-execution-preparation",
+ "wegent-git-repositories",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-llm-proxy",
+ "wegent-mcp-providers",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-task-store",
+ "wegent-task-views",
+]
+
+[[package]]
+name = "wegent-execution-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-execution-events",
+ "wegent-python-compat",
+]
+
+[[package]]
 name = "wegent-executor-manager"
 version = "0.1.0"
 dependencies = [
@@ -4858,6 +5322,27 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "wegent-git-inbox"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-http-compat",
+ "wegent-identity",
 ]
 
 [[package]]
@@ -4896,18 +5381,21 @@ dependencies = [
 name = "wegent-identity"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "anyhow",
  "async-trait",
  "base64 0.23.1",
  "brz-http-server",
  "brz-json",
  "brz-mysql",
+ "cbc",
  "chrono",
  "getrandom 0.2.17",
  "jsonwebtoken",
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
  "wegent-backend-config",
@@ -4935,6 +5423,194 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-knowledge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-knowledge-access",
+ "wegent-python-compat",
+ "wegent-resource-store",
+]
+
+[[package]]
+name = "wegent-knowledge-access"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http-server",
+ "brz-mysql",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "sha2",
+ "tokio",
+ "wegent-access",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
+name = "wegent-knowledge-jobs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "brz-schedule",
+ "chrono",
+ "futures-util",
+ "htmd",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-access",
+ "wegent-attachments",
+ "wegent-backend-config",
+ "wegent-celery",
+ "wegent-execution-preparation",
+ "wegent-execution-runtime",
+ "wegent-identity",
+ "wegent-job-runtime",
+ "wegent-knowledge",
+ "wegent-mcp-providers",
+ "wegent-network-policy",
+]
+
+[[package]]
+name = "wegent-knowledge-mcp"
+version = "0.1.0"
+dependencies = [
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-attachments",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-knowledge",
+ "wegent-knowledge-access",
+ "wegent-mcp-transport",
+ "wegent-storage",
+]
+
+[[package]]
+name = "wegent-legacy-projects"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-llm-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "futures-util",
+ "regex",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-network-policy",
+ "wegent-protocol",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-mcp-providers"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-network-policy",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-mcp-transport"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wegent-http-compat",
+]
+
+[[package]]
 name = "wegent-media"
 version = "0.1.0"
 dependencies = [
@@ -4942,6 +5618,33 @@ dependencies = [
  "async-trait",
  "brz-http",
  "brz-json",
+ "serde_json",
+]
+
+[[package]]
+name = "wegent-model-decisions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-llm-proxy",
+ "wegent-models",
+ "wegent-network-policy",
+ "wegent-python-compat",
+ "wegent-resource-store",
 ]
 
 [[package]]
@@ -4971,10 +5674,29 @@ dependencies = [
 name = "wegent-network-policy"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "brz-http",
+ "serde_json",
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "wegent-notification-inbox"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
 ]
 
 [[package]]
@@ -5034,6 +5756,243 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-plugin-catalog"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "pep440_rs",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+ "url",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-plugin-store",
+ "wegent-python-compat",
+ "wegent-socket-events",
+ "wegent-storage",
+ "zip",
+]
+
+[[package]]
+name = "wegent-plugin-package"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "regex",
+ "rustpython-ast",
+ "rustpython-parser",
+ "serde_json",
+ "sha2",
+ "unicode-normalization",
+ "zip",
+]
+
+[[package]]
+name = "wegent-plugin-runtime"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "futures-util",
+ "getrandom 0.2.17",
+ "hmac",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-authentication",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-devices",
+ "wegent-execution-preparation",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-plugin-catalog",
+ "wegent-plugin-store",
+ "wegent-python-compat",
+ "wegent-socket-events",
+ "wegent-storage",
+]
+
+[[package]]
+name = "wegent-plugin-store"
+version = "0.1.0"
+dependencies = [
+ "brz-mysql",
+ "chrono",
+ "tokio",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+]
+
+[[package]]
+name = "wegent-project-coordination"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "futures-util",
+ "getrandom 0.2.17",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-storage",
+]
+
+[[package]]
+name = "wegent-project-notifications"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "regex",
+ "serde_json",
+ "sha1 0.10.7",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-identity",
+ "wegent-project-coordination",
+ "wegent-socket-events",
+]
+
+[[package]]
+name = "wegent-project-participation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-project-coordination",
+ "wegent-project-notifications",
+ "wegent-socket-events",
+]
+
+[[package]]
+name = "wegent-project-polling"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-connector-apps",
+ "wegent-identity",
+ "wegent-project-coordination",
+ "wegent-storage",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "wegent-project-scheduler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-schedule",
+ "chrono",
+ "chrono-tz",
+ "serde",
+ "serde_json",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-device-identity",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-project-coordination",
+ "wegent-project-polling",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-storage",
+]
+
+[[package]]
 name = "wegent-protocol"
 version = "0.1.0"
 dependencies = [
@@ -5088,6 +6047,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-resource-library"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-capabilities",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-resource-readiness"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-persistence",
+ "wegent-backend-users",
+ "wegent-devices",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-resource-store",
+]
+
+[[package]]
 name = "wegent-resource-store"
 version = "0.1.0"
 dependencies = [
@@ -5100,6 +6109,64 @@ dependencies = [
  "url",
  "wegent-backend-persistence",
  "wegent-backend-test-support",
+]
+
+[[package]]
+name = "wegent-responses-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "futures-util",
+ "http",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-attachment-links",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-execution-runtime",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-models",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-responses-streaming"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "futures-util",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-execution-completion",
+ "wegent-execution-emission",
+ "wegent-execution-events",
+ "wegent-execution-runtime",
+ "wegent-http-compat",
+ "wegent-protocol",
+ "wegent-python-compat",
 ]
 
 [[package]]
@@ -5122,6 +6189,82 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-runtime-execution"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-device-identity",
+ "wegent-devices",
+ "wegent-project-coordination",
+ "wegent-python-compat",
+ "wegent-runtime-work",
+]
+
+[[package]]
+name = "wegent-runtime-observations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http-server",
+ "brz-mysql",
+ "chrono",
+ "futures-util",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-job-runtime",
+ "wegent-protocol",
+ "wegent-socket-events",
+]
+
+[[package]]
+name = "wegent-runtime-work"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "brz-socket-io",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-test-support",
+ "wegent-device-identity",
+ "wegent-devices",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-project-coordination",
+ "wegent-python-compat",
+ "wegent-socket-events",
+]
+
+[[package]]
 name = "wegent-sites"
 version = "0.1.0"
 dependencies = [
@@ -5138,6 +6281,63 @@ dependencies = [
  "wegent-backend-config",
  "wegent-http-compat",
  "wegent-identity",
+]
+
+[[package]]
+name = "wegent-skill-market"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http-server",
+ "serde",
+ "serde_json",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
+name = "wegent-smart-apps"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "hmac",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-storage",
+]
+
+[[package]]
+name = "wegent-socket-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-socket-io",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-socket-events",
+ "wegent-terminal",
 ]
 
 [[package]]
@@ -5172,6 +6372,78 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-subscriptions"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "chrono-tz",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-mcp-transport",
+ "wegent-python-compat",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-task-export-docx"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "flate2",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-task-mutations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracing",
+ "wegent-access",
+ "wegent-capabilities",
+ "wegent-chat-history",
+ "wegent-execution-runtime",
+ "wegent-executor-manager",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-socket-events",
+ "wegent-task-store",
+ "wegent-task-views",
+]
+
+[[package]]
 name = "wegent-task-store"
 version = "0.1.0"
 dependencies = [
@@ -5187,6 +6459,235 @@ dependencies = [
  "wegent-backend-test-support",
  "wegent-python-compat",
  "wegent-resource-store",
+]
+
+[[package]]
+name = "wegent-task-views"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-attachment-links",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-backend-users",
+ "wegent-capabilities",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-media",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-storage",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-tasks"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-teams"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-capabilities",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-terminal"
+version = "0.1.0"
+dependencies = [
+ "brz-redis 0.0.18",
+ "brz-socket-io",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+]
+
+[[package]]
+name = "wegent-video-jobs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "brz-schedule",
+ "chrono",
+ "futures-util",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-access",
+ "wegent-attachment-links",
+ "wegent-attachments",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-celery",
+ "wegent-execution-completion",
+ "wegent-execution-preparation",
+ "wegent-identity",
+ "wegent-job-runtime",
+ "wegent-media",
+ "wegent-network-policy",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-socket-events",
+ "wegent-task-store",
+ "wegent-task-views",
+]
+
+[[package]]
+name = "wegent-web-content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brotli",
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "flate2",
+ "md-5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-knowledge",
+ "wegent-network-policy",
+ "wegent-python-compat",
+ "zstd",
+]
+
+[[package]]
+name = "wegent-wework-transcripts"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-mysql",
+ "chrono",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-storage",
+]
+
+[[package]]
+name = "wegent-workspace-archive"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "chrono-tz",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-executor-manager",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-storage",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-workspaces"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
 ]
 
 [[package]]

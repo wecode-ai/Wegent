@@ -298,7 +298,7 @@ fn shared_startup_watchdog_preserves_another_thread_preparation() {
                     bot: json!([{"shell_type":"ClaudeCode"}]),
                     ..ExecutionRequest::default()
                 }, CodexAppServerTurnOptions {
-                    thread_started: Some(Box::new(move |id| {
+                    thread_started: Some(Box::new(move |id, _, _| {
                         if id == "thread-1" { fs::write(admitted, "ready").unwrap(); }
                     })),
                     ..CodexAppServerTurnOptions::default()

@@ -1,51 +1,66 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import '@/i18n'
+import { expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
+import '@/i18n'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import { IssueExistingTaskAction } from './IssueExistingTaskAction'
 
-const issue = {
-  id: 'ISSUE-1',
-  cloud_project_id: 'project',
-  project_store: 'backend',
-} as CloudLoopItem
-const work = {
-  projects: [],
-  chats: [
-    {
-      deviceId: 'device',
-      workspacePath: '/repo',
-      tasks: [{ taskId: 'task', title: 'Existing task', runtime: 'codex' }],
-    },
-  ],
-} as unknown as RuntimeWorkListResponse
+it('only excludes automatic memory reviews from the tasks available to link', async () => {
+  const user = userEvent.setup()
+  const bindTask = vi.fn().mockResolvedValue(undefined)
+  const title = '分身记忆整理'
+  const task = { title, runtime: 'codex', workspacePath: '/workspace' } as const
+  const automatic = {
+    ...task,
+    taskId: 'automatic-memory',
+    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+  }
+  const manual = { ...task, taskId: 'manual-memory' }
+  const weekly = {
+    ...task,
+    taskId: 'weekly-review',
+    title: 'Weekly review',
+    runtimeHandle: { origin: { type: 'stand_in_schedule', weeklyReview: true } },
+  }
+  const workspace = { available: true, workspacePath: task.workspacePath }
+  const work: RuntimeWorkListResponse = {
+    projects: [
+      {
+        project: { key: 'workspace', name: 'Workspace' },
+        deviceWorkspaces: [{ ...workspace, deviceId: 'local', tasks: [automatic, weekly] }],
+      },
+    ],
+    chats: [{ ...workspace, deviceId: 'remote', tasks: [automatic, manual] }],
+    totalTasks: 4,
+  }
 
-describe('IssueExistingTaskAction', () => {
-  it('uses the supplied store port and refreshes the shared editor after linking', async () => {
-    const port = { bindTask: vi.fn().mockResolvedValue(undefined), unbindTask: vi.fn() }
-    const onLinked = vi.fn()
-    const user = userEvent.setup()
-    render(
-      <IssueExistingTaskAction
-        source={{ work, port }}
-        issue={issue}
-        project={{ projectStore: 'backend', projectId: 'project' }}
-        bindings={[]}
-        onLinked={onLinked}
-      />
-    )
-    await user.click(screen.getByTestId('issue-link-existing-task'))
-    await user.click(screen.getByText('Existing task'))
-    await waitFor(() => expect(onLinked).toHaveBeenCalledOnce())
-    expect(port.bindTask).toHaveBeenCalledWith(
-      'ISSUE-1',
-      expect.objectContaining({ deviceId: 'device', taskId: 'task' }),
-      'Existing task',
-      null
-    )
-    await user.click(screen.getByTestId('issue-link-existing-task'))
-    expect(screen.queryByText('Existing task')).not.toBeInTheDocument()
-  })
+  render(
+    <IssueExistingTaskAction
+      source={{ work, port: { bindTask, unbindTask: vi.fn() } }}
+      issue={{ id: 'ISSUE-1' } as CloudLoopItem}
+      project={{ projectStore: 'backend', projectId: 'project' }}
+      bindings={[]}
+      onLinked={vi.fn()}
+    />
+  )
+
+  await user.click(screen.getByTestId('issue-link-existing-task'))
+  expect(await screen.findByTestId('issue-existing-task-remote-manual-memory')).toBeVisible()
+  expect(screen.getByTestId('issue-existing-task-local-weekly-review')).toBeVisible()
+  expect(screen.queryByTestId('issue-existing-task-local-automatic-memory')).toBeNull()
+  expect(screen.queryByTestId('issue-existing-task-remote-automatic-memory')).toBeNull()
+
+  const search = screen.getByTestId('issue-existing-task-search')
+  await user.type(search, automatic.taskId)
+  expect(screen.queryByTestId('issue-existing-task-remote-automatic-memory')).toBeNull()
+  await user.clear(search)
+  await user.type(search, title)
+  await user.click(screen.getByTestId('issue-existing-task-remote-manual-memory'))
+  expect(bindTask).toHaveBeenCalledExactlyOnceWith(
+    'ISSUE-1',
+    expect.objectContaining({ deviceId: 'remote', taskId: manual.taskId }),
+    title,
+    null
+  )
 })

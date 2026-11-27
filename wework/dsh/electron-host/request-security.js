@@ -1,5 +1,6 @@
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '[::1]']
+const RPC_BODY_TIMEOUT_MS = 15_000
 
 /** Protect every Wework HTTP route with the existing DSH browser session. */
 export function createRequestSecurity(connection, port) {
@@ -15,14 +16,17 @@ export function createRequestSecurity(connection, port) {
   const rejection = req =>
     trustedLocalRequest(req, authorities) ? connection.requestRejection(req) : 403
   return Object.freeze({
-    wrap(handler) {
+    wrap(handler, { rpc = false, rpcTimeoutMs = 125_000 } = {}) {
       return (req, res) => {
         const status = rejection(req)
-        if (status === undefined) return handler(req, res)
+        if (status === undefined) {
+          return rpc ? guardRpc(req, res, handler, rpcTimeoutMs) : handler(req, res)
+        }
         const code = status === 401 ? 'unauthorized' : 'forbidden'
         res.writeHead(status, {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
+          connection: 'close',
         })
         res.end(JSON.stringify({ ok: false, error: { code, message: code, retryable: false } }))
       }
@@ -37,6 +41,65 @@ export function createRequestSecurity(connection, port) {
       }
     },
   })
+}
+
+async function guardRpc(req, res, handler, rpcTimeoutMs) {
+  const socket = res.socket ?? req.socket
+  const route = req.url?.split('?')[0]
+  const header = req.headers['x-request-id']
+  const requestId =
+    typeof header === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(header) ? header : undefined
+  const report = (event, extra = {}) =>
+    console.info(
+      '[wework-http] RPC diagnostic ' + JSON.stringify({ route, requestId, event, ...extra })
+    )
+  res.once('finish', () => {
+    stopDeadline()
+    if (res.statusCode < 400) return
+    const status = res.statusCode
+    report('error_response', { status })
+    socket?.once?.('close', hadError => report('connection_closed', { status, hadError }))
+  })
+  const fail = (status, code) => {
+    report('rpc_guard', { code, headersSent: res.headersSent })
+    if (res.destroyed || res.writableEnded) return
+    if (res.headersSent) {
+      res.destroy()
+      return
+    }
+    try {
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'close',
+      })
+      res.end(JSON.stringify({ ok: false, error: { code, message: code } }))
+    } catch {
+      res.destroy()
+    }
+  }
+  const bodyDeadline = setTimeout(() => fail(408, 'body_timeout'), RPC_BODY_TIMEOUT_MS)
+  const responseDeadline = setTimeout(() => fail(504, 'rpc_timeout'), rpcTimeoutMs)
+  bodyDeadline.unref()
+  responseDeadline.unref()
+  const stopBodyDeadline = () => clearTimeout(bodyDeadline)
+  const stopDeadline = () => {
+    stopBodyDeadline()
+    clearTimeout(responseDeadline)
+    req.off('end', stopBodyDeadline)
+    res.off('close', stopDeadline)
+  }
+  req.once('end', stopBodyDeadline)
+  res.once('close', stopDeadline)
+  try {
+    await handler(req, res)
+    // The DSH HTTP middleware can finish writing after res.end() returns.
+    if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+      fail(500, 'response_not_finished')
+    }
+  } catch {
+    fail(500, 'rpc_handler_failed')
+  }
 }
 
 function trustedLocalRequest(req, authorities) {

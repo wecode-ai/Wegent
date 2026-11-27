@@ -1,4 +1,18 @@
-import { useContext, useState } from 'react'
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
+import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import {
+  delegationResultLabel,
+  dingTalkInboxScope,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
+import type { RuntimeTaskAddress } from '@/types/api'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { pendingIssueHumanRequests } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -8,21 +22,13 @@ import {
   LoaderCircle,
   Settings,
 } from 'lucide-react'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
+import { useState } from 'react'
+import { StandInConversation } from './StandInConversation'
+import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { useStandInInbox } from './useStandInInbox'
-import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
-import type { CollaborationProject } from '@wegent/collaboration'
-import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
-import { pendingIssueHumanRequests } from '@wegent/collaboration'
-import { StandInConversation } from './StandInConversation'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 
 type Props = {
   services: WorkbenchServices
@@ -31,6 +37,7 @@ type Props = {
   localDeviceId: string
   active: boolean
   settings: PersonalStandInSettings
+  account?: PersonalAssistantAccount
   projects: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -39,24 +46,22 @@ type Props = {
 /** Share the personal assistant identity while keeping collaboration history separate. */
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
+  const definition = props.account?.definitions.find(item => item.roleId === '@primary')
+  const conversationDevice = definition?.bot.spec?.execution_policy?.environment_id ?? deviceId
   const { t } = useTranslation('common')
-  const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')
   const inbox = useStandInInbox(
     services.standInApi,
     userId,
     deviceId,
-    active && (view === 'list' || view === 'conversation')
+    active && (view === 'list' || view === 'conversation'),
+    dingTalkInboxScope(settings.primary?.delegation)
   )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
-  const items = mergeStandInWorkItems(
-    workbench?.runtimeTaskReminders.items ?? [],
-    inbox.items,
-    deviceId,
-    projects
-  )
+  const items = mergeStandInWorkItems(taskReminderItems, inbox.items, deviceId, projects)
     .filter(item => {
       const origin = standInOrigin(item)
       return (
@@ -100,7 +105,8 @@ export function StandInHomeWorkspace(props: Props) {
     <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-workspace">
       <header className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         {view !== 'list' && view !== 'conversation' && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="personal-home-work-back"
             aria-label={t('personalHome.workList')}
@@ -108,7 +114,7 @@ export function StandInHomeWorkspace(props: Props) {
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-          </button>
+          </ControlButton>
         )}
         <h2 className="min-w-0 flex-1 truncate font-medium">
           {view === 'list' || view === 'conversation'
@@ -116,14 +122,15 @@ export function StandInHomeWorkspace(props: Props) {
             : opened.find(item => item.key === view)?.title}
         </h2>
         {(view === 'list' || view === 'conversation') && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="personal-home-assistant-view-toggle"
             onClick={() => setView(view === 'list' ? 'conversation' : 'list')}
             className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm hover:bg-muted md:min-h-8"
           >
             {t(view === 'list' ? 'personalHome.conversation' : 'personalHome.workList')}
-          </button>
+          </ControlButton>
         )}
         {view === 'conversation' && (
           <span
@@ -141,7 +148,8 @@ export function StandInHomeWorkspace(props: Props) {
           </span>
         )}
         {(view === 'list' || view === 'conversation') && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="personal-home-assistant-settings"
             onClick={() => navigateTo('/stand-in?profileId=@primary')}
@@ -149,7 +157,7 @@ export function StandInHomeWorkspace(props: Props) {
           >
             <Settings aria-hidden="true" className="h-4 w-4" />
             {t('personalHome.assistantSettings')}
-          </button>
+          </ControlButton>
         )}
       </header>
       <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-work-list">
@@ -164,8 +172,9 @@ export function StandInHomeWorkspace(props: Props) {
               api={services.standInApi}
               services={services}
               userId={userId}
-              deviceId={deviceId}
-              settings={settings.primary}
+              deviceId={conversationDevice}
+              settings={conversationDevice === deviceId ? settings.primary : undefined}
+              definition={definition}
               scope="collaboration"
               active={active && view === 'conversation'}
               onOpenTask={props.onOpenTask}
@@ -187,7 +196,9 @@ export function StandInHomeWorkspace(props: Props) {
             <section className="p-4" data-testid="personal-home-collaboration-pending">
               <h3 className="mb-2 font-medium">{t('personalHome.needsInput')}</h3>
               {props.collaborationWork.pendingIssues.map(issue => (
-                <button
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="button"
                   key={issue.id}
                   data-testid={`personal-home-pending-${issue.id}`}
@@ -198,21 +209,22 @@ export function StandInHomeWorkspace(props: Props) {
                   <span className="mt-1 line-clamp-3 block text-sm text-text-secondary">
                     {pendingIssueHumanRequests(issue)[0]?.question}
                   </span>
-                </button>
+                </ControlButton>
               ))}
             </section>
           )}
           {inbox.error && (
             <div role="alert" className="p-4 text-sm text-error">
               {inbox.error}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="personal-home-work-retry"
                 onClick={inbox.refresh}
                 className="ml-2 min-h-11 underline md:min-h-8"
               >
                 {t('standIn.reload')}
-              </button>
+              </ControlButton>
             </div>
           )}
           {!inbox.scope && !inbox.error && (
@@ -265,6 +277,34 @@ export function StandInHomeWorkspace(props: Props) {
                               ? CircleAlert
                               : Circle
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
+                      const decisionLabel = delegationResultLabel(work?.delegationResult)
+                      if (work?.source.delegated && !work.task) {
+                        const takenOver = work.takenOverAt || work.delegationResult?.takenOver
+                        const ownerLabel = 'standIn.dingtalk_delegation.result_taken_over'
+                        return (
+                          <div
+                            key={item.key}
+                            data-testid={`personal-home-delegated-work-${item.task.taskId}`}
+                            className="px-4 py-3 text-sm"
+                          >
+                            <p className="font-medium">{item.task.title}</p>
+                            <p>
+                              {t(
+                                decisionLabel ??
+                                  (takenOver
+                                    ? ownerLabel
+                                    : `standIn.workspace.inbox_${work.status}`)
+                              )}
+                            </p>
+                            {decisionLabel && takenOver && <p>{t(ownerLabel)}</p>}
+                            {work.delegationResult?.reason && (
+                              <p className="break-words text-xs text-text-secondary">
+                                {work.delegationResult.reason}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      }
                       const status =
                         work && work.status !== 'sent'
                           ? t(`standIn.workspace.inbox_${work.status}`)
@@ -272,7 +312,9 @@ export function StandInHomeWorkspace(props: Props) {
                             ? t('personalHome.waitingInput')
                             : t(`standIn.personal.activity_${standInState(item).status}`)
                       return (
-                        <button
+                        <ControlButton
+                          variant="primary"
+                          size="sm"
                           type="button"
                           key={item.key}
                           data-testid={`personal-home-work-${item.task.taskId}`}
@@ -299,7 +341,7 @@ export function StandInHomeWorkspace(props: Props) {
                             aria-hidden="true"
                             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-opacity group-hover/work:opacity-100 group-focus-visible/work:opacity-100"
                           />
-                        </button>
+                        </ControlButton>
                       )
                     })}
                   </div>

@@ -57,7 +57,7 @@ fn official_openai_proxy_upstream(
         native_namespace_tools: true,
         // Official Responses requests keep their native shape. The proxy
         // only sanitizes non-portable history and the first switch request.
-        codex_request_mode: local_model_proxy::CodexRequestMode::Passthrough,
+        codex_request_mode: local_model_proxy::CodexRequestMode::OfficialSubscription,
         api_key: String::new(),
         default_headers: Vec::new(),
         proxy_url: runtime_proxy_url(&request.model_config).map(str::to_owned),
@@ -73,6 +73,7 @@ pub(super) fn configure_request_provider(
     launch: &mut CodexLaunchConfig,
     request: &ExecutionRequest,
     route_scope: &str,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<(), String> {
     let upstream = request_upstream(request)?;
     let route = upstream
@@ -85,19 +86,24 @@ pub(super) fn configure_request_provider(
                 "direct_payload_provider"
             }
         });
-    log_route(request, route)?;
+    let provider = request_provider(request)?;
+    launch.inference_model_provider = Some(provider.clone());
+    log_route(request, route, &provider)?;
     if let Some((mut upstream, _)) = upstream {
         inject_session_headers(&mut upstream.default_headers, &request.task_id);
+        upstream.routing_model_id = codex_request_model(request);
+        let official_websocket = upstream.is_official_chatgpt_codex()
+            && native_provider::official_websocket_enabled(&request_home(request)?)?;
         configure_codex_router(
             launch,
             route_scope,
             upstream,
-            codex_request_model(request),
             request_model_switched(request),
             vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
+            official_websocket,
+            gateway_credentials,
         );
     } else {
-        let provider = request_provider(request)?;
         launch.model_provider = Some(codex_model_catalog::PROVIDER_ID.to_owned());
         let headers = if is_builtin_codex_provider(&provider) {
             Vec::new()
@@ -137,13 +143,13 @@ fn request_provider(request: &ExecutionRequest) -> Result<String, String> {
     )
 }
 
-fn log_route(request: &ExecutionRequest, route: &str) -> Result<(), String> {
+fn log_route(request: &ExecutionRequest, route: &str, provider: &str) -> Result<(), String> {
     log_executor_event(
         "codex model route selected",
         &[
             ("task_id", request.task_id.clone()),
             ("route", route.to_owned()),
-            ("provider", request_provider(request)?),
+            ("provider", provider.to_owned()),
             ("model", codex_request_model(request).unwrap_or_default()),
             (
                 "payload_base_url_present",
@@ -190,21 +196,23 @@ experimental_bearer_token="must-not-select"
             }),
             ..ExecutionRequest::default()
         };
-        let (upstream, source) = request_upstream(&request).unwrap().unwrap();
+        let (mut upstream, source) = request_upstream(&request).unwrap().unwrap();
         assert_eq!(source, "local_proxy_official_subscription");
         assert!(upstream.is_official_chatgpt_codex());
         assert!(upstream.api_key.is_empty());
         assert_eq!(upstream.base_url, "http://127.0.0.1:4567/backend-api/codex");
         assert_eq!(
             upstream.codex_request_mode,
-            local_model_proxy::CodexRequestMode::Passthrough
+            local_model_proxy::CodexRequestMode::OfficialSubscription
         );
         let mut launch = CodexLaunchConfig::default();
+        upstream.routing_model_id = Some("gpt-test".to_owned());
         configure_codex_router(
             &mut launch,
             "official-chatgpt-test",
             upstream,
-            Some("gpt-test".to_owned()),
+            false,
+            None,
             false,
             None,
         );
@@ -216,7 +224,7 @@ experimental_bearer_token="must-not-select"
         assert_eq!(profile["requires_openai_auth"], true);
         assert_eq!(profile["wire_api"], "responses");
         assert_eq!(profile["supports_websockets"], false);
-        assert_eq!(profile["supports_standalone_web_search"], false);
+        assert_eq!(profile["supports_standalone_web_search"], true);
         assert!(profile.get("auth").is_none());
         assert!(profile["base_url"]
             .as_str()

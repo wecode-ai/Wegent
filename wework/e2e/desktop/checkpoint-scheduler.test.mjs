@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
@@ -135,7 +135,7 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
     checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
     resourceFor: () => null,
-    exclusiveFor: id => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(id),
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
       started.push(id)
       active.add(id)
@@ -149,31 +149,86 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
   assert.deepEqual(overlaps, [])
 })
 
+test('keeps the strict runtime load budget isolated from other Electron workloads', async () => {
+  const checkpoint = 'runtime-load-performance'
+  const started = []
+  const active = new Set()
+  const overlaps = []
+
+  await runWithCheckpointResources({
+    checkpoints: ['independent-a', checkpoint, 'independent-b'],
+    workerCount: 4,
+    resourceFor: () => null,
+    exclusiveFor: isResourceExclusiveCheckpoint,
+    run: async id => {
+      started.push(id)
+      active.add(id)
+      if (active.has(checkpoint) && active.size > 1) overlaps.push([...active])
+      await new Promise(resolve => setImmediate(resolve))
+      active.delete(id)
+    },
+  })
+
+  assert.equal(started[0], checkpoint)
+  assert.deepEqual(overlaps, [])
+})
+
+test('isolates the idle and stream recovery CPU benchmarks on Linux Core only', async () => {
+  const benchmarks = ['idle-executor-requests', 'executor-stream-recovery']
+  const peers = ['collaboration-milestones', 'streaming-conversation-switching']
+  const completed = []
+  const active = new Set()
+
+  await runWithCheckpointResources({
+    checkpoints: [...peers, ...benchmarks],
+    workerCount: 4,
+    resourceFor: linuxCoreCheckpointResources,
+    exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, true),
+    run: async checkpoint => {
+      active.add(checkpoint)
+      if (benchmarks.includes(checkpoint)) assert.deepEqual([...active], [checkpoint])
+      else assert.deepEqual(completed.slice(0, benchmarks.length), benchmarks)
+      await new Promise(resolve => setImmediate(resolve))
+      active.delete(checkpoint)
+      completed.push(checkpoint)
+    },
+  })
+
+  for (const checkpoint of benchmarks) assert.equal(isResourceExclusiveCheckpoint(checkpoint), false)
+})
+
 for (const checkpoint of ['python-runtime', 'plugin-development']) {
-  test(`separates Linux Core ${checkpoint} from the competing cloud fixtures`, async () => {
-    const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
-    const independent = 'stand-in-memory-timer'
+  test(`separates Linux Core ${checkpoint} from the competing checkpoints`, async () => {
+    const peers = [
+      'collaboration-shared-core',
+      'collaboration-templates',
+      'collaboration-template-app-device-routing',
+      'claude-runtime',
+      'conversation-state',
+      'stand-in-sessions',
+    ]
+    const independent = 'tray-lifecycle'
     const active = new Set()
     let independentRanWithPython = false
-    let cloudFixturesRanTogether = false
+    let peersRanTogether = false
 
     await runWithCheckpointResources({
-      checkpoints: [checkpoint, independent, ...cloudCheckpoints],
+      checkpoints: [checkpoint, independent, ...peers],
       workerCount: 4,
       resourceFor: linuxCoreCheckpointResources,
       run: async id => {
         active.add(id)
         if (active.has(checkpoint)) {
-          assert.ok(cloudCheckpoints.every(cloud => !active.has(cloud)))
+          assert.ok(peers.every(peer => !active.has(peer)))
           independentRanWithPython ||= active.has(independent)
         }
-        cloudFixturesRanTogether ||= cloudCheckpoints.every(cloud => active.has(cloud))
+        peersRanTogether ||= peers.filter(peer => active.has(peer)).length > 1
         await new Promise(resolve => setImmediate(resolve))
         active.delete(id)
       },
     })
 
     assert.equal(independentRanWithPython, true)
-    assert.equal(cloudFixturesRanTogether, true)
+    assert.equal(peersRanTogether, true)
   })
 }

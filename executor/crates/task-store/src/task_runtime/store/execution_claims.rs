@@ -376,6 +376,12 @@ impl LocalTaskStore {
         &self,
         runtime_task_id: &str,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if self
+            .execution_by_runtime_task_id(runtime_task_id)?
+            .is_none()
+        {
+            return Ok(None);
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let timestamp = now();

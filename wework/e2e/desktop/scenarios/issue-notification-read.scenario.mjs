@@ -86,7 +86,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         assert.equal(inbox.items.find(item => item.id === notices[2].id).read_at, null)
         // No manual notification refresh: the read response must update the badge immediately.
         await control.command('waitFor', BADGE, { text: String(2 - index) })
-        await control.command('click', `${ACTIVE} [data-testid="cloud-todo-detail-close"]`)
+        await control.command(
+          'clickWhenEnabled',
+          `${ACTIVE} [data-testid="cloud-todo-detail-close"]`
+        )
         // The board stays covered until the drawer's exit animation commits.
         await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
           visible: false,

@@ -565,6 +565,167 @@ fn rejects_invalid_chat_request() {
 }
 
 #[test]
+fn request_adapters_keep_tool_results_next_to_their_calls() {
+    let text = json!({"type":"output_text","text":"Checking history","annotations":[]});
+    let empty = json!({"type":"output_text","text":"","annotations":[]});
+    let commentary = |content| json!({"type":"message","role":"assistant","content":content});
+    let call = |id| json!({"type":"function_call","name":"exec","call_id":id,"arguments":"{}"});
+    let output = |id| json!({"type":"function_call_output","call_id":id,"output":"done"});
+    let boundary = json!({"type":"message","role":"user","content":"Continue"});
+    let search = json!({"type":"tool_search_call","execution":"server","arguments":{}});
+    let search_output = json!({"type":"tool_search_output","execution":"server","tools":[]});
+    let input = json!([
+        call("exec"),
+        commentary(json!([empty])),
+        output("exec"),
+        call("exec_0"),
+        call("exec_1"),
+        output("exec_0"),
+        commentary(json!([empty, text])),
+        search,
+        search_output,
+        output("exec_1"),
+        call("exec_2"),
+        commentary(json!([text])),
+        boundary,
+        output("exec_2")
+    ]);
+    let expected = json!([
+        call("exec"),
+        output("exec"),
+        commentary(json!([text])),
+        call("exec_0"),
+        call("exec_1"),
+        output("exec_0"),
+        search,
+        search_output,
+        output("exec_1"),
+        call("exec_2"),
+        commentary(json!([text])),
+        boundary,
+        output("exec_2")
+    ]);
+    let body = serde_json::to_vec(&json!({"model":"test-model","input":input})).unwrap();
+    let (prepared, _, _) = prepare_request("openai-responses", false, None, &body).unwrap();
+    let prepared: Value = serde_json::from_slice(&prepared).unwrap();
+    assert_eq!(prepared["input"], expected);
+
+    let ordered_body = serde_json::to_vec(&json!({"model":"test-model","input":expected})).unwrap();
+    for api_format in ["openai-chat-completions", "anthropic-messages"] {
+        let (actual, _, _) = prepare_request(api_format, false, None, &body).unwrap();
+        let (expected, _, _) = prepare_request(api_format, false, None, &ordered_body).unwrap();
+        assert_eq!(actual, expected, "{api_format}");
+    }
+}
+
+#[test]
+fn responses_merges_exec_result_and_notify_for_one_call() {
+    let body = json!({"model":"test-model","input":[
+        {"type":"function_call","call_id":"call_a","name":"exec","arguments":"{}"},
+        {"type":"function_call_output","call_id":"call_a","output":"cell running"},
+        {"type":"function_call_output","call_id":"call_a","name":"exec","output":"queued"},
+        {"type":"function_call","call_id":"call_a","name":"exec","arguments":"{}"},
+        {"type":"function_call_output","call_id":"call_a","output":"next invocation"}
+    ]});
+    let (prepared, _, _) = prepare_request(
+        "openai-responses",
+        false,
+        None,
+        &serde_json::to_vec(&body).unwrap(),
+    )
+    .unwrap();
+    let prepared: Value = serde_json::from_slice(&prepared).unwrap();
+    let items = prepared["input"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[3]["output"], "next invocation");
+    assert_eq!(items[1]["output"], "cell running\nqueued");
+}
+
+#[test]
+fn request_adapters_discard_nameless_function_calls_and_their_rejections() {
+    let call = |id, call_id, name| json!({"type":"function_call","id":id,"call_id":call_id,"name":name,"arguments":"{}"});
+    let output = |id, text| json!({"type":"function_call_output","call_id":id,"output":text});
+    let request = |input: Vec<Value>| {
+        serde_json::to_vec(&json!({"model":"test-model","input":input})).unwrap()
+    };
+    let normalized_empty_id = normalized_responses_api_id("");
+    let valid_call = call("fc_valid", "exec_0", "exec");
+    let valid_output = output("exec_0", "done");
+    let detached_context = output("", "external context");
+    let actual = request(vec![
+        valid_call.clone(),
+        call("fc_bad_1", &normalized_empty_id, ""),
+        call("fc_bad_2", &normalized_empty_id, ""),
+        call("fc_bad_3", "", ""),
+        valid_output.clone(),
+        output(&normalized_empty_id, "unsupported call: "),
+        output(&normalized_empty_id, "unsupported call: "),
+        output("", "unsupported call: "),
+        detached_context,
+    ]);
+    let expected = vec![
+        valid_call,
+        valid_output,
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "external context"}]
+        }),
+    ];
+    for api_format in [
+        "openai-responses",
+        "openai-chat-completions",
+        "anthropic-messages",
+    ] {
+        let (actual, _, _) = prepare_request(api_format, false, None, &actual).unwrap();
+        let mut expected = expected.clone();
+        if api_format == "openai-responses" {
+            expected[2]["content"].as_array_mut().unwrap().insert(
+                0,
+                json!({"type":"input_text","text":"[tool_result without a matching tool_call]"}),
+            );
+        }
+        let (expected, _, _) =
+            prepare_request(api_format, false, None, &request(expected)).unwrap();
+        let actual: Value = serde_json::from_slice(&actual).unwrap();
+        let expected: Value = serde_json::from_slice(&expected).unwrap();
+        assert_eq!(actual, expected, "{api_format}");
+    }
+}
+
+#[test]
+fn responses_preserves_native_parts_and_incremental_tool_results() {
+    let file = json!({"type":"input_file","file_id":"file_1"});
+    let image = json!({"type":"input_image","image_url":"https://example.test/image.png"});
+    let text = json!({"type":"input_text","text":"external context"});
+    let result = json!({"type":"function_call_output","call_id":"call_previous","output":"done"});
+    let body = json!({
+        "model": "test-model",
+        "previous_response_id": "resp_previous",
+        "input": [
+            result,
+            {"type":"function_call_output","output":[text, file, image]}
+        ]
+    });
+    let body = serde_json::to_vec(&body).unwrap();
+    let (prepared, _, _) = prepare_request("openai-responses", false, None, &body).unwrap();
+    let prepared: Value = serde_json::from_slice(&prepared).unwrap();
+    assert_eq!(prepared["previous_response_id"], "resp_previous");
+    assert_eq!(prepared["input"][0], result);
+    assert_eq!(
+        prepared["input"][1],
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type":"input_text","text":"[tool_result without a matching tool_call]"},
+                text, file, image
+            ]
+        })
+    );
+}
+
+#[test]
 fn normalizes_cross_protocol_history_ids_for_native_responses_models() {
     let body = cross_protocol_history_with_invalid_ids();
 
@@ -731,4 +892,55 @@ fn rate_limit_retry_delay_falls_back_to_configured_backoff_sequence() {
         rate_limit_retry_delay(&headers, 20),
         Duration::from_secs(60)
     );
+}
+
+#[test]
+fn codex_external_context_without_tool_ids_stays_user_content() {
+    // The failed request carried these three context records immediately after
+    // an assistant reply. Only the preceding fixture tool has an actual call.
+    let context = [
+        r#"[{"providerId":"example/source"}]"#,
+        "Saved memories: []",
+        r#"{"items":[{"taskId":"fixture"}]}"#,
+    ];
+    let input = serde_json::to_vec(&json!({"input":[
+        {"type":"message","role":"user","content":"Test"},
+        {"type":"function_call","call_id":"fixture_call","name":"lookup","arguments":"{}"},
+        {"type":"function_call_output","call_id":"fixture_call","output":"fixture result"},
+        {"type":"message","role":"assistant","content":"Previous response."},
+        {"type":"function_call_output","call_id":"","output":context[0]},
+        {"type":"function_call_output","output":[{"type":"input_text","text":context[1]}]},
+        {"type":"function_call_output","call_id":"","output":context[2]},
+        {"type":"message","role":"user","content":"Next message."}
+    ]}))
+    .unwrap();
+    let prepare = |protocol| {
+        let (body, _, _) = prepare_request(protocol, false, None, &input).unwrap();
+        serde_json::from_slice::<Value>(&body).unwrap()
+    };
+
+    let chat = prepare("openai-chat-completions");
+    let messages = chat["messages"].as_array().unwrap();
+    assert_eq!(messages.iter().filter(|m| m["role"] == "tool").count(), 1);
+    assert_eq!(messages[2]["tool_call_id"], "fixture_call");
+    for (index, text) in context.into_iter().enumerate() {
+        assert_eq!(messages[index + 4], json!({"role":"user","content":text}));
+    }
+
+    let anthropic = prepare("anthropic-messages");
+    let messages = anthropic["messages"].as_array().unwrap();
+    let tool_results: Vec<_> = messages
+        .iter()
+        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_result")
+        .collect();
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0]["tool_use_id"], "fixture_call");
+    for text in context {
+        assert!(messages
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .any(|block| block["type"] == "text" && block["text"] == text));
+    }
 }

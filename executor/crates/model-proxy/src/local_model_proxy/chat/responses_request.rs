@@ -228,13 +228,12 @@ pub(crate) fn responses_to_responses(
         }
     }
 
-    if let Some(tools) = result.get("tools").and_then(Value::as_array) {
+    if let Some(tools) = if bridge_namespace_tools || bridge_tool_search {
+        Some(&effective_tools)
+    } else {
+        result.get("tools").and_then(Value::as_array)
+    } {
         if !tools.is_empty() {
-            let tools = if bridge_namespace_tools {
-                effective_tools.as_slice()
-            } else {
-                tools.as_slice()
-            };
             result["tools"] = Value::Array(responses_tools(
                 tools,
                 &context,
@@ -294,6 +293,9 @@ pub(super) fn convert_responses_input_items(
     let mut converted = Vec::new();
     let mut pending_tool_image_content = Vec::new();
     for item in items {
+        if bridge_tool_search && is_unlinked_server_tool_search(item) {
+            continue;
+        }
         let item_type = item.get("type").and_then(Value::as_str);
         if !is_tool_output_item(item_type) {
             flush_tool_image_content_to_responses(&mut converted, &mut pending_tool_image_content);
@@ -427,6 +429,7 @@ pub(super) fn convert_responses_input_item(
         {
             let mut converted = item.clone();
             converted["type"] = Value::String("function_call".to_owned());
+            converted.as_object_mut().unwrap().remove("id");
             if bridge_namespace_tools {
                 converted["name"] = Value::String(responses_call_wire_name(
                     context,
@@ -457,6 +460,7 @@ pub(super) fn convert_responses_input_item(
                 {
                     let mut converted = item.clone();
                     converted["type"] = Value::String("function_call_output".to_owned());
+                    converted.as_object_mut().unwrap().remove("id");
                     return Ok(converted);
                 }
             }

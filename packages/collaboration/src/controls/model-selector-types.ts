@@ -23,6 +23,7 @@ export interface ModelSelectorProps {
   ) => void;
   openSignal?: number;
   menuPlacement?: "above" | "below";
+  menuAlign?: "start" | "end";
   buttonClassName?: string;
   menuClassName?: string;
   maxClosedWidth?: number;

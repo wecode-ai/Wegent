@@ -85,7 +85,7 @@ class DeliveryService:
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is already completed")
         markdown = values.markdown.encode()
         chat_snapshot = values.chat or self._select_chat_messages(
-            db, item, values.chat_selection
+            db, item, values.chat_selection, user_id
         )
         chat = (
             json.dumps(chat_snapshot, ensure_ascii=False).encode()
@@ -157,6 +157,7 @@ class DeliveryService:
         db: Session,
         item: LoopItem,
         selection: DeliveryChatSelection | None,
+        user_id: int,
     ) -> dict[str, Any] | None:
         if selection is None:
             return None
@@ -196,7 +197,9 @@ class DeliveryService:
         return {
             "selection": selection.model_dump(mode="json"),
             "messages": [
-                project_chat_service.to_view(row, db=db).model_dump(mode="json")
+                project_chat_service.to_shared_view(
+                    row, db=db, viewer_user_id=user_id
+                ).model_dump(mode="json")
                 for row in rows
             ],
         }

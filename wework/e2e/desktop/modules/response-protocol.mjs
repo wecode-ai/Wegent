@@ -608,20 +608,28 @@ function requestAdvertisesViewImageTool(request) {
   return tools.some(tool => tool?.name === 'view_image')
 }
 
-function selectTool(request, name, argumentsValue) {
+function selectTool(request, name, argumentsValue, pluginDisplayName) {
   const tools = wireDeclarations(request, 'responses')
   const matches = tools.filter(
     tool => tool.name === name || (!tool.namespace && tool.name === `functions__${name}`)
   )
-  if (requestAdvertisesProgrammaticExec(request) && matches.length === 0)
+  if (!pluginDisplayName && requestAdvertisesProgrammaticExec(request) && matches.length === 0)
     return programmaticSelection(request, name, argumentsValue)
   assert.equal(matches.length, 1, `Real Codex must advertise exactly one ${name}`)
   const [entry] = matches
+  if (pluginDisplayName) assertMcpToolPlugin(entry, pluginDisplayName)
   return {
     name: entry.name,
     arguments: argumentsValue,
     ...(entry.namespace ? { namespace: entry.namespace } : {}),
   }
+}
+
+function assertMcpToolPlugin(tool, displayName) {
+  assert.ok(
+    tool.description?.includes(`plugin \`${displayName}\``),
+    `MCP tool ${tool.name} did not retain plugin provenance for ${displayName}`
+  )
 }
 
 function selectOfficialPluginMcpTool(request, argumentsValue) {
@@ -645,10 +653,7 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
     'The searched official plugin MCP namespace did not expose exactly one destination confirmation tool'
   )
   const tool = matchingTools[0]
-  assert.ok(
-    tool.description.includes(`plugin \`${OFFICIAL_PLUGIN_DISPLAY_NAME}\``),
-    'The searched MCP tool did not retain official plugin provenance'
-  )
+  assertMcpToolPlugin(tool, OFFICIAL_PLUGIN_DISPLAY_NAME)
   if (tool.codeModeName) {
     for (const name of ['workspacePath', 'targetPath'])
       assert.match(tool.description, new RegExp(`${name}: string`))
@@ -662,7 +667,14 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
-function selectMcpTool(request, namespaceName, toolName, argumentsValue, searchCallId) {
+function selectMcpTool(
+  request,
+  namespaceName,
+  toolName,
+  argumentsValue,
+  searchCallId,
+  pluginDisplayName
+) {
   const advertisedTools = Array.isArray(request.tools) ? request.tools : []
   const searchRequest = searchCallId
     ? { input: request.input?.filter(item => item.call_id === searchCallId) }
@@ -681,6 +693,7 @@ function selectMcpTool(request, namespaceName, toolName, argumentsValue, searchC
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
   assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
+  if (pluginDisplayName) assertMcpToolPlugin(tool, pluginDisplayName)
   if (tool.codeModeName) return programmaticSelection(request, tool.codeModeName, argumentsValue)
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
@@ -709,7 +722,13 @@ function findMcpToolNamespace(tools, toolName, namespaceName) {
   return matches[0]
 }
 
-function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
+function selectMcpToolRequest(
+  request,
+  toolName,
+  argumentsValue,
+  directToolName,
+  pluginDisplayName
+) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
   const namespaceName = directToolName?.startsWith('mcp__')
@@ -721,23 +740,26 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
     toolName,
     namespaceName
   )
-  if (searchedNamespace) {
-    return {
-      mode: 'direct',
-      ...selectMcpTool(request, searchedNamespace.name, toolName, argumentsValue),
-    }
-  }
   const advertisesToolSearch = tools.some(
     tool =>
       tool?.type === 'tool_search' ||
       (tool?.type === 'function' &&
         ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
-  const namespace = findMcpToolNamespace(tools, toolName, namespaceName)
-  if (!advertisesToolSearch && namespace) {
+  const namespace =
+    searchedNamespace ??
+    (!advertisesToolSearch && findMcpToolNamespace(tools, toolName, namespaceName))
+  if (namespace) {
     return {
       mode: 'direct',
-      ...selectMcpTool(request, namespace.name, toolName, argumentsValue),
+      ...selectMcpTool(
+        request,
+        namespace.name,
+        toolName,
+        argumentsValue,
+        undefined,
+        pluginDisplayName
+      ),
     }
   }
   if (!advertisesToolSearch && directToolName) {
@@ -749,7 +771,7 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
     if (advertisedNames.length === 1) {
       return {
         mode: 'direct',
-        ...selectTool(request, advertisedNames[0], argumentsValue),
+        ...selectTool(request, advertisedNames[0], argumentsValue, pluginDisplayName),
       }
     }
   }
@@ -763,11 +785,46 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
 }
 
+function discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName) {
+  if (!searchCallId || !directToolName?.startsWith('mcp__')) return searchCallId
+  const namespace = directToolName.slice(5, directToolName.lastIndexOf('__'))
+  const input = Array.isArray(request.input) ? request.input : []
+  const outputIndex = input.findLastIndex(
+    item => item.type?.endsWith('_call_output') && item.call_id === searchCallId
+  )
+  if (outputIndex < 0) return searchCallId
+  let catalogIndex = -1
+  for (let index = outputIndex + 1; index < input.length; index += 1) {
+    const item = input[index]
+    if (item.type !== 'message' || item.role !== 'developer') continue
+    const text = modelMessageText(item)
+    if (!text.startsWith('<tools>\n') || !text.endsWith('\n</tools>')) continue
+    const lines = text.split('\n')
+    const added = lines.indexOf('Added deferred tool namespaces:')
+    if (added < 0) continue
+    const removed = lines.indexOf('Removed deferred tool namespaces:', added + 1)
+    if (
+      lines
+        .slice(added + 1, removed < 0 ? -1 : removed)
+        .some(line => line === '- ' + namespace || line.startsWith('- ' + namespace + ': '))
+    )
+      catalogIndex = index
+  }
+  return catalogIndex < 0 ? searchCallId : searchCallId + '-catalog-' + catalogIndex
+}
+
 function mcpToolRequestEvents(
   request,
-  { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
+  { toolName, argumentsValue, directToolName, searchCallId, toolCallId, pluginDisplayName }
 ) {
-  const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  const selection = selectMcpToolRequest(
+    request,
+    toolName,
+    argumentsValue,
+    directToolName,
+    pluginDisplayName
+  )
+  searchCallId = discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName)
   if (
     selection.mode === 'search' &&
     searchCallId &&
@@ -953,6 +1010,7 @@ export {
   codexRequestKind,
   handleModelMaintenanceRequest,
   latestModelInputText,
+  modelMessageText,
   isReplyPredictionRequest,
   isReplyPredictionVisionRequest,
   REPLY_PREDICTION_PROMPT,

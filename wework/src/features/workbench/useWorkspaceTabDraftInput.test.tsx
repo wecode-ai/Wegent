@@ -17,9 +17,9 @@ test.each(['', 'Unsent objective'])(
   text => {
     const source = renderHook(() => useWorkspaceTabDraftInput('goal-source'))
     act(() => {
-      source.result.current.setInput('task-a', text)
+      source.result.current.draftStore.write('task-a', text)
       source.result.current.setGoalDraftActiveForScope('task-a', true)
-      source.result.current.setInput('task-b', 'Ordinary draft')
+      source.result.current.draftStore.write('task-b', 'Ordinary draft')
     })
     stageWorkspaceTabTransfer('goal-source')
     source.unmount()
@@ -27,18 +27,18 @@ test.each(['', 'Unsent objective'])(
     const destination = renderHook(() => useWorkspaceTabDraftInput('goal-source'), {
       wrapper: StrictMode,
     })
-    expect(destination.result.current.inputs['task-a'] ?? '').toBe(text)
-    expect(destination.result.current.inputs['task-b']).toBe('Ordinary draft')
+    expect(destination.result.current.draftStore.exportInputs()['task-a'] ?? '').toBe(text)
+    expect(destination.result.current.draftStore.exportInputs()['task-b']).toBe('Ordinary draft')
     expect(destination.result.current.goalDraftActiveByScope).toEqual({ 'task-a': true })
     expect(consumeWorkspaceTabTransfer('goal-source')).toBeNull()
 
     act(() => destination.result.current.setGoalDraftActiveForScope('task-a', false))
     stageWorkspaceTabTransfer('goal-source')
     expect(consumeWorkspaceTabTransfer('goal-source')).toEqual({
-      draftInputByScope: destination.result.current.inputs,
+      draftInputByScope: destination.result.current.draftStore.exportInputs(),
       goalDraftActiveByScope: {},
     })
-    expect(destination.result.current.inputs['task-a'] ?? '').toBe(text)
+    expect(destination.result.current.draftStore.exportInputs()['task-a'] ?? '').toBe(text)
   }
 )
 
@@ -56,13 +56,44 @@ test('replaces returned goal modes in a mounted owner without changing other tab
   stageWorkspaceTabTransfer('goal-returned')
   act(() => acceptWorkspaceTabTransfer('goal-returned'))
 
-  expect(owner.result.current.inputs).toEqual({ 'new-task': 'Returned objective' })
+  expect(owner.result.current.draftStore.exportInputs()).toEqual({
+    'new-task': 'Returned objective',
+  })
   expect(owner.result.current.goalDraftActiveByScope).toEqual({ 'new-task': true })
   expect(other.result.current.goalDraftActiveByScope).toEqual({ 'other-task': true })
 
   publishWorkspaceTabTransferState('goal-returned', { draftInputByScope: {} })
   stageWorkspaceTabTransfer('goal-returned')
   act(() => acceptWorkspaceTabTransfer('goal-returned'))
-  expect(owner.result.current.inputs).toEqual({})
+  expect(owner.result.current.draftStore.exportInputs()).toEqual({})
   expect(owner.result.current.goalDraftActiveByScope).toEqual({})
+})
+
+test('restores a persisted tab draft after a crash remount', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  act(() => {
+    first.result.current.draftStore.write('blank:0', 'Unsent input')
+  })
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  expect(restored.result.current.draftStore.read('blank:0').value).toBe('Unsent input')
+  expect(
+    renderHook(() =>
+      useWorkspaceTabDraftInput('durable-tab', 'account:two')
+    ).result.current.draftStore.read('blank:0').value
+  ).toBe('')
+})
+
+test('restores the active blank chat scope for persisted drafts', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  act(() => first.result.current.persistStandaloneChatKey(3))
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  expect(restored.result.current.initialStandaloneChatKey).toBe(3)
+  expect(
+    renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:two')).result.current
+      .initialStandaloneChatKey
+  ).toBe(0)
 })

@@ -143,6 +143,8 @@ test("delivery inputs select the real image without selecting unrelated UI chang
     "docker/backend/Dockerfile",
     "backend/app/main.py",
     "backend-rs/config/routes.toml",
+    "backend-rs/scripts/start-hybrid-backend.sh",
+    "backend-rs/execution-completion/Cargo.toml",
     "shared/setup.py",
     "chat_shell/pyproject.toml",
     "knowledge_engine/pyproject.toml",
@@ -152,10 +154,14 @@ test("delivery inputs select the real image without selecting unrelated UI chang
   ]) {
     assert.equal(deliveryImageRequired([file]), true, file);
   }
-  assert.equal(
-    deliveryImageRequired(["frontend/src/app/page.tsx", "docs/zh/index.md"]),
-    false,
-  );
+  for (const file of [
+    "frontend/src/app/page.tsx",
+    "docs/zh/index.md",
+    "backend/tests/services/execution/test_stalled_tasks.py",
+    "backend-rs/execution-completion/src/persist.rs",
+  ]) {
+    assert.equal(deliveryImageRequired([file]), false, file);
+  }
   assert.equal(deliveryImageRequired([]), false);
 });
 
@@ -250,9 +256,14 @@ test("independent runtime and delivery jobs retain their deadlines and required 
   assert.equal(delivery.needs, "changes");
   assert.match(delivery.if, /backend_delivery_image/);
   assert.ok(!backend.if.includes("backend_delivery_image"));
-  assert.ok(
-    Object.values(delivery.permissions).every((value) => value === "read"),
-  );
+  assert.deepEqual(delivery.permissions, { contents: "read", packages: "write" });
+  const prCache = delivery.env.DELIVERY_PR_CACHE;
+  assert.match(prCache, /github.event_name == 'pull_request'/);
+  assert.ok(prCache.includes("github.event.pull_request.head.repo.full_name == github.repository"));
+  assert.ok(prCache.includes("wegent-backend-delivery-ci:buildcache-amd64-pr-{1}"));
+  assert.match(prCache, /github.event.pull_request.number/);
+  const login = delivery.steps.find((step) => step.name.startsWith("Log in"));
+  assert.equal(login.if, "env.DELIVERY_PR_CACHE != ''");
   assert.ok(
     !backend.steps.some((step) => step.name.includes("Backend delivery")),
     "Runtime production must not include delivery work",
@@ -266,10 +277,14 @@ test("independent runtime and delivery jobs retain their deadlines and required 
   assert.equal(builds[0].with.load, true);
   assert.equal(builds[0].with.push, false);
   assert.equal(
-    builds[0].with["cache-from"],
+    builds[0].with["cache-from"].trim().split("\n")[0],
     "type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64",
   );
-  assert.equal(builds[0].with["cache-to"], undefined);
+  assert.ok(builds[0].with["cache-from"].includes("format('type=registry,ref={0}', env.DELIVERY_PR_CACHE)"));
+  assert.equal(
+    builds[0].with["cache-to"],
+    "${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}",
+  );
   const verify = delivery.steps.find(
     (step) => step.name === "Verify Backend delivery image",
   );

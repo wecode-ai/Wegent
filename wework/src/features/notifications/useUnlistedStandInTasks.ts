@@ -1,36 +1,98 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { dequal } from 'dequal'
+import {
+  createUnlistedStandInTasksSource,
+  isStandInNotificationTask,
+  type UnlistedTaskCandidate,
+} from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+
+function createReminderProjection() {
+  // Cache immutable rows by both inputs so an interrupted render cannot replace another pair.
+  const projected = new WeakMap<RuntimeTaskReminderItem, WeakMap<object, RuntimeTaskReminderItem>>()
+  const missingLifecycle = {}
+  let previousRows: RuntimeTaskReminderItem[] | undefined
+  const projectRow = (
+    item: RuntimeTaskReminderItem,
+    lifecycle: RuntimeTaskReminderItem['lifecycle']
+  ) => {
+    if (item.lifecycle === lifecycle) return item
+    let byLifecycle = projected.get(item)
+    if (!byLifecycle) {
+      byLifecycle = new WeakMap()
+      projected.set(item, byLifecycle)
+    }
+    const key = lifecycle ?? missingLifecycle
+    const cached = byLifecycle.get(key)
+    if (cached) return cached
+    const next = { ...item, lifecycle }
+    byLifecycle.set(key, next)
+    return next
+  }
+  return (
+    items: RuntimeTaskReminderItem[],
+    loaded: ReadonlyMap<string, RuntimeTaskReminderItem>,
+    tasks: RuntimeTaskLifecycleStoreSnapshot['tasks'],
+    visible: ReadonlySet<string>
+  ) => {
+    let next: RuntimeTaskReminderItem[] | undefined
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]
+      const row = projectRow(item, tasks.get(item.key))
+      if (row === item) continue
+      next ??= items.slice()
+      next[index] = row
+    }
+    for (const item of loaded.values()) {
+      if (visible.has(item.key)) continue
+      const lifecycle = tasks.get(item.key)
+      if (!lifecycle) continue
+      next ??= items.slice()
+      next.push(projectRow(item, lifecycle))
+    }
+    const rows = next ?? items
+    const previous = previousRows
+    if (
+      previous &&
+      previous.length === rows.length &&
+      rows.every((row, index) => row === previous[index])
+    )
+      return previous
+    previousRows = rows
+    return rows
+  }
+}
+
+function needsStandInLookup(task: RuntimeTaskReminderItem['task'] | null): boolean {
+  const handle = task?.runtimeHandle
+  // Native task summaries preserve the origin used by readTask.
+  if (
+    !task ||
+    task.cachedProjection ||
+    task.optimistic ||
+    !handle ||
+    !Object.hasOwn(handle, 'threadId')
+  )
+    return true
+  return isStandInNotificationTask(task)
+}
 
 /** Sidebar project filters must not hide executions from collaboration notifications. */
 export function useUnlistedStandInTasks(
   items: RuntimeTaskReminderItem[],
   snapshot: RuntimeTaskLifecycleStoreSnapshot,
-  reader?: StandInExecutorApi,
-  runtimeApi?: WorkbenchServices['runtimeWorkApi']
+  reader?: Pick<StandInExecutorApi, 'readTask'>
 ): RuntimeTaskReminderItem[] {
-  const [loaded, setLoaded] = useState<Map<string, RuntimeTaskReminderItem>>(new Map())
-  const attempted = useRef(new Map<string, string>())
-  const ordinary = useRef(new Set<string>())
-  const retryTimers = useRef(new Set<ReturnType<typeof setTimeout>>())
-  const mounted = useRef(false)
-  useEffect(() => {
-    const timers = retryTimers.current
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      for (const timer of timers) clearTimeout(timer)
-      timers.clear()
-    }
-  }, [])
-  const pending = useMemo(() => {
-    const visible = new Set(items.map(item => item.key))
-    return [...snapshot.tasks.values()]
-      .filter(task => !visible.has(task.key))
-      .map(task => ({
+  const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
+  const projection = useMemo(() => createReminderProjection(), [])
+  const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
+  const candidates = useMemo(() => {
+    const candidates: UnlistedTaskCandidate[] = []
+    for (const task of snapshot.tasks.values()) {
+      if (visible.has(task.key) || !needsStandInLookup(task.task)) continue
+      candidates.push({
         key: task.key,
         address: task.address,
         signature: JSON.stringify([
@@ -41,97 +103,22 @@ export function useUnlistedStandInTasks(
           task.interactionStatus,
           task.task?.updatedAt,
         ]),
-      }))
-  }, [items, snapshot.tasks])
-
-  useEffect(() => {
-    if (!reader || !runtimeApi) return
-    for (const candidate of pending) {
-      if (ordinary.current.has(candidate.key)) continue
-      if (attempted.current.get(candidate.key) === candidate.signature) continue
-      attempted.current.set(candidate.key, candidate.signature)
-      const read = (attempt: number) => {
-        void (async () => {
-          const result = await reader.readTask(candidate.address.deviceId, candidate.address.taskId)
-          if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature)
-            return
-          if (!result.success || !result.task) {
-            setLoaded(current => {
-              const next = new Map(current)
-              next.delete(candidate.key)
-              return next
-            })
-            return
-          }
-          const response = await runtimeApi.getRuntimeTranscript({
-            ...candidate.address,
-            limit: 1,
-            includeFullContent: false,
-          })
-          if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature)
-            return
-          if (
-            response.origin?.initiatedBy !== 'stand_in' &&
-            !isPersonalStandInTask({
-              task: { ...result.task, runtimeHandle: { origin: response.origin } },
-            })
-          ) {
-            if (response.origin) ordinary.current.add(candidate.key)
-            return
-          }
-          const task = {
-            ...result.task,
-            runtimeHandle: { ...result.task.runtimeHandle, origin: response.origin },
-          }
-          const item: RuntimeTaskReminderItem = {
-            key: candidate.key,
-            address: candidate.address,
-            task,
-            workspace: {
-              deviceId: candidate.address.deviceId,
-              available: true,
-              workspacePath: task.workspacePath,
-              tasks: [task],
-            },
-            projectName: '',
-          }
-          setLoaded(current => new Map(current).set(candidate.key, item))
-        })().catch(error => {
-          if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature)
-            return
-          console.warn(
-            '[Wework] Failed to read unlisted execution for collaboration notifications',
-            {
-              address: candidate.address,
-              error,
-            }
-          )
-          if (attempt >= 2) {
-            attempted.current.delete(candidate.key)
-            return
-          }
-          const timer = setTimeout(
-            () => {
-              retryTimers.current.delete(timer)
-              if (mounted.current && attempted.current.get(candidate.key) === candidate.signature)
-                read(attempt + 1)
-            },
-            500 * (attempt + 1)
-          )
-          retryTimers.current.add(timer)
-        })
-      }
-      read(0)
+      })
     }
-  }, [pending, reader, runtimeApi])
+    return candidates
+  }, [visible, snapshot.tasks])
+  // Keep the subscription's inputs with React state so an abandoned render cannot change them.
+  const [pending, setPending] = useState(candidates)
+  if (!dequal(pending, candidates)) setPending(candidates)
 
-  return useMemo(() => {
-    const visible = new Set(items.map(item => item.key))
-    return [
-      ...items,
-      ...[...loaded.values()].filter(
-        item => !visible.has(item.key) && snapshot.tasks.has(item.key)
-      ),
-    ].map(item => ({ ...item, lifecycle: snapshot.tasks.get(item.key) }))
-  }, [items, loaded, snapshot.tasks])
+  const subscribe = useCallback(
+    (notify: () => void) => source.subscribe(notify, pending),
+    [source, pending]
+  )
+  const loaded = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+
+  return useMemo(
+    () => projection(items, loaded, snapshot.tasks, visible),
+    [projection, items, loaded, snapshot.tasks, visible]
+  )
 }

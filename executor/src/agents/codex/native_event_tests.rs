@@ -93,7 +93,7 @@ async fn run_native_event_case(recover_injection: bool) {
         client.request("thread/goal/set", json!({"threadId":thread,"objective":"Process the connected source event and complete this goal.","status":"blocked","tokenBudget":20000})).await.unwrap();
         let before = client.request("thread/goal/get",json!({"threadId":thread})).await.unwrap();
         let prompt = json!("Continue the original work. Untrusted source data: event-wakeup-source-fact.");
-        let item = json!({"type":"message","id":"wework-event:test-operation","role":"user","content":[{"type":"input_text","text":prompt}]});
+        let item = json!({"type":"message","id":"msg_wework_event_4af404a14e6a5e37428a4d00a0ab1a45","role":"user","content":[{"type":"input_text","text":prompt}]});
         if recover_injection {
             client.request("thread/inject_items",json!({"threadId":thread,"items":[item]})).await.unwrap();
             client.restart().await;
@@ -126,7 +126,10 @@ async fn run_native_event_case(recover_injection: bool) {
             event_goal:Some(admission),resume_thread_id:Some(native_thread),active_turn_started:Some(Box::new(move |thread,turn| { captured_starts.lock().unwrap().push((thread,turn)); })),..Default::default()
         }).await });
         let first = tokio::time::timeout(Duration::from_secs(15),receive.recv()).await.unwrap().unwrap();
-        assert!(first["input"].to_string().contains("event-wakeup-source-fact"));
+        let event = first["input"].as_array().unwrap().iter().find(|input| {
+            input["role"] == "user" && input["content"].to_string().contains("event-wakeup-source-fact")
+        }).expect("the first model request must contain the delivered event");
+        assert_eq!(event["id"], item["id"], "injected message IDs must use the Responses message prefix");
         let active = client.request("thread/goal/get",json!({"threadId":thread})).await.unwrap();
         assert_eq!(active["goal"]["status"],"active","The Goal must be active before the first model response");
         tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -152,7 +155,7 @@ async fn run_native_event_case(recover_injection: bool) {
         let history = client.request("thread/read",json!({"threadId":thread,"includeTurns":true})).await.unwrap();
         let rollout = std::fs::read_to_string(history["thread"]["path"].as_str().unwrap()).unwrap();
         let rows: Vec<Value> = rollout.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
-        assert_eq!(rows.iter().filter(|row|row["type"]=="response_item" && row["payload"]["id"]=="wework-event:test-operation").count(),1);
+        assert_eq!(rows.iter().filter(|row|row["type"]=="response_item" && row["payload"]["id"]==item["id"]).count(),1);
         assert_eq!(rows.iter().filter(|row|row["type"]=="event_msg" && row["payload"]["type"]=="task_started").count(),1,"activation must start exactly one native turn");
         let receipt = crate::agents::codex::event_receipt::read(&home,Path::new(history["thread"]["path"].as_str().unwrap()),thread,&item).unwrap();
         assert!(receipt.injected && receipt.activated && receipt.completed);

@@ -1,9 +1,8 @@
-import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import { useTranslation } from '@/hooks/useTranslation'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
 import type {
   DeviceInfo,
   RuntimeManagedWorktree,
@@ -11,7 +10,20 @@ import type {
   RuntimeWorktreeConversation,
   RuntimeWorktreeSettings,
 } from '@/types/api'
-import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -19,6 +31,10 @@ import {
   SettingsRow,
   SettingsSwitch,
 } from './settings-ui'
+import {
+  createWorktreeSettingsResource,
+  type WorktreeSettingsChange,
+} from './worktreeSettingsResource'
 
 type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
 
@@ -90,7 +106,8 @@ function WorktreeRow({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${item.state === 'restorable' ? 'restore' : 'delete'}-worktree-button-${item.worktreeId}`}
             onClick={item.state === 'restorable' ? onRestore : onDelete}
@@ -107,7 +124,7 @@ function WorktreeRow({
                 ? 'workbench.worktrees_restore'
                 : 'workbench.worktrees_delete'
             )}
-          </button>
+          </ControlButton>
         </div>
       </div>
       <div className="flex flex-col gap-1">
@@ -119,7 +136,8 @@ function WorktreeRow({
         ) : (
           <div className="flex flex-col gap-1">
             {item.conversations.map(conversation => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 key={`${conversation.deviceId}-${conversation.taskId}`}
                 data-testid="worktree-linked-task"
@@ -131,7 +149,7 @@ function WorktreeRow({
                   <Loader2 className="mr-2 h-3.5 w-3.5 shrink-0 animate-spin" />
                 )}
                 <span className="truncate">{conversation.title}</span>
-              </button>
+              </ControlButton>
             ))}
           </div>
         )}
@@ -139,6 +157,28 @@ function WorktreeRow({
     </div>
   )
 }
+
+type WorktreeSource = ReturnType<typeof createWorktreeSettingsResource>
+type WorktreeFailure = {
+  cause: unknown
+  key: 'load' | 'save' | 'delete' | 'restore' | 'open_conversation'
+}
+function initialWorktreeUI(source: WorktreeSource) {
+  return {
+    source,
+    baseline: undefined as RuntimeWorktreeSettings | undefined,
+    rootDraft: undefined as string | undefined,
+    keepCountDraft: undefined as string | undefined,
+    saving: false,
+    busyPaths: new Set<string>(),
+    openingTaskId: null as string | null,
+    pendingDisableCleanup: false,
+    pendingRecycle: null as RuntimeManagedWorktree | null,
+    savedReceipt: null as { message: string; deadline: number } | null,
+    error: null as WorktreeFailure | null,
+  }
+}
+const EMPTY_WORKTREES: RuntimeManagedWorktree[] = []
 
 export function WorktreesSettingsPage({
   api,
@@ -161,159 +201,141 @@ export function WorktreesSettingsPage({
   const selectedDeviceId = availableDevices.some(device => device.device_id === deviceId)
     ? deviceId
     : (availableDevices[0]?.device_id ?? '')
-  const [settings, setSettings] = useState<RuntimeWorktreeSettings | null>(null)
-  const [rootDraft, setRootDraft] = useState('')
-  const [keepCountDraft, setKeepCountDraft] = useState('15')
-  const [items, setItems] = useState<RuntimeManagedWorktree[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [busyPath, setBusyPath] = useState<string | null>(null)
-  const [openingTaskId, setOpeningTaskId] = useState<string | null>(null)
-  const [pendingDisableCleanup, setPendingDisableCleanup] = useState(false)
-  const [pendingRecycle, setPendingRecycle] = useState<RuntimeManagedWorktree | null>(null)
-  const [savedNotice, setSavedNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const loadSequence = useRef(0)
-  const currentDeviceId = useRef(selectedDeviceId)
-
-  useEffect(() => {
-    currentDeviceId.current = selectedDeviceId
-    return () => {
-      loadSequence.current += 1
-    }
-  }, [selectedDeviceId])
-
+  const source = useMemo(
+    () => createWorktreeSettingsResource(api, selectedDeviceId),
+    [api, selectedDeviceId]
+  )
+  const settingsQuery = useSyncExternalStore(
+    source?.settings.subscribe ?? subscribeIdleResource,
+    source?.settings.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const listQuery = useSyncExternalStore(
+    source?.items.subscribe ?? subscribeIdleResource,
+    source?.items.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const settings = settingsQuery.data
+  const items = listQuery.data ?? EMPTY_WORKTREES
+  const loading = !!source && !listQuery.settled
+  const [ui, setUI] = useState(() => initialWorktreeUI(source))
+  if (ui.source !== source) setUI(initialWorktreeUI(source))
+  else if (ui.baseline !== settings)
+    setUI({
+      ...ui,
+      baseline: settings,
+      rootDraft: ui.rootDraft === ui.baseline?.worktreeRoot ? undefined : ui.rootDraft,
+      keepCountDraft:
+        ui.keepCountDraft === String(ui.baseline?.keepCount) ? undefined : ui.keepCountDraft,
+    })
+  const rootDraft = ui.rootDraft ?? settings?.worktreeRoot ?? ''
+  const keepCountDraft = ui.keepCountDraft ?? String(settings?.keepCount ?? 15)
+  const { saving, openingTaskId, pendingDisableCleanup, pendingRecycle } = ui
+  const busyPath = ui.busyPaths.values().next().value ?? null
+  const failure =
+    ui.error ??
+    (settingsQuery.status === 'error'
+      ? { cause: settingsQuery.error, key: 'load' as const }
+      : listQuery.status === 'error'
+        ? { cause: listQuery.error, key: 'load' as const }
+        : null)
+  const error = failure
+    ? failure.cause instanceof Error && failure.cause.message
+      ? failure.cause.message
+      : t('workbench.worktrees_' + failure.key + '_failed')
+    : null
+  const expired = useDeadlineExpired(ui.savedReceipt?.deadline)
+  const savedNotice = ui.savedReceipt && !expired ? ui.savedReceipt.message : null
+  const patchUI = useCallback(
+    (patch: Partial<typeof ui>) => {
+      setUI(current => (current.source === source ? { ...current, ...patch } : current))
+    },
+    [source]
+  )
   const load = useCallback(async () => {
-    if (currentDeviceId.current !== selectedDeviceId) return
-    const sequence = loadSequence.current + 1
-    loadSequence.current = sequence
-    if (!api || !selectedDeviceId) {
-      setSettings(null)
-      setItems([])
-      setLoading(false)
-      return
-    }
-    setSettings(null)
-    setItems([])
-    setLoading(true)
-    setError(null)
-    try {
-      const [nextSettings, response] = await Promise.all([
-        api.getWorktreeSettings({ deviceId: selectedDeviceId }),
-        api.listWorktrees({ deviceId: selectedDeviceId }),
-      ])
-      if (loadSequence.current !== sequence) return
-      setSettings(nextSettings)
-      setRootDraft(nextSettings.worktreeRoot)
-      setKeepCountDraft(String(nextSettings.keepCount))
-      setItems(response.items)
-    } catch (loadError) {
-      if (loadSequence.current !== sequence) return
-      setError(
-        loadError instanceof Error ? loadError.message : t('workbench.worktrees_load_failed')
-      )
-    } finally {
-      if (loadSequence.current === sequence) setLoading(false)
-    }
-  }, [api, selectedDeviceId, t])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0)
-    return () => window.clearTimeout(timer)
-  }, [load])
-
-  useEffect(() => {
-    if (!savedNotice) return
-    const timer = window.setTimeout(() => setSavedNotice(null), 2000)
-    return () => window.clearTimeout(timer)
-  }, [savedNotice])
+    if (!source?.active()) return
+    patchUI({ error: null })
+    await source.reload()
+  }, [source, patchUI])
 
   const updateSettings = useCallback(
-    async (
-      patch: Partial<
-        Pick<RuntimeWorktreeSettings, 'worktreeRoot' | 'autoCleanupEnabled' | 'keepCount'>
-      >,
-      successNotice?: string
-    ) => {
-      if (!api || !selectedDeviceId) return false
-      setSaving(true)
-      setError(null)
+    async (patch: WorktreeSettingsChange, successNotice?: string) => {
+      if (!source?.active()) return false
+      patchUI({ saving: true, error: null })
       try {
-        const next = await api.updateWorktreeSettings({ deviceId: selectedDeviceId, ...patch })
-        setSettings(next)
-        setRootDraft(next.worktreeRoot)
-        setKeepCountDraft(String(next.keepCount))
-        if (successNotice) setSavedNotice(successNotice)
-        return true
-      } catch (saveError) {
-        setError(
-          saveError instanceof Error ? saveError.message : t('workbench.worktrees_save_failed')
+        const receipt = await source.updateSettings(patch)
+        if (!source.active()) return false
+        setUI(current =>
+          current.source === source
+            ? {
+                ...current,
+                rootDraft:
+                  patch.worktreeRoot !== undefined && current.rootDraft === patch.worktreeRoot
+                    ? undefined
+                    : current.rootDraft,
+                keepCountDraft:
+                  patch.keepCount !== undefined &&
+                  current.keepCountDraft === String(patch.keepCount)
+                    ? undefined
+                    : current.keepCountDraft,
+                savedReceipt: successNotice
+                  ? { message: successNotice, deadline: receipt.savedAt + 2000 }
+                  : current.savedReceipt,
+              }
+            : current
         )
+        return true
+      } catch (cause) {
+        patchUI({ error: { cause, key: 'save' } })
         return false
       } finally {
-        setSaving(false)
+        patchUI({ saving: source.hasPendingSettings() })
       }
     },
-    [api, selectedDeviceId, t]
+    [source, patchUI]
   )
-
   const commitKeepCount = useCallback(() => {
     if (!settings) return
     const keepCount = Math.max(1, Number(keepCountDraft) || 1)
-    setKeepCountDraft(String(keepCount))
+    patchUI({ keepCountDraft: String(keepCount) })
     if (keepCount === settings.keepCount) return
     void updateSettings({ keepCount }, t('workbench.worktrees_saved_limit'))
-  }, [keepCountDraft, settings, t, updateSettings])
+  }, [keepCountDraft, settings, patchUI, t, updateSettings])
 
-  const deleteWorktree = useCallback(
-    async (item: RuntimeManagedWorktree) => {
-      if (!api) return
-      setBusyPath(item.path)
-      setError(null)
-      try {
-        const response = await api.deleteWorktree({
-          deviceId: item.deviceId,
-          path: item.path,
-          preserveSnapshot: true,
-        })
-        if (!response.success) throw new Error(t('workbench.worktrees_delete_failed'))
-        setPendingRecycle(null)
-        await onRefreshWorkLists?.()
-        await load()
-      } catch (deleteError) {
-        setPendingRecycle(null)
-        setError(
-          deleteError instanceof Error
-            ? deleteError.message
-            : t('workbench.worktrees_delete_failed')
-        )
-      } finally {
-        setBusyPath(null)
-      }
-    },
-    [api, t, load, onRefreshWorkLists]
-  )
-
-  const restoreWorktree = async (item: RuntimeManagedWorktree) => {
-    if (!api) return
-    setBusyPath(item.path)
-    setError(null)
-    try {
-      const response = await api.restoreWorktree({ deviceId: item.deviceId, path: item.path })
-      if (!response.success) throw new Error(t('workbench.worktrees_restore_failed'))
-      await onRefreshWorkLists?.()
-      await load()
-    } catch (restoreError) {
-      setError(
-        restoreError instanceof Error
-          ? restoreError.message
-          : t('workbench.worktrees_restore_failed')
+  const mutateWorktree = async (item: RuntimeManagedWorktree, kind: 'delete' | 'restore') => {
+    if (!source?.active() || source.actions.has(item.path)) return
+    source.actions.add(item.path)
+    patchUI({ busyPaths: new Set(source.actions), error: null })
+    const finish = (failure?: WorktreeFailure) =>
+      setUI(current =>
+        current.source === source
+          ? {
+              ...current,
+              pendingRecycle:
+                current.pendingRecycle?.path === item.path ? null : current.pendingRecycle,
+              error: failure ?? current.error,
+            }
+          : current
       )
+    try {
+      const response = await (kind === 'delete'
+        ? source.api.deleteWorktree({
+            deviceId: item.deviceId,
+            path: item.path,
+            preserveSnapshot: true,
+          })
+        : source.api.restoreWorktree({ deviceId: item.deviceId, path: item.path }))
+      if (!source.active()) return
+      if (!response.success) throw new Error(t('workbench.worktrees_' + kind + '_failed'))
+      finish()
+      await Promise.all([source.items.reload(), onRefreshWorkLists?.()])
+    } catch (cause) {
+      finish({ cause, key: kind })
     } finally {
-      setBusyPath(null)
+      source.actions.delete(item.path)
+      patchUI({ busyPaths: new Set(source.actions) })
     }
   }
-
   const groups = useMemo(
     () =>
       groupWorktrees(items.filter(item => ['active', 'restorable', 'failed'].includes(item.state))),
@@ -321,27 +343,20 @@ export function WorktreesSettingsPage({
   )
   const unavailable = !api || availableDevices.length === 0
 
-  const openConversation = useCallback(
-    async (conversation: RuntimeWorktreeConversation) => {
-      if (!onOpenRuntimeTask) return
-      setOpeningTaskId(conversation.taskId)
-      setError(null)
-      try {
-        await onRefreshWorkLists?.()
-        await onOpenRuntimeTask(conversation)
-        onLeaveSettings?.()
-      } catch (openError) {
-        setError(
-          openError instanceof Error
-            ? openError.message
-            : t('workbench.worktrees_open_conversation_failed')
-        )
-      } finally {
-        setOpeningTaskId(null)
-      }
-    },
-    [onLeaveSettings, onOpenRuntimeTask, onRefreshWorkLists, t]
-  )
+  const openConversation = async (conversation: RuntimeWorktreeConversation) => {
+    if (!source?.active() || !onOpenRuntimeTask) return
+    patchUI({ openingTaskId: conversation.taskId, error: null })
+    try {
+      await onRefreshWorkLists?.()
+      if (!source.active()) return
+      await onOpenRuntimeTask(conversation)
+      if (source.active()) onLeaveSettings?.()
+    } catch (cause) {
+      patchUI({ error: { cause, key: 'open_conversation' } })
+    } finally {
+      patchUI({ openingTaskId: null })
+    }
+  }
 
   return (
     <SettingsPage data-testid="worktrees-settings-page">
@@ -350,18 +365,21 @@ export function WorktreesSettingsPage({
       {availableDevices.length > 1 && (
         <label className="block text-sm text-text-secondary">
           <span className="mb-2 block">{t('workbench.worktrees_device')}</span>
-          <select
-            data-testid="worktrees-device-select"
-            value={selectedDeviceId}
-            onChange={event => setDeviceId(event.target.value)}
-            className="h-9 w-full max-w-[360px] rounded-md border border-border bg-background px-3 text-sm text-text-primary"
+          <SelectRoot
+            value={normalizeSelectValue(selectedDeviceId)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null) return setDeviceId(selectedValue)
+            }}
           >
-            {availableDevices.map(device => (
-              <option key={device.device_id} value={device.device_id}>
-                {device.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger data-testid="worktrees-device-select" className="w-full max-w-[360px]" />
+            <SelectContent>
+              {availableDevices.map(device => (
+                <SelectItem key={device.device_id} value={String(device.device_id)}>
+                  {device.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </SelectRoot>
         </label>
       )}
 
@@ -375,11 +393,11 @@ export function WorktreesSettingsPage({
             <SettingsRow
               label={t('workbench.worktrees_root')}
               description={t('workbench.worktrees_root_description')}
-              control={
-                <input
+              children={
+                <ControlInput
                   data-testid="worktrees-root-input"
                   value={rootDraft}
-                  onChange={event => setRootDraft(event.target.value)}
+                  onChange={event => patchUI({ rootDraft: event.target.value })}
                   onBlur={() => {
                     if (rootDraft !== settings.worktreeRoot)
                       void updateSettings(
@@ -389,20 +407,20 @@ export function WorktreesSettingsPage({
                   }}
                   placeholder={t('workbench.worktrees_default')}
                   disabled={saving}
-                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary disabled:opacity-50 max-sm:w-full"
+                  className="w-56 max-sm:w-full"
                 />
               }
             />
             <SettingsRow
               label={t('workbench.worktrees_auto_cleanup')}
               description={t('workbench.worktrees_auto_cleanup_description')}
-              control={
+              children={
                 <SettingsSwitch
                   checked={settings.autoCleanupEnabled}
                   data-testid="worktrees-auto-cleanup-switch"
                   onCheckedChange={checked => {
                     if (!checked) {
-                      setPendingDisableCleanup(true)
+                      patchUI({ pendingDisableCleanup: true })
                     } else {
                       void updateSettings(
                         { autoCleanupEnabled: true },
@@ -418,20 +436,20 @@ export function WorktreesSettingsPage({
             <SettingsRow
               label={t('workbench.worktrees_keep_count')}
               description={t('workbench.worktrees_keep_count_description')}
-              control={
+              children={
                 <div className="ml-6 max-sm:ml-0">
-                  <input
+                  <ControlInput
                     type="number"
                     min={1}
                     data-testid="worktrees-keep-count-input"
                     value={keepCountDraft}
-                    onChange={event => setKeepCountDraft(event.target.value)}
+                    onChange={event => patchUI({ keepCountDraft: event.target.value })}
                     onBlur={commitKeepCount}
                     onKeyDown={event => {
                       if (event.key === 'Enter') event.currentTarget.blur()
                     }}
                     disabled={saving || !settings.autoCleanupEnabled}
-                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="w-24"
                   />
                 </div>
               }
@@ -452,7 +470,8 @@ export function WorktreesSettingsPage({
         ) : groups.length === 0 ? (
           <div>
             <div className="mb-3 flex justify-end">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="worktrees-refresh-button"
                 onClick={() => void load()}
@@ -461,11 +480,13 @@ export function WorktreesSettingsPage({
                 aria-label={t('workbench.worktrees_refresh')}
               >
                 <RefreshCw className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </div>
-            <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm text-text-secondary">
-              {t('workbench.worktrees_empty_description')}
-            </div>
+            {listQuery.data !== undefined && listQuery.status !== 'error' && (
+              <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm text-text-secondary">
+                {t('workbench.worktrees_empty_description')}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-10">
@@ -482,7 +503,8 @@ export function WorktreesSettingsPage({
                     {group.sourcePath || group.name}
                   </h3>
                   {index === 0 && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="worktrees-refresh-button"
                       onClick={() => void load()}
@@ -491,7 +513,7 @@ export function WorktreesSettingsPage({
                       aria-label={t('workbench.worktrees_refresh')}
                     >
                       <RefreshCw className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                   )}
                 </div>
                 <SettingsGroup className="bg-background">
@@ -499,10 +521,10 @@ export function WorktreesSettingsPage({
                     <WorktreeRow
                       key={`${item.deviceId}-${item.path}`}
                       item={item}
-                      busy={busyPath === item.path}
+                      busy={ui.busyPaths.has(item.path)}
                       openingTaskId={openingTaskId}
-                      onDelete={() => setPendingRecycle(item)}
-                      onRestore={() => void restoreWorktree(item)}
+                      onDelete={() => patchUI({ pendingRecycle: item })}
+                      onRestore={() => void mutateWorktree(item, 'restore')}
                       onOpenConversation={
                         onOpenRuntimeTask
                           ? conversation => void openConversation(conversation)
@@ -525,15 +547,16 @@ export function WorktreesSettingsPage({
         >
           <CircleCheck className="h-5 w-5 text-primary" />
           <span>{savedNotice}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="dismiss-worktrees-saved-notice-button"
-            onClick={() => setSavedNotice(null)}
+            onClick={() => patchUI({ savedReceipt: null })}
             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
             aria-label={t('workbench.worktrees_dismiss_saved_notice')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       )}
 
@@ -546,23 +569,29 @@ export function WorktreesSettingsPage({
         confirmTestId="confirm-recycle-worktree-button"
         destructive
         pending={Boolean(busyPath)}
-        onClose={() => setPendingRecycle(null)}
+        onClose={() => patchUI({ pendingRecycle: null })}
         onConfirm={() => {
-          if (pendingRecycle) void deleteWorktree(pendingRecycle)
+          if (pendingRecycle) void mutateWorktree(pendingRecycle, 'delete')
         }}
       />
       {pendingDisableCleanup && (
         <div
           className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"
           onClick={event => {
-            if (!saving && event.target === event.currentTarget) setPendingDisableCleanup(false)
+            if (!saving && event.target === event.currentTarget)
+              patchUI({ pendingDisableCleanup: false })
           }}
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            data-testid="disable-worktree-cleanup-dialog"
-            className="w-full max-w-[640px] rounded-[28px] border border-border bg-popover px-8 py-7 shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+          <DialogSurface
+            onClose={() => {
+              if (!saving) patchUI({ pendingDisableCleanup: false })
+            }}
+            render={
+              <div
+                data-testid="disable-worktree-cleanup-dialog"
+                className="w-full max-w-[640px] rounded-[28px] border border-border bg-popover px-8 py-7 shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+              />
+            }
           >
             <h2 className="heading-base text-text-primary">
               {t('workbench.worktrees_disable_cleanup_title')}
@@ -571,16 +600,19 @@ export function WorktreesSettingsPage({
               {t('workbench.worktrees_disable_cleanup_description')}
             </p>
             <div className="mt-6 flex justify-end gap-3">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="keep-worktree-cleanup-button"
-                onClick={() => setPendingDisableCleanup(false)}
+                onClick={() => patchUI({ pendingDisableCleanup: false })}
                 disabled={saving}
                 className="h-10 rounded-xl px-5 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
               >
                 {t('workbench.worktrees_keep_cleanup_enabled')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
                 type="button"
                 data-testid="disable-worktree-cleanup-button"
                 onClick={() => {
@@ -588,16 +620,15 @@ export function WorktreesSettingsPage({
                     { autoCleanupEnabled: false },
                     t('workbench.worktrees_saved_cleanup')
                   ).then(success => {
-                    if (success) setPendingDisableCleanup(false)
+                    if (success) patchUI({ pendingDisableCleanup: false })
                   })
                 }}
                 disabled={saving}
-                className="h-10 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:opacity-50 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
               >
                 {t('workbench.worktrees_disable_cleanup')}
-              </button>
+              </ControlButton>
             </div>
-          </div>
+          </DialogSurface>
         </div>
       )}
     </SettingsPage>

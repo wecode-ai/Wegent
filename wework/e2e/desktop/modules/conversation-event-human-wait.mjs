@@ -15,7 +15,7 @@ const BLOCKER = 'WEWORK_CONVERSATION_EVENT_CAPACITY_BLOCKER'
 export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureScreenshot }) {
   const releases = new Map()
   let originalSettings
-  let eventRequests = 0
+  const eventMessageIds = new Set()
   const blockerTask = 'event-human-capacity-blocker'
   const waitHeld = key =>
     waitForValue(
@@ -50,8 +50,9 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         return hold('event-human-answer', response)
       return null
     },
-    eventStarted() {
-      eventRequests++
+    eventStarted(messageId) {
+      assert.ok(messageId, 'A delivered event must have a user message ID')
+      eventMessageIds.add(messageId)
     },
     release() {
       for (const release of releases.values()) release()
@@ -91,13 +92,16 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
       await waitHeld('event-capacity-blocker')
     },
     async verifyPending(control, address, getTask, requestsBefore, readRequestCount) {
+      const subscription = task =>
+        task.runtimeHandle?.connectionEventSubscriptions?.find(item =>
+          item.subscription_key.endsWith('_human')
+        )
+      const turnId = task => task.executionState?.turnId ?? task.executionState?.latestTurnId
       await waitForValue(
         getTask,
         value =>
           value.task.interactionStatus === 'awaitingUserReply' &&
-          value.task.runtimeHandle?.connectionEventSubscriptions?.some(
-            item => item.subscription_key.endsWith('_human') && item.status === 'pending'
-          ),
+          subscription(value.task)?.status === 'pending',
         'The event must wait behind the real unanswered question',
         30000
       )
@@ -158,6 +162,7 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
       }
+      const questionTurnId = turnId((await getTask()).task)
       await control.command(
         'fill',
         `${card} [data-testid="request-user-input-custom-question_1"]`,
@@ -167,21 +172,39 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         'clickWhenEnabled',
         `${card} [data-testid="request-user-input-submit-button"]`
       )
-      await waitHeld('event-human-answer')
-      await rpc(control, 'runtime.settings.update', { maxConcurrentTasks: 1 })
-      releases.get('event-human-answer')()
-      await waitForValue(
+      const answer = await waitForValue(
         getTask,
-        value =>
-          !value.task.interactionStatus &&
-          value.task.runtimeHandle?.connectionEventSubscriptions?.some(
-            item => item.subscription_key.endsWith('_human') && item.status === 'resuming_goal'
-          ),
-        'The accepted event must queue behind the occupied worker slot',
+        ({ task }) =>
+          turnId(task) &&
+          turnId(task) !== questionTurnId &&
+          (releases.has('event-human-answer') || eventMessageIds.size > 0),
+        'The answer must open a native turn and reach the model',
+        uiTimeoutMs
+      )
+      const answerTurnId = turnId(answer.task)
+      await rpc(control, 'runtime.settings.update', { maxConcurrentTasks: 1 })
+      releases.get('event-human-answer')?.()
+      // A matching event can steer the answer turn before the capacity change.
+      const delivery = await waitForValue(
+        getTask,
+        ({ task }) =>
+          !task.interactionStatus &&
+          Boolean(subscription(task)?.operation_id) &&
+          ((subscription(task)?.status === 'delivered' && eventMessageIds.size > 0) ||
+            (subscription(task)?.status === 'resuming_goal' &&
+              !task.running &&
+              task.goalStatus === 'blocked')),
+        'The event must reach the answer turn or queue behind the occupied worker slot',
         30000
       )
+      if (subscription(delivery.task)?.status === 'delivered') {
+        assert.equal(turnId(delivery.task), answerTurnId, 'The event must steer the answer turn')
+        assert.equal(eventMessageIds.size, 1, 'The event must enter the model once')
+        releases.get('event-capacity-blocker')()
+        return
+      }
       assert.equal(
-        eventRequests,
+        eventMessageIds.size,
         0,
         'Queued event work must not reach the model before capacity is released'
       )

@@ -15,6 +15,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemCreate
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.wework_notification import NotificationCreate
 from app.services.cloud_project_visibility import (
@@ -115,6 +116,40 @@ def test_send_without_project_rejects_other_recipient_and_orphan_issue(
     assert response.status_code == status
     assert test_db.query(WeworkNotification).count() == 0
     no_external_delivery.assert_not_called()
+
+
+def test_issue_creation_and_invitation_schedule_im_once(
+    test_db, test_user, no_external_delivery
+):
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "invitee", BaseRole.Developer)
+    assignee = _make_member(test_db, project, "silent-assignee", BaseRole.Developer)
+    values = LoopItemCreate(
+        title="New Issue",
+        request_id="new-issue",
+        assignee_user_id=assignee.id,
+        notify_assignee=False,
+    )
+    issue = loop_item_service.create(test_db, project.id, test_user.id, values)
+    issue_id = issue.id
+    assert (
+        loop_item_service.create(test_db, project.id, test_user.id, values).id
+        == issue_id
+    )
+    for _ in range(2):
+        loop_item_service.add_collaborator(test_db, issue_id, member.id, test_user.id)
+
+    assert test_db.query(WeworkNotification).count() == 0
+    deliveries = [call.args for call in no_external_delivery.call_args_list]
+    assert [(payload["user_id"], payload["title"]) for _, payload, _ in deliveries] == [
+        (test_user.id, "事项已创建"),
+        (member.id, "你已加入事项"),
+    ]
+    for deliver, payload, channels in deliveries:
+        assert deliver is deliver_notification_payload
+        assert channels == {"im": True, "in_app": False, "system": False}
+        assert payload["url"] == issue_url(str(project.id), issue_id)
+        assert payload["payload"]["itemTitle"] == issue.title
 
 
 def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):

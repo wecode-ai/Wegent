@@ -9,6 +9,7 @@ import {
 import {
   LINUX_CORE_HISTORY_CHECKPOINT,
   isResourceExclusiveCheckpoint,
+  linuxCoreCheckpointResources,
 } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 
 const measurements = JSON.parse(
@@ -22,6 +23,7 @@ export function balanceLinuxCoreMatrix(
   matrix,
   seconds = measurements.scopes.core,
   runnerScale = 1,
+  scope = 'core',
 ) {
   if (!Array.isArray(matrix?.include))
     throw new Error('Invalid Linux Core matrix')
@@ -29,66 +31,79 @@ export function balanceLinuxCoreMatrix(
   const history = include.find((entry) =>
     entry.segments.split(',').includes(LINUX_CORE_HISTORY_CHECKPOINT),
   )
-  if (!history) return { ...matrix, include }
+  if (!history && scope === 'core' && runnerScale === 1) return { ...matrix, include }
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
+  const pinnedCheckpoint = (entry) => {
+    if (scope !== 'core') return undefined
+    if (entry === history) return LINUX_CORE_HISTORY_CHECKPOINT
+    if (['core-9', 'core-10'].includes(entry.id)) return checkpoints(entry)[0]
+    return undefined
+  }
   const taskCount = include.reduce(
-    (total, entry) => total + (['core-9', 'core-10'].includes(entry.id)
-      ? 1 : checkpoints(entry).length),
+    (total, entry) => total + (pinnedCheckpoint(entry) ? 1 : checkpoints(entry).length),
     0,
   )
-  include.push(...coreRunnerSlots(include, taskCount, runnerScale))
-  // Keep the two latency benchmark shards exclusive.
-  const receivers = include.filter(
-    (entry) => !['core-9', 'core-10'].includes(entry.id),
-  )
-  if (!receivers.some((entry) => entry !== history))
+  include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
+  // Keep the latency benchmarks on their original runners. Redistribute their tails.
+  const receivers = include.filter((entry) => !pinnedCheckpoint(entry))
+  if (!receivers.length)
     return { ...matrix, include }
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
-  const pending = receivers
+  const pending = include
     .filter((entry) => entry.segments.length)
-    .flatMap(checkpoints)
-    .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
+    .flatMap((entry) => {
+      const selected = checkpoints(entry)
+      const pinned = pinnedCheckpoint(entry)
+      if (!pinned) return selected
+      entry.segments = pinned
+      return selected.filter((checkpoint) => checkpoint !== pinned)
+    })
     .sort((a, b) => a.localeCompare(b))
-  const ordered = orderLinuxCheckpoints(pending, 'core', seconds)
-  const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
-  // History reserves every worker until it exits. Its remaining runner time
-  // can serve measured ordinary checkpoints without sharing its runtime.
+  const exclusiveFor = (checkpoint) => isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
+  // Place isolated prefixes before allocating any work to the parallel workers.
+  const ordered = orderLinuxCheckpoints(pending, scope, seconds).sort(
+    (a, b) => Number(exclusiveFor(b)) - Number(exclusiveFor(a)),
+  )
   const assignments = receivers.map((entry) => ({
     entry,
-    checkpoints: entry === history ? [LINUX_CORE_HISTORY_CHECKPOINT] : [],
-    workers: Array(measurements.workers).fill(
-      entry === history ? (historySeconds ?? 180) : 0,
-    ),
+    checkpoints: [],
+    workers: Array(measurements.workers).fill(0),
   }))
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.
+  const resources = (checkpoint) =>
+    scope === 'core' ? linuxCoreCheckpointResources(checkpoint) : []
   for (const checkpoint of ordered) {
-    const exclusive = isResourceExclusiveCheckpoint(checkpoint, true)
+    const exclusive = exclusiveFor(checkpoint)
+    const duration = seconds[checkpoint] ?? 180
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
         : Math.min(...assignment.workers)
-    // Do not put another exclusive prefix or an unmeasured case on history's runner.
-    const candidates = assignments.filter(
-      ({ entry }) =>
-        entry !== history ||
-        (!exclusive &&
-          historySeconds !== undefined &&
-          seconds[checkpoint] !== undefined),
-    )
-    candidates.sort(
+    const conflicts = (assignment) => {
+      const occupied = new Set(assignment.checkpoints.flatMap(resources))
+      return Number(resources(checkpoint).some((resource) => occupied.has(resource)))
+    }
+    // Concurrent long desktop sessions compete for the same CPU. Spread them
+    // before filling each runner with shorter checkpoints.
+    const longPeers = (assignment) =>
+      duration >= 400
+        ? assignment.checkpoints.filter((peer) => (seconds[peer] ?? 0) >= 400).length
+        : 0
+    assignments.sort(
       (a, b) =>
+        conflicts(a) - conflicts(b) ||
+        longPeers(a) - longPeers(b) ||
         load(a) - load(b) ||
         a.workers.reduce((sum, value) => sum + value, 0) -
           b.workers.reduce((sum, value) => sum + value, 0) ||
         a.entry.id.localeCompare(b.entry.id),
     )
-    const target = candidates[0]
+    const target = assignments[0]
     const worker = target.workers.indexOf(Math.min(...target.workers))
-    const duration = seconds[checkpoint] ?? 180
     if (exclusive)
       target.workers = target.workers.map((value) => value + duration)
     else target.workers[worker] += duration
@@ -141,13 +156,15 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  if (process.argv[2] === '--balance-core') {
+  if (['--balance-core', '--balance-cloud'].includes(process.argv[2])) {
+    const scope = process.argv[2] === '--balance-cloud' ? 'cloud' : 'core'
     if (!process.env.CORE_MATRIX) throw new Error('CORE_MATRIX is required')
     console.log(
       `matrix=${JSON.stringify(balanceLinuxCoreMatrix(
         JSON.parse(process.env.CORE_MATRIX),
-        measurements.scopes.core,
+        measurements.scopes[scope],
         Number(process.env.CORE_RUNNER_SCALE ?? 1),
+        scope,
       ))}`,
     )
   } else {

@@ -180,6 +180,7 @@ export interface RuntimeSendRequest {
   resourceEventKeys?: string[]
   /** Private discussion retains the task identity without automatic Issue writeback. */
   conversationContext?: 'private_discussion'
+  assistantPrompt?: string
   startNewSession?: boolean
   expectedThreadId?: string
   retrySourceTurnId?: string
@@ -203,8 +204,10 @@ export interface RuntimeSendRequest {
 
 export interface RuntimeSendResponse {
   accepted: boolean
+  guidanceId?: string
   taskId: string
   status?: 'queued' | 'running'
+  guided?: boolean
   queuePosition?: number | null
   turnId?: string
   turn_id?: string

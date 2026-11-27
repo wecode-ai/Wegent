@@ -19,15 +19,15 @@ fn empty_ui_maintenance_preserves_the_uninitialized_journal() {
         .block_on(async {
             for _ in 0..2 {
                 handler.poll_ui_observers().await.unwrap();
-                handler.poll_ui_observer_sources().await.unwrap();
+                handler.poll_connection_observation_sources().await.unwrap();
             }
         });
     assert!(handler
         .read_ui_observer("not-yet-registered")
         .unwrap()
         .is_null());
-    workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-        assert!(state.get("observers").is_none());
+    event_store::transact(&handler.event_subscription_path(), |state| {
+        assert!(state["observers"].as_object().unwrap().is_empty());
         assert_eq!(state["operations"], json!({}));
         Ok(())
     })
@@ -73,8 +73,11 @@ fn missing_source_authentication_is_reported_without_creating_an_observer() {
             handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
             let ipc = crate::local::app_ipc::AppIpcServer::new()
                 .with_runtime_work_handler(handler.clone());
-            let failure = command(&ipc, "start", json!({"consumerKey":"ui-auth","generation":"one","discovery":{"providerId":"git","kind":"repository","query":"{}"}})).await.unwrap_err();
-            assert_eq!(failure.code, "connector_auth_required");
+            let failure = command(&ipc, "start", json!({"consumerKey":"ui-auth","generation":"one","discovery":{"providerId":"git","kind":"repository","query":"{}"}})).await.unwrap();
+            assert_eq!(failure["success"], false);
+            assert_eq!(failure["exit_code"], 1);
+            assert_eq!(failure["error"], "connector_auth_required");
+            assert_eq!(failure["stderr"], "Authorize this connection before observing the resource");
             assert_eq!(calls.lock().unwrap().len(), 1);
             assert!(handler.read_ui_observer(&observer_id("control-test-device", "ui-auth", "one")).unwrap().is_null());
             assert!(handler.command_journal.lock().unwrap().is_empty());
@@ -123,17 +126,17 @@ fn ui_leases_and_a_model_consumer_share_one_due_collector_without_ui_model_work(
         assert_eq!(calls.lock().unwrap().iter().filter(|call|call["method"]=="collectObservation").count(),1);
         command(&ipc,"refresh",json!({"consumerKey":"ui-1","generation":"one"})).await.unwrap();
         assert!(handler.connection_observation_wakeup.notified().now_or_never().is_some(),"A UI collector wakes the model dispatcher without waiting for maintenance");
-        let pending_wakeup=|| workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][&model_id]["pending_wakeup"].clone())).unwrap();
+        let pending_wakeup=|| event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][&model_id]["pending_wakeup"].clone())).unwrap();
         assert_eq!(pending_wakeup(),true);
         handler.poll_conversation_connection_events(false).await.unwrap();
         assert_eq!(pending_wakeup(),false,"The new captured batch is attempted outside a maintenance tick");
         handler.poll_conversation_connection_events(false).await.unwrap();
         assert_eq!(pending_wakeup(),false);
         assert!(handler.connection_observation_wakeup.notified().now_or_never().is_none(),"A blocked pending retry cannot repeatedly signal immediate work");
-        handler.poll_ui_observer_sources().await.unwrap();
+        handler.poll_connection_observation_sources().await.unwrap();
         assert_eq!(calls.lock().unwrap().iter().filter(|call|call["method"]=="collectObservation").count(),2);
-        workbench_control::journal::transact(&handler.event_subscription_path(),|state| { state["observations"][&observation]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
-        handler.poll_ui_observer_sources().await.unwrap(); handler.poll_conversation_connection_events(true).await.unwrap();
+        event_store::transact(&handler.event_subscription_path(),|state| { state["observations"][&observation]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
+        handler.poll_connection_observation_sources().await.unwrap(); handler.poll_conversation_connection_events(true).await.unwrap();
         let latest=command(&ipc,"renew",json!({"consumerKey":"ui-2","generation":"one"})).await.unwrap();
         assert_eq!(latest["stdout"]["observation"]["resourceStates"][0]["data"]["revision"],7);
         let collected:Vec<_>=calls.lock().unwrap().iter().filter(|call|call["method"]=="collectObservation").cloned().collect();
@@ -143,15 +146,15 @@ fn ui_leases_and_a_model_consumer_share_one_due_collector_without_ui_model_work(
         assert_eq!(broken["stdout"]["observation"]["errorCode"],"invalid_event_subscription");
         let broken_id=broken["stdout"]["observation"]["id"].as_str().unwrap();
         let count=calls.lock().unwrap().len(); command(&ipc,"renew",json!({"consumerKey":"ui-broken","generation":"one"})).await.unwrap(); assert_eq!(calls.lock().unwrap().len(),count);
-        workbench_control::journal::transact(&handler.event_subscription_path(),|state| {
+        event_store::transact(&handler.event_subscription_path(),|state| {
             assert_eq!(state["observations"][broken_id]["checkpoint"]["cursor"],4,"Invalid pages cannot advance a checkpoint");
             state["observations"][broken_id]["next_poll_at"]=json!(0); state["observations"][&observation]["next_poll_at"]=json!(0); Ok(())
         }).unwrap();
-        handler.poll_ui_observer_sources().await.unwrap();
+        handler.poll_connection_observation_sources().await.unwrap();
         let healthy=command(&ipc,"renew",json!({"consumerKey":"ui-2","generation":"one"})).await.unwrap();
         assert_eq!(healthy["stdout"]["observation"]["resourceStates"][0]["data"]["revision"],8);
         assert!(healthy["stdout"]["observation"]["errorCode"].is_null());
-        let captured=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][&model_id].clone())).unwrap();
+        let captured=event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][&model_id].clone())).unwrap();
         assert_eq!(captured["status"],"pending"); assert_eq!(captured["events"][0]["id"],"event-5");
         let key=captured["resource_event_keys"][0].as_str().unwrap().to_owned();
         handler.validate_resource_event_keys("task",std::slice::from_ref(&key)).unwrap();
@@ -161,7 +164,7 @@ fn ui_leases_and_a_model_consumer_share_one_due_collector_without_ui_model_work(
             command(&ipc,"stop",json!({"consumerKey":key,"generation":"one"})).await.unwrap();
             assert!(command(&ipc,"start",json!({"consumerKey":key,"generation":"one","source":source()})).await.is_err());
         }
-        let before=calls.lock().unwrap().len(); handler.poll_ui_observer_sources().await.unwrap(); assert_eq!(calls.lock().unwrap().len(),before);
+        let before=calls.lock().unwrap().len(); handler.poll_connection_observation_sources().await.unwrap(); assert_eq!(calls.lock().unwrap().len(),before);
         assert!(!latest.to_string().contains("private-secret"));
         server.abort(); let _=server.await;
     });
@@ -175,17 +178,30 @@ fn expired_or_corrupt_ui_leases_cannot_reactivate_or_break_the_runtime() {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let handler=RuntimeWorkRpcHandler::new("device","/bin/false");
         let id=observer_id("device","ui","one");
-        handler.save_ui_observer(&json!({"id":id,"consumer_key":"ui","generation":"one","device_id":"device","status":"observing","expires_at":now_ms()-1})).unwrap();
+        handler.save_ui_observer(&json!({
+            "id": id,
+            "consumer_key": "ui",
+            "generation": "one",
+            "device_id": "device",
+            "status": "observing",
+            "expires_at": now_ms() - 1,
+            "resource_states": [{"kind": "change_request", "data": {"number": 17}}],
+        })).unwrap();
         assert_eq!(handler.connection_observer_operation("renew",json!({"consumerKey":"ui","generation":"one"})).await.unwrap_err().code,"observation_observer_lease_lost");
-        handler.poll_ui_observers().await.unwrap(); assert_eq!(handler.read_ui_observer(&id).unwrap()["status"],"stopped");
+        handler.poll_ui_observers().await.unwrap();
+        let stopped = handler.read_ui_observer(&id).unwrap();
+        assert_eq!(stopped["status"], "stopped");
+        assert_eq!(stopped["stop_reason"], "expired");
+        assert_eq!(change_request_number(&stopped), Some(17));
+        assert!(stopped.get("resource_states").is_none());
         let broken_id=observer_id("device","broken","one");
         handler.save_ui_observer(&json!({"id":broken_id,"consumer_key":"broken","generation":"one","device_id":"device","status":"observing","expires_at":now_ms()+90_000,"observation_id":"corrupt-source","source":source()})).unwrap();
-        let before=workbench_control::journal::transact(&handler.event_subscription_path(),|state| {
+        let before=event_store::transact(&handler.event_subscription_path(),|state| {
             state["observations"]["corrupt-source"]=json!({"source":source(),"checkpoint":{"cursor":4},"sequence":3,"events":"corrupt"}); Ok(state.clone())
         }).unwrap();
-        handler.poll_ui_observer_sources().await.unwrap();
-        assert_eq!(workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state.clone())).unwrap(),before,"Corrupt source state must not be repaired or reset by collection");
-        workbench_control::journal::transact(&handler.event_subscription_path(),|state| { state["observers"]=json!(true); Ok(()) }).unwrap();
+        handler.poll_connection_observation_sources().await.unwrap();
+        assert_eq!(event_store::transact(&handler.event_subscription_path(),|state|Ok(state.clone())).unwrap(),before,"Corrupt source state must not be repaired or reset by collection");
+        event_store::transact(&handler.event_subscription_path(),|state| { state["observers"][observer_id("device","ui","two")]=json!(true); Ok(()) }).unwrap();
         assert_eq!(handler.connection_observer_operation("start",json!({"consumerKey":"ui","generation":"two","source":source()})).await.unwrap_err().code,"control_storage_failed");
         assert!(handler.command_journal.lock().unwrap().is_empty());
     });
@@ -250,7 +266,7 @@ fn cloud_ui_lease_recovers_lost_replies_without_local_collection_or_stale_accoun
             let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
             let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
             let handler=RuntimeWorkRpcHandler::new("control-test-device","/bin/false").with_connection_observation_device_type("remote");
-            let connection=ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-ui-session".into(),..Default::default()};
+            let connection=ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-ui-session".into(),authenticated_user_id:Some(7),..Default::default()};
             *handler.backend_connection.lock().unwrap()=Some(connection.clone());
             handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
             let ipc=crate::local::app_ipc::AppIpcServer::new().with_runtime_work_handler(handler.clone());

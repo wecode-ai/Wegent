@@ -16,6 +16,7 @@ import {
   withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { verifyModelDialogKeyboard } from './project-create-interaction-checks.mjs'
+import { confirmProjectDraftDiscard as confirmDiscard } from './project-create-dialog-navigation.mjs'
 import {
   assertCollaboratorAccessibilityIsolation,
   assertCollaboratorSearchLayout,
@@ -25,7 +26,6 @@ export {
   assertProjectCreateActionHit,
 } from './project-create-test-utils.mjs'
 export { handleProjectCreateGroupModel } from './project-create-group-model.mjs'
-export { confirmDiscard as confirmProjectDraftDiscard }
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')
@@ -73,14 +73,6 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
   await control.command('fill', nameInput, { value: draftName })
-}
-
-async function confirmDiscard(control) {
-  await control.command('waitFor', DISCARD, { visible: true })
-  await control.command(
-    'clickWhenEnabled',
-    `${DISCARD} ${testId('collaboration-project-create-discard-confirm')}`
-  )
 }
 
 async function keepDraft(control, resume, action = 'Escape') {
@@ -613,6 +605,8 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
     await assertCollaboratorMenuBounds(control)
     await assertCollaboratorAccessibilityIsolation('open', true)
     await assertCollaboratorSearchLayout()
+    const collaboratorMenuSide = await control.command('getAttribute', MENU, { value: 'data-side' })
+    assert.match(collaboratorMenuSide, /^(top|bottom)$/)
     for (const [category, emptyText] of [
       ['members', '当前分组暂无其他可添加人员。'],
       ['agents', '暂无其他可添加的智能体。'],
@@ -634,6 +628,11 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
         text: '没有匹配项，请换个关键词或切换类别。',
       })
       assert.equal(Number(await control.command('getElementCount', `${panel} button`)), 0)
+      assert.equal(
+        await control.command('getAttribute', MENU, { value: 'data-side' }),
+        collaboratorMenuSide,
+        `The collaborator popup flipped when the ${category} results became empty`
+      )
       if (category === 'members') {
         const status = `${MENU} ${testId('collaboration-project-create-people-search-status')}`
         await control.command('waitFor', status, { text: '没有匹配项，请换个关键词或切换类别。' })

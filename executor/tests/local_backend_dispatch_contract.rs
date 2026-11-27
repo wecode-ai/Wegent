@@ -188,6 +188,17 @@ async fn task_cancel_marks_registered_task_as_cancel_requested() {
     assert_eq!(snapshot.cancel_requested_task_ids, vec!["10".to_owned()]);
     assert!(snapshot.pending_task_ids.is_empty());
     assert!(snapshot.pending_subtask_ids.is_empty());
+
+    transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 21})).await;
+    assert!(!runner.is_cancel_requested("10", Some("21")));
+    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
+    assert!(!runner.is_cancel_requested("10", Some("21")));
+    assert!(runner
+        .cancellation_snapshot()
+        .cancel_requested_task_ids
+        .is_empty());
+    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 21})).await;
+    assert!(runner.is_cancel_requested("10", Some("21")));
 }
 
 #[tokio::test]

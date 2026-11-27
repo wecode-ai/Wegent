@@ -355,6 +355,7 @@ class LoopItemExecutionManagerStatus(ProjectChatSchema):
     round_id: str = Field(min_length=1, max_length=128)
     runtime_device_id: str = Field(min_length=1, max_length=255)
     runtime_task_id: str = Field(min_length=1, max_length=255)
+    refresh_runtime_profiles: bool = False
 
 
 class LoopItemExecutionView(ProjectChatSchema):
@@ -480,6 +481,17 @@ class ProjectChatCommentExecution(ProjectChatSchema):
 
 
 class ProjectChatMessageView(ProjectChatSchema):
+    actor_user_id: str | None = None
+    actor_display_name: str | None = None
+    generation_source: Literal["human", "ai", "system"] = "human"
+    publication_source: Literal["human", "ai", "system"] = "human"
+    confirmation_state: Literal["pending", "not_required", "authorized", "unknown"] = (
+        "unknown"
+    )
+    trace_ref: str | None = None
+    trace_state: Literal["available", "restricted", "history-unavailable"] = (
+        "history-unavailable"
+    )
     sequence_number: int
     message_id: str
     client_message_id: str | None

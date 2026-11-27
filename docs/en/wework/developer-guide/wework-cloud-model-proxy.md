@@ -56,9 +56,11 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
+OpenAI Responses upstreams in `auto` and `standard` receive Codex subagent items as `type: "message"` with `role: "developer"`. The outbound item uses standard message fields, with the sender and recipient preserved in the Codex message content.
+
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
-The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
+The local router and cloud gateway map the top-level `model` before forwarding. Explicit passthrough preserves the remaining JSON bytes, including tool descriptions, history IDs, numeric representations and whitespace. The built-in ChatGPT subscription separately normalizes foreign reasoning history so conversations can continue after switching providers.
 
 For example, configure Kimi Responses with:
 
@@ -86,6 +88,12 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
 #### Portable Responses Tools
+
+When bridging to Responses with ordinary function tools, Chat Completions, or Anthropic Messages, the proxy merges server-side search results into the outbound tool catalog and omits server search calls and results without a `call_id` from the request history. Paired ordinary tool calls and results retain their IDs and order. Native Responses passthrough preserves the complete search history.
+
+The standard Responses and tool-bridging paths share validation for completed function calls. If a tool name or `call_id` is missing, the proxy emits `response.failed` before forwarding the call and logs only counts of missing fields. When preparing subsequent requests, it removes nameless function calls and their failure results from history and preserves detached context. Explicit passthrough uses a separate forwarding path.
+
+Before protocol adaptation, the proxy removes empty `output_text` blocks from assistant messages. If a message has no remaining content after this cleanup, the proxy omits it. When assistant messages appear between tool calls and their complete set of results, the proxy moves those messages before the tool call group.
 
 All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
 
@@ -172,6 +180,16 @@ The `codex overloaded turn recovery` diagnostic records the thread, retry number
 limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoint
 uses real Electron, Codex, and executor processes to verify tool-history retention,
 automatic continuation, no duplicate user messages, and cancellation.
+
+### Codex external context conversion
+
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. When adapting requests for Responses, Chat Completions, or Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID stay linked to the original call through the destination protocol's call ID.
+
+The Responses adapter adds the `[tool_result without a matching tool_call]` marker and preserves native `input_image` and `input_file` content parts.
+
+### Codex subagent message conversion
+
+The executor normalizes Codex subagent `agent_message` items to `developer` messages. The Chat Completions adapter converts them to a `system` message within `messages`, and the Anthropic Messages adapter writes them to the request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated Anthropic upstream to verify that both the child task and the completion reach that field.
 
 ### Anthropic Empty-Output Recovery
 

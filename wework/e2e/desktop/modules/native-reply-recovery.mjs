@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 
 export const NATIVE_RECOVERY_TEXT = 'WEWORK_UNSENT_NATIVE_REPLY_MUST_SURVIVE'
 const TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
@@ -170,6 +171,7 @@ async function assertRecovered(control, recovery) {
 
 export async function verifyNativeReplyRecoveryAfterReload(control, recovery, restartDesktopApp) {
   await assertRecovered(control, recovery)
+  await verifyProjectFieldFocus(control, 'interaction-unsent-text')
   // The host process is replaced; recovery must come from the real disk record.
   await restartDesktopApp()
   await assertRecovered(control, recovery)

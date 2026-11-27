@@ -37,7 +37,7 @@ impl CapabilityPackageProvider for Packages {
 pub(super) fn archive(name: &str) -> Vec<u8> {
     archive_payload(name, "plugin capability")
 }
-fn archive_payload(name: &str, content: &str) -> Vec<u8> {
+pub(super) fn archive_payload(name: &str, content: &str) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (path, body) in [
         (
@@ -79,6 +79,138 @@ pub(super) async fn installed(root: &Path, codex_only: bool) -> GlobalCapability
     let result = handler.apply_sync(payload("demo")).await.unwrap();
     assert_eq!(result["success"], true, "{result}");
     store
+}
+
+#[tokio::test]
+async fn desktop_recovery_projects_only_package_owned_python_mcp_commands() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("before");
+    let store = self::store(&home, true);
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let codex_manifest = json!({"name":"demo","version":"1.0"});
+    let claude_manifest = json!({"name":"demo","version":"1.0","mcpServers":"./claude-mcp.json"});
+    let claude_config = json!({
+        "claude":{"cwd":"./","command":"python3","args":["scripts/server.py"],
+            "startup_timeout_sec":1200.0}
+    });
+    let config = json!({"mcpServers":{
+        "managed":{"cwd":"./","command":"python3","args":["scripts/server.py","two words"],
+            "startup_timeout_ms":250,"env_vars":["PLUGIN_OPTION"]},
+        "workspace":{"command":"python3","args":["scripts/server.py"]},
+        "escape":{"cwd":"../outside","command":"python3","args":["scripts/server.py"]},
+        "custom":{"cwd":"./","command":"python3","args":["scripts/server.py"],
+            "env_vars":["PYTHONPATH"]},
+        "venv":{"cwd":"./","command":"python3","args":["scripts/server.py"],
+            "env":{"PATH":"./.venv/bin"}},
+        "inherited_venv":{"cwd":"./","command":"python3","args":["scripts/server.py"],
+            "env_vars":["PATH"]},
+        "windows_venv":{"cwd":"./","command":"python.exe","args":["scripts/server.py"],
+            "env_vars":[{"name":"Path","source":"local"}]},
+        "node":{"cwd":"./","command":"node","args":["tools.mjs"]}
+    }});
+    for (path, body) in [
+        (CODEX_PLUGIN_MANIFEST_PATH, codex_manifest.to_string()),
+        (CLAUDE_PLUGIN_MANIFEST_PATH, claude_manifest.to_string()),
+        (".mcp.json", config.to_string()),
+        ("claude-mcp.json", claude_config.to_string()),
+        ("scripts/server.py", "pass\n".to_owned()),
+    ] {
+        zip.start_file(path, zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    let archive = zip.finish().unwrap().into_inner();
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "",
+        store.clone(),
+        Packages(archive),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    );
+    let mut request = payload("demo");
+    request["plugins"][0]["enabled"] = json!(true);
+    let result = handler.apply_sync(request).await.unwrap();
+    assert_eq!(result["success"], true, "{result}");
+    let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
+    let source = PathBuf::from(entry["store_path"].as_str().unwrap()).join(".mcp.json");
+    let runtime = PathBuf::from(entry["runtime"]["codex_link"].as_str().unwrap());
+    assert_eq!(
+        fs::read(runtime.join(".mcp.json")).unwrap(),
+        fs::read(&source).unwrap()
+    );
+
+    let python = home.join("managed-runtimes/python/bin/python");
+    let desktop = store.with_managed_mcp_python(Some(python.clone()));
+    let recovered = desktop.reconcile_managed_plugin_runtimes().unwrap();
+    assert!(recovered.failed.is_empty(), "{:?}", recovered.failed);
+    assert_eq!(recovered.restored, ["demo@wegent"]);
+    let projected: Value =
+        serde_json::from_slice(&fs::read(runtime.join(".mcp.json")).unwrap()).unwrap();
+    let mut expected = config.clone();
+    expected["mcpServers"]["managed"]["command"] = json!(python);
+    expected["mcpServers"]["managed"]["args"] =
+        json!(["plugin-python", "--mcp", "scripts/server.py", "two words"]);
+    expected["mcpServers"]["managed"]["startup_timeout_sec"] = json!(970.0);
+    expected["mcpServers"]["managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("startup_timeout_ms");
+    expected["mcpServers"]["managed"]["env_vars"] = json!([
+        "PLUGIN_OPTION",
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "WEWORK_PYTHON_RUNTIME_TOKEN",
+        "WEGENT_PYTHON_PATH"
+    ]);
+    assert_eq!(projected, expected);
+    let mut expected_claude = claude_config.clone();
+    expected_claude["claude"]["command"] = json!(python);
+    expected_claude["claude"]["args"] = json!(["plugin-python", "--mcp", "scripts/server.py"]);
+    expected_claude["claude"]["env_vars"] = json!([
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "WEWORK_PYTHON_RUNTIME_TOKEN",
+        "WEGENT_PYTHON_PATH"
+    ]);
+    let projected_claude: Value =
+        serde_json::from_slice(&fs::read(runtime.join("claude-mcp.json")).unwrap()).unwrap();
+    assert_eq!(projected_claude, expected_claude);
+    assert_eq!(
+        fs::read_to_string(source.with_file_name("claude-mcp.json")).unwrap(),
+        claude_config.to_string()
+    );
+    assert_eq!(fs::read_to_string(&source).unwrap(), config.to_string());
+    assert_eq!(
+        desktop.manifest.load().unwrap()["plugins"]["demo@wegent"]["runtime"]["managed_mcp_python"],
+        json!(python)
+    );
+    assert_eq!(
+        desktop.manifest.load().unwrap()["plugins"]["demo@wegent"]["enabled"],
+        true
+    );
+
+    let spec = checked_spec("demo@wegent", &entry).unwrap();
+    assert!(desktop
+        .unchanged_plugin_runtime_paths(&spec, source.parent().unwrap())
+        .unwrap()
+        .contains(&runtime));
+    assert!(desktop
+        .reconcile_managed_plugin_runtimes()
+        .unwrap()
+        .restored
+        .is_empty());
+
+    let new_home = temp.path().join("after");
+    fs::rename(&home, &new_home).unwrap();
+    let next_python = new_home.join("managed-runtimes/python/bin/python");
+    let moved = self::store(&new_home, true).with_managed_mcp_python(Some(next_python.clone()));
+    let repaired = moved.reconcile_managed_plugin_runtimes().unwrap();
+    assert!(repaired.failed.is_empty(), "{:?}", repaired.failed);
+    assert_eq!(repaired.restored, ["demo@wegent"]);
+    let next_runtime = new_home.join(runtime.strip_prefix(&home).unwrap());
+    let rebuilt: Value =
+        serde_json::from_slice(&fs::read(next_runtime.join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        rebuilt["mcpServers"]["managed"]["command"],
+        json!(next_python)
+    );
 }
 
 #[tokio::test]
@@ -613,6 +745,88 @@ async fn relocated_uninstalled_owner_can_reinstall_without_reviving_on_startup()
         handler.apply_sync(payload("demo")).await.unwrap()["success"],
         true
     );
+}
+
+#[tokio::test]
+async fn relocated_uninstalled_python_mcp_reuses_only_verified_runtime_contents() {
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, body) in [
+        (
+            CODEX_PLUGIN_MANIFEST_PATH,
+            r#"{"name":"demo","version":"1.0"}"#,
+        ),
+        (
+            ".mcp.json",
+            r#"{"demo":{"command":"python3","cwd":"./","args":["probe.py"]}}"#,
+        ),
+        ("probe.py", "pass\n"),
+    ] {
+        zip.start_file(path, zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    let packages = Packages(zip.finish().unwrap().into_inner());
+    for marketplace in RECONCILABLE_PLUGIN_MARKETPLACES {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        let old_python = old.join("managed-runtimes/python/bin/python3");
+        let new_python = new.join("managed-runtimes/python/bin/python3");
+        let original = store(&old, true).with_managed_mcp_python(Some(old_python.clone()));
+        let key = format!("demo@{marketplace}");
+        let handler = CapabilitySyncHandler::with_package_provider(
+            "",
+            original.clone(),
+            packages.clone(),
+            std::sync::Arc::new(crate::NoRunningSessions),
+        );
+        let mut request = payload("demo");
+        request["plugins"][0]["marketplace"] = json!(marketplace);
+        request["plugins"][0]["enabled"] = json!(true);
+        let installed = handler.apply_sync(request.clone()).await.unwrap();
+        assert_eq!(installed["success"], true, "{installed}");
+        let entry = original.manifest.load().unwrap()["plugins"][&key].clone();
+        let old_cache = PathBuf::from(entry["runtime"]["codex_link"].as_str().unwrap());
+        assert_eq!(entry["runtime"]["managed_mcp_python"], json!(old_python));
+        let removed = handler
+            .apply_sync(json!({"scope":"plugins","plugins":[]}))
+            .await
+            .unwrap();
+        assert_eq!(removed["success"], true, "{removed}");
+        fs::rename(&old, &new).unwrap();
+        let moved = store(&new, true).with_managed_mcp_python(Some(new_python.clone()));
+        let report = moved.reconcile_managed_plugin_runtimes().unwrap();
+        assert!(
+            report.restored.is_empty() && report.failed.is_empty(),
+            "{report:?}"
+        );
+        assert!(moved.manifest.load().unwrap()["plugins"][&key].is_null());
+
+        let handler = CapabilitySyncHandler::with_package_provider(
+            "",
+            moved,
+            packages.clone(),
+            std::sync::Arc::new(crate::NoRunningSessions),
+        );
+        request["plugins"][0]["installed_plugin_id"] = json!(42);
+        let cache = new.join(old_cache.strip_prefix(&old).unwrap());
+        let script = cache.join("probe.py");
+        fs::write(&script, "modified\n").unwrap();
+        let rejected = handler.apply_sync(request.clone()).await.unwrap();
+        assert_eq!(rejected["success"], false, "{rejected}");
+        assert_eq!(
+            rejected["plugins"][0]["error"],
+            "Retained plugin destination is occupied by unrelated data; preserving it"
+        );
+        assert_eq!(fs::read_to_string(&script).unwrap(), "modified\n");
+
+        fs::write(&script, "pass\n").unwrap();
+        let reinstalled = handler.apply_sync(request).await.unwrap();
+        assert_eq!(reinstalled["success"], true, "{marketplace}: {reinstalled}");
+        let config: Value =
+            serde_json::from_slice(&fs::read(cache.join(".mcp.json")).unwrap()).unwrap();
+        assert_eq!(config["demo"]["command"], json!(new_python));
+    }
 }
 
 #[tokio::test]

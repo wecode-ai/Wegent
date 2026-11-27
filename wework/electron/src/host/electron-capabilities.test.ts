@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { acquireDebuggerSession } from './debugger-session.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
@@ -36,6 +38,7 @@ import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+import { OpenAiCatalogStore } from './openai-catalog-store.js'
 
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
@@ -309,6 +312,35 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('publishes an asynchronous native delivery failure to the renderer', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.show', {
+      title: 'Assigned',
+      body: 'Open the project task.',
+    })
+
+    const failed = electronMocks.notificationOnce.mock.calls.find(
+      ([event]) => event === 'failed'
+    )?.[1]
+    failed?.({}, new Error('permission denied'))
+
+    expect(notificationNavigation.events.publish).toHaveBeenCalledWith('notification-lifecycle', {
+      status: 'failed',
+    })
+  })
+
+  test('reports native notification support without showing a notification', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.notificationIsSupported.mockReturnValueOnce(false)
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      false
+    )
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      true
+    )
+    expect(electronMocks.notificationShow).not.toHaveBeenCalled()
+  })
+
   test('opens only the fixed platform notification settings destination', async () => {
     const { router } = createIsolatedClipboardRouter()
     electronMocks.shellOpenExternal.mockClear()
@@ -476,7 +508,14 @@ function createIsolatedClipboardRouter(
   services?: Partial<ElectronDesktopServices>,
   storedPreferences: Record<string, unknown> = { workbenchMode: 'developer' }
 ) {
-  const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
+  const notificationNavigation = {
+    events: {
+      publish: vi.fn(),
+      read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
+    },
+    openRuntimeTask: vi.fn(),
+    openScheme: vi.fn(),
+  }
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -499,10 +538,7 @@ function createIsolatedClipboardRouter(
       executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
-      events: {
-        publish: vi.fn(),
-        read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
-      },
+      events: notificationNavigation.events,
       feedback: {} as never,
       ...notificationNavigation,
       pendingSchemes: {
@@ -538,6 +574,39 @@ describe('external browser capability', () => {
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
+describe('OpenAI catalog capabilities', () => {
+  test('serializes access to the dedicated file and restricts it to the core app', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-host-catalog-'))
+    const openAiCatalog = new OpenAiCatalogStore(root)
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, { openAiCatalog })
+    const invoke = router.invoke.bind(router, WEWORK_APP_PRINCIPAL)
+    const path = join(root, 'plugin-cache', 'openai-official-catalog.json')
+    const snapshot = JSON.stringify({ version: 1, fetchedAt: 100, items: [] })
+    try {
+      await expect(
+        router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'pluginCatalog.readOpenAi', {})
+      ).rejects.toMatchObject({ code: 'capability_denied' })
+      await expect(invoke('pluginCatalog.readOpenAi', {})).resolves.toBeNull()
+
+      await mkdir(path, { recursive: true })
+      await expect(invoke('pluginCatalog.writeOpenAi', { snapshot })).rejects.toThrow()
+      await rm(path, { recursive: true })
+
+      await invoke('pluginCatalog.writeOpenAi', { snapshot })
+      expect(await readFile(path, 'utf8')).toBe(snapshot)
+      await expect(readFile(join(root, 'renderer-local-storage.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      const pendingClear = invoke('pluginCatalog.clearOpenAi', {})
+      await expect(invoke('pluginCatalog.readOpenAi', {})).resolves.toBeNull()
+      await pendingClear
+    } finally {
+      await openAiCatalog.flush()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

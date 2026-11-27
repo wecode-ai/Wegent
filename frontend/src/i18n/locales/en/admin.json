@@ -505,16 +505,47 @@
       "cannot_demote_self": "Cannot demote yourself when you are the only admin"
     }
   },
+  "model_group_icons": {
+    "title": "Primary group icons",
+    "description": "Groups with the same name share an icon. Select Automatic to restore the generated icon.",
+    "group": "Primary group",
+    "icon": "Icon",
+    "automatic": "Automatic",
+    "save": "Save",
+    "saved": "Group icon saved",
+    "save_failed": "Could not save the group icon",
+    "load_failed": "Could not load group icons",
+    "loading": "Loading group icons…",
+    "retry": "Retry",
+    "choices": {
+      "globe": "Globe",
+      "map-pin": "Map pin",
+      "zap": "Lightning",
+      "brain": "Brain",
+      "code": "Code",
+      "cpu": "Chip",
+      "layers": "Layers",
+      "sparkles": "Sparkles",
+      "shield": "Shield",
+      "flask-conical": "Flask"
+    }
+  },
   "public_models": {
     "title": "Public Model Management",
     "description": "Manage public AI models available to all users",
     "loading": "Loading models...",
     "no_models": "No public models found",
+    "no_search_results": "No models match \"{{search}}\"",
+    "search_placeholder": "Search by model name",
+    "clear_search": "Clear search",
     "create_model": "Create Model",
     "edit_model": "Edit Model",
     "delete_model": "Delete Model",
     "model_id": "Model ID",
     "namespace_label": "Namespace",
+    "pagination": {
+      "total_count": "{{count}} models"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive",

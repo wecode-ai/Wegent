@@ -14,18 +14,27 @@ let fileCount = 0;
 const groups = [
   `${component}/Cargo.toml`,
   `${component}/Cargo.lock`,
-  `${component}/src`,
-  "shared/rust",
-  `${component}/crates`,
   ...(component === "executor"
     ? [
+        "executor/src",
+        "shared/rust",
+        "executor/crates",
         "executor/vendor",
         "sdk/plugin-auth",
         "sdk/plugin-creator",
         "shared/assets",
         "shared/protocol",
       ]
-    : ["shared/assets/calendars"]),
+    : [
+        ":(glob)backend-rs/*/Cargo.toml",
+        ":(glob)backend-rs/*/src/**",
+        "backend-rs/src/task_export_docx/templates/thumbnail.jpeg",
+        "backend-rs/migrations",
+        "shared/rust",
+        "shared/assets/calendars",
+        "shared/assets/codex-models",
+        "shared/data/builtin-connector-apps.json",
+      ]),
   ".github/ci/rust-toolchain",
   ".github/actions/setup-rust-cache/action.yml",
   ".github/scripts/build-macos-e2e-runtimes.sh",

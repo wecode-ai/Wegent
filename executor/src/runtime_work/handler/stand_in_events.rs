@@ -29,6 +29,11 @@ impl RuntimeWorkRpcHandler {
         if payload["commentId"].is_string() {
             return self.process_stand_in_issue_mention(payload).await;
         }
+        if let Some(issue_id) = payload["personalIssueId"].as_str() {
+            return self
+                .process_personal_issue_assignment(&payload, issue_id)
+                .await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),
@@ -44,7 +49,12 @@ impl RuntimeWorkRpcHandler {
         let personal = store
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
-        let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
+        let Some(user) = payload["recipientUserId"].as_i64() else {
+            return Ok(());
+        };
+        let project_configs = self
+            .cloud_issue_intake_configs(&personal, user, project, issue_id)
+            .await?;
         let configs: Vec<Value> = project_configs
             .iter()
             .filter(|config| {
@@ -55,6 +65,13 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .collect();
         if configs.is_empty() {
+            self.record_assignment_policy_block(
+                &context,
+                issue_id,
+                assignment,
+                "no_authorized_assistant",
+            )
+            .await?;
             self.log_stand_in_decision(
                 &context,
                 &event_issue,
@@ -81,6 +98,8 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         if super::personal_stand_in::automatic_assignment_roles(&configs, &issue).is_empty() {
+            self.record_assignment_policy_block(&context, issue_id, assignment, "tag_mismatch")
+                .await?;
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
@@ -94,6 +113,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })
         {
+            self.log_stand_in_decision(&context, &issue, "assignment_already_handled", json!({}));
             return Ok(());
         }
 
@@ -154,6 +174,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -266,6 +287,37 @@ mod tests {
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 0);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        assert!(store.pending_assignment_receipts().unwrap().is_empty());
+        assert!(fixture.handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_assistant_records_policy_block_for_its_own_recipient() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["collaboration"]["enabled"] = json!(false);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+        fixture
+            .handler
+            .handle_runtime_rpc(notification())
+            .await
+            .unwrap();
+
+        let receipts = store.pending_assignment_receipts().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].1["userId"], 7);
+        assert_eq!(receipts[0].1["assignmentId"], "assignment");
+        assert_eq!(receipts[0].1["dispatch"]["state"], "blocked_policy");
+        assert_eq!(
+            receipts[0].1["dispatch"]["reasonCode"],
+            "no_authorized_assistant"
+        );
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        assert!(fixture.handler.local_task_links(true).is_empty());
     }
 
     #[tokio::test]

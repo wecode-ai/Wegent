@@ -1,12 +1,14 @@
-import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
-import { useState } from 'react'
-import { createPortal } from 'react-dom'
-import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import type { DeviceInfo } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 
 interface LocalProjectCreateDialogProps {
@@ -70,9 +72,7 @@ function LocalProjectCreateDialogContent({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!submitting) onClose()
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
 
   const addFolders = async () => {
     if (!shouldUseNativeProjectDirectoryPicker()) {
@@ -104,23 +104,30 @@ function LocalProjectCreateDialogContent({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <DialogForm
-        role="dialog"
-        ref={dialogRef}
-        onSubmit={event => {
-          event.preventDefault()
-          void createProject()
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
         }}
-        aria-modal="true"
-        aria-labelledby="local-project-create-title"
-        data-testid="local-project-create-dialog"
-        className="w-full max-w-[560px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+        render={
+          <DialogForm
+            role="dialog"
+            ref={dialogRef}
+            onSubmit={event => {
+              event.preventDefault()
+              void createProject()
+            }}
+            aria-labelledby="local-project-create-title"
+            data-testid="local-project-create-dialog"
+            className="w-full max-w-[560px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+          />
+        }
       >
         <div className="flex items-center justify-between gap-4">
           <h2 id="local-project-create-title" className="heading-base">
             {t('workbench.create_project', '创建项目')}
           </h2>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="close-local-project-create-dialog"
             onClick={onClose}
@@ -129,20 +136,21 @@ function LocalProjectCreateDialogContent({
             className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
           <Folder className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
           <span className="h-full w-px bg-border" />
-          <input
+          <ControlInput
+            appearance="plain"
             data-testid="local-project-create-name-input"
             aria-label={t('workbench.project_name', '项目名称')}
             placeholder={t('workbench.project_name', '项目名称')}
             value={name}
             disabled={submitting}
             onChange={event => setName(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 text-base placeholder:text-text-muted"
           />
         </label>
 
@@ -158,7 +166,8 @@ function LocalProjectCreateDialogContent({
               <span className="min-w-0 flex-1 truncate text-base" title={root}>
                 {folderName(root)}
               </span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`remove-local-project-create-root-${index}`}
                 disabled={submitting}
@@ -167,10 +176,11 @@ function LocalProjectCreateDialogContent({
                 className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-30"
               >
                 <X className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </div>
           ))}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="add-local-project-create-folders"
             disabled={submitting}
@@ -179,7 +189,7 @@ function LocalProjectCreateDialogContent({
           >
             <FolderPlus className="h-4 w-4 text-text-secondary" />
             {t('workbench.add_folder', '添加文件夹')}
-          </button>
+          </ControlButton>
           {showFolderPicker && (
             <div
               className="border-t border-border p-3"
@@ -205,26 +215,28 @@ function LocalProjectCreateDialogContent({
 
         {error && <p className="mt-3 text-sm text-destructive wework:text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
-          <button
+          <ControlButton
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="cancel-local-project-create-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="submit"
             data-testid="confirm-local-project-create-button"
             disabled={submitting || !name.trim() || roots.length === 0}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.create_project', '创建项目')}
-          </button>
+          </ControlButton>
         </div>
-      </DialogForm>
+      </DialogSurface>
     </div>,
     document.body
   )

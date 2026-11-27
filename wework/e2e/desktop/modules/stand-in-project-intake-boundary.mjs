@@ -1,3 +1,4 @@
+import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { createLocalCollaborationProject } from './workspace-flows.mjs'
 
@@ -26,12 +27,9 @@ export async function verifyProjectIntakeBoundary({
   const save = settings => rpc('runtime.stand_in.personal.save', { userId, settings })
   const read = () => rpc('runtime.stand_in.personal.get', { userId })
   let settings = await read()
-  const template = settings.roles.find(role => role.id === 'default')
-  assert.ok(template)
   const roleId = 'project-boundary-regression'
   const role = {
-    ...template,
-    id: roleId,
+    ...standInRoleFixture(settings.executionDeviceId, roleId),
     name: '项目接入边界回归',
     enabled: true,
     agentId: undefined,

@@ -1,24 +1,23 @@
-import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
-import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
-import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
-import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
-import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
-import { QuotaWaitStatus } from './QuotaWaitStatus'
-import {
-  forwardRef,
-  useContext,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
-import { createPortal } from 'react-dom'
+import type { CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
+import { X } from 'lucide-react'
+import type { QuickPhrase } from '@/desktop/appPreferences'
+import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
+import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  buildConversationMentionCandidates,
+  type ConversationMentionCandidate,
+} from '@/lib/conversation-mentions'
+import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type {
   Attachment,
   DeviceInfo,
@@ -41,31 +40,35 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
-import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
-import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
+import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
+import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import {
-  buildConversationMentionCandidates,
-  type ConversationMentionCandidate,
-} from '@/lib/conversation-mentions'
+  forwardRef,
+  useContext,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
+import { QuotaWaitStatus } from './QuotaWaitStatus'
 import { CompactChatComposer } from './composer/CompactChatComposer'
+import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
+import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ConversationEventContext } from './composer/ConversationEventContext'
-import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
-import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
-import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
-import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
-import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
-import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { QuickPhrase } from '@/desktop/appPreferences'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
+import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -84,6 +87,8 @@ export interface ProjectChatControls {
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
+  permissionError?: { message: string; dismiss(): void }
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string
@@ -147,12 +152,9 @@ export interface ProjectWorkControls {
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
   branchLoading?: boolean
-  onRefreshBranch?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  onGenerateBranchName?: (sourceText: string) => Promise<string>
-  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -182,6 +184,7 @@ export interface ChatInputProps {
   requireText?: boolean
   allowEmptySubmit?: boolean
   error?: string | null
+  onDismissError?: () => void
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
@@ -229,6 +232,7 @@ export interface ChatInputProps {
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   contextHeader?: ReactNode
@@ -325,6 +329,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     requireText = false,
     allowEmptySubmit = false,
     error,
+    onDismissError,
     disabledReason,
     placeholder,
     inputTestId,
@@ -368,6 +373,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onSelectExternalMention,
     onSelectCloudProject,
     isStreaming = false,
+    showPauseButton,
     onPause,
     showWorkspaceMenu,
     contextHeader,
@@ -478,8 +484,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   const projectQuickPhrases =
     projectPhrases ??
     (isDeviceRuntimeProject(currentRuntimeProject)
-      ? (currentRuntimeProject?.aiSettings?.quickPhrases ?? [])
-      : [])
+      ? currentRuntimeProject?.aiSettings?.quickPhrases
+      : undefined)
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const editor = composerRef.current
     if (!editor) return
@@ -646,7 +652,28 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     followUpBehavior,
     isStreaming,
   }
-  const errorBanner = <ComposerErrorBanner error={error} />
+  const dismissError = controls.permissionError?.dismiss ?? onDismissError
+  const errorBanner = (
+    <ComposerErrorBanner
+      error={controls.permissionError?.message ?? error}
+      action={
+        dismissError && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-current md:h-7 md:w-7"
+            aria-label={t('workbench.dismiss_composer_error')}
+            title={t('workbench.dismiss_composer_error')}
+            data-testid="dismiss-chat-input-error"
+            onClick={dismissError}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )
+      }
+    />
+  )
   const quotaWaitStatus = (
     <QuotaWaitStatus
       onCancel={onPause}
@@ -739,6 +766,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             selectedModel={controls.selectedModel}
             activeModel={controls.activeModel}
             selectedModelOptions={controls.selectedModelOptions}
+            permissionControls={controls.permissionControls}
             modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
             onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
             isModelSelectionReady={controls.isModelSelectionReady ?? true}
@@ -799,6 +827,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onListLocalSkills={controls.listLocalSkills}
             onListLocalApps={controls.listLocalApps}
             isStreaming={isStreaming}
+            showPauseButton={showPauseButton}
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
@@ -811,10 +840,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
                 <div
                   data-testid="composer-context-rail"
                   className={[
-                    'mb-1 min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
+                    'mb-1 grid min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
                     contextHeader && displayedGoal && !goalDraftActive
-                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                      : 'flex flex-wrap',
+                      ? 'grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'grid-cols-1',
                   ].join(' ')}
                 >
                   <ConversationEventContext
@@ -921,12 +950,14 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
+          permissionControls={controls.permissionControls}
           onSelectModel={model => requestModelSelection(model)}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
+          showPauseButton={showPauseButton}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}
         />
@@ -977,12 +1008,15 @@ function QueueResumeDialog({
       data-testid="paused-queue-send-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="paused-queue-send-dialog-title"
-        data-testid="paused-queue-send-dialog"
-        className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={onCancel}
+        render={
+          <div
+            aria-labelledby="paused-queue-send-dialog-title"
+            data-testid="paused-queue-send-dialog"
+            className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <h2
           id="paused-queue-send-dialog-title"
@@ -1025,7 +1059,7 @@ function QueueResumeDialog({
             {t('queue.send_with_paused_preserve')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -1051,13 +1085,16 @@ function ModelSwitchWarningDialog({
       data-testid="model-switch-warning-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="model-switch-warning-dialog-title"
-        aria-describedby="model-switch-warning-dialog-description"
-        data-testid="model-switch-warning-dialog"
-        className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
+      <DialogSurface
+        onClose={onCancel}
+        render={
+          <div
+            aria-labelledby="model-switch-warning-dialog-title"
+            aria-describedby="model-switch-warning-dialog-description"
+            data-testid="model-switch-warning-dialog"
+            className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
+          />
+        }
       >
         <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
           {continueInNewConversation
@@ -1119,7 +1156,7 @@ function ModelSwitchWarningDialog({
               : t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

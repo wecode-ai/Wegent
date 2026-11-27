@@ -288,32 +288,6 @@ describe('chatReducer', () => {
     })
   })
 
-  it('hides injected application context from historical and optimistic user messages', () => {
-    const runtimeContent = [
-      '<application_context>',
-      '[cloudCollaboration]',
-      'Current task: WORK-567',
-      '</application_context>',
-      '',
-      '本地启动后无法流式输出',
-    ].join('\n')
-    const historical = chatReducer([], {
-      type: 'replace',
-      messages: [{ id: 'user-history', role: 'user', content: runtimeContent }],
-    })
-    const optimistic = chatReducer(historical, {
-      type: 'optimistic-user',
-      id: 'user-live',
-      content: runtimeContent,
-      createdAt: 1788099302000,
-    })
-
-    expect(optimistic.map(message => message.content)).toEqual([
-      '本地启动后无法流式输出',
-      '本地启动后无法流式输出',
-    ])
-  })
-
   it('prepends an older transcript page without duplicating boundary messages', () => {
     const recent = chatReducer([], {
       type: 'replace',

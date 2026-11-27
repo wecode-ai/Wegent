@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Retain verifiable ownership of official marketplace copies across uninstall.
+//! Retain verifiable ownership of managed plugin copies across uninstall.
 //! Receipts authorize replacement only; they never create installed inventory.
 
 use super::*;
@@ -10,7 +10,7 @@ const RECEIPTS: &str = "plugin_retained_sources";
 fn source_spec(key: &str, entry: &Value) -> Option<PluginSyncSpec> {
     let spec = checked_spec(key, entry).ok()?;
     (entry.get("managed").and_then(Value::as_bool) == Some(true)
-        && CLOUD_MANAGED_PLUGIN_MARKETPLACES.contains(&spec.marketplace.as_str())
+        && RECONCILABLE_PLUGIN_MARKETPLACES.contains(&spec.marketplace.as_str())
         && spec.installed_plugin_id.is_some_and(|id| id > 0)
         && spec.checksum.is_some())
     .then_some(spec)
@@ -43,6 +43,20 @@ pub(in crate::local::capabilities) fn remember(manifest: &mut Value, key: &str, 
         record["previous"] = previous;
     }
     ensure_object_field(manifest, RECEIPTS).insert(key.to_owned(), record);
+}
+
+pub(super) fn retained_runtime_receipt<'a>(
+    manifest: &'a Value,
+    requested: &PluginSyncSpec,
+    path: &Path,
+    field: &str,
+) -> Option<&'a Value> {
+    let entry = manifest.get(RECEIPTS)?.get(&requested.key)?;
+    let retained = source_spec(&requested.key, entry)?;
+    (retained.version == requested.version
+        && retained.checksum == requested.checksum
+        && entry["runtime"][field].as_str().map(Path::new) == Some(path))
+    .then_some(entry)
 }
 
 pub(super) fn rebase(manifest: &mut Value, key: &str, field: &str, old: &Path, next: &Path) {
@@ -135,12 +149,30 @@ impl GlobalCapabilityStore {
                 let Some(spec) = source_spec(&requested.key, entry) else {
                     continue;
                 };
-                let runtime = if field == "claude_link" {
+                let retained_runtime = entry
+                    .get("runtime")
+                    .and_then(|value| value.get(field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    .filter(|path| cache_selection::is_retained(path));
+                let runtime = if field == "codex_link" && retained_runtime.is_some() {
+                    let Some(runtime) = self.recorded_runtime_at_current_home(&spec, entry, field)
+                    else {
+                        continue;
+                    };
+                    runtime
+                } else if field == "claude_link" {
                     self.plugin_runtime_link(&spec)
                 } else {
                     self.plugin_codex_link(&spec)
                 };
-                if !entry_owns_path(entry, &runtime, field) {
+                if entry
+                    .get("runtime")
+                    .and_then(|value| value.get(field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    != Some(runtime.as_path())
+                {
                     continue;
                 }
                 let owner = manifest
@@ -157,7 +189,7 @@ impl GlobalCapabilityStore {
                 let Some(package) = self.marketplace_copy_package(&spec)? else {
                     continue;
                 };
-                if self.matches_managed_package_copy(target, &spec, &package.path)? {
+                if self.matches_managed_package_copy(target, &spec, &package.path, entry)? {
                     return Ok(true);
                 }
             }

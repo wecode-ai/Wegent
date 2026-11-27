@@ -1,19 +1,14 @@
+import { useMediaQuery } from '../media-query'
 import { useIssueMentionCandidates } from './useIssueMentionCandidates'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import type { SharedWorkspaceApi, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationMember,
-  CollaborationAgent,
-  CollaborationIssue,
-  CollaborationProject,
-} from '../types'
-import type { CollaborationTranslate } from '../i18n'
 import { ModelSelector } from '../controls/ModelSelector'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ProjectWorkBar } from '../controls/ProjectWorkBar'
@@ -21,12 +16,21 @@ import { resolveAutomaticModel } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
 import { refreshTaskAfterComment, startTaskAiRun } from '../execution/taskAiExecution'
 import { commentAgentMentions } from '../execution/taskCardReply'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { SharedWorkspaceApi, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import type {
+  CollaborationAgent,
+  CollaborationIssue,
+  CollaborationMember,
+  CollaborationProject,
+} from '../types'
+import type { AttachmentImageServices } from './AttachmentImageView'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
-import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
 import type { IssueMentionOption } from './issueCommentMentions'
-import type { AttachmentImageServices } from './AttachmentImageView'
+import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { issueCommentBody } from './useIssueCommentAttachments'
 
 type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'issues'>
@@ -73,14 +77,8 @@ export function BrowserIssueCommentComposer({
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && client.executeTaskComment
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 767px)')
-    const update = () => setIsMobile(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   const agent = agents.find(
     agent => agent.id === issue.assignee_agent_id && agent.status === 'active'
   )
@@ -232,14 +230,15 @@ export function BrowserIssueCommentComposer({
       {!serverExecution && execution.error && (
         <div role="alert" className="mb-2 text-xs text-error">
           {execution.error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="ml-2 underline"
             data-testid="comment-execution-retry"
             onClick={execution.retry}
           >
             {t('activity.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <IssueMainCommentComposer
@@ -329,8 +328,19 @@ export function BrowserIssueCommentComposer({
               <PermissionModeSelector
                 translate={t}
                 value={runtimePermissionMode(options)}
+                commandApproval={runtimeCommandApprovalMode(options)}
+                onCommandApprovalChange={mode => setOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
                 disabled={draft.busy}
-                onChange={mode => setOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                onChange={(mode, approval) =>
+                  draft.setSelection({
+                    model: selectedModel,
+                    options: {
+                      ...options,
+                      [RUNTIME_PERMISSION_MODE_OPTION]: mode,
+                      ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
+                    },
+                  })
+                }
               />
             </>
           )

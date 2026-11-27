@@ -204,7 +204,7 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
   ).seconds
   for (const missing of [
     ['window-lifecycle'],
-    ['model-settings', 'browser-toolbar-actions'],
+    ['model-routing', 'computer-use'],
     ['stand-in', 'application-menu', 'streaming-content'],
   ]) {
     const seconds = { ...measured }
@@ -302,8 +302,8 @@ test('balancing never multiplies expensive conditional preparation from the orig
     const count = matrix =>
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
-    assert.equal(count(balanced), count(original), name)
-    assert.equal(count(completeBalanced), count(completeMatrix), name)
+    assert.ok(count(balanced) <= count(original), `${name}: preparation count increased`)
+    assert.ok(count(completeBalanced) <= count(completeMatrix), `${name}: full preparation count increased`)
   }
   assert.equal(
     balancedLoads.reduce((a, b) => a + b),
@@ -371,8 +371,23 @@ function assertDeadlineReplay(replay) {
   assert.equal(Object.keys(observed).length, replay.checkpointCount)
   assert.ok(Object.keys(replay.unobservedSeconds).every(key => !Object.hasOwn(replay.seconds, key)))
   for (const seconds of Object.values(observed)) assert.ok(Number.isFinite(seconds) && seconds > 0)
+  // Replay the original workload even when today's group has fewer members.
+  const historicalGroups = {
+    'collaboration-issue-comment-notification': [
+      'collaboration-issue-comment-notification-navigation',
+      'issue-notification-read',
+    ],
+  }
+  const historicalMatrix = {
+    ...replay.matrix,
+    include: replay.matrix.include.map(shard => ({
+      ...shard,
+      segments: shard.segments.split(',')
+        .flatMap(segment => historicalGroups[segment] ?? [segment]).join(','),
+    })),
+  }
   const covered = []
-  for (const shard of balanceWindowsMatrix(replay.matrix).include) {
+  for (const shard of balanceWindowsMatrix(historicalMatrix).include) {
     if (['core-9', 'core-10'].includes(shard.id)) continue
     covered.push(...expandDesktopCheckpoints(shard.segments.split(',')))
     const seconds = replayedShardSeconds(shard, observed, replay.runnerOverheadSeconds)

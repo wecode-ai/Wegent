@@ -1,13 +1,24 @@
-import { AlertTriangle, Cloud, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ApiError } from '@/api/http'
+import { Button } from '@/components/ui/button'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { DeviceInfo } from '@/types/devices'
-import type { DeviceGitAccountSyncResult, GitAccountSyncSummary } from '@/types/gitCredentials'
-import { createSettingsDeviceApi } from './settings-cloud-api'
-import { Button } from '@/components/ui/button'
-import { gitAccountSettingsUrl } from '@/lib/git-access'
 import { openExternalUrl } from '@/lib/external-links'
+import { gitAccountSettingsUrl } from '@/lib/git-access'
+import type { DeviceInfo } from '@/types/devices'
+import type { DeviceGitAccountSyncResult } from '@/types/gitCredentials'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertTriangle, Cloud, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createSettingsDeviceApi, type CloudSettingsConnection } from './settings-cloud-api'
 
 interface DeviceGitSyncSectionProps {
   devices?: DeviceInfo[]
@@ -40,114 +51,213 @@ function syncLoadErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: 
     : t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
 }
 
-export function DeviceGitSyncSection({
-  devices,
-  devicesLoading = false,
-  onRefreshDevices,
-}: DeviceGitSyncSectionProps) {
-  const { t } = useTranslation('common')
+function syncApplyErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.errorCode) {
+      case 'git_not_found':
+        return t('workbench.git_device_sync_git_missing')
+      case 'invalid_workbench_home':
+      case 'credential_directory_invalid':
+      case 'credential_directory_unwritable':
+      case 'legacy_credentials_unmanaged':
+        return t('workbench.git_device_sync_directory_error')
+      case 'git_config_failed':
+        return t('workbench.git_device_sync_git_config_error')
+      case 'profile_update_failed':
+        return t('workbench.git_device_sync_profile_error')
+      case 'sync_in_progress':
+        return t('workbench.git_device_sync_in_progress')
+      case 'git_sync_result_unconfirmed':
+        return t('workbench.git_device_sync_result_unconfirmed')
+      case 'credential_payload_missing':
+      case 'credential_payload_invalid':
+      case 'git_sync_device_unavailable':
+        return t('workbench.git_device_sync_delivery_error')
+      case 'credential_lock_failed':
+      case 'credential_lock_invalid':
+        return t('workbench.git_device_sync_lock_error')
+      case 'managed_git_config_invalid':
+        return t('workbench.git_device_sync_generated_config_error')
+      case 'credential_rollback_failed':
+        return t('workbench.git_device_sync_rollback_error')
+      case 'credential_stage_failed':
+      case 'credential_publish_failed':
+      case 'credential_apply_failed':
+        return t('workbench.git_device_sync_failed')
+    }
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : t('workbench.git_device_sync_failed')
+}
+
+function createGitSyncResources(
+  connection: CloudSettingsConnection,
+  refreshUser: () => Promise<unknown>
+) {
+  let api: ReturnType<typeof createSettingsDeviceApi> | undefined
+  let refreshingUser: Promise<unknown> | undefined
+  const getApi = () => (api ??= createSettingsDeviceApi(connection))
+  const failure = (error: unknown) => {
+    if (httpErrorStatus(error) === 401 && !refreshingUser) {
+      refreshingUser = refreshUser()
+        .catch(cause => {
+          console.error('Failed to refresh cloud identity after Git sync read:', cause)
+        })
+        .finally(() => {
+          refreshingUser = undefined
+        })
+    }
+  }
+  return {
+    getApi,
+    failure,
+    summary: createAsyncResource(
+      'settings/git-sync-summary',
+      () => getApi().getGitAccountSyncSummary(),
+      { failure }
+    ),
+    devices: createAsyncResource('settings/git-sync-devices', () => getApi().getAllDevices(), {
+      failure,
+    }),
+  }
+}
+
+export function DeviceGitSyncSection(props: DeviceGitSyncSectionProps) {
   const cloudConnection = useOptionalCloudConnection()
-  const settingsUrl = gitAccountSettingsUrl(cloudConnection)
-  const refreshCloudUser = cloudConnection.refreshUser
-  const syncConnection = useMemo(
+  const connection = useMemo(
     () => ({
       isConnected: cloudConnection.isConnected,
       apiBaseUrl: cloudConnection.apiBaseUrl,
       token: cloudConnection.token,
+      userId: cloudConnection.user?.id,
     }),
-    [cloudConnection.apiBaseUrl, cloudConnection.isConnected, cloudConnection.token]
+    [
+      cloudConnection.isConnected,
+      cloudConnection.apiBaseUrl,
+      cloudConnection.token,
+      cloudConnection.user?.id,
+    ]
   )
-  const [uncontrolledDevices, setUncontrolledDevices] = useState<DeviceInfo[]>([])
-  const [syncSummary, setSyncSummary] = useState<GitAccountSyncSummary | null>(null)
-  const [syncLoading, setSyncLoading] = useState(true)
+  const [owner, setOwner] = useState({ connection, revision: 0 })
+  if (owner.connection !== connection) setOwner({ connection, revision: owner.revision + 1 })
+  return (
+    <DeviceGitSyncContent
+      key={owner.revision}
+      {...props}
+      connection={connection}
+      cloudConnection={cloudConnection}
+    />
+  )
+}
+
+function DeviceGitSyncContent({
+  devices,
+  devicesLoading = false,
+  onRefreshDevices,
+  connection,
+  cloudConnection,
+}: DeviceGitSyncSectionProps & {
+  connection: CloudSettingsConnection
+  cloudConnection: ReturnType<typeof useOptionalCloudConnection>
+}) {
+  const { t } = useTranslation('common')
+  const settingsUrl = gitAccountSettingsUrl(cloudConnection)
+  const ready = !!(connection.isConnected && connection.apiBaseUrl && connection.token)
+  const [resources] = useState(() =>
+    createGitSyncResources(connection, cloudConnection.refreshUser)
+  )
+  const summary = useSyncExternalStore(
+    ready ? resources.summary.subscribe : subscribeIdleResource,
+    resources.summary.getSnapshot
+  )
+  const inventory = useSyncExternalStore(
+    ready && devices === undefined ? resources.devices.subscribe : subscribeIdleResource,
+    resources.devices.getSnapshot
+  )
+  const syncSummary = summary.data ?? null
+  const activeDevices = devices ?? inventory.data ?? []
   const [syncing, setSyncing] = useState(false)
+  const pending = useRef(false)
+  const refreshingDevices = useRef(false)
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
-  const [syncError, setSyncError] = useState<string | null>(null)
+  const [syncFailure, setSyncFailure] = useState<{ cause: unknown } | null>(null)
+  const [refreshFailure, setRefreshFailure] = useState<{ cause: unknown } | null>(null)
   const [syncResult, setSyncResult] = useState<DeviceGitAccountSyncResult | null>(null)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const usesProvidedDevices = devices !== undefined
-  const activeDevices = devices ?? uncontrolledDevices
-  const eligibleDevices = useMemo(
-    () =>
-      activeDevices.filter(
-        device =>
-          device.status === 'online' &&
-          (device.device_type === 'cloud' || device.device_type === 'remote') &&
-          device.bind_shell === 'claudecode'
-      ),
-    [activeDevices]
+  const [confirmClear, setConfirmClear] = useState<string | null>(null)
+  const eligibleDevices = activeDevices.filter(
+    device =>
+      device.status === 'online' &&
+      (device.device_type === 'cloud' || device.device_type === 'remote') &&
+      device.bind_shell === 'claudecode'
   )
   const activeSelectedDeviceId = eligibleDevices.some(
     device => device.device_id === selectedDeviceId
   )
     ? selectedDeviceId
     : ''
-  const loading = syncLoading || devicesLoading
-
-  const loadSyncConfiguration = useCallback(
-    async (refreshDevices: boolean) => {
-      setSyncError(null)
-      setSyncResult(null)
-      if (!syncConnection.isConnected || !syncConnection.apiBaseUrl || !syncConnection.token) {
-        setSyncSummary(null)
-        setUncontrolledDevices([])
-        setSelectedDeviceId('')
-        setSyncLoading(false)
-        return
-      }
-
-      setSyncLoading(true)
+  const loading = ready && (!summary.settled || summary.status === 'loading')
+  const inventoryPending = devicesLoading || (ready && devices === undefined && !inventory.settled)
+  const inventoryError = devices === undefined && inventory.status === 'error'
+  const inventoryUnavailable = inventoryPending || (devices === undefined && !inventory.data)
+  const syncError = syncFailure
+    ? syncApplyErrorMessage(t, syncFailure.cause)
+    : summary.status === 'error'
+      ? syncLoadErrorMessage(t, summary.error)
+      : refreshFailure
+        ? syncLoadErrorMessage(t, refreshFailure.cause)
+        : inventoryError
+          ? syncLoadErrorMessage(t, inventory.error)
+          : null
+  if (
+    confirmClear &&
+    (confirmClear !== activeSelectedDeviceId || !syncSummary || syncSummary.effective_count !== 0)
+  )
+    setConfirmClear(null)
+  const loadSyncConfiguration = async () => {
+    if (!ready || !resources.summary.hasSubscribers()) return
+    setSyncFailure(null)
+    setRefreshFailure(null)
+    setSyncResult(null)
+    void resources.summary.reload()
+    if (devices === undefined) {
+      if (resources.devices.getSnapshot().status !== 'loading') void resources.devices.reload()
+    } else if (!refreshingDevices.current) {
+      refreshingDevices.current = true
       try {
-        const api = createSettingsDeviceApi(syncConnection)
-        const summaryPromise = api.getGitAccountSyncSummary()
-        const devicesPromise = refreshDevices
-          ? usesProvidedDevices
-            ? onRefreshDevices?.()
-            : api.getAllDevices().then(nextDevices => setUncontrolledDevices(nextDevices))
-          : undefined
-        const [summary] = await Promise.all([summaryPromise, devicesPromise])
-        setSyncSummary(summary)
-      } catch (loadError) {
-        console.error('Failed to load device Git sync configuration:', loadError)
-        setSyncSummary(null)
-        if (!usesProvidedDevices) setUncontrolledDevices([])
-        setSelectedDeviceId('')
-        setSyncError(syncLoadErrorMessage(t, loadError))
-        if (httpErrorStatus(loadError) === 401) {
-          void refreshCloudUser()
+        await onRefreshDevices?.()
+      } catch (cause) {
+        if (resources.summary.hasSubscribers()) {
+          setRefreshFailure({ cause })
+          resources.failure(cause)
         }
       } finally {
-        setSyncLoading(false)
+        refreshingDevices.current = false
       }
-    },
-    [onRefreshDevices, refreshCloudUser, syncConnection, t, usesProvidedDevices]
-  )
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => void loadSyncConfiguration(!usesProvidedDevices), 0)
-    return () => window.clearTimeout(timeout)
-  }, [loadSyncConfiguration, usesProvidedDevices])
+    }
+  }
 
   const performSync = async (allowEmpty: boolean) => {
-    if (!activeSelectedDeviceId) return
-    setConfirmClear(false)
+    if (!ready || !resources.summary.hasSubscribers() || !activeSelectedDeviceId || pending.current)
+      return
+    if (
+      allowEmpty &&
+      (confirmClear !== activeSelectedDeviceId || syncSummary?.effective_count !== 0)
+    )
+      return
+    pending.current = true
+    setConfirmClear(null)
     setSyncing(true)
-    setSyncError(null)
+    setSyncFailure(null)
     setSyncResult(null)
     try {
-      const result = await createSettingsDeviceApi(syncConnection).syncGitAccounts(
-        activeSelectedDeviceId,
-        allowEmpty
-      )
-      setSyncResult(result)
+      const result = await resources.getApi().syncGitAccounts(activeSelectedDeviceId, allowEmpty)
+      if (resources.summary.hasSubscribers()) setSyncResult(result)
     } catch (syncFailure) {
       console.error('Failed to sync Git credentials to device:', syncFailure)
-      setSyncError(
-        syncFailure instanceof Error && syncFailure.message
-          ? syncFailure.message
-          : t('workbench.git_device_sync_failed', '同步设备 Git 配置失败')
-      )
+      if (resources.summary.hasSubscribers()) setSyncFailure({ cause: syncFailure })
     } finally {
+      pending.current = false
       setSyncing(false)
     }
   }
@@ -192,10 +302,11 @@ export function DeviceGitSyncSection({
               )}
             </div>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="git-device-sync-refresh"
-            onClick={() => void loadSyncConfiguration(true)}
+            onClick={() => void loadSyncConfiguration()}
             disabled={loading || syncing}
             className="inline-flex h-8 items-center gap-2 rounded-lg bg-muted px-3 text-sm text-text-primary hover:bg-hover disabled:opacity-50"
           >
@@ -205,14 +316,14 @@ export function DeviceGitSyncSection({
               <RefreshCw className="h-4 w-4" />
             )}
             {t('workbench.git_device_sync_refresh', '刷新')}
-          </button>
+          </ControlButton>
         </div>
 
-        {!cloudConnection.isConnected ? (
+        {!ready ? (
           <p data-testid="git-device-sync-disconnected" className="mt-4 text-xs text-text-muted">
             {t('workbench.git_device_sync_cloud_required', '连接 Wegent 云端后可同步 Git 配置。')}
           </p>
-        ) : loading ? (
+        ) : loading && !syncSummary ? (
           <div
             data-testid="git-device-sync-loading"
             className="mt-4 flex items-center gap-2 text-xs text-text-muted"
@@ -273,25 +384,36 @@ export function DeviceGitSyncSection({
 
             <label className="block text-xs font-medium text-text-primary">
               {t('workbench.git_device_sync_target', '目标设备')}
-              <select
-                data-testid="git-device-sync-select"
-                value={activeSelectedDeviceId}
-                onChange={event => setSelectedDeviceId(event.target.value)}
+              <SelectRoot
+                value={normalizeSelectValue(activeSelectedDeviceId)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setSelectedDeviceId(selectedValue)
+                }}
                 disabled={syncing || eligibleDevices.length === 0}
-                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:opacity-50"
               >
-                <option value="">
-                  {eligibleDevices.length
-                    ? t('workbench.git_device_sync_select_placeholder', '请选择设备')
-                    : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
-                </option>
-                {eligibleDevices.map(device => (
-                  <option key={device.device_id} value={device.device_id}>
-                    {device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')} ·{' '}
-                    {device.device_type}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  data-testid="git-device-sync-select"
+                  data-value={activeSelectedDeviceId}
+                  className="mt-2 w-full"
+                />
+                <SelectContent>
+                  <SelectItem value="">
+                    {eligibleDevices.length
+                      ? t('workbench.git_device_sync_select_placeholder', '请选择设备')
+                      : inventoryPending
+                        ? t('workbench.git_device_sync_loading', '正在读取 Git 账户和设备…')
+                        : inventoryUnavailable
+                          ? t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
+                          : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
+                  </SelectItem>
+                  {eligibleDevices.map(device => (
+                    <SelectItem key={device.device_id} value={String(device.device_id)}>
+                      {device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')}{' '}
+                      · {device.device_type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -300,7 +422,12 @@ export function DeviceGitSyncSection({
                 data-testid="git-device-sync-submit"
                 onClick={requestSync}
                 size="sm"
-                disabled={!activeSelectedDeviceId || syncing || syncSummary.effective_count === 0}
+                disabled={
+                  !activeSelectedDeviceId ||
+                  syncing ||
+                  inventoryUnavailable ||
+                  syncSummary.effective_count === 0
+                }
               >
                 {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {t('workbench.git_device_sync_submit', '同步 Git 配置')}
@@ -310,8 +437,8 @@ export function DeviceGitSyncSection({
                   variant="ghost"
                   size="sm"
                   data-testid="git-device-sync-clear"
-                  disabled={!activeSelectedDeviceId || syncing}
-                  onClick={() => setConfirmClear(true)}
+                  disabled={!activeSelectedDeviceId || syncing || inventoryUnavailable}
+                  onClick={() => setConfirmClear(activeSelectedDeviceId)}
                 >
                   {t('workbench.git_device_sync_clear', '清理 Wegent Git 配置')}
                 </Button>
@@ -348,13 +475,21 @@ export function DeviceGitSyncSection({
                   </p>
                 ) : null}
                 {syncResult.cli
-                  .filter(item => item.status !== 'configured')
+                  .filter(
+                    item =>
+                      item.status !== 'configured' || item.reason_code === 'cli_git_protocol_failed'
+                  )
                   .map(item => (
                     <p key={`${item.provider}-${item.domain}`} className="mt-1">
                       {item.provider} · {item.domain}:{' '}
-                      {item.status === 'not_installed'
-                        ? t('workbench.git_device_sync_cli_missing', 'CLI 未安装，Git 认证已生效')
-                        : t('workbench.git_device_sync_cli_failed', 'CLI 登录失败，Git 认证已生效')}
+                      {item.status === 'configured'
+                        ? t('workbench.git_device_sync_cli_protocol_failed')
+                        : item.status === 'not_installed'
+                          ? t('workbench.git_device_sync_cli_missing', 'CLI 未安装，Git 认证已生效')
+                          : t(
+                              'workbench.git_device_sync_cli_failed',
+                              'CLI 登录失败，Git 认证已生效'
+                            )}
                       {item.status === 'failed' && item.detail ? `（${item.detail}）` : null}
                     </p>
                   ))}
@@ -398,12 +533,15 @@ export function DeviceGitSyncSection({
       </section>
 
       {confirmClear ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="git-device-sync-clear-title"
-          data-testid="git-device-sync-clear-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        <DialogSurface
+          onClose={() => setConfirmClear(null)}
+          render={
+            <div
+              aria-labelledby="git-device-sync-clear-title"
+              data-testid="git-device-sync-clear-dialog"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            />
+          }
         >
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-xl">
             <h2 id="git-device-sync-clear-title" className="text-sm font-medium text-text-primary">
@@ -416,25 +554,28 @@ export function DeviceGitSyncSection({
               )}
             </p>
             <div className="mt-5 flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="git-device-sync-clear-cancel"
-                onClick={() => setConfirmClear(false)}
+                onClick={() => setConfirmClear(null)}
                 className="h-8 rounded-lg bg-muted px-3 text-sm text-text-primary hover:bg-hover"
               >
                 {t('common.cancel', '取消')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
                 type="button"
                 data-testid="git-device-sync-clear-confirm"
                 onClick={() => void performSync(true)}
                 className="h-8 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive wework:bg-red-500 wework:text-white wework:hover:bg-red-600"
               >
                 {t('workbench.git_device_sync_clear_confirm', '确认清理')}
-              </button>
+              </ControlButton>
             </div>
           </div>
-        </div>
+        </DialogSurface>
       ) : null}
     </>
   )

@@ -129,22 +129,23 @@ describe('runtimeConversationCache', () => {
   })
 
   test('reuses the projection while the canonical turns are unchanged', () => {
-    const projected = applyRuntimeConversationAction(address, {
+    applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
       subtaskId: 'turn-1',
     })
 
-    expect(getRuntimeConversationMessages(address)).toBe(projected)
+    const projected = getRuntimeConversationMessages(address)
     expect(getRuntimeConversationMessages(address)).toBe(projected)
 
-    const updated = applyRuntimeConversationAction(address, {
+    applyRuntimeConversationAction(address, {
       type: 'assistant_chunk',
       subtaskId: 'turn-1',
       itemId: 'assistant-1',
       content: 'next',
     })
 
+    const updated = getRuntimeConversationMessages(address)
     expect(updated).not.toBe(projected)
     expect(getRuntimeConversationMessages(address)).toBe(updated)
   })
@@ -470,25 +471,61 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address)[0]?.content).toBe('updated projection')
   })
 
-  test('evicts an unobserved terminal conversation after the idle ttl', () => {
-    vi.useFakeTimers()
-    applyRuntimeConversationAction(address, {
-      type: 'assistant_started',
-      taskId: address.taskId,
-      subtaskId: 'turn-1',
-    })
-    applyRuntimeConversationAction(address, {
-      type: 'assistant_done',
-      subtaskId: 'turn-1',
-    })
+  test.each([
+    { name: 'production default', config: undefined, ttlMs: 300_000 },
+    {
+      name: 'active E2E cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 10_000 },
+      ttlMs: 10_000,
+    },
+    {
+      name: 'disabled E2E',
+      config: {
+        controlUrl: 'http://127.0.0.1:43111',
+        disabled: true,
+        conversationCacheIdleTtlMs: 10_000,
+      },
+      ttlMs: 300_000,
+    },
+    { name: 'no E2E controller', config: { conversationCacheIdleTtlMs: 10_000 }, ttlMs: 300_000 },
+    {
+      name: 'nonpositive cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 0 },
+      ttlMs: 300_000,
+    },
+    {
+      name: 'fractional cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 0.5 },
+      ttlMs: 300_000,
+    },
+    {
+      name: 'nonfinite cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: Infinity },
+      ttlMs: 300_000,
+    },
+  ])(
+    'evicts an unobserved terminal conversation after the idle ttl: $name',
+    ({ config, ttlMs }) => {
+      vi.useFakeTimers()
+      vi.stubGlobal('__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__', config)
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'turn-1',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+      })
 
-    vi.advanceTimersByTime(5 * 60 * 1000 - 1)
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
+      vi.advanceTimersByTime(ttlMs - 1)
+      expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
 
-    vi.advanceTimersByTime(1)
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
-    vi.useRealTimers()
-  })
+      vi.advanceTimersByTime(1)
+      expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+      vi.useRealTimers()
+    }
+  )
 
   test('keeps a terminal conversation while a view is subscribed', () => {
     vi.useFakeTimers()
@@ -919,6 +956,14 @@ describe('runtimeConversationCache', () => {
   })
 
   test('keeps goal, plan, and subagent state independently from a mounted pane', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
+    const emptyMetadata = getRuntimeConversationMetadata(address)
+
+    settleRuntimeConversationSubagents(address)
+    expect(getRuntimeConversationMetadata(address)).toBe(emptyMetadata)
+    expect(listener).not.toHaveBeenCalled()
+
     setRuntimeConversationGoal(address, {
       threadId: 'thread-1',
       objective: 'Finish the fix',
@@ -958,9 +1003,17 @@ describe('runtimeConversationCache', () => {
       ],
     })
 
+    listener.mockClear()
     settleRuntimeConversationSubagents(address)
 
-    expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
+    const settledMetadata = getRuntimeConversationMetadata(address)
+    expect(settledMetadata.subagentStatuses[0]?.status).toBe('done')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    settleRuntimeConversationSubagents(address)
+    expect(getRuntimeConversationMetadata(address)).toBe(settledMetadata)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   test('bounds subagent status metadata across a long-running conversation', () => {
@@ -1054,9 +1107,21 @@ describe('runtimeConversationCache', () => {
     expect(isRuntimeGoalSnapshotCurrent(address, olderSnapshot)).toBe(false)
     expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(true)
 
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
     setRuntimeConversationGoal(address, null)
 
     expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(false)
+    expect(listener).toHaveBeenCalledOnce()
+
+    const metadata = getRuntimeConversationMetadata(address)
+    const repeatedSnapshot = beginRuntimeGoalSnapshot(address)
+    setRuntimeConversationGoal(address, null)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, repeatedSnapshot)).toBe(false)
+    expect(getRuntimeConversationMetadata(address)).toBe(metadata)
+    expect(listener).toHaveBeenCalledOnce()
+    unsubscribe()
   })
 
   test('does not reuse Goal snapshot versions after conversation eviction', () => {

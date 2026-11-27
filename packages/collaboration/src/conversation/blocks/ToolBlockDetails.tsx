@@ -1,14 +1,20 @@
-import { useMarkdownServices } from "../../markdown/MarkdownServices";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useConversationTranslation } from "../ConversationTranslation";
-import { useToolInteractionServices } from "../ToolInteractionServices";
-import { terminalOutputToText } from "@wegent/chat-core/terminal-text";
-import type { ToolBlock } from "./types";
+import { Button as ControlButton } from '../../markdown/Button'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useMarkdownServices } from '../../markdown/MarkdownServices'
+import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useConversationTranslation } from '../ConversationTranslation'
+import { useToolInteractionServices } from '../ToolInteractionServices'
+import { terminalOutputToText } from '@wegent/chat-core/terminal-text'
+import type { ToolBlock } from './types'
 import {
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
-} from "../../markdown/assistantMarkdownLinks";
-import { isWebSearchToolName, unwrapShellCommand } from "./toolBlockActivity";
+} from '../../markdown/assistantMarkdownLinks'
+import { isWebSearchToolName, unwrapShellCommand } from './toolBlockActivity'
 import {
   getFileInputPath,
   getFileInputPaths,
@@ -21,39 +27,39 @@ import {
   isImageViewToolName,
   isFileReadToolName,
   isNodeReplToolName,
-} from "./toolBlockKinds";
-import { WebSearchActivityRows } from "./WebSearchSources";
-import { getWebSearchActivityItems } from "./webSearchActivity";
-import { truncate } from "./toolBlockText";
+} from './toolBlockKinds'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
+import { truncate } from './toolBlockText'
 
 export function renderBlockDetail(block: ToolBlock) {
-  const name = block.toolName.toLowerCase();
+  const name = block.toolName.toLowerCase()
 
   if (isCommandToolName(name)) {
-    return <BashBlockDetail block={block} />;
+    return <BashBlockDetail block={block} />
   }
   if (isFileCreateToolName(name)) {
-    return <FileWriteDetail block={block} />;
+    return <FileWriteDetail block={block} />
   }
   if (isFileEditToolName(name)) {
-    return <FileEditDetail block={block} />;
+    return <FileEditDetail block={block} />
   }
   if (isWebSearchToolName(name)) {
-    return <WebSearchBlockDetail block={block} />;
+    return <WebSearchBlockDetail block={block} />
   }
   if (isImageViewToolName(name)) {
-    return <ImageViewBlockDetail block={block} />;
+    return <ImageViewBlockDetail block={block} />
   }
   if (isGuidanceToolName(name)) {
-    return null;
+    return null
   }
 
-  return <GenericToolBlockDetail block={block} />;
+  return <GenericToolBlockDetail block={block} />
 }
 
 export function hasBlockDetail(block: ToolBlock): boolean {
-  const name = block.toolName.toLowerCase();
-  if (isGuidanceToolName(name) || isImageGenerationToolName(name)) return false;
+  const name = block.toolName.toLowerCase()
+  if (isGuidanceToolName(name) || isImageGenerationToolName(name)) return false
   if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
@@ -61,19 +67,20 @@ export function hasBlockDetail(block: ToolBlock): boolean {
     isWebSearchToolName(name) ||
     isImageViewToolName(name)
   ) {
-    return true;
+    return true
   }
-  return block.toolInput !== undefined || block.toolOutput !== undefined;
+  return block.toolInput !== undefined || block.toolOutput !== undefined
 }
 
 function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
-  const { t } = useConversationTranslation();
-  const inputText = stringifyToolValue(block.toolInput);
-  const outputText = stringifyToolValue(block.toolOutput);
-  const isJavaScript = isNodeReplToolName(block.toolName);
-  const code = isJavaScript
-    ? getInputField(block, "code", "javascript", "source")
-    : undefined;
+  const { t } = useConversationTranslation()
+  const providerCatalog = getConnectionEventProviderCatalog(block)
+  if (providerCatalog) return <ConnectionEventProviderDetail {...providerCatalog} />
+
+  const inputText = stringifyToolValue(block.toolInput)
+  const outputText = stringifyToolValue(block.toolOutput)
+  const isJavaScript = isNodeReplToolName(block.toolName)
+  const code = isJavaScript ? getInputField(block, 'code', 'javascript', 'source') : undefined
 
   return (
     <div
@@ -84,38 +91,90 @@ function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
         <span className="min-w-0 truncate font-mono text-xs text-text-secondary">
           {block.toolName}
         </span>
-        {isJavaScript ? (
-          <span className="shrink-0 text-xs text-text-muted">JavaScript</span>
-        ) : null}
+        {isJavaScript ? <span className="shrink-0 text-xs text-text-muted">JavaScript</span> : null}
       </div>
       <div className="flex min-w-0 flex-col gap-3 p-3">
         {code ? (
           <ToolDetailSection
-            label={t("tool_activity.tool_input")}
+            label={t('tool_activity.tool_input')}
             content={code}
             testId="generic-tool-input"
           />
         ) : inputText ? (
           <ToolDetailSection
-            label={t("tool_activity.tool_input")}
+            label={t('tool_activity.tool_input')}
             content={inputText}
             testId="generic-tool-input"
           />
         ) : null}
         {outputText ? (
           <ToolDetailSection
-            label={t("tool_activity.tool_output")}
+            label={t('tool_activity.tool_output')}
             content={outputText}
             testId="generic-tool-output"
           />
-        ) : block.status === "done" ? (
-          <p className="text-xs text-text-muted">
-            {t("tool_activity.tool_no_output")}
-          </p>
+        ) : block.status === 'done' ? (
+          <p className="text-xs text-text-muted">{t('tool_activity.tool_no_output')}</p>
         ) : null}
       </div>
     </div>
-  );
+  )
+}
+
+function getConnectionEventProviderCatalog(
+  block: ToolBlock
+): { catalog: unknown; providers: unknown[] } | null {
+  const name = 'list_connection_event_providers'
+  const isCatalog =
+    block.toolName === `wework_control.${name}` ||
+    (block.toolName === 'wework_control.invoke_capability' && block.toolInput?.name === name)
+  if (!isCatalog || block.status !== 'done' || !isRecord(block.toolOutput)) return null
+
+  const summary = block.toolOutput.structuredContent
+  if (!isRecord(summary) || !Array.isArray(summary.items)) return null
+
+  const metadata = block.toolOutput._meta
+  const fullCatalog = isRecord(metadata) ? metadata.connectionEventProviderCatalog : undefined
+  return { catalog: fullCatalog ?? summary, providers: summary.items }
+}
+
+function ConnectionEventProviderDetail({
+  catalog,
+  providers,
+}: NonNullable<ReturnType<typeof getConnectionEventProviderCatalog>>) {
+  const { t } = useConversationTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const ready = providers.filter(
+    provider =>
+      isRecord(provider) &&
+      isRecord(provider.availability) &&
+      provider.availability.status === 'ready'
+  ).length
+
+  return (
+    <div className="min-w-0 space-y-2 pl-5 text-sm text-text-secondary">
+      <div className="flex flex-wrap items-center gap-x-3">
+        <span>{t('tool_activity.event_provider_summary', { total: providers.length, ready })}</span>
+        <ControlButton
+          variant="unstyled"
+          type="button"
+          aria-expanded={expanded}
+          className="min-h-11 rounded text-text-secondary hover:text-text-primary hover:underline keyboard:focus-visible:outline keyboard:focus-visible:outline-2 md:min-h-7"
+          data-testid="connection-event-provider-result-toggle"
+          onClick={() => setExpanded(value => !value)}
+        >
+          {t(expanded ? 'tool_activity.hide_full_result' : 'tool_activity.show_full_result')}
+        </ControlButton>
+      </div>
+      {expanded && (
+        <ToolDetailSection
+          label={t('tool_activity.tool_output')}
+          content={stringifyToolValue(catalog)}
+          testId="generic-tool-output"
+        />
+      )}
+    </div>
+  )
 }
 
 function ToolDetailSection({
@@ -123,9 +182,9 @@ function ToolDetailSection({
   content,
   testId,
 }: {
-  label: string;
-  content: string;
-  testId: string;
+  label: string
+  content: string
+  testId: string
 }) {
   return (
     <section className="min-w-0">
@@ -137,35 +196,35 @@ function ToolDetailSection({
         {content}
       </pre>
     </section>
-  );
+  )
 }
 
 function stringifyToolValue(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "";
-  if (typeof value === "string") return value;
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'string') return value
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(value, null, 2)
   } catch {
-    return String(value);
+    return String(value)
   }
 }
 
 function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
-  const { t } = useConversationTranslation();
-  const source = getImageViewSource(block);
-  const { url, loading, error } = useResolvedImageViewSource(source);
+  const { t } = useConversationTranslation()
+  const source = getImageViewSource(block)
+  const { url, loading, error } = useResolvedImageViewSource(source)
 
   if (loading) {
-    return <p role="status">{t("tool_activity.image_loading")}</p>;
+    return <p role="status">{t('tool_activity.image_loading')}</p>
   }
   if (error) {
     return (
       <p role="alert">
-        {t("tool_activity.image_load_failed")}: {error}
+        {t('tool_activity.image_load_failed')}: {error}
       </p>
-    );
+    )
   }
-  if (!url) return null;
+  if (!url) return null
 
   return (
     <div
@@ -174,190 +233,142 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
     >
       <img
         src={url}
-        alt={t("tool_activity.image_preview_alt")}
+        alt={t('tool_activity.image_preview_alt')}
         className="max-h-96 w-full object-contain"
         data-testid="image-view-preview"
       />
     </div>
-  );
+  )
 }
 
 function useResolvedImageViewSource(source?: string): {
-  url: string | null;
-  loading: boolean;
-  error: string | null;
+  url: string | null
+  loading: boolean
+  error: string | null
 } {
-  const { readLocalFile } = useMarkdownServices();
-  const { readImageFile } = useToolInteractionServices();
-  const readFile = readImageFile ?? readLocalFile;
+  const { readLocalFile } = useMarkdownServices()
+  const { readImageFile } = useToolInteractionServices()
+  const readFile = readImageFile ?? readLocalFile
   const localImagePath = useMemo(() => {
-    if (!source || !readFile) return null;
-    const localPath = localMarkdownImagePath(source);
-    if (localPath) return localPath;
-    return readImageFile && !/^(data:|blob:|https?:|asset:)/i.test(source)
-      ? source
-      : null;
-  }, [source, readFile, readImageFile]);
-  const [localImage, setLocalImage] = useState<{
-    path: string;
-    url: string;
-    reader: typeof readFile;
-  } | null>(null);
-  const [error, setError] = useState<{
-    path: string;
-    message: string;
-    reader: typeof readFile;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!localImagePath || !readFile) return undefined;
-
-    let active = true;
-    let objectUrl: string | null = null;
-    void readFile(localImagePath)
-      .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        if (active)
-          setLocalImage({
-            path: localImagePath,
-            url: objectUrl,
-            reader: readFile,
-          });
-        else URL.revokeObjectURL(objectUrl);
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setError({
-            path: localImagePath,
-            message: reason instanceof Error ? reason.message : String(reason),
-            reader: readFile,
-          });
-        }
-      });
-
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [localImagePath, readFile]);
-
+    if (!source || !readFile) return null
+    const localPath = localMarkdownImagePath(source)
+    if (localPath) return localPath
+    return readImageFile && !/^(data:|blob:|https?:|asset:)/i.test(source) ? source : null
+  }, [source, readFile, readImageFile])
+  const resource = useMemo(
+    () =>
+      localImagePath && readFile
+        ? createAsyncResource(
+            localImagePath,
+            async () => URL.createObjectURL(await readFile(localImagePath)),
+            { release: url => URL.revokeObjectURL(url) }
+          )
+        : null,
+    [localImagePath, readFile]
+  )
+  const snapshot = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
   if (localImagePath) {
-    const imageReady =
-      localImage?.path === localImagePath && localImage.reader === readFile;
-    const imageFailed =
-      error?.path === localImagePath && error.reader === readFile;
+    const failed = snapshot.status === 'error'
     return {
-      url: imageReady ? localImage.url : null,
-      loading: !imageReady && !imageFailed,
-      error: imageFailed ? error.message : null,
-    };
+      url: snapshot.data ?? null,
+      loading: snapshot.data === undefined && !failed,
+      error: failed
+        ? String(snapshot.error instanceof Error ? snapshot.error.message : snapshot.error)
+        : null,
+    }
   }
   return {
     url: source ? resolveDirectMarkdownImageSrc(source) : null,
     loading: false,
     error: null,
-  };
+  }
 }
 
 function getImageViewSource(block: ToolBlock): string | undefined {
-  const output = block.toolOutput;
-  if (typeof output === "string" && isImageSource(output)) return output;
+  const output = block.toolOutput
+  if (typeof output === 'string' && isImageSource(output)) return output
   if (isRecord(output)) {
-    const directSource = getStringField(
-      output,
-      "image_url",
-      "imageUrl",
-      "url",
-      "path",
-    );
-    if (directSource && isImageSource(directSource)) return directSource;
+    const directSource = getStringField(output, 'image_url', 'imageUrl', 'url', 'path')
+    if (directSource && isImageSource(directSource)) return directSource
 
-    const nestedImageUrl = output.image_url;
+    const nestedImageUrl = output.image_url
     if (isRecord(nestedImageUrl)) {
-      const nestedSource = getStringField(nestedImageUrl, "url");
-      if (nestedSource && isImageSource(nestedSource)) return nestedSource;
+      const nestedSource = getStringField(nestedImageUrl, 'url')
+      if (nestedSource && isImageSource(nestedSource)) return nestedSource
     }
   }
 
-  return getInputField(block, "path", "file_path", "filePath");
+  return getInputField(block, 'path', 'file_path', 'filePath')
 }
 
 function isImageSource(value: string): boolean {
-  const source = value.trim();
+  const source = value.trim()
   return (
-    source.startsWith("data:image/") ||
-    source.startsWith("blob:") ||
-    source.startsWith("file://") ||
+    source.startsWith('data:image/') ||
+    source.startsWith('blob:') ||
+    source.startsWith('file://') ||
     /^https?:\/\//i.test(source) ||
     /^asset:/i.test(source) ||
-    source.startsWith("/") ||
+    source.startsWith('/') ||
     /^[a-zA-Z]:[\\/]/.test(source)
-  );
+  )
 }
 
 function WebSearchBlockDetail({ block }: { block: ToolBlock }) {
-  const items = getWebSearchActivityItems([block]);
+  const items = getWebSearchActivityItems([block])
 
-  if (items.length === 0) return null;
+  if (items.length === 0) return null
 
   return (
     <div data-testid="web-search-block-detail">
       <WebSearchActivityRows items={items} />
     </div>
-  );
+  )
 }
 
 export function getWorkspaceFilePath(block: ToolBlock): string | undefined {
-  const name = block.toolName.toLowerCase();
-  if (
-    !isFileReadToolName(name) &&
-    !isFileCreateToolName(name) &&
-    !isFileEditToolName(name)
-  ) {
-    return undefined;
+  const name = block.toolName.toLowerCase()
+  if (!isFileReadToolName(name) && !isFileCreateToolName(name) && !isFileEditToolName(name)) {
+    return undefined
   }
-  return getFileInputPath(block);
+  return getFileInputPath(block)
 }
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {
-  const command = getInputField(block, "command", "cmd", "commandLine");
-  const displayCommand = command ? unwrapShellCommand(command) : undefined;
-  const cwd = getInputField(block, "cwd", "workdir", "workingDirectory");
-  const output = block.toolOutput;
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')
+  const displayCommand = command ? unwrapShellCommand(command) : undefined
+  const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
+  const output = block.toolOutput
   const rawOutputText = useMemo(
-    () =>
-      typeof output === "string"
-        ? output
-        : output
-          ? JSON.stringify(output, null, 2)
-          : "",
-    [output],
-  );
-  const outputText = useMemo(
-    () => terminalOutputToText(rawOutputText),
-    [rawOutputText],
-  );
-  const outputRef = useRef<HTMLPreElement>(null);
-  const isDone = block.status === "done";
-  const isError = block.status === "error";
-  const [copied, setCopied] = useState(false);
+    () => (typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''),
+    [output]
+  )
+  const outputText = useMemo(() => terminalOutputToText(rawOutputText), [rawOutputText])
+  const outputRef = useRef<HTMLPreElement>(null)
+  const isDone = block.status === 'done'
+  const isError = block.status === 'error'
+  const [copied, setCopied] = useState(false)
 
   useLayoutEffect(() => {
-    const outputElement = outputRef.current;
-    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight;
-  }, [outputText]);
+    const outputElement = outputRef.current
+    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight
+  }, [outputText])
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(displayCommand ?? "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+    void navigator.clipboard.writeText(displayCommand ?? '')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   return (
     <div className="min-w-0 overflow-x-hidden rounded-lg bg-code-bg px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-text-muted">Shell</span>
-        <button
+        <ControlButton variant="unstyled"
           type="button"
           onClick={handleCopy}
           className="p-0.5 text-text-muted hover:text-text-secondary"
@@ -370,11 +381,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
               stroke="currentColor"
               strokeWidth={2}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M5 13l4 4L19 7"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           ) : (
             <svg
@@ -391,7 +398,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
               />
             </svg>
           )}
-        </button>
+        </ControlButton>
       </div>
       {displayCommand && (
         <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">
@@ -400,10 +407,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         </div>
       )}
       {cwd && (
-        <div
-          className="mt-1 min-w-0 truncate font-mono text-xs text-text-muted"
-          title={cwd}
-        >
+        <div className="mt-1 min-w-0 truncate font-mono text-xs text-text-muted" title={cwd}>
           cwd: {cwd}
         </div>
       )}
@@ -429,11 +433,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
                 stroke="currentColor"
                 strokeWidth={2}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M5 13l4 4L19 7"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               成功
             </span>
@@ -442,41 +442,41 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         </div>
       )}
     </div>
-  );
+  )
 }
 
 function FileWriteDetail({ block }: { block: ToolBlock }) {
-  const filePaths = getFileInputPaths(block);
-  const content = getInputField(block, "content", "file_text", "fileText");
+  const filePaths = getFileInputPaths(block)
+  const content = getInputField(block, 'content', 'file_text', 'fileText')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePaths.map((filePath) => (
+      {filePaths.map(filePath => (
         <p key={filePath} className="break-words text-xs text-text-muted">
           {filePath}
         </p>
       ))}
       {content && (
         <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs leading-5 text-text-primary">
-          {content.length > 500 ? content.substring(0, 500) + "..." : content}
+          {content.length > 500 ? content.substring(0, 500) + '...' : content}
         </pre>
       )}
     </div>
-  );
+  )
 }
 
 function FileEditDetail({ block }: { block: ToolBlock }) {
-  const filePaths = getFileInputPaths(block);
-  const previews = getEditPreviews(block);
+  const filePaths = getFileInputPaths(block)
+  const previews = getEditPreviews(block)
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePaths.map((filePath) => (
+      {filePaths.map(filePath => (
         <p key={filePath} className="break-words text-xs text-text-muted">
           {filePath}
         </p>
       ))}
       {previews.map((preview, index) => (
         <div
-          key={`${index}:${preview.oldText ?? ""}:${preview.newText ?? ""}`}
+          key={`${index}:${preview.oldText ?? ''}:${preview.newText ?? ''}`}
           className="space-y-1"
         >
           {preview.oldText && (
@@ -492,51 +492,35 @@ function FileEditDetail({ block }: { block: ToolBlock }) {
         </div>
       ))}
     </div>
-  );
+  )
 }
 
-function getEditPreviews(
-  block: ToolBlock,
-): Array<{ oldText?: string; newText?: string }> {
-  const directOldText = getInputField(
-    block,
-    "old_string",
-    "old_str",
-    "oldString",
-  );
-  const directNewText = getInputField(
-    block,
-    "new_string",
-    "new_str",
-    "newString",
-    "new_source",
-  );
+function getEditPreviews(block: ToolBlock): Array<{ oldText?: string; newText?: string }> {
+  const directOldText = getInputField(block, 'old_string', 'old_str', 'oldString')
+  const directNewText = getInputField(block, 'new_string', 'new_str', 'newString', 'new_source')
   if (directOldText || directNewText) {
-    return [{ oldText: directOldText, newText: directNewText }];
+    return [{ oldText: directOldText, newText: directNewText }]
   }
 
-  const edits = block.toolInput?.edits;
-  if (!Array.isArray(edits)) return [];
+  const edits = block.toolInput?.edits
+  if (!Array.isArray(edits)) return []
 
-  return edits.flatMap((edit) => {
-    if (!isRecord(edit)) return [];
-    const oldText = getStringField(edit, "old_string", "old_str", "oldString");
-    const newText = getStringField(edit, "new_string", "new_str", "newString");
-    return oldText || newText ? [{ oldText, newText }] : [];
-  });
+  return edits.flatMap(edit => {
+    if (!isRecord(edit)) return []
+    const oldText = getStringField(edit, 'old_string', 'old_str', 'oldString')
+    const newText = getStringField(edit, 'new_string', 'new_str', 'newString')
+    return oldText || newText ? [{ oldText, newText }] : []
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function getStringField(
-  record: Record<string, unknown>,
-  ...keys: string[]
-): string | undefined {
+function getStringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string") return value;
+    const value = record[key]
+    if (typeof value === 'string') return value
   }
-  return undefined;
+  return undefined
 }

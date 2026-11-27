@@ -198,7 +198,8 @@ describe('Mobile workspace changes state', () => {
       target.deviceId,
       target.path,
       { mode: 'branch' },
-      undefined
+      undefined,
+      target.taskId
     )
     expect(service.isWorkspaceGitRepository).not.toHaveBeenCalled()
     expect(result.target).not.toBe(target)
@@ -229,7 +230,8 @@ describe('Mobile workspace changes state', () => {
     expect(service.isWorkspaceGitRepository).toHaveBeenCalledWith(
       target.deviceId,
       target.path,
-      undefined
+      undefined,
+      target.taskId
     )
   })
 
@@ -282,7 +284,8 @@ describe('Mobile workspace changes state', () => {
       next.deviceId,
       next.path,
       { mode: 'unstaged' },
-      undefined
+      undefined,
+      next.taskId
     )
   })
 })

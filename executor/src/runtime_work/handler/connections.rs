@@ -3,7 +3,11 @@ use super::*;
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn configure_connection_host(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let poll = payload["poll"] == true;
         super::super::connection_host::configure(payload)?;
+        if poll {
+            self.schedule_connection_subscribers();
+        }
         Ok(json!({"success": true}))
     }
 

@@ -10,24 +10,40 @@ import {
   type NativeContextMenuParams,
 } from './image-context-menu.js'
 
+export interface NativeContextMenuActionOptions {
+  canReload?: () => boolean
+  requestAnnotation?: (mode: 'quick' | 'batch', x: number, y: number) => void
+  saveUrlAs?: (url: string) => void
+}
+
 export function createNativeContextMenuActions(
   contents: WebContents,
   openLinkInNewTab: (url: string) => void = url => {
     void shell.openExternal(url)
-  }
+  },
+  options: NativeContextMenuActionOptions = {}
 ): NativeContextMenuActions {
   return {
     copyLink: url => clipboard.writeText(url),
     copyPath: path => clipboard.writeText(path),
     getState: () => ({
-      canGoBack: !contents.isDestroyed() && contents.canGoBack(),
-      canGoForward: !contents.isDestroyed() && contents.canGoForward(),
+      canGoBack:
+        !contents.isDestroyed() &&
+        (contents.navigationHistory?.canGoBack() ?? contents.canGoBack()),
+      canGoForward:
+        !contents.isDestroyed() &&
+        (contents.navigationHistory?.canGoForward() ?? contents.canGoForward()),
+      ...(options.canReload ? { canReload: options.canReload() } : {}),
     }),
     goBack: () => {
-      if (!contents.isDestroyed() && contents.canGoBack()) contents.goBack()
+      if (contents.isDestroyed()) return
+      if (contents.navigationHistory?.canGoBack()) contents.navigationHistory.goBack()
+      else if (contents.canGoBack()) contents.goBack()
     },
     goForward: () => {
-      if (!contents.isDestroyed() && contents.canGoForward()) contents.goForward()
+      if (contents.isDestroyed()) return
+      if (contents.navigationHistory?.canGoForward()) contents.navigationHistory.goForward()
+      else if (contents.canGoForward()) contents.goForward()
     },
     inspect: (x, y) => {
       if (contents.isDestroyed()) return
@@ -54,7 +70,9 @@ export function createNativeContextMenuActions(
     reportError: (action, error) => {
       console.error(`[context-menu] ${action} failed`, error)
     },
+    ...(options.requestAnnotation ? { requestAnnotation: options.requestAnnotation } : {}),
     resolveImageContext: params => resolveRendererImageContext(contents, params),
+    ...(options.saveUrlAs ? { saveUrlAs: options.saveUrlAs } : {}),
     showItemInFolder: path => shell.showItemInFolder(path),
   }
 }

@@ -171,6 +171,7 @@ fn closed_session_child_events_cannot_leak_into_the_current_conversation() {
         routing.routes.insert(
             "old-child".into(),
             RuntimeThreadEventRoute {
+                goal_model_route: None,
                 local_task_id: TASK.into(),
                 request: ExecutionRequest::default(),
                 event_mapper: mapper,
@@ -222,6 +223,16 @@ async fn history_pages_cross_sessions_without_changing_the_active_task_or_approv
     assert_eq!(older["hasMoreBefore"], false);
     assert_eq!(older["hasMoreAfter"], true);
     assert!(!older["messages"].as_array().unwrap().is_empty());
+    let from_start = handler
+        .read_transcript(json!({"taskId":TASK,"limit":1,"afterCursor":"start"}))
+        .await
+        .unwrap();
+    assert_eq!(from_start["sessionThreadId"], "thread-1");
+    assert_eq!(from_start["hasMoreBefore"], false);
+    assert_eq!(from_start["hasMoreAfter"], true);
+    assert!(from_start["messages"]
+        .to_string()
+        .contains("original request"));
     let newer = handler
         .read_transcript(json!({"taskId":TASK,"limit":10,"afterCursor":older["afterCursor"]}))
         .await

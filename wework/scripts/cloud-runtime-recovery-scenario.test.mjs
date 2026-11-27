@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   notificationCleanup: vi.fn(),
   questionVerify: vi.fn(),
   questionCleanup: vi.fn(),
+  questionFilesVerify: vi.fn(),
   proxyStop: vi.fn(),
   existingCleanup: vi.fn(),
   disconnected: false,
@@ -32,6 +33,17 @@ vi.mock('../e2e/desktop/modules/runtime-im-questions.mjs', () => ({
     verify: state.questionVerify,
     cleanup: state.questionCleanup,
   }),
+}))
+
+vi.mock('../e2e/desktop/modules/cloud-question-attachments.mjs', () => ({
+  createCloudQuestionAttachments: () => ({
+    respond: () => undefined,
+    verify: state.questionFilesVerify,
+  }),
+}))
+
+vi.mock('../e2e/desktop/modules/task-feedback-model-identity.mjs', () => ({
+  assertFeedbackModelSnapshot: vi.fn(),
 }))
 
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
@@ -195,6 +207,7 @@ test('accepts the completed runtime-work list projection without native executio
   await scenario.verify(control)
   assert.equal(state.existingVerify.mock.calls.length, 1)
   assert.deepEqual(state.questionVerify.mock.calls, [[cloud, control]])
+  assert.deepEqual(state.questionFilesVerify.mock.calls, [[cloud, control]])
   assert.equal(cloud.waitForRuntimeTask.mock.calls.length, 1)
   assert.ok(control.command.mock.calls.some(([command]) => command === 'getWorkbenchDebugSnapshot'))
   assert.equal(state.disconnected, false)

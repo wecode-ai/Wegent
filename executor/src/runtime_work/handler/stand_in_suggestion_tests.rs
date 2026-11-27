@@ -54,6 +54,7 @@ fn provider_fixture(
     handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] = json!([{"providerId":provider,
@@ -84,6 +85,7 @@ fn accept_activity(handler: &RuntimeWorkRpcHandler, command_id: &str) {
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,
+        guidance_turn_id: None,
         turn: SpawnTurnRequest {
             task_kind: None,
             local_task_id: super::super::stand_in_conversations::conversation_task_id(7, None),

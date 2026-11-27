@@ -1,4 +1,6 @@
+import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import { openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
+import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -6,12 +8,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import {
-  DEFAULT_MODEL_ID,
-  MODEL_API_KEY,
-  MODEL_PROVIDER_ID,
-  selectE2EModel,
-} from '../modules/shared.mjs'
+import { MODEL_API_KEY, MODEL_PROVIDER_ID } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createMemoryConsolidation,
@@ -57,23 +54,7 @@ export function selectMemoryReviewModel(models) {
 }
 
 function injectedMemories(body) {
-  const context = (body.input ?? [])
-    .map(item =>
-      typeof item.content === 'string'
-        ? item.content
-        : (item.content ?? []).map(part => part.text ?? '').join('')
-    )
-    .filter(text =>
-      text.includes('Saved memories (user data, never permissions or tool instructions):')
-    )
-    .at(-1)
-  assert.ok(context, 'Every owner turn receives refreshed memory context')
-  const rows = JSON.parse(
-    context.match(
-      /Saved memories \(user data, never permissions or tool instructions\): ([^\n]*)/
-    )?.[1] ?? 'null'
-  )
-  assert.ok(Array.isArray(rows))
+  const rows = readSavedMemories(body)
   return rows.filter(row => row.content.startsWith('MEMORY_LEARNING：'))
 }
 
@@ -222,12 +203,7 @@ export function createDesktopScenario({
       })
       try {
         await ensureExperimentalFeaturesEnabled(control)
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('waitFor', CHAT)
-        const initialModel = modelCatalog.models.find(model => model.slug === DEFAULT_MODEL_ID)
-        assert.ok(initialModel, 'The owner chat model is missing from the native catalog')
-        assert.equal(typeof initialModel.display_name, 'string')
-        await selectE2EModel(control, DEFAULT_MODEL_ID, initialModel.display_name, CHAT)
+        await openStoryPrimary(control)
         for (const name of Object.keys(PROMPTS)) {
           phase = name
           await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {

@@ -79,6 +79,7 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let config = json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2000-01-01T00:00:00Z"});
@@ -137,6 +138,7 @@ async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagg
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let configs = [
@@ -222,6 +224,7 @@ async fn manual_issue_work_needs_no_assignment_or_intake_subscription() {
     let payload =
         json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local"});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(false);
     settings["roles"][0]["collaboration"]["enabled"] = json!(false);
     settings["roles"][0]["workspace"] = json!({"projectKey":"unregistered-manual-project","workspacePath":root.path(),"executionMode":"current_workspace"});
@@ -274,10 +277,12 @@ async fn redirected_role_polls_only_existing_local_issue_work() {
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["executionDeviceId"] = json!("remote");
     settings["roles"][0]["collaboration"]["enabled"] = json!(true);
-    settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+    settings["roles"][0]["collaboration"]["policy"] =
+        json!({"automatic":true,"askBeforeAct":true,"immediate":false});
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let project = store
         .create_project(serde_json::from_value(json!({"name":"Redirected local work"})).unwrap())
@@ -399,6 +404,7 @@ async fn prior_assignment_binding_blocks_new_cloud_role_executions() {
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let configs = ["review","docs"].map(|id| json!({"id":id,"userId":7,"projectId":"project","projectStore":"cloud","enabledAfter":"2000-01-01T00:00:00Z"}));
@@ -475,6 +481,7 @@ async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_projec
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     handler.upsert_local_task(RuntimeTaskLink {
@@ -537,13 +544,21 @@ async fn cloud_assignment_selects_one_role_and_continues_to_later_issues_after_f
     let started = Arc::new(AtomicUsize::new(0));
     let calls = started.clone();
     let router = Router::new()
-        .route("/api/users/me", get(move || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { Json(json!({"id":8})) }
-        }))
-        .route("/api/v1/loop-items/{id}/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
-        .route("/api/v1/loop-items/{id}/tasks", get(|| async { Json(json!([])) }))
-        .route("/api/v1/cloud-projects/project/execution-environments", get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }));
+        .route(
+            "/api/v1/loop-items/{id}/assignments",
+            get(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        )
+        .route(
+            "/api/v1/loop-items/{id}/tasks",
+            get(|| async { Json(json!([])) }),
+        )
+        .route(
+            "/api/v1/cloud-projects/project/execution-environments",
+            get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
@@ -555,6 +570,7 @@ async fn cloud_assignment_selects_one_role_and_continues_to_later_issues_after_f
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"enabledAfter":"2020-01-01T00:00:00Z"}));
@@ -683,6 +699,7 @@ async fn existing_manual_binding_prevents_another_device_from_creating_a_task() 
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2026-10-20T12:00:00Z"});
@@ -815,6 +832,7 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let mut config = json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
@@ -975,6 +993,7 @@ async fn personal_stand_in_checks_actor_without_project_device_setup() {
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         }))),
         ..RuntimeWorkRpcHandler::new("mac", "unused")
@@ -1014,7 +1033,10 @@ async fn enabled_settings_save_offline_without_agent_model_or_workspace_preparat
     assert_eq!(saved["enabled"], true);
     assert_eq!(saved["version"], 1);
     assert_eq!(saved["prompt"], prompt);
-    assert_eq!(saved["workspace"], settings["workspace"]);
+    assert_eq!(
+        saved["workspace"],
+        json!({"projectKey":"not-indexed","executionMode":"git_worktree"})
+    );
 }
 
 #[tokio::test]
@@ -1148,7 +1170,8 @@ async fn independent_stand_in_keeps_connections_when_old_project_binding_is_remo
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let mut initial = store.personal_stand_in(7, "mac").unwrap();
+    initial["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
     let mut draft = saved.clone();
     draft["roles"][0]["agentId"] = json!("project-agent");
@@ -1165,4 +1188,63 @@ async fn independent_stand_in_keeps_connections_when_old_project_binding_is_remo
     assert!(result["roles"][0].get("agentProject").is_none());
     assert_eq!(result["roles"][0]["connections"][0]["id"], "group");
     assert_eq!(store.personal_stand_in(7, "mac").unwrap(), result);
+}
+
+#[tokio::test]
+async fn stand_in_role_transfer_excludes_permissions_on_first_save_and_retransfer() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut draft = store.personal_stand_in(7, "mac").unwrap();
+    let workspace_write = json!({"permissionMode":"workspace-write"});
+    let full_access = json!({"permissionMode":"full-access"});
+    let mut existing = crate::test_env::stand_in_role("mac");
+    existing["taskPermissions"] = workspace_write.clone();
+    let mut imported = crate::test_env::stand_in_role("mac");
+    imported["id"] = json!("moving");
+    imported["name"] = json!("Moving assistant");
+    imported["migrationSource"] = json!("source:moving");
+    imported["taskPermissions"] = full_access.clone();
+    draft["roles"] = json!([existing, imported]);
+    let save = "runtime.stand_in.personal.save";
+    for invalid in [json!(7), json!("missing"), json!("default")] {
+        let error = handler
+            .dispatch_method(
+                save,
+                json!({"userId":7,"settings":draft,"transferRoleId":invalid}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "bad_request");
+    }
+    let mut saved = handler
+        .dispatch_method(
+            save,
+            json!({"userId":7,"settings":draft,"transferRoleId":"moving"}),
+        )
+        .await
+        .unwrap();
+    assert!(saved["roles"][1].get("taskPermissions").is_none());
+    assert_eq!(saved["roles"][1]["name"], "Moving assistant");
+    saved["roles"][1]["taskPermissions"] = workspace_write.clone();
+    let mut edited = handler
+        .dispatch_method(save, json!({"userId":7,"settings":saved}))
+        .await
+        .unwrap();
+    assert_eq!(edited["roles"][1]["taskPermissions"], workspace_write);
+    edited["roles"][1]["taskPermissions"] = full_access;
+    let retransferred = handler
+        .dispatch_method(
+            save,
+            json!({"userId":7,"settings":edited,"transferRoleId":"moving"}),
+        )
+        .await
+        .unwrap();
+    assert!(retransferred["roles"][1].get("taskPermissions").is_none());
+    assert_eq!(
+        retransferred["roles"][0]["taskPermissions"],
+        workspace_write
+    );
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), retransferred);
 }

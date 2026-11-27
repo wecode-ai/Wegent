@@ -5,6 +5,15 @@ use super::*;
 use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
+fn scheduler_interval(variable: &str, default: Duration) -> Duration {
+    std::env::var(variable)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
 pub(super) fn personal_task_claimed(issue: &Value) -> bool {
     let marker = issue
         .get("personal_task_assignment_at")
@@ -173,6 +182,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user_id}"));
+        let _git_settings = git_settings.lock().await;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
         let previous = store
@@ -374,9 +385,17 @@ impl RuntimeWorkRpcHandler {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let poll_interval = scheduler_interval(
+            "WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS",
+            Duration::from_secs(5),
+        );
+        let maintenance_interval = scheduler_interval(
+            "WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS",
+            Duration::from_secs(60),
+        );
         let path = self.task_store_path.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(maintenance_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Leave startup and foreground restoration ahead of maintenance.
             interval.tick().await;
@@ -400,9 +419,23 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         });
+        let share_handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = share_handler.flush_assistant_shares().await {
+                    log_executor_event(
+                        "Assistant share synchronization failed",
+                        &[("code", error.code)],
+                    );
+                }
+            }
+        });
         let receipt_handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -426,7 +459,7 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -437,7 +470,33 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = handler.flush_local_role_cancellations().await {
+                    log_executor_event(
+                        "Specialist cancellation reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_stand_in_role_dependencies().await {
+                    log_executor_event(
+                        "Specialist prerequisite dispatch failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_remote_stand_in_role_requests().await {
+                    log_executor_event(
+                        "Specialist dispatch reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+            }
+        });
+        let handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -495,7 +554,18 @@ impl RuntimeWorkRpcHandler {
 
     async fn poll_local_stand_in(&self, configs: &[Value]) -> Result<(), AppIpcError> {
         let project = configs[0]["projectId"].as_str().unwrap_or_default();
+        let user = configs[0]["userId"].as_i64().unwrap_or_default();
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let participant_ids = if configs
+            .iter()
+            .any(crate::task_runtime::personal_stand_in::role_receives_participating_issues)
+        {
+            store
+                .participating_issue_ids(project, &[0, user])
+                .map_err(settings_error)?
+        } else {
+            Default::default()
+        };
         for issue in store.list_tasks(project).map_err(settings_error)? {
             if issue.assignee_user_id != configs[0]["userId"].as_i64() {
                 continue;
@@ -516,11 +586,19 @@ impl RuntimeWorkRpcHandler {
             }
             let eligible: Vec<Value> = configs
                 .iter()
+                .filter_map(|config| {
+                    super::personal_stand_in::issue_role_config(
+                        config,
+                        user,
+                        project,
+                        "local",
+                        participant_ids.contains(&issue.id),
+                    )
+                })
                 .filter(|config| {
                     self.stand_in_issue_runs_here(config, &issue_value)
                         && assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
                 })
-                .cloned()
                 .collect();
             if eligible.is_empty() {
                 continue;
@@ -820,8 +898,10 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         };
-        self.prepare_stand_in_execution_with_agent(payload, config, agent)
-            .await
+        super::dispatch::boxed_rpc(|| {
+            self.prepare_stand_in_execution_with_agent(payload, config, agent)
+        })
+        .await
     }
 
     pub(super) async fn prepare_stand_in_execution_with_agent(

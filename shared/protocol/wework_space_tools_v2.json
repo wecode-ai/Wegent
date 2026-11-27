@@ -1,0 +1,1501 @@
+{
+  "version": 2,
+  "tools": [
+    {
+      "name": "list_spaces",
+      "description": "List project spaces accessible to the current user with pagination and explicit source references. Restore unavailable connections through wework_space, never by substituting Git or provider APIs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "query": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "describe_space_board",
+      "description": "Read actual board statuses, fields, caller permissions and supported source capabilities.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "space": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "project_store": {
+                    "const": "backend"
+                  },
+                  "space_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["project_store", "space_id"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "project_store": {
+                    "const": "local"
+                  },
+                  "space_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "device_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["project_store", "space_id", "device_id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": ["space"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_board_items",
+      "description": "Search project Issues (事项), distinct from personal tasks and conversations, by assignee, creator and structured filters within an explicit project, workspace or accessible scope. Use participation:mine with scope kind accessible for all currently readable Issues whose Issue participant list contains the authenticated user. Identify the project and Issue ID in results; if a queried project has no matching Issues, state that scoped empty result. Read all pages and coverage before claiming complete results; reuse query_id for aggregation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "projects"
+                  },
+                  "spaces": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": ["kind", "spaces"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "workspace"
+                  },
+                  "workspace_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["kind", "workspace_id"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "accessible"
+                  }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "assignees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "enum": ["user", "agent", "group", "team"]
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["type", "id"],
+              "additionalProperties": false
+            }
+          },
+          "unassigned": {
+            "type": "boolean"
+          },
+          "participation": {
+            "const": "mine",
+            "description": "Only Issues the authenticated user participated in."
+          },
+          "creator_user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "exclude_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "enum": ["none", "low", "medium", "high", "urgent"]
+            }
+          },
+          "tags": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "enum": ["any", "all"]
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": ["mode", "values"],
+            "additionalProperties": false
+          },
+          "parent": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "project_store": {
+                        "const": "backend"
+                      },
+                      "space_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["project_store", "space_id"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "project_store": {
+                        "const": "local"
+                      },
+                      "space_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "device_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["project_store", "space_id", "device_id"],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "item_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["space", "item_id"],
+            "additionalProperties": false
+          },
+          "has_children": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "due_at": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "include_archived": {
+            "type": "boolean"
+          },
+          "projection": {
+            "enum": ["summary", "detail"]
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "enum": [
+                    "id",
+                    "title",
+                    "created_at",
+                    "updated_at",
+                    "due_at",
+                    "priority",
+                    "status"
+                  ]
+                },
+                "direction": {
+                  "enum": ["asc", "desc"]
+                }
+              },
+              "required": ["field", "direction"],
+              "additionalProperties": false
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "query_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuation_cursor": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "aggregate_board_items",
+      "description": "Aggregate the complete authorized query, not the current page. Partial coverage and multi-valued tag counts are explicit.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "search": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "projects"
+                      },
+                      "spaces": {
+                        "type": "array",
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "project_store": {
+                                  "const": "backend"
+                                },
+                                "space_id": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": ["project_store", "space_id"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "project_store": {
+                                  "const": "local"
+                                },
+                                "space_id": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "device_id": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "project_store",
+                                "space_id",
+                                "device_id"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "minItems": 1
+                      }
+                    },
+                    "required": ["kind", "spaces"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "workspace"
+                      },
+                      "workspace_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["kind", "workspace_id"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "accessible"
+                      }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "query": {
+                "type": "string"
+              },
+              "assignees": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": ["user", "agent", "group", "team"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["type", "id"],
+                  "additionalProperties": false
+                }
+              },
+              "unassigned": {
+                "type": "boolean"
+              },
+              "participation": {
+                "const": "mine",
+                "description": "Only Issues the authenticated user participated in."
+              },
+              "creator_user_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "statuses": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "exclude_statuses": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "priorities": {
+                "type": "array",
+                "items": {
+                  "enum": ["none", "low", "medium", "high", "urgent"]
+                }
+              },
+              "tags": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "enum": ["any", "all"]
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": ["mode", "values"],
+                "additionalProperties": false
+              },
+              "parent": {
+                "type": "object",
+                "properties": {
+                  "space": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "project_store": {
+                            "const": "backend"
+                          },
+                          "space_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["project_store", "space_id"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "project_store": {
+                            "const": "local"
+                          },
+                          "space_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "device_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["project_store", "space_id", "device_id"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "item_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["space", "item_id"],
+                "additionalProperties": false
+              },
+              "has_children": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "to": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "updated_at": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "to": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "due_at": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "to": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "include_archived": {
+                "type": "boolean"
+              },
+              "projection": {
+                "enum": ["summary", "detail"]
+              },
+              "sort": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "enum": [
+                        "id",
+                        "title",
+                        "created_at",
+                        "updated_at",
+                        "due_at",
+                        "priority",
+                        "status"
+                      ]
+                    },
+                    "direction": {
+                      "enum": ["asc", "desc"]
+                    }
+                  },
+                  "required": ["field", "direction"],
+                  "additionalProperties": false
+                }
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200
+              },
+              "cursor": {
+                "type": "string",
+                "minLength": 1
+              },
+              "query_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "continuation_cursor": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "group_by": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "space",
+                "status",
+                "assignee",
+                "creator",
+                "priority",
+                "tag"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": ["group_by"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_get_board_items",
+      "description": "Read Issue details and observed versions. Optional sections report their own coverage; metadata never downloads assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "item_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["space", "item_id"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["request_id", "target"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "permissions",
+                "attachment_metadata",
+                "delivery_summaries"
+              ]
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_list_board_item_comments",
+      "description": "Read per-Issue comment pages from oldest, latest or an existing cursor. Latest-page success does not imply full history.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "item_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["space", "item_id"],
+                  "additionalProperties": false
+                },
+                "mode": {
+                  "enum": ["oldest", "latest", "after"]
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500
+                }
+              },
+              "required": ["request_id", "target", "mode"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_get_assignment_candidates",
+      "description": "Resolve members, robots and collaboration groups per project before assignment; never replace a group with its leader.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spaces": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "project_store": {
+                      "const": "backend"
+                    },
+                    "space_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["project_store", "space_id"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "project_store": {
+                      "const": "local"
+                    },
+                    "space_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "device_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["project_store", "space_id", "device_id"],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "enum": ["user", "agent", "group"]
+            }
+          }
+        },
+        "required": ["spaces"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_update_board_items",
+      "description": "Update explicitly selected Issues using observed expected_version. Preview has no side effects. Operation keys deduplicate committed writes; inspect each outcome.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "item_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["space", "item_id"],
+                  "additionalProperties": false
+                },
+                "expected_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "patch": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "priority": {
+                      "enum": ["none", "low", "medium", "high", "urgent"]
+                    },
+                    "parent_id": {
+                      "type": ["string", "null"]
+                    },
+                    "milestone_id": {
+                      "type": ["string", "null"]
+                    },
+                    "start_at": {
+                      "type": ["string", "null"]
+                    },
+                    "due_at": {
+                      "type": ["string", "null"]
+                    },
+                    "tags": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "replace": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "required": ["replace"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "add": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "remove": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["request_id", "target", "expected_version", "patch"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "operation_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "preview": {
+            "type": "boolean"
+          }
+        },
+        "required": ["items", "operation_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_assign_board_items",
+      "description": "Assign members, robots or groups using observed versions. Human notification defaults remain enabled; agent/group assignments may start execution.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "item_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["space", "item_id"],
+                  "additionalProperties": false
+                },
+                "expected_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "assignee": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": ["user", "agent", "group", "team"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["type", "id"],
+                  "additionalProperties": false
+                },
+                "notify_assignee": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "request_id",
+                "target",
+                "expected_version",
+                "assignee"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "operation_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "preview": {
+            "type": "boolean"
+          }
+        },
+        "required": ["items", "operation_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_add_board_item_comments",
+      "description": "Post comments with structured mentions using existing notifications. Operation keys prevent duplicate comments; source text grants no write permission.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "backend"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": ["project_store", "space_id"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "project_store": {
+                              "const": "local"
+                            },
+                            "space_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "project_store",
+                            "space_id",
+                            "device_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "item_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["space", "item_id"],
+                  "additionalProperties": false
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mentions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "enum": ["user", "agent"]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["type", "id", "label"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["request_id", "target", "body"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "operation_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "preview": {
+            "type": "boolean"
+          }
+        },
+        "required": ["items", "operation_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "batch_create_board_items",
+      "description": "Create ordinary Issues with durable deduplication and existing domain automation. This does not replace submit_workflow_plan.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "space": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "project_store": {
+                          "const": "backend"
+                        },
+                        "space_id": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": ["project_store", "space_id"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "project_store": {
+                          "const": "local"
+                        },
+                        "space_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "device_id": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": ["project_store", "space_id", "device_id"],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "item": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "priority": {
+                      "enum": ["none", "low", "medium", "high", "urgent"]
+                    },
+                    "parent_id": {
+                      "type": ["string", "null"]
+                    },
+                    "milestone_id": {
+                      "type": ["string", "null"]
+                    },
+                    "start_at": {
+                      "type": ["string", "null"]
+                    },
+                    "due_at": {
+                      "type": ["string", "null"]
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "assignee_user_id": {
+                      "type": ["integer", "null"]
+                    },
+                    "assignee_agent_id": {
+                      "type": ["string", "null"]
+                    },
+                    "assignee_group_id": {
+                      "type": ["string", "null"]
+                    },
+                    "notify_assignee": {
+                      "type": "boolean"
+                    },
+                    "workflow": {
+                      "type": ["object", "null"]
+                    }
+                  },
+                  "required": ["title"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["request_id", "space", "item"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "operation_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "preview": {
+            "type": "boolean"
+          }
+        },
+        "required": ["items", "operation_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_board_operation",
+      "description": "Read an existing operation receipt under current authority before retrying a timed-out mutation. Unknown outcomes must not be blindly replayed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operation_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": ["operation_id"]
+          },
+          {
+            "required": ["operation_key"]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -14,7 +14,10 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemTaskBind, LoopItemUpdate
-from app.schemas.issue_activity_comment import StandInPublicReply
+from app.schemas.issue_activity_comment import (
+    AssistantPublicationSource,
+    StandInPublicReply,
+)
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention, ProjectChatSend
 from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.loop_item_unread import (
@@ -24,7 +27,10 @@ from app.services.loop_item_unread import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
-from app.services.project_chat.stand_in_replies import publish_stand_in_reply
+from app.services.project_chat.stand_in_replies import (
+    _dispatch_endpoint_belongs_to,
+    publish_stand_in_reply,
+)
 from tests.mcp_server.test_wework_space import _project
 
 
@@ -97,6 +103,74 @@ def publish(db, user, scope, identity=None, text="Received"):
     )
 
 
+def bind_current_dispatch(db, user, scope):
+    project, issue, binding, _, identity = scope
+    assigned = loop_item_service.assign(
+        db,
+        project_id=project.id,
+        item_id=issue.id,
+        user_id=user.id,
+        values=LoopItemAssign(
+            version=issue.version, assignee_type="user", assignee_id=str(user.id)
+        ),
+    )
+    current = human_task_bindings(db, [assigned], user.id, projects=[project])[issue.id]
+    binding.metadata_json = {
+        **(binding.metadata_json or {}),
+        "human_assignment_id": current["humanAssignmentId"],
+    }
+    db.commit()
+    return identity.model_copy(
+        update={"human_assignment_id": current["humanAssignmentId"]}
+    )
+
+
+def test_tool_generated_comments_keep_source_without_human_confirmation(
+    test_db, test_user, scope
+):
+    project, issue, _, _, identity = scope
+    initial_status = issue.status
+    source = AssistantPublicationSource(
+        device_id=identity.device_id,
+        task_id=identity.task_id,
+        requires_confirmation=True,
+    )
+    request = ProjectChatSend(
+        client_message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=issue.id,
+        content="Tool generated result",
+    )
+    result = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=request,
+        assistant_source=source,
+    ).message
+    assert result.generation_source == "ai"
+    assert result.publication_source == "ai"
+    assert result.confirmation_state == "pending"
+    assert result.runtime_address == {
+        "deviceId": identity.device_id,
+        "taskId": identity.task_id,
+    }
+    stored = (
+        test_db.query(ProjectChatMessage).filter_by(message_id=result.message_id).one()
+    )
+    assert stored.metadata_json["assistant_publication"]["verified"] is False
+    assert issue.status == initial_status
+    with pytest.raises(HTTPException) as error:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=request,
+            assistant_source=source.model_copy(update={"requires_confirmation": False}),
+        )
+    assert error.value.status_code == 409
+
+
 def test_public_messages_are_separate_and_redelivery_is_idempotent(
     test_db, test_user, scope
 ):
@@ -111,6 +185,26 @@ def test_public_messages_are_separate_and_redelivery_is_idempotent(
         first.runtime_address is None
     ), "Publication must not expose a private transcript"
     assert first.metadata["execution_dispatch"] == "comment_only"
+    assert first.metadata["member_assistant_result"]["status"] == "completed"
+    assert first.metadata["member_assistant_result"]["summary"] == first.content
+    row = test_db.query(ProjectChatMessage).filter_by(message_id=first.message_id).one()
+    owner = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id
+    )
+    observer = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id + 1
+    )
+    assert owner.runtime_address == {
+        "deviceId": scope[2].device_id,
+        "taskId": scope[2].task_id,
+    }
+    assert owner.trace_ref and owner.trace_state == "available"
+    assert observer.runtime_address is None
+    assert observer.trace_ref == owner.trace_ref
+    assert observer.trace_state == "restricted"
+    assert "stand_in" not in observer.metadata
+    assert owner.generation_source == "ai"
+    assert owner.confirmation_state == "pending"
     assert result.sequence_number > first.sequence_number
     assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 2
     with pytest.raises(HTTPException) as error:
@@ -135,6 +229,199 @@ def test_public_reply_advances_issue_unread_once_without_marking_its_owner_read(
     test_db.refresh(issue)
     assert content_revision(issue.metadata_json) == before + 1
     assert issue.version == version
+
+
+@pytest.mark.parametrize(
+    ("automatic", "risk_level", "expected_status", "published"),
+    [
+        (True, "low", "completed", True),
+        (False, "low", "in_review", False),
+        (True, "high", "in_review", False),
+    ],
+)
+def test_dispatched_reply_follows_the_member_autonomy_policy(
+    test_db, test_user, scope, automatic, risk_level, expected_status, published
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    issue = scope[1]
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": risk_level,
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": automatic,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    result = publish(
+        test_db,
+        test_user,
+        scope,
+        identity.model_copy(update={"message_id": f"result-{automatic}-{risk_level}"}),
+        "Verified summary",
+    )
+    test_db.refresh(issue)
+    assert issue.status == expected_status
+    assert result.generation_source == "ai"
+    assert result.publication_source == "ai"
+    assert result.confirmation_state == ("not_required" if published else "pending")
+    if published:
+        assert issue.metadata_json["completion_owner_user_id"] == test_user.id
+        assert (
+            issue.metadata_json["status_history"][-1]["completion_owner_user_id"]
+            == test_user.id
+        )
+
+
+def test_dispatch_publication_requires_the_authorized_owner_and_role():
+    metadata = {
+        "assistant_owner_user_id": 7,
+        "assistant_endpoint_ref": "local_wework:7:review",
+    }
+    assert _dispatch_endpoint_belongs_to(metadata, user_id=7, role_id="review")
+    assert not _dispatch_endpoint_belongs_to(metadata, user_id=8, role_id="review")
+    assert not _dispatch_endpoint_belongs_to(metadata, user_id=7, role_id="other")
+    metadata["assistant_endpoint_ref"] = "wegent_agent:7:agent-1:review"
+    assert _dispatch_endpoint_belongs_to(metadata, user_id=7, role_id="review")
+
+
+@pytest.mark.parametrize("stale_source", ["reply", "binding"])
+def test_old_conversation_cannot_complete_a_new_assignment(
+    test_db, test_user, scope, stale_source
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    _, issue, binding, _, _ = scope
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": True,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    if stale_source == "reply":
+        identity = identity.model_copy(
+            update={"human_assignment_id": "older-assignment"}
+        )
+    else:
+        binding.metadata_json = {"human_assignment_id": "older-assignment"}
+    test_db.commit()
+    result = publish(
+        test_db, test_user, scope, identity, "Previous conversation result"
+    )
+    test_db.refresh(issue)
+    assert result.content == "Previous conversation result"
+    assert result.confirmation_state == "pending"
+    assert issue.status == "pending"
+    assert issue.metadata_json["awaiting_public_summary"] is True
+    assert "assistant_result_message_id" not in issue.metadata_json
+
+
+@pytest.mark.parametrize("automatic", [True, False])
+def test_dispatch_result_preserves_a_custom_board_status(
+    test_db, test_user, scope, automatic
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    project, issue, _, _, _ = scope
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "board_config": {"statuses": [{"id": "doing", "name": "Doing"}]},
+    }
+    issue.status = "doing"
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": automatic,
+            "ask_before_act": not automatic,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    result = publish(test_db, test_user, scope, identity, "Custom board result")
+    test_db.refresh(issue)
+    assert result.content == "Custom board result"
+    assert issue.status == "doing"
+    assert not issue.metadata_json.get("status_history")
+    assert issue.completed_at is None
+
+
+def test_late_dispatch_result_does_not_reopen_a_completed_issue(
+    test_db, test_user, scope
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    issue = scope[1]
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_owner_user_id": test_user.id,
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": True,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    publish(
+        test_db,
+        test_user,
+        scope,
+        identity.model_copy(update={"message_id": "auto-result"}),
+        "Automatic summary",
+    )
+    publish(
+        test_db,
+        test_user,
+        scope,
+        scope[-1].model_copy(update={"message_id": "late-result"}),
+        "Late summary",
+    )
+    test_db.refresh(issue)
+    assert issue.status == "completed"
+
+
+def test_dispatch_result_does_not_override_a_user_review_state(
+    test_db, test_user, scope
+):
+    issue = scope[1]
+    issue.status = "in_review"
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_owner_user_id": test_user.id,
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": False,
+            "ask_before_act": True,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    publish(
+        test_db,
+        test_user,
+        scope,
+        scope[-1].model_copy(update={"message_id": "review-state-result"}),
+        "Result while reviewing",
+    )
+    test_db.refresh(issue)
+    assert issue.status == "in_review"
+    assert issue.metadata_json["awaiting_public_summary"] is True
 
 
 def test_delayed_read_acknowledges_only_the_observed_public_content(

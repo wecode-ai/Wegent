@@ -18,11 +18,13 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
+mod batch;
 #[cfg(test)]
 mod issue_access_tests;
 
@@ -30,7 +32,7 @@ use assignment_notifications::emit_local_assignment_notifications;
 
 use super::{
     BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, RuntimeTaskAddress,
-    TaskRuntime, TaskSearch, TaskUpdate,
+    TaskRuntime, TaskUpdate,
 };
 
 mod comments;
@@ -42,12 +44,17 @@ mod parent_issue;
 mod stand_in;
 mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
+pub(crate) use context::is_independent_issue_origin;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
 pub(crate) use stand_in::stand_in_identity;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
+pub(crate) use stand_in::{
+    begin_stand_in_turn_witness, bind_stand_in_turn_context, observe_stand_in_turn_boundary,
+    stand_in_turn_versions,
+};
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
@@ -134,7 +141,12 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    stand_in_delivery: Option<stand_in::DeliveryContext>,
+    stand_in_role_delegation: bool,
     control: Option<crate::workbench_control::ControlContext>,
+    current_device_id: Option<String>,
+    principal_id: Option<String>,
+    bound_project_store: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -144,6 +156,17 @@ pub(crate) enum WeworkMcpSurface {
     Notifications,
     StandIn,
     Control,
+}
+
+impl WeworkMcpSurface {
+    pub(super) fn server_name(&self) -> &'static str {
+        match self {
+            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
+            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +186,9 @@ impl SpaceMcpRequestContext {
             && other.grant.is_none()
             && self.backend_url == other.backend_url
             && self.auth_token == other.auth_token
+            && self.principal_id == other.principal_id
+            && self.current_device_id == other.current_device_id
+            && self.bound_project_store == other.bound_project_store
     }
 
     pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
@@ -190,7 +216,12 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_delivery: None,
+            stand_in_role_delegation: false,
             control: None,
+            current_device_id: None,
+            principal_id: None,
+            bound_project_store: None,
         }
     }
 
@@ -203,7 +234,12 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_delivery: None,
+            stand_in_role_delegation: false,
             control: None,
+            current_device_id: None,
+            principal_id: None,
+            bound_project_store: None,
         }
     }
 
@@ -231,15 +267,6 @@ impl SpaceMcpRequestContext {
         self.surface
     }
 
-    fn server_name(&self) -> &'static str {
-        match self.surface {
-            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
-            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
-            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
-            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
-        }
-    }
-
     pub(crate) fn set_cloud_collaboration_dispatcher(
         &mut self,
         dispatcher: Option<CloudCollaborationRoundDispatcher>,
@@ -263,7 +290,7 @@ pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool
 pub(crate) fn space_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<SpaceMcpClientConfig, String> {
-    let context = SpaceMcpRequestContext::new(
+    let mut context = SpaceMcpRequestContext::new(
         space_context_grant(request)?,
         request
             .backend_url
@@ -282,6 +309,23 @@ pub(crate) fn space_mcp_client_config(
             .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
             .filter(|value| !value.trim().is_empty()),
     );
+    context.current_device_id = request.device_id.clone();
+    context.principal_id = request
+        .extra
+        .get("user_id")
+        .and_then(Value::as_i64)
+        .filter(|id| *id > 0)
+        .map(|id| id.to_string());
+    context.bound_project_store = request
+        .extra
+        .get("origin")
+        .and_then(|origin| {
+            origin
+                .get("projectStore")
+                .or_else(|| origin.get("project_store"))
+        })
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let registered = super::mcp_http::register_space_mcp_context(context)?;
     Ok(SpaceMcpClientConfig {
         url: registered.endpoint.url,
@@ -299,6 +343,14 @@ pub(crate) fn space_mcp_client_config(
 pub(crate) fn notifications_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<Option<SpaceMcpClientConfig>, String> {
+    // The coordinator routes findings through the stand-in assessment flow.
+    if request
+        .extra
+        .get("origin")
+        .is_some_and(|origin| origin["type"] == "stand_in_coordinator")
+    {
+        return Ok(None);
+    }
     let Some(backend_url) = request
         .backend_url
         .as_deref()
@@ -452,7 +504,7 @@ pub(crate) async fn handle_request_with_context(
                 "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {
-                    "name": context.server_name(),
+                    "name": context.surface().server_name(),
                     "version": env!("CARGO_PKG_VERSION")
                 }
             });
@@ -871,12 +923,6 @@ async fn call_tool_with_context(
 }
 
 #[cfg(test)]
-async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
-    let context = SpaceMcpRequestContext::from_env();
-    call_tool_with_context(runtime, name, arguments, &context).await
-}
-
-#[cfg(test)]
 async fn call_tool_with_grant(
     runtime: &TaskRuntime,
     name: &str,
@@ -892,6 +938,18 @@ async fn call_tool_with_grant(
 }
 
 async fn call_tool_with_runtime_context(
+    runtime: &TaskRuntime,
+    name: &str,
+    arguments: Value,
+    context: &SpaceMcpRequestContext,
+) -> Value {
+    if batch::contains(name) {
+        return batch::call(runtime, name, arguments, context).await;
+    }
+    call_individual_tool(runtime, name, arguments, context).await
+}
+
+async fn call_individual_tool(
     runtime: &TaskRuntime,
     name: &str,
     mut arguments: Value,
@@ -971,34 +1029,6 @@ async fn call_tool_with_runtime_context(
     let is_locally_routed = requested_project_id
         .as_deref()
         .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
-    if name == "list_spaces" {
-        let local_projects = match runtime.list_projects().and_then(|mut projects| {
-            projects.retain(|project| project.metadata["project_store"] != "backend");
-            serde_json::to_value(projects).map_err(invalid_json)
-        }) {
-            Ok(Value::Array(projects)) => projects,
-            Ok(_) => Vec::new(),
-            Err(error) => return text_result(error.to_string(), true),
-        };
-        let Some((backend_url, auth_token)) = backend_url.zip(auth_token) else {
-            return text_result(Value::Array(local_projects).to_string(), false);
-        };
-        let backend_context = BackendToolContext {
-            backend_url,
-            auth_token,
-            project_id: "",
-            grant,
-            collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
-        };
-        return match call_backend_tool(&backend_context, name, &arguments).await {
-            Ok(Value::Array(mut cloud_projects)) => {
-                cloud_projects.extend(local_projects);
-                text_result(Value::Array(cloud_projects).to_string(), false)
-            }
-            Ok(value) => text_result(value.to_string(), false),
-            Err(error) => text_result(error, true),
-        };
-    }
     let should_use_backend = backend_url.is_some()
         && auth_token.is_some()
         && (matches!(name, "create_space" | "send_notification")
@@ -1031,7 +1061,6 @@ async fn call_tool_with_runtime_context(
         );
     }
     let result = match name {
-        "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
         "update_issue_status" => local_update_issue_status(runtime, &arguments, grant).await,
         "submit_workflow_plan" => {
             let manager_task_id = manager_runtime_task_id(grant);
@@ -1059,11 +1088,20 @@ async fn call_tool_with_runtime_context(
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
                     .map(|item| {
-                        json!({
+                        let mut value = json!({
                             "space_id": project_id,
                             "item_id": task_id,
                             "item": item,
-                        })
+                        });
+                        match project_space_ref(runtime, context, project_id) {
+                            Ok(space) => value["space_ref"] = space,
+                            Err(message) => {
+                                value["space_ref_error"] = json!({
+                                    "code": "source_unavailable", "message": message,
+                                })
+                            }
+                        }
+                        value
                     }),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
@@ -1093,22 +1131,6 @@ async fn call_tool_with_runtime_context(
                 .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
             Err(error) => Err(error),
         },
-        "search_board_items" => {
-            let requested_space_id = arguments
-                .get("space_id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            match parse::<TaskSearch>(arguments) {
-                Ok(mut input) => {
-                    input.project_id = requested_space_id.or_else(|| default_project_id.clone());
-                    runtime
-                        .search_tasks(input)
-                        .await
-                        .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
-                }
-                Err(error) => Err(error),
-            }
-        }
         "get_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
             let task_id = string_argument(&arguments, "item_id");
@@ -1856,6 +1878,25 @@ fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, tool_name:
     })
 }
 
+fn project_space_ref(
+    runtime: &TaskRuntime,
+    context: &SpaceMcpRequestContext,
+    project_id: &str,
+) -> Result<Value, String> {
+    let project = runtime
+        .stand_in_store()
+        .get_project(project_id)
+        .map_err(|error| error.to_string())?;
+    match project.metadata["project_store"].as_str() {
+        Some("local") => Ok(json!({
+            "project_store": "local", "space_id": project_id,
+            "device_id": batch::device(context)?,
+        })),
+        Some("backend") => Ok(json!({"project_store":"backend","space_id":project_id})),
+        _ => Err("Project storage identity is unavailable".into()),
+    }
+}
+
 fn is_dingtalk_project(runtime: &TaskRuntime, project_id: &str) -> bool {
     runtime
         .list_projects()
@@ -1955,7 +1996,7 @@ async fn call_backend_tool(
     arguments: &Value,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
+    let base = crate::agents::runtime_capabilities::api_url(context.backend_url, "/api/v1")?;
     let project_id = context.project_id;
     let grant = context.grant;
     let auth_token = context.auth_token;
@@ -2200,18 +2241,6 @@ async fn call_backend_tool(
             return Ok(json!({"path": output_path}));
         }
         "list_board_items" => client.get(format!("{base}/cloud-projects/{project_id}/loop-items")),
-        "search_board_items" => {
-            let response = backend_json(
-                client
-                    .get(format!("{base}/cloud-projects/{project_id}/loop-items"))
-                    .bearer_auth(auth_token)
-                    .send()
-                    .await
-                    .map_err(|error| error.to_string())?,
-            )
-            .await?;
-            return Ok(filter_backend_tasks(response, arguments));
-        }
         "get_current_context" => {
             let item_id = task_id()?;
             let item = backend_json(
@@ -2226,6 +2255,7 @@ async fn call_backend_tool(
             return Ok(json!({
                 "space_id": project_id,
                 "item_id": item_id,
+                "space_ref": {"project_store": "backend", "space_id": project_id},
                 "item": item,
             }));
         }
@@ -2294,16 +2324,52 @@ async fn call_backend_tool(
                 ("after_sequence", arguments.get("after_sequence").and_then(Value::as_i64).unwrap_or(0)),
                 ("limit", arguments.get("limit").and_then(Value::as_i64).unwrap_or(200)),
             ]),
-        "add_board_item_comment" => client
-            .post(format!(
+        "add_board_item_comment" => {
+            let item = task_id()?;
+            let mut body = json!({
+                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([])),
+            });
+            if let Some(target) = arguments.get("reply_to_comment_id") {
+                body["reply_to_comment_id"] = target.clone();
+            }
+            let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
+            if let Some((grant, dispatch_id)) = issue_grant
+                .filter(|grant| grant.role.is_some())
+                .and_then(|grant| grant.dispatch_id.as_deref().map(|id| (grant, id)))
+            {
+                let address = delivery_address(Some(grant)).map_err(|error| error.to_string())?;
+                let message_id = if body["reply_to_comment_id"].is_string() {
+                    let message_key =
+                        json!(["explicit-reply", body["reply_to_comment_id"], body["body"]]);
+                    format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                } else {
+                    uuid::Uuid::new_v4().to_string()
+                };
+                body["collaboration"] = json!({
+                    "device_id": address.device_id,
+                    "task_id": address.task_id,
+                    "dispatch_id": dispatch_id,
+                    "message_id": message_id
+                });
+            } else if let Some(address) = issue_grant
+                .and_then(|grant| delivery_address(Some(grant)).ok())
+            {
+                body["assistant_source"] = json!({
+                    "device_id": address.device_id, "task_id": address.task_id,
+                    "requires_confirmation": true
+                });
+            }
+            let request = client.post(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
                 encode_segment(project_id),
-                encode_segment(task_id()?)
-            ))
-            .json(&json!({
-                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
-                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
-            })),
+                encode_segment(item)
+            )).json(&body);
+            if body["collaboration"].is_object() {
+                return comments::send_collaboration(request.bearer_auth(auth_token)).await;
+            }
+            request
+        },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -2832,63 +2898,6 @@ fn normalize_assignment_candidates(members: Value, robots: Value, teams: Value) 
     json!({"members": members, "robots": robots, "groups": teams})
 }
 
-fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
-    let tasks = response
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let query = arguments
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_lowercase();
-    let limit = arguments
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(50)
-        .clamp(1, 200) as usize;
-    Value::Array(
-        tasks
-            .into_iter()
-            .filter(|task| {
-                let text = format!(
-                    "{} {} {} {}",
-                    task["id"].as_str().unwrap_or_default(),
-                    task["title"].as_str().unwrap_or_default(),
-                    task["description"].as_str().unwrap_or_default(),
-                    task["tags"]
-                )
-                .to_lowercase();
-                (query.is_empty() || text.contains(&query))
-                    && matches_filter(task, arguments, "status")
-                    && matches_filter(task, arguments, "priority")
-                    && arguments
-                        .get("tag")
-                        .and_then(Value::as_str)
-                        .map_or(true, |tag| {
-                            task["tags"]
-                                .as_array()
-                                .is_some_and(|tags| tags.iter().any(|value| value == tag))
-                        })
-                    && arguments
-                        .get("creator_user_id")
-                        .and_then(Value::as_i64)
-                        .map_or(true, |id| task["created_by_user_id"] == id)
-                    && matches_filter(task, arguments, "parent_id")
-            })
-            .take(limit)
-            .collect(),
-    )
-}
-
-fn matches_filter(task: &Value, arguments: &Value, key: &str) -> bool {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map_or(true, |value| task[key] == value)
-}
-
 fn encode_segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
@@ -2972,7 +2981,7 @@ fn delivery_fulfillments_schema() -> Value {
 }
 
 fn tools() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         human_requests::list_tool(),
         human_requests::assign_tool(),
         human_requests::blocking_tool(),
@@ -3034,13 +3043,8 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "list_spaces",
-            "List Wework project spaces accessible to the current user. Use this when a personal conversation has no project binding; pass the selected space_id to board, file and table tools. Backend access errors must be resolved through Wework, never by substituting Git or provider APIs.",
-            json!({"type": "object", "properties": {}}),
-        ),
-        tool(
             "get_current_context",
-            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, use that project for list_board_items or search_board_items. Only when no project is bound, discover accessible projects with list_spaces. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
+            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, keep that project as the default target. Pass space_id to list_board_items. For search_board_items, use scope:{kind:projects,spaces:[space]} with query and structured filters at the top level; never pass a top-level space_id. Reuse an explicit space reference with project_store and space_id, plus the actual device_id for local spaces only. When no project is bound or an explicit source reference is needed, read list_spaces items and reuse their space references. Both discovery and search return paginated objects; follow next_cursor until null and inspect coverage.complete before claiming complete or empty results. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -3109,24 +3113,6 @@ fn tools() -> Vec<Value> {
                     "output_path": {"type": "string"}
                 },
                 "required": ["space_id", "file_id"]
-            }),
-        ),
-        tool(
-            "search_board_items",
-            "Search project Issues (事项, Issue, 看板事项) using text and structured filters. Pass the current project's space_id for unqualified project queries; search across projects only when the user's request calls for it. Standalone personal tasks and conversations use wework_control instead. Identify each result's project and Issue ID; if empty, state that no matching Issues were found in the queried project or scope.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Matches Issue id, title, description, or tags"},
-                    "space_id": {"type": "string"},
-                    "status": {"enum": ["inbox", "pending", "in_progress", "in_review", "completed"]},
-                    "priority": {"enum": ["none", "low", "medium", "high", "urgent"]},
-                    "tag": {"type": "string"},
-                    "creator_user_id": {"type": "integer"},
-                    "parent_id": {"type": "string"},
-                    "has_children": {"type": "boolean"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200}
-                }
             }),
         ),
         tool(
@@ -3223,7 +3209,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "add_board_item_comment",
-            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            "Post an Issue comment or reply. To reply in an existing thread, read list_board_item_comments and pass the target's id as reply_to_comment_id. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Plain @name text does not notify. Do not send a separate notification for the same mention.",
             comments::create_schema(),
         ),
         tool(
@@ -3550,7 +3536,9 @@ fn tools() -> Vec<Value> {
                 "required": ["space_id", "field_id"]
             }),
         ),
-    ]
+    ];
+    tools.extend(batch::tools());
+    tools
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
@@ -3621,6 +3609,10 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
     }
     match name {
         "create_space"
+        | "batch_update_board_items"
+        | "batch_assign_board_items"
+        | "batch_create_board_items"
+        | "batch_get_assignment_candidates"
         | "update_space"
         | "create_board_item"
         | "send_notification"
@@ -3631,6 +3623,12 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
         | "update_issue_status"
         | "reorder_board_items" => Some(BoardToolCategory::Management),
         "list_spaces"
+        | "describe_space_board"
+        | "aggregate_board_items"
+        | "batch_get_board_items"
+        | "batch_list_board_item_comments"
+        | "batch_add_board_item_comments"
+        | "get_board_operation"
         | "get_current_context"
         | "list_board_items"
         | "list_space_files"
@@ -3800,6 +3798,20 @@ mod tests {
         ChatAgentCreate, LocalExecutionClaim, LocalTaskStore, ProjectDescriptor, ProjectStoreKind,
         ProjectUpdate, TaskCreate, TaskProviderKind,
     };
+
+    #[test]
+    fn coordinator_does_not_receive_direct_notification_capability() {
+        let mut request = ExecutionRequest {
+            backend_url: Some("https://wework.example.com".to_owned()),
+            auth_token: Some("runtime-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("origin".into(), json!({"type": "stand_in_coordinator"}));
+
+        assert!(notifications_mcp_client_config(&request).unwrap().is_none());
+    }
 
     fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
         space_context_grant(request)
@@ -4163,8 +4175,12 @@ mod tests {
             .unwrap()["description"]
             .as_str()
             .unwrap();
-        assert!(context.contains("when space_id is present, use that project"));
-        assert!(context.contains("Only when no project is bound"));
+        assert!(context.contains("when space_id is present, keep that project"));
+        assert!(context.contains("Pass space_id to list_board_items"));
+        assert!(context.contains("scope:{kind:projects,spaces:[space]}"));
+        assert!(context.contains("never pass a top-level space_id"));
+        assert!(context.contains("actual device_id for local spaces only"));
+        assert!(context.contains("follow next_cursor until null and inspect coverage.complete"));
         let skill = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-space/skills/wework-project-space/SKILL.md");
         for term in [
             "查一下事项",
@@ -4225,6 +4241,82 @@ mod tests {
         }
     }
 
+    #[test]
+    fn exposes_task_search_tool() {
+        let search = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "search_board_items")
+            .expect("search_board_items tool");
+
+        assert_eq!(
+            search["inputSchema"]["properties"]["statuses"]["items"]["type"],
+            "string"
+        );
+        assert_eq!(
+            search["inputSchema"]["properties"]["creator_user_ids"]["items"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn exposes_only_wework_space_business_vocabulary() {
+        let exposed_tools = tools();
+        let assign = exposed_tools
+            .iter()
+            .find(|tool| tool["name"] == "assign_board_item")
+            .expect("assign_board_item tool");
+        assert_eq!(
+            assign["inputSchema"]["properties"]["assignee_type"]["enum"],
+            json!(["user", "agent", "group"])
+        );
+        for exposed_tool in &exposed_tools {
+            let public_surface = format!(
+                "{} {}",
+                exposed_tool["name"].as_str().unwrap_or_default(),
+                exposed_tool["description"].as_str().unwrap_or_default()
+            )
+            .to_lowercase();
+            for forbidden in [
+                "wegent_tasks",
+                "wegent_delivery",
+                "github",
+                "gitlab",
+                "todo",
+                "report_automation_bug",
+            ] {
+                assert!(
+                    !public_surface.contains(forbidden),
+                    "found {forbidden} in tool surface {public_surface}"
+                );
+            }
+            let input_properties = exposed_tool["inputSchema"]["properties"]
+                .as_object()
+                .expect("tool input properties");
+            for forbidden in ["project_id", "task_id"] {
+                assert!(
+                    !input_properties.contains_key(forbidden),
+                    "found {forbidden} in {} input",
+                    exposed_tool["name"]
+                );
+            }
+        }
+        let serialized = serde_json::to_string(&exposed_tools)
+            .unwrap()
+            .to_lowercase();
+        for required in [
+            "list_spaces",
+            "get_board_item",
+            "get_assignment_candidates",
+            "assign_board_item",
+            "list_item_attachments",
+            "read_item_attachment",
+            "list_space_files",
+            "list_deliveries",
+        ] {
+            assert!(serialized.contains(required), "missing {required}");
+        }
+    }
+
     #[tokio::test]
     async fn sends_notifications_through_the_authenticated_backend() {
         use axum::{extract::Json, http::HeaderMap, routing::post, Router};
@@ -4238,7 +4330,7 @@ mod tests {
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let backend_url = format!("http://{address}");
+        let backend_url = format!("http://{address}/api/");
         let context = BackendToolContext {
             backend_url: &backend_url,
             auth_token: "unit-token",
@@ -4907,6 +4999,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn searches_todos_by_text_and_structured_filters() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Search project".to_owned(),
+                project_key: Some("SEARCH".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    milestone_id: None,
+                    title: "Fix OAuth callback".to_owned(),
+                    description: "Login fails after redirect".to_owned(),
+                    status: "in_progress".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec!["bug".to_owned()],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    milestone_id: None,
+                    title: "Write deployment guide".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec!["docs".to_owned()],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let mut context = SpaceMcpRequestContext::new(None, None, None);
+        context.current_device_id = Some("device-search".into());
+        let result = call_tool_with_runtime_context(
+            &runtime,
+            "search_board_items",
+            json!({
+                "scope":{"kind":"projects","spaces":[{"project_store":"local","device_id":"device-search","space_id":project.id}]},
+                "query":"oauth","statuses":["in_progress"],"tags":{"mode":"all","values":["bug"]}
+            }),
+            &context,
+        )
+        .await;
+        assert_eq!(result["isError"], false);
+        let tasks: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(tasks["items"].as_array().unwrap().len(), 1);
+        assert_eq!(tasks["items"][0]["title"], "Fix OAuth callback");
+    }
+
+    #[tokio::test]
     async fn search_board_items_honors_the_requested_space() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -4953,16 +5115,19 @@ mod tests {
         }
         let runtime = TaskRuntime::new(store).unwrap();
 
-        let result = call_tool(
+        let mut context = SpaceMcpRequestContext::new(None, None, None);
+        context.current_device_id = Some("device-search".into());
+        let result = call_tool_with_runtime_context(
             &runtime,
             "search_board_items",
-            json!({"space_id": second.id, "query": "feedback"}),
+            json!({"scope":{"kind":"projects","spaces":[{"project_store":"local","device_id":"device-search","space_id":second.id}]},"query":"feedback"}),
+            &context,
         )
         .await;
         let items: Value =
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
 
-        assert_eq!(items.as_array().unwrap().len(), 1);
-        assert_eq!(items[0]["title"], "Second feedback");
+        assert_eq!(items["items"].as_array().unwrap().len(), 1);
+        assert_eq!(items["items"][0]["title"], "Second feedback");
     }
 }

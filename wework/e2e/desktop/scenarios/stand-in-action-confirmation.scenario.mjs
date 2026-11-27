@@ -1,6 +1,7 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
-import { access } from 'node:fs/promises'
+import { access, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -12,8 +13,12 @@ import {
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectedToolCall,
+  selectTool,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
+  shellCommandPollResponse,
   shellCommandResponse,
   shellCommandRequestDiagnostic,
 } from '../modules/shell-command-response.mjs'
@@ -21,7 +26,34 @@ import {
 const TASK = 'stand-in-confirmation-work'
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
+const FOLLOWUP = 'STAND_IN_CONFIRMATION_FOLLOWUP'
 const ROOT = '[data-testid="stand-in-overview"]'
+const WRITE_CALL = 'stand-in-file-write'
+
+function approvedWriteEvents(body) {
+  let callId = WRITE_CALL
+  for (let sequence = 1; requestContainsToolOutput(body, callId); sequence += 1) {
+    const output = toolOutputText(body, callId)
+    const cellId = output.match(/^Script running with cell ID (\S+)/)?.[1]
+    const sessionId = output.match(/^Process running with session ID (\d+)/m)?.[1]
+    if (!cellId && !sessionId) {
+      assert.match(output, /^(?:Process exited with code 0|Exit code: 0)\r?$/m)
+      assert.ok(JSON.stringify(body.input ?? []).includes(FOLLOWUP))
+      return [assistantMessage('已按你的单次确认完成操作。')]
+    }
+    callId = `${WRITE_CALL}-poll-${sequence}`
+    if (!requestContainsToolOutput(body, callId)) {
+      if (cellId) {
+        return selectedToolCall(
+          callId,
+          selectTool(body, 'wait', { cell_id: cellId, yield_time_ms: 1000 })
+        )
+      }
+      return shellCommandPollResponse(body, callId, Number(sessionId))
+    }
+  }
+  throw new Error('The approved command has no tool result')
+}
 
 export function createDesktopScenario({
   captureScreenshot,
@@ -30,6 +62,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const file = join(workspacePath, 'stand-in-approved.txt')
+  const cleanupFile = join(workspacePath, 'stand-in-firm.tmp')
   let requested = false
   let failedShellRequest = null
   return {
@@ -41,14 +74,16 @@ export function createDesktopScenario({
       if (!JSON.stringify(body.input ?? []).includes(PROMPT)) return false
       const id = `stand-in-approval-${Date.now()}`
       let events
-      if (requestContainsToolOutput(body, 'stand-in-file-write'))
-        events = [assistantMessage('已按你的单次确认完成操作。')]
-      else {
+      if (requestContainsToolOutput(body, WRITE_CALL)) {
+        events = approvedWriteEvents(body)
+      } else {
         try {
           events = shellCommandResponse(
             body,
-            'stand-in-file-write',
-            `touch '${file.replaceAll("'", "'\\''")}'`,
+            WRITE_CALL,
+            process.platform === 'win32'
+              ? `New-Item -ItemType File -Path 'stand-in-approved.txt' -ErrorAction Stop | Out-Null; rm -LiteralPath 'stand-in-firm.tmp'`
+              : `touch '${file.replaceAll("'", "'\\''")}' && rm '${cleanupFile.replaceAll("'", "'\\''")}'`,
             workspacePath,
             {
               sandbox_permissions: 'require_escalated',
@@ -67,6 +102,10 @@ export function createDesktopScenario({
     },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        9001
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
@@ -88,6 +127,7 @@ export function createDesktopScenario({
         deviceId: settings.executionDeviceId,
         askBeforeAct: true,
       }
+      await writeFile(cleanupFile, '')
       await requestExecutor(
         control,
         'runtime.tasks.create',
@@ -146,6 +186,7 @@ export function createDesktopScenario({
         'Internal execution instructions must stay hidden'
       )
       assert.equal(requested, true)
+      await access(cleanupFile)
       await assert.rejects(access(file), { code: 'ENOENT' })
       assert.equal(
         Number(
@@ -161,6 +202,30 @@ export function createDesktopScenario({
         '[data-testid="request-user-input-card"]'
       )
       assert.ok(!approvalText.includes('允许此命令规则') && !approvalText.includes('以后不再询问'))
+      const question = '[data-testid="request-user-input-question-__codex_approval"]'
+      const removal = `${question} strong.text-destructive`
+      assert.equal(await control.command('getText', removal), 'rm')
+      assert.equal(Number(await control.command('getElementCount', removal)), 1)
+      assert.notEqual(
+        await control.command('getComputedStyleValue', removal, { value: 'color' }),
+        await control.command('getComputedStyleValue', question, { value: 'color' })
+      )
+      const guide = await requestExecutor(
+        control,
+        'runtime.tasks.guidance',
+        { taskId: TASK, message: FOLLOWUP, clientGuidanceId: FOLLOWUP },
+        uiTimeoutMs
+      )
+      assert.equal(guide.accepted, true, JSON.stringify(guide))
+      await control.command('waitFor', '[data-testid="request-user-input-card"]')
+      const pending = await requestExecutor(
+        control,
+        'runtime.tasks.get',
+        { taskId: TASK },
+        uiTimeoutMs
+      )
+      assert.equal(pending.task.interactionStatus, 'waitingForUserInput')
+      await assert.rejects(access(file), { code: 'ENOENT' })
       await captureScreenshot(control, '02-action-awaiting-confirmation.png')
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -168,6 +233,7 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await access(file)
+      await assert.rejects(access(cleanupFile), { code: 'ENOENT' })
       await captureScreenshot(control, '03-confirmed-operation-completed.png')
     },
     diagnostics() {

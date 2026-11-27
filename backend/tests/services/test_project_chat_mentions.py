@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.ws import wework_runtime_namespace
@@ -29,6 +30,7 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
 from tests.e2e.project_mention_runner import manage_runner
@@ -41,7 +43,10 @@ from tests.utils.collaboration import (
 
 @pytest.fixture
 def mention_scope(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> tuple[CloudProject, Kind, User, LoopItem, MagicMock]:
     schedule = MagicMock()
     monkeypatch.setattr("app.core.async_utils.schedule_async_task", schedule)
@@ -55,7 +60,32 @@ def mention_scope(
         metadata_json={},
     )
     workspace = authorize_project(test_db, project)
+    recipient_id = None
+    if getattr(request, "param", None) == "overlapping-ids":
+        # User and Kind identities are independent and may share the same number.
+        recipient_id = (
+            max(
+                test_db.query(func.max(Kind.id)).scalar() or 0,
+                test_db.query(func.max(User.id)).scalar() or 0,
+            )
+            + 1
+        )
+        parent = (
+            test_db.query(ResourceMember)
+            .filter_by(
+                resource_type="CloudProject",
+                resource_id=int(project.id),
+                entity_type="workspace",
+                entity_id=str(workspace.id),
+            )
+            .one()
+        )
+        workspace.id = recipient_id
+        parent.entity_id = str(recipient_id)
+        test_db.flush()
+        test_db.refresh(project)
     recipient = User(
+        id=recipient_id,
         user_name=f"mention-{uuid.uuid4().hex[:8]}",
         password_hash="unused",
         email="mention@example.com",
@@ -190,6 +220,64 @@ async def test_user_mentions_do_not_execute_assigned_agent(
         manage_runner(test_db, item.id, "check")
     manage_runner(test_db, item.id, "cleanup")
     assert test_db.get(ProjectChatAgent, agent.id) is None
+
+
+@pytest.mark.parametrize("invitation", ["participant", "assignee"])
+@pytest.mark.parametrize(
+    "mention_scope", ["separate-ids", "overlapping-ids"], indirect=True
+)
+def test_invited_commenter_cannot_dispatch_by_mentioning_an_agent(
+    test_db, test_user, assigned_mention_scope, invitation
+):
+    project, recipient, item, agent, _ = assigned_mention_scope
+    removed = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Workspace",
+            resource_id=project.workspace_id,
+            entity_type="user",
+            entity_id=str(recipient.id),
+        )
+        .delete()
+    )
+    assert removed == 1
+    if invitation == "participant":
+        loop_item_service.add_collaborator(test_db, item.id, recipient.id, test_user.id)
+    else:
+        item.assignee_user_id = recipient.id
+    test_db.commit()
+    try:
+        request = ProjectChatSend(
+            client_message_id=str(uuid.uuid4()),
+            project_id=project.id,
+            task_id=item.id,
+            content="Please review this Issue",
+        )
+        comment = project_chat_service.send(
+            test_db,
+            user_id=recipient.id,
+            user_name=recipient.user_name,
+            request=request,
+        )
+        assert comment.created
+        request.client_message_id = str(uuid.uuid4())
+        request.mentions = [
+            ProjectChatMention(type="agent", id=agent.id, label=agent.name)
+        ]
+        before = test_db.query(ProjectChatMessage).count()
+        with pytest.raises(HTTPException) as denied:
+            project_chat_service.send(
+                test_db,
+                user_id=recipient.id,
+                user_name=recipient.user_name,
+                request=request,
+            )
+        assert denied.value.status_code == 403
+        assert test_db.query(ProjectChatMessage).count() == before
+        assert test_db.query(LoopItemExecution).count() == 0
+        assert test_db.query(WeworkNotification).count() == 0
+    finally:
+        manage_runner(test_db, item.id, "cleanup")
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab"])

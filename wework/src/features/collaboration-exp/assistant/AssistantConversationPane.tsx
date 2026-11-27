@@ -1,15 +1,16 @@
-import { useState } from 'react'
-import type { RuntimeTaskAddress } from '@/types/api'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useExperienceDraftInput } from '../useExperienceDraftInput'
-import { selectAssistantConversation } from './assistantConversationIdentity'
-import type { ExperiencePrivateConversation } from '../model'
-import { acceptedAssistantConversation } from './acceptedAssistantConversations'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useState } from 'react'
+import type { ExperiencePrivateConversation } from '../model'
+import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { acceptedAssistantConversation } from './acceptedAssistantConversations'
+import { selectAssistantConversation } from './assistantConversationIdentity'
 import { useAssistantSources } from './useAssistantSources'
 
 export interface AssistantConversationPaneProps {
@@ -70,7 +71,8 @@ function AssistantConversationContent({
             {refreshError}
           </p>
         )}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-exp-assistant-conversation-retry"
           onClick={() => {
@@ -82,7 +84,7 @@ function AssistantConversationContent({
           className="mt-2 min-h-11 underline md:min-h-8"
         >
           {t('assistant.retry')}
-        </button>
+        </ControlButton>
       </div>
     )
   return (
@@ -135,6 +137,7 @@ function VerifiedAssistantConversation({
         }}
         sendEphemeral={false}
         nativeConversation
+        showActivityDots
         active={active}
         emptyStateText={t('assistant.conversationEmpty')}
         placeholder={t('assistant.placeholder')}

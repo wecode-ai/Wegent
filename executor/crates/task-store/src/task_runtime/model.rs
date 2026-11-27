@@ -345,8 +345,26 @@ fn default_mcp_servers() -> Value {
     Value::Object(Default::default())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LocalComment {
+    #[serde(default)]
+    pub actor_user_id: Option<String>,
+    #[serde(default)]
+    pub runtime_owner_user_id: Option<String>,
+    #[serde(default)]
+    pub actor_display_name: Option<String>,
+    #[serde(default)]
+    pub runtime_shared: bool,
+    #[serde(default)]
+    pub generation_source: String,
+    #[serde(default)]
+    pub publication_source: String,
+    #[serde(default)]
+    pub confirmation_state: String,
+    #[serde(default)]
+    pub trace_ref: Option<String>,
+    #[serde(default)]
+    pub trace_state: String,
     pub id: i64,
     pub message_id: String,
     pub client_message_id: Option<String>,

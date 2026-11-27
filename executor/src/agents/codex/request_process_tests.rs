@@ -11,6 +11,45 @@ struct Fixture {
 }
 
 #[tokio::test]
+async fn mcp_startup_failure_preserves_turn_completion() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/start"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"mcp-turn","modelProvider":"~"}}}\n' "$id" ;;
+    *'"method":"turn/start"'*)
+      printf '{"id":%s,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}\n' "$id"
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"mcp-turn","name":"wework_space","status":"failed","failureReason":"HTTP 401"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"mcp-turn","name":"connector","status":"failed","failureReason":"TLS error"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"mcp-turn","turnId":"turn-1","item":{"id":"tool-1","type":"mcpToolCall","server":"connector","tool":"read","arguments":{},"status":"failed","error":{"message":"connection timed out"}}}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"mcp-turn","turnId":"turn-1","item":{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"continued"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"mcp-turn","turn":{"id":"turn-1","status":"completed"}}}' ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let result = timeout(Duration::from_secs(5), fixture.client.run_turn_with_cancel(
+        ExecutionRequest {
+            task_id: "mcp-turn".into(),
+            bot: json!([{ "shell_type": "Codex" }]),
+            model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+            ..ExecutionRequest::default()
+        }, CodexAppServerTurnOptions::default()
+    )).await;
+    fixture.client.restart().await;
+    assert_eq!(
+        result.unwrap().unwrap().outcome,
+        ExecutionOutcome::Completed {
+            content: "continued".into()
+        }
+    );
+}
+
+#[tokio::test]
 async fn mcp_app_tool_failure_before_dispatch_remains_a_denial() {
     let fixture = Fixture::with_script("#!/bin/sh\nexit 0\n");
     let error = fixture
@@ -496,11 +535,7 @@ done
         .request("test/fail-mcp", json!({}))
         .await
         .unwrap();
-    assert!(fixture
-        .resume_work("one")
-        .await
-        .unwrap_err()
-        .contains("status unavailable"));
+    fixture.resume_work("one").await.unwrap();
     fixture.resume_work("one").await.unwrap();
     let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
         .unwrap()
@@ -519,7 +554,7 @@ done
             .iter()
             .filter(|r| r["method"] == "thread/resume")
             .count(),
-        1
+        2
     );
     assert_eq!(
         requests
@@ -1034,4 +1069,57 @@ async fn native_rpc_responses_protect_the_gap_before_turn_and_goal_notifications
         .unwrap();
     assert_ne!(pid(client).await, original_pid);
     client.restart().await;
+}
+
+#[path = "connection_mcp_process_tests.rs"]
+mod connection_mcp;
+
+#[tokio::test]
+async fn concurrent_action_resumes_queue_on_the_thread_lifecycle_gate() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+dir=$(dirname "$0")
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$dir/requests.jsonl"
+  (
+    id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    [ -n "$id" ] || exit 0
+    case "$line" in
+      *'"method":"thread/resume"'*)
+        if mkdir "$dir/resume.lock" 2>/dev/null; then
+          sleep 0.2
+          rmdir "$dir/resume.lock"
+          printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+        else
+          printf 'overlap\n' >> "$dir/overlap.log"
+          printf '{"id":%s,"error":{"code":-32600,"message":"thread thread-1 already has an active writer"}}\n' "$id"
+        fi ;;
+      *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+    esac
+  ) &
+done
+wait
+"#,
+    );
+    let request = ExecutionRequest {
+        task_id: "resume-gate".into(),
+        ..ExecutionRequest::default()
+    };
+    let params = json!({"threadId":"thread-1"}).as_object().unwrap().clone();
+    let calls = (0..8).map(|_| {
+        fixture
+            .client
+            .resume_thread_for_action(&request, params.clone())
+    });
+    let results = timeout(
+        Duration::from_secs(15),
+        futures_util::future::join_all(calls),
+    )
+    .await
+    .unwrap();
+    for result in results {
+        result.unwrap();
+    }
+    assert!(!fixture._directory.path().join("overlap.log").exists());
+    fixture.client.restart().await;
 }

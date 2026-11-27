@@ -99,11 +99,14 @@ export function buildLocalRuntimeExecutionRequest(
     model_config: input.modelConfig,
     system_prompt: input.projectInstructions?.trim() ?? '',
     project_plugin_ids: (input.projectPlugins ?? []).map(plugin => plugin.id),
-    prompt: messageWithApplicationContext(
-      input.message,
-      input.additionalContext,
-      input.origin?.type !== 'project_automation'
-    ),
+    prompt: claudeRuntime
+      ? claudeMessageWithApplicationContext(
+          input.message,
+          input.additionalContext,
+          input.origin?.type !== 'project_automation'
+        )
+      : input.message,
+    additionalContext: input.additionalContext,
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: deployedSkillNames,
@@ -225,7 +228,7 @@ function isNonEmptyString(value: string | null): value is string {
   return Boolean(value)
 }
 
-function messageWithApplicationContext(
+function claudeMessageWithApplicationContext(
   message: string,
   context?: RuntimeTaskCreateIntent['additionalContext'],
   includeImplicitProjectSpaceCapability = true

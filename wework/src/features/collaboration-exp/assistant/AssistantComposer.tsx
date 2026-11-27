@@ -1,20 +1,20 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { useTranslation } from '@/hooks/useTranslation'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { recordAcceptedAssistantConversation } from './acceptedAssistantConversations'
-import { IssueDetailSearchableSelect } from '@wegent/collaboration'
+import { SearchableSelect } from '@wegent/collaboration'
+import { ChevronDown } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { recordAcceptedAssistantConversation } from './acceptedAssistantConversations'
 
 export interface AssistantComposerProps {
   active: boolean
@@ -74,7 +74,7 @@ function AssistantComposerSession({
   const draft = useExperienceDraftInput({
     accountKey,
     scopeKey,
-    initialValue: projectChat.inputByScope[scopeKey] ?? '',
+    initialValue: projectChat.draftStore.read(scopeKey).value,
     onChange: next => projectChat.setInputForScope(scopeKey, next),
   })
   const { value, setValue } = draft
@@ -173,13 +173,13 @@ function AssistantComposerSession({
       showModelSelector
       toolbarLeadingContext={
         <>
-          <IssueDetailSearchableSelect
+          <SearchableSelect
             value={role ? JSON.stringify([role.id]) : 'auto'}
             options={[
               { value: 'auto', label: t('assistant.automatic') },
               ...settings.roles.map(item => ({
                 value: JSON.stringify([item.id]),
-                label: item.name || t('assistant.specialist'),
+                label: item.name || t('assistant.unnamedAssistant'),
               })),
             ]}
             accessibleLabel={t('assistant.chooseRole')}
@@ -189,7 +189,9 @@ function AssistantComposerSession({
             className="assistant-role-select text-xs"
             triggerContent={
               <>
-                <span>{role?.name || t('assistant.automatic')}</span>
+                <span>
+                  {role ? role.name || t('assistant.unnamedAssistant') : t('assistant.automatic')}
+                </span>
                 <ChevronDown size={14} aria-hidden="true" />
               </>
             }

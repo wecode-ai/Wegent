@@ -1,3 +1,4 @@
+import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 import assert from 'node:assert/strict'
 import { verifyStartupDatabaseLock } from '../modules/startup-database-lock.mjs'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -136,6 +137,7 @@ export async function createDesktopScenario({
         join(resultDir, 'startup-preferences-unavailable-result.json'),
         JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
       )
+      await verifyStartupRecovery({ appBinary, resultDir })
       await verifyStartupDatabaseLock({
         control,
         executorHome,
@@ -245,7 +247,7 @@ export async function createDesktopScenario({
         assert.ok(prepared.components.executor)
         assert.ok(prepared.components.codex)
         for (const [id, path] of Object.entries(prepared.components)) {
-          if (id !== 'contentSha256') await access(path)
+          if (id !== 'contentSha256' && id !== 'dwsSource') await access(path)
         }
         await writeFile(
           join(resultDir, 'manual-install-reconciliation.json'),

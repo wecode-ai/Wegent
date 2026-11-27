@@ -4,6 +4,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { prepareElectronNodeRuntime } from '../src/runtime/electron-node-runtime.ts'
 import { verifyEmbeddedNodeSkillRuntime } from '../../e2e/desktop/scenarios/release-package-startup.scenario.mjs'
+import { resolveRealNodeExecutable } from './real-node-executable.mjs'
+
+// Fixtures must drive a real Node.js binary: inside the project's own Electron
+// runtime host, process.execPath is the host's Electron helper and reports an
+// Electron version the rejection cases cannot control (#4740).
+const realNode = await resolveRealNodeExecutable()
 
 const electronPackage = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8')
@@ -17,8 +23,8 @@ beforeEach(async () => {
   const runtime = await prepareElectronNodeRuntime({
     dataDirectory: directory,
     environment: { PATH: process.env.PATH },
-    helperExecPath: process.execPath,
-    nodeVersion: process.versions.node,
+    helperExecPath: realNode.executable,
+    nodeVersion: realNode.nodeVersion,
     platform: process.platform,
   })
   binDirectory = runtime.environment.WEWORK_RUNTIME_BIN
@@ -45,7 +51,7 @@ test('executes the generated runtime launcher and records the verified versions'
     JSON.parse(await readFile(join(directory, 'embedded-node-versions.json'), 'utf8'))
   ).toEqual({
     electron: electronPackage.devDependencies.electron,
-    node: process.versions.node,
+    node: realNode.nodeVersion,
     availableMemoryBytes: expect.any(Number),
   })
 })

@@ -47,6 +47,43 @@ describe('ComponentUpdateManager', () => {
     expect(await readdir(cache)).toEqual(before)
   })
 
+  test('reuses bundled programs across isolated component activation states', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'shared-parent-executor-v2')
+    const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+    const parent = createManager(fixture, fetch)
+    await parent.stageUpdateForApp(appVersion, 'beta')
+    const selected = await parent.prepareStartup()
+    await parent.confirmStartup()
+    const parentState = join(fixture.data, 'managed-components', 'state.json')
+    const beforeState = await readFile(parentState, 'utf8')
+    const beforeProgram = await stat(selected.weworkCorePlugins)
+    const childData = join(fixture.root, 'development-profile')
+    const child = new ComponentUpdateManager({
+      resourcesRoot: fixture.resources,
+      dataDirectory: childData,
+      bundledComponentDirectory: join(fixture.data, 'managed-components'),
+      updateBaseUrl,
+      currentAppVersion: appVersion,
+      platform: 'darwin',
+      arch: 'arm64',
+      fetch,
+    })
+
+    const initial = await child.prepareStartup()
+
+    expect(initial.weworkCorePlugins).toBe(selected.weworkCorePlugins)
+    expect((await stat(initial.weworkCorePlugins)).ino).toBe(beforeProgram.ino)
+    expect((await stat(initial.weworkCorePlugins)).mtimeMs).toBe(beforeProgram.mtimeMs)
+    expect(await readFile(initial.executor, 'utf8')).toBe('executor-v1')
+    expect(await readFile(selected.executor, 'utf8')).toBe('shared-parent-executor-v2')
+    await child.stageUpdateForApp(appVersion, 'beta')
+    await child.prepareStartup()
+    await child.confirmStartup()
+    expect(await readFile(parentState, 'utf8')).toBe(beforeState)
+    expect(await readFile(join(childData, 'managed-components', 'state.json'), 'utf8')).not.toBe('')
+  })
+
   test('removes incomplete composition without publishing a cache entry', async () => {
     const fixture = await createFixture()
     await rm(join(fixture.resources, 'wework-app-static', 'wasm'), { recursive: true })
@@ -201,6 +238,7 @@ describe('ComponentUpdateManager', () => {
       join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin', 'codex')
     )
     expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
+    expect(paths.dwsSource).toBe('bundled')
     await expect(
       readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
     ).resolves.toBe('plugin code')

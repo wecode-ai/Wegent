@@ -557,6 +557,12 @@ fn local_comment_thread_and_enqueue_writeback() {
     assert_eq!(continued.message_id, continuation.message_id);
     assert_eq!(continued.status, "completed");
     assert_eq!(continued.content, "你之前让我看一下");
+    assert_eq!(continued.actor_user_id.as_deref(), Some("1"));
+    assert_eq!(continued.actor_display_name.as_deref(), Some("Ada"));
+    assert_eq!(continued.runtime_owner_user_id.as_deref(), Some("7"));
+    assert!(continued.runtime_shared);
+    assert_eq!(continued.trace_state, "available");
+    assert_eq!(continued.trace_ref.as_deref().map(str::len), Some(64));
     assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
     assert_eq!(
         store
@@ -588,6 +594,22 @@ fn local_comment_thread_and_enqueue_writeback() {
             .as_deref(),
         Some("in_review")
     );
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.visibility','private') WHERE id=?1",
+            params![agent.id],
+        )
+        .unwrap();
+    let private = store
+        .list_comments(&project.id, &task.id, 0)
+        .unwrap()
+        .into_iter()
+        .find(|comment| comment.message_id == continuation.message_id)
+        .unwrap();
+    assert_eq!(private.runtime_owner_user_id.as_deref(), Some("7"));
+    assert!(!private.runtime_shared);
 }
 
 #[test]

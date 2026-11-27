@@ -42,6 +42,44 @@ def installation(db: Session, name: str) -> int:
     return row.id
 
 
+def test_snapshot_receipt_does_not_hold_an_unrelated_installation_lease(
+    scoped_db, plugin_write_backend, monkeypatch
+):
+    bind = scoped_db.get_bind()
+    PluginDeviceInstallation.__table__.create(bind)
+    first = installation(scoped_db, "first")
+    independent = installation(scoped_db, "independent")
+    service = PluginDeviceInstallationService()
+    record = service._record_device_sync_result
+
+    def record_with_independent_write(db, user_id, result, **kwargs):
+        if first in kwargs["installed_ids"]:
+            with Session(bind) as other:
+                acquire_plugin_write_lock(
+                    other, user_id, installed_id=independent, blocking_timeout=0
+                )
+                row = other.get(Kind, independent)
+                payload = deepcopy(row.json)
+                payload["spec"]["enabled"] = False
+                replace_installed_kind(other, row, payload)
+                other.commit()
+        return record(db, user_id, result, **kwargs)
+
+    monkeypatch.setattr(
+        service, "_record_device_sync_result", record_with_independent_write
+    )
+    service.record_sync_response(
+        scoped_db,
+        user_id=913,
+        response=DeviceCapabilitySyncResponse(
+            results=[DeviceCapabilitySyncResult(device_id="device", success=True)]
+        ),
+    )
+    scoped_db.expire_all()
+    assert scoped_db.get(Kind, independent).json["spec"]["enabled"] is False
+    assert not plugin_write_backend.values
+
+
 @pytest.mark.parametrize("single_device", [True, False])
 def test_ack_merges_metadata_without_retry_or_losing_another_device(
     scoped_db, plugin_write_backend, monkeypatch, single_device

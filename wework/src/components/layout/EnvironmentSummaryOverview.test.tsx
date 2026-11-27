@@ -1,48 +1,92 @@
-import { render, screen } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
-import type { DeviceInfo } from '@/types/api'
+import '@/i18n'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import type { EnvironmentInfo } from '@/types/environment'
 import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 
-vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: string | { device: string }) =>
-      typeof fallback === 'string'
-        ? fallback
-        : fallback?.device
-          ? `${fallback.device} offline`
-          : key,
-  }),
-}))
+vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn() }))
+const info: EnvironmentInfo = {
+  additions: '0',
+  deletions: '0',
+  executionTarget: 'local',
+  workspaceRoots: ['/work/first', '/work/second'],
+}
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(10000)
+  vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(undefined)
+})
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
-test('names the remote owner and retains a failed read until a successful refresh', () => {
-  const device: DeviceInfo = {
-    id: 1,
-    device_id: 'owner',
-    name: 'Remote workspace',
-    status: 'offline',
-    client_ip: '127.0.0.1',
-    device_type: 'remote',
-    bind_shell: 'claudecode',
-    is_default: false,
-  }
-  const info: EnvironmentInfo = {
-    additions: '',
-    deletions: '',
-    executionTarget: 'remote',
-    executionDeviceId: device.device_id,
-    error: 'executor-offline:owner',
-  }
-  const { rerender } = render(<EnvironmentSummaryOverview devices={[device]} info={info} />)
-  expect(screen.getByTestId('environment-read-error')).toHaveTextContent('Remote workspace offline')
-  expect(screen.getByTestId('environment-execution-target-row').title).toContain('远程设备')
-  rerender(<EnvironmentSummaryOverview devices={[{ ...device, status: 'online' }]} info={info} />)
-  expect(screen.getByTestId('environment-read-error')).toBeInTheDocument()
-  rerender(
-    <EnvironmentSummaryOverview
-      devices={[{ ...device, status: 'online' }]}
-      info={{ ...info, error: undefined }}
-    />
+async function copy(testId = 'environment-workspace-path-button') {
+  await act(async () => {
+    fireEvent.click(screen.getByTestId(testId))
+  })
+}
+
+test('refreshes copy feedback for another path and removes its timer when unmounted', async () => {
+  const { unmount } = render(<EnvironmentSummaryOverview devices={[]} info={info} />)
+  await copy()
+  expect(copyTextToClipboard).toHaveBeenCalledWith('/work/first')
+  expect(screen.getByTestId('environment-workspace-path-button')).toContainElement(
+    screen.getByRole('status')
   )
-  expect(screen.queryByTestId('environment-read-error')).not.toBeInTheDocument()
+  act(() => vi.advanceTimersByTime(1500))
+  await copy('environment-workspace-root-button-1')
+  expect(screen.getByTestId('environment-workspace-root-button-1')).toContainElement(
+    screen.getByRole('status')
+  )
+  act(() => vi.advanceTimersByTime(500))
+  expect(screen.getByRole('status')).toBeInTheDocument()
+  act(() => vi.advanceTimersByTime(1500))
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(vi.getTimerCount()).toBe(0)
+  await copy()
+  unmount()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('keeps feedback on the most recently requested path when clipboard completions arrive out of order', async () => {
+  let finish!: () => void
+  vi.mocked(copyTextToClipboard).mockImplementationOnce(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  render(<EnvironmentSummaryOverview devices={[]} info={info} />)
+  await copy()
+  expect(screen.queryByRole('status')).toBeNull()
+  await copy('environment-workspace-root-button-1')
+  await act(async () => finish())
+  expect(screen.getByTestId('environment-workspace-root-button-1')).toContainElement(
+    screen.getByRole('status')
+  )
+  expect(screen.getByTestId('environment-workspace-path-button')).not.toContainElement(
+    screen.getByRole('status')
+  )
+})
+
+test('does not create an expiration timer for a late clipboard result after unmount', async () => {
+  let finish!: () => void
+  vi.mocked(copyTextToClipboard).mockImplementationOnce(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  const { unmount } = render(<EnvironmentSummaryOverview devices={[]} info={info} />)
+  await copy()
+  unmount()
+  const timers = vi.spyOn(globalThis, 'setTimeout')
+  try {
+    await act(async () => finish())
+    expect(timers.mock.calls.some(([, delay]) => delay === 2000)).toBe(false)
+  } finally {
+    timers.mockRestore()
+  }
 })

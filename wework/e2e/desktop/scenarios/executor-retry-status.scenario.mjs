@@ -25,6 +25,7 @@ export function createDesktopScenario(options) {
   let active = false
   let recover = false
   let attempts = 0
+  const rateLimitRequestIdentities = []
 
   return {
     ...existing,
@@ -36,6 +37,16 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
       attempts += 1
+      rateLimitRequestIdentities.push({
+        threadId: body.client_metadata?.thread_id ?? null,
+        turnId: body.client_metadata?.turn_id ?? null,
+        parentTurnId: body.client_metadata?.parent_turn_id ?? null,
+        rootTurnId: body.client_metadata?.root_turn_id ?? null,
+      })
+      console.info(
+        '[desktop-e2e] rate-limit model request identity',
+        JSON.stringify(rateLimitRequestIdentities.at(-1))
+      )
       if (!recover) {
         response.writeHead(429, {
           'content-type': 'application/json',
@@ -52,6 +63,9 @@ export function createDesktopScenario(options) {
         createSse([responseCreated(id), assistantMessage(COMPLETED), responseCompleted(id)])
       )
       return true
+    },
+    diagnostics() {
+      return { ...existing.diagnostics?.(), rateLimitRequestIdentities }
     },
     async verify(control) {
       await existing.verify(control)

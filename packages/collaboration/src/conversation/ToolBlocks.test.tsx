@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
+import { ToolBlockItem } from './blocks/ToolBlockItem'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import type { ToolBlock } from './blocks/types'
@@ -45,6 +46,53 @@ function block(id: string): ToolBlock {
 }
 
 describe('shared tool output without a desktop host', () => {
+  it.each([false, true])('expands one provider catalog on demand (legacy response: %s)', legacy => {
+    const catalog = {
+      items: [
+        {
+          id: 'github',
+          availability: { status: 'ready' },
+          eventTypes: ['git.event'],
+        },
+        { id: 'gitlab', availability: { status: 'plugin_disabled' } },
+      ],
+    }
+    render(
+      <ToolBlockItem
+        block={{
+          ...block('event-providers'),
+          toolName: 'wework_control.list_connection_event_providers',
+          toolInput: {},
+          toolOutput: {
+            content: legacy ? [{ type: 'text', text: JSON.stringify(catalog) }] : [],
+            structuredContent: legacy
+              ? catalog
+              : {
+                  items: catalog.items.map(({ id, availability }) => ({
+                    id,
+                    availability,
+                  })),
+                },
+            _meta: legacy ? null : { connectionEventProviderCatalog: catalog },
+          },
+        }}
+        forceExpanded
+      />
+    )
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="connection-event-provider-result-toggle"]'
+    )!
+    const output = () => container.querySelector('[data-testid="generic-tool-output"]')
+    expect(container.textContent).toContain('2 total, 1 ready')
+    expect(output()).toBeNull()
+    act(() => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(JSON.parse(output()!.textContent!)).toEqual(catalog)
+    act(() => toggle.click())
+    expect(output()).toBeNull()
+  })
+
   it.each([
     ['done', 'Ran pwd'],
     ['streaming', 'Running pwd'],
@@ -137,7 +185,26 @@ describe('shared tool output without a desktop host', () => {
     expect(container.querySelector('[data-testid="web-search-sources-chip"]')?.textContent).toBe(
       'Sources'
     )
-    const link = container.querySelector<HTMLAnchorElement>(
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        const trigger = container.querySelector<HTMLButtonElement>(
+          '[data-testid="web-search-sources-chip"]'
+        )!
+        trigger.dispatchEvent(
+          new PointerEvent('pointerenter', {
+            bubbles: true,
+            pointerType: 'mouse',
+          })
+        )
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    const link = document.querySelector<HTMLAnchorElement>(
       '[data-testid="web-search-source-popup-row"]'
     )!
     await act(async () => link.click())
@@ -167,7 +234,7 @@ describe('shared tool output without a desktop host', () => {
     expect(ignore).not.toBeNull()
     expect(ignore?.disabled).toBe(true)
   })
-  it('keeps an opened native approval rationale when the conversation remounts', () => {
+  it('keeps a user-opened approval rationale when the conversation remounts', () => {
     const review: ToolBlock = {
       ...block('review-retained-details'),
       toolName: 'auto_approval_review',
@@ -177,20 +244,114 @@ describe('shared tool output without a desktop host', () => {
     const show = () =>
       render(<ToolBlocksDisplay blocks={[review]} isStreaming={false} forceExpanded />)
     show()
-    const details = container.querySelector<HTMLDetailsElement>(
-      '[data-testid="auto-approval-review"]'
+    const details = container.querySelector<HTMLElement>(
+      '[data-testid="auto-approval-review-details"]'
     )!
-    act(() => {
-      details.open = true
-      details.dispatchEvent(new Event('toggle'))
-    })
+    expect(details.getAttribute('aria-expanded')).toBe('false')
+    act(() => details.click())
     render(<div>Other conversation</div>)
     show()
     expect(
-      container.querySelector<HTMLDetailsElement>('[data-testid="auto-approval-review"]')?.open
-    ).toBe(true)
+      container
+        .querySelector<HTMLElement>('[data-testid="auto-approval-review-details"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('true')
     expect(
       container.querySelector('[data-testid="auto-approval-review-evidence"]')?.textContent
     ).toContain('Private data is outside the task')
+  })
+})
+
+describe('automatic retry presentation', () => {
+  it.each([
+    ['custom', 'overload', 'Server is busy, reconnecting…'],
+    ['codex-official', 'overload', 'Server is busy, reconnecting…'],
+    ['codex-official', 'rate_limit', 'Model rate limited. Waiting to retry…'],
+    ['codex-official', 'unknown', 'Retrying automatically…'],
+  ])('shows classified progress for %s / %s', (modelKind, reason, expected) => {
+    const retry: ToolBlock = {
+      ...block('classified-retry'),
+      toolName: 'runtime_reconnecting',
+      status: 'streaming',
+      toolInput: {
+        model_kind: modelKind,
+        retry_reason: reason,
+        retry_attempt: 2,
+        retry_max_attempts: 5,
+      },
+    }
+    render(
+      <ToolBlocksDisplay blocks={[block('completed-command'), retry]} isStreaming forceExpanded />
+    )
+    expect(
+      container.querySelector('[data-testid="processing-summary-header"]')?.textContent
+    ).toContain(expected + ' (2/5)')
+    expect(
+      container.querySelector('[data-testid="runtime-reconnecting-open-proxy-settings"]')
+    ).toBeNull()
+    expect(container.querySelector('[data-testid="assistant-error-card"]')).toBeNull()
+    render(
+      <ToolBlocksDisplay
+        blocks={[block('completed-command'), { ...retry, status: 'done' }]}
+        isStreaming
+        forceExpanded
+      />
+    )
+    expect(container.textContent).not.toContain('(2/5)')
+  })
+  it('uses native reconnect progress without showing the raw message', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          block('completed-command'),
+          {
+            ...block('native-retry'),
+            toolName: 'runtime_reconnecting',
+            status: 'streaming',
+            toolInput: {
+              retry_reason: 'connection',
+              message: 'Reconnecting... 3/5',
+            },
+          },
+        ]}
+        isStreaming
+      />
+    )
+    expect(
+      container.querySelector('[data-testid="processing-summary-header"]')?.textContent
+    ).toContain('Reconnecting… (3/5)')
+    expect(container.textContent).not.toContain('Reconnecting... 3/5')
+  })
+  it('keeps overload progress through its countdown and clears it on completion', () => {
+    vi.useFakeTimers()
+    try {
+      const retry: ToolBlock = {
+        ...block('countdown-retry'),
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        toolInput: {
+          retry_reason: 'overload',
+          retry_at: Date.now() + 10_000,
+          retry_attempt: 2,
+          retry_max_attempts: 4,
+          model_kind: 'codex-official',
+        },
+      }
+      render(<ToolBlockItem block={retry} />)
+      const status = () => container.querySelector('[data-testid="runtime-overload-wait-status"]')
+      expect(status()?.textContent).toContain('10s')
+      expect(status()?.textContent).toContain('(2/4)')
+      expect(
+        container.querySelector('[data-testid="runtime-reconnecting-open-proxy-settings"]')
+      ).toBeNull()
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(status()?.textContent).toContain('Retrying the same model')
+      expect(status()?.textContent).toContain('(2/4)')
+      render(<ToolBlockItem block={{ ...retry, status: 'done' }} />)
+      expect(status()).toBeNull()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

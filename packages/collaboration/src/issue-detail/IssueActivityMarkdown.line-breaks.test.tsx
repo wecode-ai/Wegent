@@ -1,13 +1,29 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import type { Processor } from 'unified'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AssistantMarkdown, MarkdownServicesProvider, browserMarkdownServices } from '../markdown'
 import { IssueActivityMarkdown } from './IssueActivityMarkdown'
 
+const parses = vi.hoisted(() => [] as string[])
+vi.mock('../markdown/remarkMathDelimiters', async importOriginal => {
+  const actual = await importOriginal<typeof import('../markdown/remarkMathDelimiters')>()
+  return {
+    ...actual,
+    remarkMathDelimiters: function (this: Processor) {
+      actual.remarkMathDelimiters.call(this)
+      return (_tree: unknown, file: { value: unknown }) => {
+        parses.push(String(file.value))
+      }
+    },
+  }
+})
+
 let root: Root
 let container: HTMLDivElement
 beforeEach(() => {
+  parses.length = 0
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -25,6 +41,7 @@ afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
   document.documentElement.removeAttribute('data-theme')
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -115,4 +132,156 @@ it('anchors document Markdown blocks to source lines only when requested', async
   expect(container.querySelector('[data-source-line="7"]')?.textContent).toBe(
     'Closing paragraph.'
   )
+})
+
+it.each([
+  ['default', false],
+  ['default', true],
+  ['process', false],
+] as const)(
+  'keeps live %s Markdown mounted through completion with desktop windowing=%s',
+  async (variant, windowMarkdown) => {
+    const content = '# Heading\n\nParagraph **bold**.\n\n- First\n- Second'
+    const services = { ...browserMarkdownServices, windowMarkdown }
+    const render = (value: string, isStreaming = false) =>
+      act(async () =>
+        root.render(
+          <MarkdownServicesProvider value={services}>
+            <AssistantMarkdown content={value} variant={variant} isStreaming={isStreaming} />
+          </MarkdownServicesProvider>
+        )
+      )
+    await render(content, true)
+    const parsed = parses.length
+    expect(parsed).toBeGreaterThan(0)
+    const paragraph = container.querySelector('p')
+    await render(content)
+    expect(parses).toHaveLength(parsed)
+    expect(container.querySelector('p')).toBe(paragraph)
+    expect(container.querySelector('strong')?.textContent).toBe('bold')
+    await render(content + '\n\nActual new content.')
+    expect(parses.length).toBeGreaterThan(parsed)
+    expect(container.textContent).toContain('Actual new content.')
+  }
+)
+
+it('does not remeasure a single visible Markdown chunk when its stream ends', async () => {
+  const content = 'First paragraph.\n\nSecond paragraph.'
+  const render = (isStreaming: boolean) =>
+    act(async () =>
+      root.render(
+        <MarkdownServicesProvider value={{ ...browserMarkdownServices, windowMarkdown: true }}>
+          <AssistantMarkdown content={content} isStreaming={isStreaming} />
+        </MarkdownServicesProvider>
+      )
+    )
+  await render(true)
+  const chunk = container.querySelector<HTMLElement>('[data-markdown-window-chunk]')!
+  const measure = vi.spyOn(chunk, 'getBoundingClientRect')
+
+  await render(false)
+
+  expect(container.querySelector('[data-markdown-window-chunk]')).toBe(chunk)
+  expect(chunk.textContent).toContain('Second paragraph.')
+  expect(measure).not.toHaveBeenCalled()
+})
+
+it('coalesces streamed Markdown appends with a desktop flush interval', async () => {
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+  })
+  const services = {
+    ...browserMarkdownServices,
+    windowMarkdown: true,
+    streamingTextFlushIntervalMs: 125,
+  }
+  const render = (content: string, isStreaming = true) =>
+    act(async () =>
+      root.render(
+        <MarkdownServicesProvider value={services}>
+          <AssistantMarkdown
+            content={content}
+            isStreaming={isStreaming}
+            renderVisualization={() => null}
+          />
+        </MarkdownServicesProvider>
+      )
+    )
+  const advance = (milliseconds: number) =>
+    act(async () => vi.advanceTimersByTimeAsync(milliseconds))
+
+  await render('')
+  await render('First text')
+  expect(container.textContent).toBe('First text')
+  const initialParseCount = parses.length
+
+  await advance(100)
+  await render('First text with')
+  await advance(100)
+  await render('First text with two deltas')
+  expect(container.textContent).toBe('First text')
+  expect(parses).toHaveLength(initialParseCount)
+
+  await advance(50)
+  expect(container.textContent).toBe('First text with two deltas')
+  expect(parses.slice(initialParseCount)).toEqual(['First text with two deltas'])
+
+  await render('First text with two deltas and a pending tail')
+  await render('Rewritten text')
+  expect(container.textContent).toBe('Rewritten text')
+  const paragraph = container.querySelector('p')
+
+  await render('Rewritten text with a pending tail')
+  expect(container.textContent).toBe('Rewritten text')
+  await render('Rewritten text with the final tail', false)
+  expect(container.textContent).toBe('Rewritten text with the final tail')
+  expect(container.querySelector('p')).toBe(paragraph)
+  await advance(250)
+  expect(container.textContent).toBe('Rewritten text with the final tail')
+})
+
+it('renders tables and following paragraphs in completed desktop Markdown', async () => {
+  await act(async () =>
+    root.render(
+      <MarkdownServicesProvider value={{ ...browserMarkdownServices, windowMarkdown: true }}>
+        <AssistantMarkdown
+          content={'# Table\n\n| Result |\n| --- |\n| Success |\n\nClosing **note**.'}
+        />
+      </MarkdownServicesProvider>
+    )
+  )
+  expect(container.querySelector('td')?.textContent).toBe('Success')
+  expect(container.querySelector('p strong')?.textContent).toBe('note')
+})
+
+it('finalizes an unfinished citation when streaming ends', async () => {
+  const content = 'Visible text :codex-followup{prompt='
+  await act(async () => root.render(<AssistantMarkdown content={content} isStreaming />))
+  expect(container.textContent).not.toContain('codex-followup')
+  await act(async () => root.render(<AssistantMarkdown content={content} />))
+  expect(container.textContent).toContain('codex-followup')
+})
+
+it('finalizes incomplete process Markdown without keeping synthetic delimiters', async () => {
+  const content = 'Prefix **unfinished'
+  await act(async () =>
+    root.render(<AssistantMarkdown content={content} variant="process" isStreaming />)
+  )
+  expect(container.querySelector('strong')?.textContent).toBe('unfinished')
+  await act(async () => root.render(<AssistantMarkdown content={content} variant="process" />))
+  expect(container.querySelector('strong')).toBeNull()
+  expect(container.textContent).toContain('**unfinished')
+})
+
+it.each([
+  ':codex-file-citation{path="report.md"}',
+  ':codex-followup[Continue]{prompt="Next"}',
+])('does not reparse completed annotations at completion: %s', async content => {
+  await act(async () => root.render(<AssistantMarkdown content={content} isStreaming />))
+  const parsed = parses.length
+  expect(parsed).toBeGreaterThan(0)
+  const rendered = container.innerHTML
+  await act(async () => root.render(<AssistantMarkdown content={content} />))
+  expect(parses).toHaveLength(parsed)
+  expect(container.innerHTML).toBe(rendered)
 })

@@ -18,6 +18,14 @@ Native developer instructions own host policy. Bounded per-turn revision referen
 
 Independent Backend Tasks retain their existing inline artifact-declaration contract, using the same Backend identity check as task environment construction. Wework conversations load artifact guidance through the skill. Text-only auxiliary requests omit action policy and remove both top-level and Lite-history tool declarations.
 
+## Plugin versions and the native cache
+
+Wework publishes the selected plugin to Codex's native `plugins/cache/<marketplace>/<name>/<version>`, with the directory version matching the plugin manifest. A fixed `local` directory cannot replace version selection: native background refresh compares the directory version with the source manifest and removes inconsistent caches.
+
+Codex prefers `local` and otherwise chooses the highest directory using its native SemVer/string comparison. When selecting an older version, Wework moves only higher-priority caches with verified ownership outside the scan directory to `plugins/retained-cache/<marketplace>/<name>/<version>@<transaction-id>`. It preserves their complete contents and updates ownership and historical references. Unowned directories remain intact and produce a diagnostic conflict for the affected plugin.
+
+The selection transaction persists directory fingerprints and its move plan before publishing the selected version and native metadata. The manifest records its commit marker. After interruption, uncommitted transactions restore original directories only when paths, ownership and fingerprints match; committed transactions only remove their journals. Changed contents or unknown paths preserve the data and isolate recovery errors to the affected plugin. A remaining journal cannot reactivate an old version after uninstall.
+
 ## Verification gates
 
 The shared desktop `model-routing` matrix covers 10 model configurations across local and cloud execution: 20 cases. Core runs three local custom-model cases; Cloud runs seven other local-execution cases and ten cloud-execution cases. Protocol switching changes only the upstream format and preserves plugin and MCP configuration.

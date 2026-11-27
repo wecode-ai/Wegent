@@ -741,6 +741,46 @@ def test_runtime_queue_reorder_endpoint_dispatches_position(
     assert request.queue_position == 1
 
 
+def test_runtime_send_endpoint_preserves_async_guidance_receipt(
+    test_client, test_token, monkeypatch
+):
+    from app.api.endpoints import runtime_work
+
+    answer = {
+        "delivery": "async",
+        "itemId": "question-1",
+        "interactionScope": "turn-1",
+        "answers": {"q": {"answers": ["Proceed"]}},
+    }
+    service = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "task-1",
+            "guidanceId": "answer-1",
+            "turnId": "turn-1",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "send_runtime_message", service
+    )
+    response = test_client.post(
+        "/api/runtime-work/send",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {"deviceId": "device-1", "taskId": "task-1"},
+            "message": "Proceed",
+            "requestUserInputResponse": answer,
+            "clientUserMessageId": "answer-1",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["guidanceId"] == "answer-1"
+    assert response.json()["turnId"] == "turn-1"
+    request = service.await_args.kwargs["request"]
+    assert request.request_user_input_response == answer
+    assert request.client_user_message_id == "answer-1"
+
+
 def test_runtime_guidance_endpoint_dispatches_request(
     test_client,
     test_token,

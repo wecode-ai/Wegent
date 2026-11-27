@@ -91,7 +91,22 @@
     "background": "Background and goals",
     "unknownTime": "Time unavailable",
     "unknownSource": "Source unknown",
+    "traceRestricted": "Private source restricted",
+    "assistantSources": "Assistant participation sources",
+    "openAssistantSource": "Open original private workspace",
+    "participation": {
+      "unverified": "Source available",
+      "restricted": "Source visible to participant only",
+      "history-unavailable": "Historical source unavailable"
+    },
     "system": "System",
+    "unknownMember": "Unknown member (historical data)",
+    "provenance": {
+      "humanPublished": "Human generated · Human published",
+      "aiPending": "AI generated · Pending confirmation",
+      "aiHumanPublished": "AI generated · Human published",
+      "aiPublished": "AI generated · AI published"
+    },
     "statusChanged": "Status: {{from}} → {{to}}",
     "handoff": "{{action}}: {{target}}",
     "handoffActions": {
@@ -165,6 +180,11 @@
     "continueDiscussion": "Continue discussion"
   },
   "assistant": {
+    "availability": {
+      "online": "Online",
+      "offline": "Offline",
+      "unknown": "Unknown"
+    },
     "runtimeWorkUnavailable": "The work list could not be loaded. Retry to confirm the team's current status.",
     "snapshot": {
       "title": "Current work",
@@ -186,18 +206,18 @@
     "recentProgress": "Recent progress",
     "noProgress": "No recent assistant activity.",
     "progressLoading": "Loading recent assistant activity.",
-    "team": "Assistant team",
+    "team": "Your assistants",
     "manage": "Configure",
     "defaultAssistant": "Default assistant",
     "defaultProtected": "The default assistant remains available and cannot be deleted or paused.",
-    "specialist": "Specialist assistant",
+    "unnamedAssistant": "Unnamed assistant",
     "noProjectScope": "No project scope selected",
     "configureRole": "Configure {{name}}",
     "deleteRole": "Delete {{name}}",
-    "deleteRoleTitle": "Delete specialist assistant?",
+    "deleteRoleTitle": "Delete assistant?",
     "deleteRoleDescription": "Delete {{name}}? Its discussion and execution history will remain available. The default assistant will continue to handle work in the project's configured scope.",
     "cancel": "Cancel",
-    "delete": "Delete role",
+    "delete": "Delete assistant",
     "loading": "Loading your assistant…",
     "retry": "Retry",
     "conversationUnavailable": "This private discussion could not be verified in the current account's assistant work. Refresh the work list and try again.",
@@ -226,14 +246,15 @@
   },
   "teamRelay": {
     "title": "Your assistants are working together",
-    "statusSummary": "Assistant team: {{members}}",
+    "statusSummary": "Assistants: {{members}}",
     "memberCountSummary": "{{name}}: {{state}}. {{waiting}} awaiting confirmation, {{running}} in progress, {{completed}} completed.",
     "memberStatusSummary": "{{name}}: {{state}}.",
     "memberLabel": "{{name}} · {{state}} · Configure assistant",
     "allMembers": "View all {{count}} assistants",
     "paused": "Paused",
-    "unavailable": "Assistant team is not available yet.",
-    "managementUnavailable": "Assistant configuration is unavailable. Retry loading it before managing the team.",
+    "unavailable": "The assistant list is unavailable.",
+    "managementUnavailable": "Assistant configuration is unavailable. Retry loading it before managing assistants.",
+    "deviceUnavailable": "The configured assistant device is unavailable. Refresh devices and retry.",
     "state": {
       "waiting": "Awaiting confirmation",
       "running": "In progress",
@@ -260,6 +281,13 @@
     "summary": "Delivery summary",
     "summaryPlaceholder": "Briefly describe the problem and the deliverable.",
     "defaults": "Project, assignee and date have defaults. You can change them in the task details after creation.",
+    "assistantRoster": "Assign scoped work to project assistants",
+    "riskLevel": "Execution risk",
+    "risk": {
+      "high": "Higher risk · confirm before acting",
+      "low": "Low risk · policy may act automatically"
+    },
+    "registerInProject": "Register in {{project}}",
     "cancel": "Cancel",
     "submit": "Create and open task",
     "search": "Search options",

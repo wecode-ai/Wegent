@@ -3,15 +3,96 @@ use crate::local::app_ipc::AppIpcError;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{Mutex, OnceLock},
 };
-use std::{process::Stdio, time::Duration};
+use std::{
+    process::Stdio,
+    time::{Duration, Instant},
+};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 use tokio::{io::AsyncReadExt, process::Command};
 mod status;
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
+
+tokio::task_local! {
+    pub(crate) static GIT_READ_REQUEST_ID: String;
+}
+
+struct GitReadTiming {
+    request_id: String,
+    phase: &'static str,
+    started: Instant,
+    outcome: &'static str,
+}
+
+impl Drop for GitReadTiming {
+    fn drop(&mut self) {
+        crate::logging::log_executor_event(
+            "Git read CLI phase",
+            &[
+                ("request_id", self.request_id.clone()),
+                ("phase", self.phase.to_owned()),
+                ("elapsed_ms", self.started.elapsed().as_millis().to_string()),
+                ("outcome", self.outcome.to_owned()),
+            ],
+        );
+    }
+}
+
+async fn time_read_phase<T, E>(
+    phase: &'static str,
+    read: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let mut timing = GIT_READ_REQUEST_ID
+        .try_with(|id| GitReadTiming {
+            request_id: id.clone(),
+            phase,
+            started: Instant::now(),
+            outcome: "cancelled",
+        })
+        .ok();
+    let result = read.await;
+    if let Some(timing) = &mut timing {
+        timing.outcome = if result.is_ok() { "ok" } else { "error" };
+    }
+    result
+}
+
+async fn read_api(
+    platform: &str,
+    instance: &str,
+    phase: &'static str,
+    path: &str,
+) -> Result<ApiReply, AppIpcError> {
+    time_read_phase(phase, api(platform, instance, "GET", path, None)).await
+}
+
+fn git_cli_command(platform: &str, environment: HashMap<String, String>) -> Command {
+    let name = if platform == "github" { "gh" } else { "glab" };
+    let environment = wegent_subprocess::environment::merge_process_environment(environment);
+    #[cfg(windows)]
+    let (program, prefix) = {
+        let executable = crate::local::git_commands::resolve_cli_executable(name, &environment)
+            .unwrap_or_else(|| name.into());
+        crate::process::spawn_program_parts(&executable.to_string_lossy())
+    };
+    #[cfg(not(windows))]
+    let (program, prefix) = (name.to_owned(), Vec::<String>::new());
+    let mut command = Command::new(program);
+    crate::process::hide_windows_console(&mut command);
+    command
+        .args(prefix)
+        .env_clear()
+        .envs(environment)
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GLAB_PROMPT_DISABLED", "1")
+        .env("NO_COLOR", "1")
+        .kill_on_drop(true);
+    command
+}
 
 pub(super) fn uses_webhook(source: &Value) -> bool {
     source["kind"] == "repository" && source["transport"] != "cli"
@@ -190,10 +271,8 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
             .ok_or_else(|| invalid("Invalid repository-relative API path"))?;
         return Ok(format!("{base}/{path}"));
     }
-    let number = input["number"]
-        .as_u64()
-        .filter(|n| *n > 0)
-        .ok_or_else(|| invalid("Missing object number"))?;
+    let number =
+        positive_id(input["number"].as_u64()).ok_or_else(|| invalid("Missing object number"))?;
     let kind = input["entityKind"].as_str().unwrap_or("issue");
     let entity = if kind == "change_request" {
         if platform == "github" {
@@ -231,6 +310,10 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
     Ok(format!("{base}/{suffix}"))
 }
 
+fn positive_id(value: Option<u64>) -> Option<u64> {
+    value.filter(|id| *id > 0)
+}
+
 struct ApiReply {
     data: Value,
     poll_interval: u64,
@@ -266,9 +349,16 @@ async fn api(
     endpoint: &str,
     body: Option<&Value>,
 ) -> Result<ApiReply, AppIpcError> {
-    api_request(platform, instance, method, endpoint, body)
-        .await
-        .map_err(|failure| failure.error)
+    api_request(
+        platform,
+        instance,
+        method,
+        endpoint,
+        body.map(ApiBody::Json),
+        None,
+    )
+    .await
+    .map_err(|failure| failure.error)
 }
 
 async fn bounded_output<R: AsyncRead + Unpin>(
@@ -383,20 +473,32 @@ fn decode_reply(raw: &[u8]) -> Result<DecodedReply<'_>, AppIpcError> {
     })
 }
 
+enum ApiBody<'a> {
+    Json(&'a Value),
+    GitLabGraphql {
+        query: &'a str,
+        path: &'a str,
+        iid: u64,
+    },
+}
+
 async fn api_request(
     platform: &str,
     instance: &str,
     method: &str,
     endpoint: &str,
-    body: Option<&Value>,
+    body: Option<ApiBody<'_>>,
+    pr_number: Option<u64>,
 ) -> Result<ApiReply, GitRequestError> {
     let hostname = instance
         .strip_prefix("https://")
         .ok_or_else(|| GitRequestError::not_sent(invalid("Invalid instance")))?;
-    let serialized = body
-        .map(serde_json::to_vec)
-        .transpose()
-        .map_err(|_| GitRequestError::not_sent(invalid("Invalid Git request")))?;
+    let serialized = match &body {
+        Some(ApiBody::Json(value)) => Some(serde_json::to_vec(value)),
+        _ => None,
+    }
+    .transpose()
+    .map_err(|_| GitRequestError::not_sent(invalid("Invalid Git request")))?;
     if serialized
         .as_ref()
         .is_some_and(|body| body.len() > 256 * 1024)
@@ -413,7 +515,11 @@ async fn api_request(
     {
         return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
     }
-    let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
+    let mut command = git_cli_command(platform, std::env::vars().collect());
+    if pr_number.is_some() {
+        // gh HTTP debug output can contain request and response bodies.
+        command.env_remove("GH_DEBUG").env_remove("DEBUG");
+    }
     command.args([
         "api",
         "--include",
@@ -422,21 +528,22 @@ async fn api_request(
         "--method",
         method,
     ]);
-    if body.is_some() {
+    if let Some(ApiBody::GitLabGraphql { query, path, iid }) = body {
+        command.env_remove("GLAB_DEBUG_HTTP").args([
+            "--raw-field",
+            &format!("query={query}"),
+            "--raw-field",
+            &format!("path={path}"),
+            "--raw-field",
+            &format!("iid={iid}"),
+        ]);
+    }
+    if serialized.is_some() {
         command.args(["--input", "-"]);
     }
     command
         .arg(endpoint)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GLAB_PROMPT_DISABLED", "1")
-        .env("NO_COLOR", "1")
-        .env(
-            "PATH",
-            crate::process_environment::normalized_process_path(
-                &std::env::var("PATH").unwrap_or_default(),
-            ),
-        )
-        .stdin(if body.is_some() {
+        .stdin(if serialized.is_some() {
             Stdio::piped()
         } else {
             Stdio::null()
@@ -463,7 +570,14 @@ async fn api_request(
         }
         let (out,err)=tokio::try_join!(bounded_output(&mut stdout,2*1024*1024),bounded_output(&mut stderr,8192))?;
         let status=child.wait().await.map_err(|_|invalid("Git CLI failed"))?;
-        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
+        let decoded = decode_reply(&out);
+        if let Some(number) = pr_number.filter(|_| !status.success() || decoded.is_err()) {
+            let http_status = decoded.as_ref().ok()
+                .filter(|_| out.starts_with(b"HTTP/"))
+                .map(|reply| reply.status);
+            status::log_cli_failure(number, http_status, status.code(), &err);
+        }
+        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decoded?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
             return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
@@ -506,7 +620,13 @@ fn definite_rejection(status: u16) -> bool {
 pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     let platform = provider(&input)?;
     let instance = instance(&input, platform)?;
-    let identity = api(platform, &instance, "GET", "user", None).await?.data;
+    if input["operation"] == "change_request_status" {
+        let (response, profile) = status::read(platform, &instance, &input).await?;
+        return Ok(
+            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
+        );
+    }
+    let identity = read_api(platform, &instance, "user", "user").await?.data;
     let id = identity["id"]
         .as_str()
         .map(str::to_owned)
@@ -519,22 +639,9 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
         return Err(invalid("Missing account ID"));
     }
     let profile = json!([instance, id]).to_string();
-    if let Some(expected) = input["profile"].as_str() {
-        if expected != profile {
-            return Err(AppIpcError::new(
-                "git_account_changed",
-                "The selected CLI account changed",
-            ));
-        }
-    }
+    verify_profile(&input, &profile)?;
     if input["operation"] == "identity" {
         return Ok(json!({"profile":profile,"accountId":id,"login":login,"instance":instance}));
-    }
-    if input["operation"] == "change_request_status" && platform == "github" {
-        let response = status::read(&instance, &input).await?;
-        return Ok(
-            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
-        );
     }
     if input["operation"] == "job_log" {
         endpoint(
@@ -551,7 +658,7 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
             instance,
             input["repository"].as_str().unwrap_or("")
         );
-        let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
+        let mut command = git_cli_command(platform, std::env::vars().collect());
         if platform == "github" {
             command.args([
                 "run",
@@ -566,15 +673,6 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
             command.args(["ci", "trace", &job, "--repo", &repository]);
         }
         command
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GLAB_PROMPT_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .env(
-                "PATH",
-                crate::process_environment::normalized_process_path(
-                    &std::env::var("PATH").unwrap_or_default(),
-                ),
-            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -605,8 +703,39 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     bound["accountId"] = json!(id);
     bound["login"] = json!(login);
     let path = endpoint(platform, &bound)?;
-    let data = api(platform, &instance, "GET", &path, None).await?;
+    if input["operation"] == "checks" {
+        if let Some(expected) = input.get("repositoryId") {
+            let repository_path = endpoint(
+                platform,
+                &json!({"operation":"repository","repository":input["repository"]}),
+            )?;
+            let repository = read_api(platform, &instance, "repository", &repository_path).await?;
+            verify_repository_id(&repository.data["id"], expected)?;
+        }
+    }
+    let data = read_api(platform, &instance, "target", &path).await?;
     Ok(json!({"data":data.data,"profile":profile,"pollIntervalSeconds":data.poll_interval}))
+}
+
+fn verify_repository_id(actual: &Value, expected: &Value) -> Result<(), AppIpcError> {
+    let repository_id = actual.as_u64().map(|id| id.to_string());
+    if repository_id.is_none() || repository_id.as_deref() != expected.as_str() {
+        return Err(invalid("Repository identity changed"));
+    }
+    Ok(())
+}
+
+fn verify_profile(input: &Value, profile: &str) -> Result<(), AppIpcError> {
+    if input["profile"]
+        .as_str()
+        .is_some_and(|expected| expected != profile)
+    {
+        return Err(AppIpcError::new(
+            "git_account_changed",
+            "The selected CLI account changed",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn write_target(input: &Value) -> Result<(&str, String), AppIpcError> {
@@ -643,9 +772,16 @@ pub(crate) async fn write(input: Value) -> Result<Value, GitRequestError> {
     check["operation"] = json!("identity");
     read(check).await.map_err(GitRequestError::not_sent)?;
     let (method, path) = write_target(&input).map_err(GitRequestError::not_sent)?;
-    let mut result = api_request(platform, &instance, method, &path, Some(&input["body"]))
-        .await?
-        .data;
+    let mut result = api_request(
+        platform,
+        &instance,
+        method,
+        &path,
+        Some(ApiBody::Json(&input["body"])),
+        None,
+    )
+    .await?
+    .data;
     let parts: Vec<_> = input["path"].as_str().unwrap_or("").split('/').collect();
     if parts
         .iter()
@@ -706,6 +842,89 @@ fn comment_event_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn hosting_cli_uses_path_shims_without_shell_interpolation() {
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("gh.mjs");
+        std::fs::write(
+            &script,
+            "console.log(JSON.stringify(process.argv.slice(2)))",
+        )
+        .unwrap();
+        #[cfg(windows)]
+        std::fs::write(
+            root.path().join("gh.cmd"),
+            "@echo off\r\nnode \"%~dp0gh.mjs\" %*\r\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = root.path().join("gh");
+            std::fs::write(
+                &shim,
+                "#!/bin/sh\nexec node \"$(dirname \"$0\")/gh.mjs\" \"$@\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(shim, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let environment: HashMap<String, String> = std::env::vars()
+            .filter(|(key, _)| !key.eq_ignore_ascii_case("PATH"))
+            .collect();
+        #[cfg(unix)]
+        let directories = {
+            use std::os::unix::fs::PermissionsExt;
+            let shadow = root.path().join("non-executable");
+            std::fs::create_dir(&shadow).unwrap();
+            let candidate = shadow.join("gh");
+            std::fs::write(&candidate, "This file cannot be executed").unwrap();
+            std::fs::set_permissions(candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+            vec![shadow, root.path().to_owned()]
+        };
+        #[cfg(not(unix))]
+        let directories = vec![root.path().to_owned()];
+        let paths = directories
+            .into_iter()
+            .chain(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ))
+            .collect::<Vec<_>>();
+        let path = std::env::join_paths(paths)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let arguments = [
+            "api",
+            "repos/owner/repo/issues?state=open&per_page=10",
+            "quoted \"value\"",
+            "line one\nline two",
+        ];
+        let path_keys = if cfg!(windows) {
+            vec!["PATH", "Path"]
+        } else {
+            vec!["PATH"]
+        };
+        for key in path_keys {
+            let mut environment = environment.clone();
+            environment.insert(key.into(), path.clone());
+            let output = git_cli_command("github", environment)
+                .args(arguments)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+                json!(arguments)
+            );
+        }
+    }
+
     #[test]
     fn cli_failure_diagnostics_preserve_auth_permission_and_missing_tool_causes() {
         for (http, exit, stderr, code) in [
@@ -731,7 +950,8 @@ mod tests {
             "https://github.com",
             "POST",
             "repos/org/repo/issues",
-            Some(&oversized),
+            Some(ApiBody::Json(&oversized)),
+            None,
         )
         .await
         .err()
@@ -742,8 +962,15 @@ mod tests {
             .lock()
             .unwrap()
             .insert(host.into(), chrono::Utc::now().timestamp_millis() + 60000);
-        let result =
-            api_request("gitlab", host, "POST", "projects/1/hooks", Some(&json!({}))).await;
+        let result = api_request(
+            "gitlab",
+            host,
+            "POST",
+            "projects/1/hooks",
+            Some(ApiBody::Json(&json!({}))),
+            None,
+        )
+        .await;
         rate_limits().lock().unwrap().remove(host);
         let failure = result.err().unwrap();
         assert_eq!(failure.error.code, "git_rate_limited");

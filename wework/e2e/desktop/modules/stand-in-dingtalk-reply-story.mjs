@@ -236,6 +236,9 @@ export function createDingTalkReplyStory(options) {
         await control.command('fill', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           value: `${MARKER}-OWNER：看到这个群的新@时准备回复，每次发送让我确认。`,
         })
+        await control.command('waitFor', `${STORY_CHAT} [data-testid="send-message-button"]`, {
+          enabled: true,
+        })
         await control.command('press', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           key: 'Enter',
         })
@@ -323,23 +326,51 @@ export function createDingTalkReplyStory(options) {
           'The model must receive the persisted proposal before reviewing its grant'
         )
         assert.equal(model.proposalSubmitted, true)
+        const beforeGrant = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
         assert.equal(
-          (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(
-            item => item.id === ROLE
-          ).connections[0].policy.askBeforeAct,
+          beforeGrant.roles.find(item => item.id === ROLE).connections[0].policy.askBeforeAct,
           true
         )
         await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-open"]')
         await options.captureScreenshot(control, 'source-story-dingtalk-continuous-proposal.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-accept"]')
-        const granted = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
-        assert.equal(
-          granted.roles.find(item => item.id === ROLE).connections[0].policy.askBeforeAct,
-          false
+        const granted = await storyUntil(
+          async () => {
+            const settings = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
+            const source = settings.roles
+              .find(item => item.id === ROLE)
+              ?.connections.find(
+                item => item.providerId === PROVIDER && item.id === page.items[0].id
+              )
+            return { version: settings.version, askBeforeAct: source?.policy.askBeforeAct }
+          },
+          value => value.version > beforeGrant.version && value.askBeforeAct === false,
+          options.modelResponseTimeoutMs,
+          'The accepted continuing grant must persist on the same source before the next mention'
         )
+        assert.equal(granted.askBeforeAct, false)
         model.continuous = true
         model.phase = 3
         await publish(3)
+        const { automaticWork, automaticTask } = await storyUntil(
+          async () => {
+            const latestWorks = await rpc('runtime.stand_in.work.list', { userId: STORY_USER })
+            const automaticWork = latestWorks.items.find(
+              item =>
+                item.roleId === ROLE && item.latestMessage?.id === REPLY_STORY_VALUES[3].messageId
+            )
+            const automaticTask = automaticWork?.taskId
+              ? await rpc('runtime.tasks.get', { taskId: automaticWork.taskId })
+              : null
+            const sentCurrentReply =
+              automaticTask?.task?.status === 'done' &&
+              (await replies()).some(item => item.messageId === REPLY_STORY_VALUES[3].messageId)
+            return { automaticWork, automaticTask, sentCurrentReply }
+          },
+          value => value.sentCurrentReply,
+          options.modelResponseTimeoutMs,
+          'A confirmed continuous grant must complete the new source work without another user decision'
+        )
         await assertStoryPrimaryOutcome(
           control,
           rpc,
@@ -347,12 +378,7 @@ export function createDingTalkReplyStory(options) {
           options.modelResponseTimeoutMs
         )
         const sent = await replies()
-        const latestWorks = await rpc('runtime.stand_in.work.list', { userId: STORY_USER })
-        const automaticWork = latestWorks.items.find(
-          item => item.roleId === ROLE && item.latestMessage?.id === REPLY_STORY_VALUES[3].messageId
-        )
         assert.ok(automaticWork, 'The new mention must have its own actual source work')
-        const automaticTask = await rpc('runtime.tasks.get', { taskId: automaticWork.taskId })
         assert.equal(
           automaticTask.task.status,
           'done',

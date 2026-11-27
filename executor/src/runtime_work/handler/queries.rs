@@ -33,6 +33,9 @@ impl RuntimeWorkRpcHandler {
             self.is_active_local_task(&task_id),
             self.queued_local_task_position(&task_id),
         );
+        sidebar::apply_sidebar_task_pin(&mut link, |thread_id| {
+            CodexGlobalProjectIndex::load().pinned_thread_order(thread_id)
+        });
         link.git_info = crate::runtime_work::response::git_info_for_workspace(
             link.git_info.take(),
             &link.workspace_path,
@@ -59,6 +62,7 @@ impl RuntimeWorkRpcHandler {
                         | "quotaWait"
                         | "connectionEventSubscriptions"
                         | "startupFailure"
+                        | super::stand_in_task_permissions::TASK_PERMISSIONS
                 )
             });
             // The serializer originally adds this authoritative identity after
@@ -74,6 +78,7 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(json!({
             "success": true,
+            "deviceId": self.device_id.as_str(),
             "task": task,
         }))
     }
@@ -138,11 +143,20 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         let pending_only = bool_field(payload, "pendingOnly").unwrap_or(false);
+        let awaits_user = |link: &RuntimeTaskLink| {
+            matches!(
+                link.interaction_status.as_deref(),
+                Some("waitingForUserInput" | "awaitingUserReply")
+            )
+        };
         let stage_started_at = Instant::now();
-        let (collected_links, catalog_complete) = if prefer_cached {
-            (self.collect_cached_links(false), false)
+        let (collected_links, catalog_complete, candidate_count) = if prefer_cached {
+            let (links, count) =
+                self.collect_cached_links(false, |link| !pending_only || awaits_user(link));
+            (links, false, Some(count))
         } else {
-            self.collect_query_links(false).await
+            let (links, complete) = self.collect_query_links(false).await;
+            (links, complete, None)
         };
         log_runtime_work_list_diagnostic(
             "links_collected",
@@ -152,15 +166,11 @@ impl RuntimeWorkRpcHandler {
         );
         let stage_started_at = Instant::now();
         let links = if pending_only {
-            collected_links
-                .into_iter()
-                .filter(|link| {
-                    matches!(
-                        link.interaction_status.as_deref(),
-                        Some("waitingForUserInput" | "awaitingUserReply")
-                    )
-                })
-                .collect()
+            if prefer_cached {
+                collected_links
+            } else {
+                collected_links.into_iter().filter(awaits_user).collect()
+            }
         } else {
             self.visible_links_for_projects(collected_links, project_index)
         };
@@ -192,6 +202,11 @@ impl RuntimeWorkRpcHandler {
                 ("elapsed_ms", elapsed_ms(started_at)),
                 ("workspaces", workspaces.len().to_string()),
                 ("tasks", task_count.to_string()),
+                ("pending_only", pending_only.to_string()),
+                (
+                    "candidate_tasks",
+                    candidate_count.map_or_else(|| "n/a".to_owned(), |count| count.to_string()),
+                ),
             ],
         );
         // Pending decisions are framework-owned state, not a provider discovery request.
@@ -428,7 +443,24 @@ impl RuntimeWorkRpcHandler {
             payload["limit"] = json!(limit);
         }
         let reconciliation_ids = super::transcript_read_link::reconciliation_ids(&payload)?;
+        let presentation_read = ![
+            "conversationContextOnly",
+            "conversation_context_only",
+            "navigationOnly",
+            "navigation_only",
+        ]
+        .iter()
+        .any(|key| payload[*key] == true);
         let mut response = self.read_transcript(payload).await?;
+        if presentation_read {
+            if let Some(link) = self.store.get_task_summary(&task_id).filter(|link| {
+                requested_session_id.as_ref().map_or(true, |id| {
+                    runtime_session_id_from_link(link).as_ref() == Some(id)
+                })
+            }) {
+                append_preparation_failure(&mut response, &link);
+            }
+        }
         if let Some(requested) = reconciliation_ids {
             if let Some(accepted) =
                 self.accepted_reconciliation_ids(&task_id, &response, &requested)
@@ -448,9 +480,10 @@ impl RuntimeWorkRpcHandler {
         }
         // A refresh can replace the linked provider session before publishing.
         let directory = snapshot_directory();
+        let cleanup = self.transcript_transfer_cleanup.clone();
         super::super::transcript_work::run(move |cancellation| {
             cancellation.check()?;
-            transcript_transport::remove_expired_transfers(&runtime_directory)?;
+            cleanup.run_if_due(&runtime_directory, Instant::now());
             transcript_transport::encode_cancellable(&directory, response, cancellation)
         })
         .await
@@ -469,8 +502,21 @@ impl RuntimeWorkRpcHandler {
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
-        let after_cursor = string_field(&payload, "afterCursor")
+        let mut after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        if after_cursor.as_deref() == Some("start") {
+            let link = historical_link
+                .clone()
+                .or_else(|| self.store.get_task_summary(&local_task_id));
+            after_cursor = Some(
+                if link.as_ref().map_or(true, |link| link.runtime == "codex") {
+                    crate::runtime_work::codex_transcript_search::first_history_cursor()
+                        .map_err(|error| AppIpcError::new("history_cursor_invalid", error))?
+                } else {
+                    "offset:0".to_string()
+                },
+            );
+        }
         let search_match_requested = before_cursor
             .as_deref()
             .or(after_cursor.as_deref())
@@ -867,7 +913,7 @@ impl RuntimeWorkRpcHandler {
                     )
                     && local_link.as_ref().is_some_and(|link| {
                         link.runtime != "codex"
-                            && (!transcript_snapshot_messages(link).is_empty()
+                            && (transcript_snapshot_message_refs(link).next().is_some()
                                 || !completed_transcript_messages(link).is_empty())
                     }) =>
             {

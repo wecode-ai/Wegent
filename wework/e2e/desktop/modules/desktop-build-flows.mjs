@@ -14,6 +14,7 @@ import {
 } from './model-progressive-contract.mjs'
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { verifyProjectRemovalCompletion } from './project-removal-completion.mjs'
+import { verifyRemoteConversationOwnerRejection } from './remote-conversation-owner.mjs'
 import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -72,6 +73,7 @@ import {
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
+  MODEL_API_KEY,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   MODEL_PROTOCOL_MATRIX_TOTAL,
   MODEL_PROVIDER_ID,
@@ -92,6 +94,7 @@ import {
   join,
   mkdir,
   mcpElicitationServerPath,
+  UNANSWERED_MCP_APPROVAL_SERVER,
   randomUUID,
   readFile,
   rename,
@@ -257,7 +260,7 @@ async function verifyOfflineRemoteProjectRemoval({
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -394,6 +397,12 @@ function mcpElicitationConfigToml(evidencePath) {
     'env = { ELECTRON_RUN_AS_NODE = "1" }',
     // Keep the real tool alive beyond the production ten-minute URL deadline.
     'tool_timeout_sec = 1200',
+    'default_tools_approval_mode = "prompt"',
+    '',
+    `[mcp_servers.${UNANSWERED_MCP_APPROVAL_SERVER}]`,
+    `command = ${command}`,
+    `args = [${server}, ${JSON.stringify(evidencePath + '.approval')}, "--verify-unanswered-approval"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
@@ -751,7 +760,7 @@ export async function verifyRemoteDockerCommandFlow(
     await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
     await control.command('clickWhenEnabled', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]')
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    await control.command('select', '[data-testid="standalone-remote-device-select"]', {
       value: REMOTE_DOCKER_DEVICE_ID,
     })
     await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
@@ -814,6 +823,9 @@ export async function verifyRemoteDockerCommandFlow(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+      text: remoteDeviceE2EExtension.commandMarker,
+    })
     runnableCommandSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -840,7 +852,13 @@ export async function verifyRemoteDockerCommandFlow(
   const generatedAuthToken = runnableCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
   assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
   assert.ok(generatedDeviceName, 'The generated command did not include a device name')
-  assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
+  assert.ok(
+    generatedAuthToken?.startsWith('wg-'),
+    'The generated device must use a personal API key'
+  )
+  const ownerId = projectEntry
+    ? await verifyRemoteDeviceOwnerIdentity(cloudEnvironment, generatedAuthToken)
+    : undefined
   const generatedDevice = await cloudEnvironment.startGeneratedRemoteDevice({
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
@@ -879,12 +897,12 @@ export async function verifyRemoteDockerCommandFlow(
       false,
       'Device setup did not advance to project creation'
     )
+    const deviceSelector = '[data-testid="standalone-remote-device-select"]'
+    const showDevices = () =>
+      control.command('setExpanded', deviceSelector, { value: 'true', visible: true })
+    await showDevices()
     const existingOption = `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:not(:disabled)`)),
-      1,
-      'The existing remote device was not selectable before disconnecting'
-    )
+    await control.command('waitFor', existingOption, { visible: true, enabled: true })
     await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
     await waitForWorkbenchDeviceStatus(
       control,
@@ -892,11 +910,8 @@ export async function verifyRemoteDockerCommandFlow(
       'offline',
       'The workbench catalog did not publish the disconnected remote device'
     )
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:disabled`)),
-      1,
-      'The open project picker kept the disconnected device selectable'
-    )
+    await showDevices()
+    await control.command('waitFor', `${existingOption}[aria-disabled="true"]`, { visible: true })
     assert.equal(
       await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
       generatedDeviceId,
@@ -958,7 +973,27 @@ export async function verifyRemoteDockerCommandFlow(
   }
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-device-online.png')
   await control.command('navigate', 'body', { value: '/' })
-  return { deviceId: generatedDeviceId, ...generatedDevice }
+  return { deviceId: generatedDeviceId, ...generatedDevice, ownerId }
+}
+
+async function verifyRemoteDeviceOwnerIdentity(cloudEnvironment, deviceKey) {
+  const { backendUrl, authToken } = cloudEnvironment
+  const request = (path, token) =>
+    fetch(`${backendUrl}/api${path}`, { headers: { Authorization: `Bearer ${token}` } })
+  const [session, owner, invalidKey, profile] = await Promise.all([
+    request('/users/me', authToken),
+    request('/devices/runtime-owner', deviceKey),
+    request('/devices/runtime-owner', 'wg-invalid-e2e-device-key'),
+    request('/users/me', deviceKey),
+  ])
+  assert.equal(session.status, 200)
+  assert.equal(owner.status, 200)
+  const { id: ownerId } = await session.json()
+  assert.ok(Number.isSafeInteger(ownerId) && ownerId > 0)
+  assert.deepEqual(await owner.json(), { id: ownerId })
+  assert.equal(invalidKey.status, 401)
+  assert.equal(profile.status, 401)
+  return ownerId
 }
 
 async function assertDisabledControl(control, selector, message) {
@@ -970,10 +1005,44 @@ async function assertDisabledControl(control, selector, message) {
   )
 }
 
+const REMOTE_DEVICE_MODEL = 'remote-device-e2e-model'
+
+export async function prepareRemoteDeviceConversationModel(userDataDir, modelServerUrl) {
+  const directory = join(userDataDir, 'model-connections')
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    join(directory, 'model.yml'),
+    JSON.stringify({
+      version: 1,
+      providers: [
+        {
+          id: REMOTE_DEVICE_MODEL,
+          name: REMOTE_DEVICE_MODEL,
+          base_url: modelServerUrl,
+          request_path: '/v1/responses',
+          api_format: 'openai-responses',
+          api_key: MODEL_API_KEY,
+          models: [
+            {
+              id: REMOTE_DEVICE_MODEL,
+              model_id: DEFAULT_MODEL_ID,
+              display_name: REMOTE_DEVICE_MODEL,
+              codex_catalog_model_id: 'wework-gpt-6.1-sol',
+              tool_profile: 'function',
+              codex_tool_compatibility: 'standard',
+            },
+          ],
+        },
+      ],
+    }),
+    { mode: 0o600 }
+  )
+}
+
 export async function verifyDisabledRemoteSessionCapabilities(
   control,
   cloudEnvironment,
-  { deviceId, home }
+  { deviceId, home, ownerId }
 ) {
   const device = await cloudEnvironment.device(deviceId)
   assert.deepEqual(
@@ -1010,7 +1079,7 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: deviceId,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -1058,7 +1127,7 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
 
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  control.setScenario('cloud_initial')
+  control.setPersonalRemoteCloudInitialScenario(cloudEnvironment.backendUrl, ownerId)
   await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, CLOUD_TASK_PROMPT)
   await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
@@ -1098,6 +1167,42 @@ export async function verifyDisabledRemoteSessionCapabilities(
     WORKBENCH_READY_TIMEOUT_MS
   )
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-task-completed.png')
+
+  const apiLogPath = join(resultDir, 'backend-rs-logs', 'api.log')
+  await verifyRemoteConversationOwnerRejection(cloudEnvironment, {
+    deviceId,
+    ownerId,
+    taskId: runtimeTaskId,
+    apiLogPath,
+  })
+
+  await selectE2EModel(control, `local-model:${REMOTE_DEVICE_MODEL}`, REMOTE_DEVICE_MODEL)
+  const apiLogOffset = (await readFile(apiLogPath, 'utf8')).length
+  control.setScenario('cloud_follow_up')
+  await sendPromptWithButton(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    CLOUD_FOLLOW_UP_PROMPT,
+    WORKBENCH_READY_TIMEOUT_MS,
+    { confirmCloudModelCatalogSync: true }
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  control.releaseCloudFollowUpResponse()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(runningTaskTestId),
+    'The generated remote Executor follow-up did not settle after completion',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.match(
+    (await readFile(apiLogPath, 'utf8')).slice(apiLogOffset),
+    /\[API\] GET \/api\/devices\/runtime-owner 200 /,
+    'The remote conversation did not verify its owner with the device key'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-generated-remote-owner-verified.png')
 }
 
 export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
@@ -1209,12 +1314,13 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="standalone-remote-device-select"]')
   await control.command(
     'waitFor',
     `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,
-    { text: 'Remote Docker', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    { text: 'Remote Docker', visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -1227,7 +1333,7 @@ async function verifyCloudProjectFlow(
     'The remote Docker device was not selectable from the real desktop device picker'
   )
   await captureVerificationScreenshot(control, 'cloud-01-remote-docker-device-selected.png')
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await waitForControlValue(
@@ -1259,20 +1365,21 @@ async function verifyCloudProjectFlow(
       value.testIds.some(testId => testId.startsWith('project-device-status-')),
     'The real cloud project was not shown with its remote device status'
   )
-  await control.command('waitFor', '[data-testid^="project-menu-"]', {
+  const remoteFolderIconPrefix = 'project-remote-folder-icon-'
+  await control.command('waitFor', `[data-testid^="${remoteFolderIconPrefix}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS * 2,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const projectMenuTestIds = projectSnapshot.testIds.filter(testId =>
-    testId.startsWith('project-menu-')
+  const remoteFolderIcons = projectSnapshot.testIds.filter(testId =>
+    testId.startsWith(remoteFolderIconPrefix)
   )
   assert.equal(
-    projectMenuTestIds.length,
+    remoteFolderIcons.length,
     1,
-    'The cloud flow did not expose exactly one remote project'
+    `The cloud flow did not expose exactly one remote project: ${remoteFolderIcons.join(', ')}`
   )
-  const preservedProjectId = projectMenuTestIds[0].slice('project-menu-'.length)
+  const preservedProjectId = remoteFolderIcons[0].slice(remoteFolderIconPrefix.length)
   await control.command(
     'waitFor',
     `[data-testid="project-remote-folder-icon-${preservedProjectId}"]`,
@@ -1538,7 +1645,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {

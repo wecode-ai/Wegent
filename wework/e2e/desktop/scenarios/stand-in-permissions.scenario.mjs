@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { editProjectSource, openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -154,6 +155,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         201
       )
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture((method, params) => rpc(control, method, params), user.id)
       for (const role of ['Maintainer', 'Developer']) {
         await setRole(role)
         await assertRole(role)

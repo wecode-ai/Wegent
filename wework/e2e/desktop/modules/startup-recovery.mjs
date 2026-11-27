@@ -67,6 +67,7 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
           `${JSON.stringify(evidence, null, 2)}\n`
         )
         for (const name of [
+          'development-release-routing.json',
           'runtime-confirmation.png',
           'user-confirmation.png',
           'cleanup-failure.png',
@@ -87,6 +88,7 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
 
 async function retainStartupRecoveryDiagnostics(root, resultDir) {
   for (const name of [
+    'development-release-routing.json',
     'evidence.json',
     'runtime-confirmation.png',
     'user-confirmation.png',
@@ -196,6 +198,47 @@ async function runRecoveryVerification() {
     await fs.readFile(path.join(input.electronRoot, 'package.json'), 'utf8')
   )
   const dist = path.join(input.electronRoot, path.dirname(metadata.main))
+  if (phase === 'runtime') {
+    const keys = ['ELECTRON_FORCE_IS_PACKAGED', 'WEWORK_APP_HOT_RELOAD', 'WEWORK_USER_DATA_DIR']
+    const previous = keys.map(key => process.env[key])
+    try {
+      // Exercise Electron's native packaged getter as with a renamed development binary.
+      process.env.ELECTRON_FORCE_IS_PACKAGED = '1'
+      process.env.WEWORK_APP_HOT_RELOAD = '1'
+      process.env.WEWORK_USER_DATA_DIR = dataDirectory
+      assert.equal(app.isPackaged, true)
+      await assert.rejects(
+        fs.access(
+          path.join(
+            process.resourcesPath,
+            process.platform === 'win32' ? 'wework-launcher.exe' : 'wework-launcher'
+          )
+        ),
+        { code: 'ENOENT' }
+      )
+      const { routeRelease } = await import(
+        pathToFileURL(path.join(dist, 'release-bootstrap.js')).href
+      )
+      const startMain = await routeRelease(
+        metadata,
+        () => [],
+        error => {
+          throw error
+        }
+      )
+      assert.equal(startMain, true, 'Development startup must enter the main application')
+      await assert.rejects(fs.stat(path.join(dataDirectory, 'releases')), { code: 'ENOENT' })
+      await fs.writeFile(
+        path.join(root, 'development-release-routing.json'),
+        JSON.stringify({ electronReportsPackaged: app.isPackaged, startMain })
+      )
+    } finally {
+      keys.forEach((key, index) => {
+        if (previous[index] === undefined) delete process.env[key]
+        else process.env[key] = previous[index]
+      })
+    }
+  }
   const load = name => import(pathToFileURL(path.join(dist, 'host', name + '.js')).href)
   const { StartupRecoveryService, assertStartupRecoverySender } = await load('startup-recovery')
   const { clearStartupRuntimeFiles, clearStartupUserFiles } = await load('startup-recovery-files')

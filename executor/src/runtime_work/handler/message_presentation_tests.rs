@@ -61,7 +61,8 @@ fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
 #[test]
 fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
     let root = tempfile::tempdir().unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("mac", "unused", event_tx);
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
     link.thread_id = Some("thread".into());
@@ -76,13 +77,108 @@ fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
         &ExecutionRequest::default(),
         &payload,
     );
+    handler.record_runtime_turn_id("chat", "next", "turn-before", Some("activity-before"));
+    start_test_execution(&handler, "chat");
+    let request = ExecutionRequest {
+        subtask_id: "next".into(),
+        extra: serde_json::from_value(json!({"client_user_message_id":"activity-next"})).unwrap(),
+        ..ExecutionRequest::default()
+    };
+    handler.register_thread_event_route("thread", "chat".into(), request, true);
+    handler.route_codex_notification(json!({"method":"turn/started","params":{
+        "threadId":"thread","turn":{"id":"turn-next","status":"inProgress"}
+    }}));
+    // Native user items can arrive before turn/start returns and binds the new send.
+    for method in ["item/started", "item/completed"] {
+        handler.route_codex_notification(json!({"method":method,"params":{
+            "threadId":"thread","turnId":"turn-next","item":{
+                "type":"userMessage","id":"native-user","clientId":"activity-next",
+                "content":[{"type":"text","text":"internal continuation"}]
+            }
+        }}));
+    }
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert!(
+        events
+            .iter()
+            .all(|event| event["event"] != "response.guidance.applied"),
+        "{events:?}"
+    );
+    assert!(!serde_json::to_string(&events)
+        .unwrap()
+        .contains("internal continuation"));
     handler.record_runtime_turn_id("chat", "next", "turn-next", Some("activity-next"));
+    handler.route_codex_notification(json!({"method":"item/completed","params":{
+        "threadId":"thread","turnId":"turn-next","item":{
+            "type":"userMessage","id":"native-guidance","clientId":"guidance-next",
+            "content":[{"type":"text","text":"Owner guidance"}]
+        }
+    }}));
+    let guidance = event_rx.try_recv().unwrap();
+    assert_eq!(guidance["event"], "response.guidance.applied");
+    assert_eq!(guidance["payload"]["data"]["message"], "Owner guidance");
+    assert_eq!(
+        guidance["payload"]["data"]["clientGuidanceId"],
+        "guidance-next"
+    );
     let persisted = handler.local_task_link("chat").unwrap();
     let presentations = user_message_presentations(&persisted);
-    assert_eq!(presentations.len(), 1);
-    assert_eq!(presentations[0]["content"], "任务完成，开始汇总结果");
-    assert_eq!(presentations[0]["turnId"], "turn-next");
-    assert_eq!(presentations[0]["restoreContent"], true);
+    let presentation = presentations
+        .iter()
+        .find(|value| value["clientUserMessageId"] == "activity-next")
+        .unwrap();
+    assert_eq!(presentation["content"], "任务完成，开始汇总结果");
+    assert_eq!(presentation["turnId"], "turn-next");
+    assert_eq!(presentation["restoreContent"], true);
+}
+
+#[test]
+fn queued_connection_event_prompt_is_not_reported_as_guidance_before_route_rebind() {
+    let (mut handler, root) = isolated_runtime_work_handler("queued-event-opening-item");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".into(),
+        "/work".into(),
+        "Chat".into(),
+    ));
+    let mut previous = ExecutionRequest::default();
+    previous
+        .extra
+        .insert("client_user_message_id".into(), json!("previous-message"));
+    handler.register_thread_event_route("thread-1", "task-1".into(), previous, false);
+    start_test_execution(&handler, "task-1");
+    let mut submitted = ExecutionRequest::default();
+    submitted
+        .extra
+        .insert("client_user_message_id".into(), json!("event-operation"));
+    handler
+        .active_local_executions
+        .lock()
+        .unwrap()
+        .get_mut("task-1")
+        .unwrap()
+        .request = Some(submitted);
+
+    for id in ["event-operation", "actual-guidance"] {
+        handler.route_codex_notification(json!({
+            "method": "item/completed",
+            "params": {"threadId": "thread-1", "turnId": "event-turn",
+                "item": {"type": "userMessage", "id": id, "clientId": id,
+                    "content": [{"type": "text", "text": "Input"}]}}
+        }));
+    }
+    let mut guidance_ids = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        if event["event"] == "response.guidance.applied" {
+            guidance_ids.push(event["payload"]["data"]["clientGuidanceId"].clone());
+        }
+    }
+    assert_eq!(guidance_ids, [json!("actual-guidance")]);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -279,7 +375,7 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         execution_id,
         &request,
         None,
-        Err("startup failed".into()),
+        Err("Agent Skills directory contains unmanaged entries".into()),
     );
     let mut terminal = None;
     while let Ok(event) = event_rx.try_recv() {
@@ -288,6 +384,16 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         }
     }
     let event = terminal.expect("startup failure should emit its terminal event");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "skills_unmanaged_entries",
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["stage"], "prepare");
+    let stored = handler.local_task_link("task-1").unwrap();
+    assert_eq!(
+        stored.runtime_handle["startupFailure"]["errorInfo"],
+        event["payload"]["data"]["error_info"],
+    );
     assert!(event["payload"].get("clientUserMessageId").is_none());
     assert!(event["payload"]
         .get("runtimeGeneratedUserMessage")
@@ -585,6 +691,7 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         Some(&active),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "Continuation output".to_owned(),

@@ -207,23 +207,42 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn project_quota_waits(&self, turns: &VecDeque<SpawnTurnRequest>) {
         let waits: HashMap<_, _> = turns
             .iter()
-            .filter_map(|turn| {
+            .enumerate()
+            .filter_map(|(position, turn)| {
                 let wait = wait(turn)?;
                 Some((
                     turn.local_task_id.clone(),
-                    json!({
-                        "resumeAt": wait.reset_at, "nextCheckAt": wait.next_check_at,
-                    }),
+                    (
+                        position,
+                        json!({
+                            "resumeAt": wait.reset_at, "nextCheckAt": wait.next_check_at,
+                        }),
+                    ),
                 ))
             })
             .collect();
         for link in self.local_task_links(true) {
             let next = waits.get(&link.local_task_id);
-            if link.runtime_handle.get("quotaWait") == next {
+            if link.runtime_handle.get("quotaWait") == next.map(|(_, wait)| wait)
+                && (next.is_none()
+                    || crate::runtime_work::lifecycle::native_execution_state(&link).is_some_and(
+                        |state| {
+                            state.phase
+                                == crate::runtime_work::lifecycle::NativeExecutionPhase::Queued
+                        },
+                    ))
+            {
                 continue;
             }
             self.store.update_task(&link.local_task_id, |link| {
-                if let Some(next) = next {
+                if let Some((position, next)) = next {
+                    // Publish the durable wait and its lifecycle in one store update.
+                    if crate::runtime_work::lifecycle::native_execution_state(link)
+                        .is_some_and(|state| !state.awaits_admission())
+                    {
+                        settle_native_execution(link, "failed");
+                    }
+                    queue_native_execution(link, *position, false);
                     link.runtime_handle["quotaWait"] = next.clone();
                 } else if let Some(handle) = link.runtime_handle.as_object_mut() {
                     handle.remove("quotaWait");
@@ -347,18 +366,13 @@ impl RuntimeWorkRpcHandler {
         if let Some(execution) = execution {
             self.finish_local_task_execution(&task, execution);
         }
-        let position = self.queued_local_task_position(&task).unwrap_or(0);
-        self.store.update_task(&task, |link| {
-            settle_native_execution(link, "failed");
-            queue_native_execution(link, position, false);
-        });
         emit_runtime_work_changed(&self.event_tx, &self.device_id, &task);
         Ok(())
     }
 
     pub(super) async fn start_quota_turn(&self, mut turn: SpawnTurnRequest) {
         let gate = self.task_send_gate(&turn.local_task_id);
-        let _send = gate.lock().await;
+        let send = gate.lock().await;
         if !self
             .local_task_link(&turn.local_task_id)
             .is_some_and(|link| {
@@ -400,7 +414,7 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         // Cancellation must acquire the send gate while native account reads are pending.
-        drop(_send);
+        drop(send);
         let checked = tokio::select! {
             biased;
             _ = &mut cancelled => {
@@ -418,8 +432,9 @@ impl RuntimeWorkRpcHandler {
             send = gate.lock() => send,
         };
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
-            self.finish_local_task_execution(&turn.local_task_id, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&turn.local_task_id, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         match checked {
@@ -457,8 +472,9 @@ impl RuntimeWorkRpcHandler {
         let task = turn.local_task_id.clone();
         if !self.is_local_task_execution_accepting_notifications(&task, execution) {
             drop(operation);
-            self.finish_local_task_execution(&task, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&task, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         if let Err(error) = self.park_quota_turn_locked(turn.clone(), None).await {

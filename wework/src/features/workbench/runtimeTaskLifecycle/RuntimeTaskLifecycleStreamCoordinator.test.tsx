@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
@@ -7,8 +7,9 @@ import {
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
+import { pendingTerminalTranscriptTurn } from '../runtimeConversationCacheStore'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 
 import {
   runtimeTaskAddress,
@@ -101,7 +102,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
@@ -130,10 +131,12 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     ])
   })
 
-  test('replaces an optimistic turn after the executor projection settles during transcript refresh', async () => {
+  test.each([false, true])('replaces the optimistic turn (stand-in: %s)', async standIn => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
+    const work = runtimeWork(true)
+    if (standIn) work.chats[0].tasks[0].runtimeHandle = { origin: { type: 'stand_in_identity' } }
+    store.syncRuntimeWork(work)
     store.turnStarted(address, 'provisional-turn')
     applyRuntimeConversationAction(address, {
       type: 'user_added',
@@ -172,7 +175,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
@@ -182,6 +185,9 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       } as never)
     })
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+    expect(pendingTerminalTranscriptTurn(address, store.notificationScope)).toBe(
+      standIn ? 'provider-renamed-turn' : null
+    )
 
     act(() => store.syncRuntimeWork(runtimeWork(false)))
     await act(async () => {
@@ -224,6 +230,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(pendingTerminalTranscriptTurn(address, store.notificationScope)).toBeNull()
     expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
       'continue',
       'authoritative completed answer',
@@ -274,7 +281,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         },
       } as unknown as WorkbenchServices
 
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      renderRuntimeTaskLifecycle({ services: services, store: store })
       await act(async () => {
         streamHandlers.onChatStart?.({
           taskId: address.taskId,
@@ -338,7 +345,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
@@ -390,7 +397,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         },
         executorClient: { runtime: { getRuntimeTranscript } },
       } as unknown as WorkbenchServices
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      renderRuntimeTaskLifecycle({ services: services, store: store })
       await act(async () => {
         streamHandlers.onChatDone?.({
           taskId: address.taskId,
@@ -457,7 +464,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
@@ -511,7 +518,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
@@ -587,7 +594,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: runtimeAddress.taskId,
@@ -641,7 +648,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatError?.({
         taskId: address.taskId,
@@ -678,7 +685,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         runtime: { listRuntimeWork: vi.fn(), getRuntimeTranscript },
       },
     } as unknown as WorkbenchServices
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatError?.({
         taskId: address.taskId,
@@ -713,7 +720,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'another-task',

@@ -35,6 +35,7 @@ describe('prepareDesktopComponents', () => {
       executor: '/components/executor',
       codex: '/components/codex',
       dws: '/components/dws',
+      dwsSource: 'managed',
       contentSha256: {
         coreDsh: '1',
         weworkCorePlugins: '2',

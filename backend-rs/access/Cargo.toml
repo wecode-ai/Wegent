@@ -1,0 +1,21 @@
+[package]
+name = "wegent-access"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Entity membership and effective role resolution on caller-owned queries"
+
+[dependencies]
+wegent-directory = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+async-trait = { workspace = true }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+serde = { workspace = true, features = ["derive"] }
+wegent-backend-persistence = { workspace = true }
+
+[dev-dependencies]
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

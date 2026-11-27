@@ -1,267 +1,61 @@
-// @vitest-environment node
-
-import { describe, expect, test } from 'vitest'
-import {
-  connectorAuthMessageText,
-  extractConnectorAuthConnectorSlug,
-  latestConnectorAuthMessage,
-  messageRequiresConnectorAuth,
-  resolveConnectorAuthHint,
-  resolveLocalConnectorAuthHint,
-} from '@/features/plugins/localConnectorAuthGate'
+import { describe, expect, it } from 'vitest'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { latestConnectorAuthMessage } from './localConnectorAuthGate'
 
-describe('local connector authorization recovery messages', () => {
-  const gitlabTarget = {
-    pluginKey: 'gitlab',
-    connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
-    instance: 'https://gitlab.company.example:8443',
-  }
+const message = (content: string, fields: Partial<WorkbenchMessage> = {}): WorkbenchMessage => ({
+  id: 'reply',
+  role: 'assistant',
+  status: 'done',
+  content,
+  createdAt: '2026-11-23T00:00:00.000Z',
+  ...fields,
+})
 
-  test('preserves the reported GitLab instance from structured resource discovery', () => {
-    const message: WorkbenchMessage = {
-      id: 'gitlab-auth',
-      role: 'assistant',
-      content: '',
-      blocks: [
-        {
-          id: 'discovery',
-          type: 'tool',
-          status: 'done',
-          toolOutput: {
-            code: 'connector_auth_required',
-            authTarget: gitlabTarget,
-          },
-        },
-      ],
-    }
-    const candidate = latestConnectorAuthMessage([message])
-    expect(resolveLocalConnectorAuthHint(candidate?.text)).toEqual({
-      ...gitlabTarget,
-      displayName: 'gitlab',
-    })
+describe('conversation connector authorization', () => {
+  it.each([
+    'The parser reads `connector_auth_required`, `pluginKey`: `hint.pluginKey` and `connectorSlug`: `account`.',
+    'Example:\n\n```text\nconnector_auth_required\npluginKey=example\nconnectorSlug=account\n```',
+    'connector_auth_required\n\nThe relevant code uses:\n\npluginKey=example\nconnectorSlug=account',
+    'connector_auth_required\npluginKey=example',
+  ])('ignores prose, code examples and incomplete records', content => {
+    expect(latestConnectorAuthMessage([message(content)])).toBeNull()
   })
 
-  test('preserves a Markdown-formatted public GitLab instance', () => {
+  it('does not combine a marker and identity from different sources', () => {
     expect(
-      resolveLocalConnectorAuthHint(
-        `connector_auth_required\npluginKey=gitlab\nconnectorSlug=${gitlabTarget.connectorSlug}\n- **instance**: **${gitlabTarget.instance}**`
-      )
-    ).toEqual({
-      ...gitlabTarget,
-      displayName: 'gitlab',
-    })
-  })
-
-  test.each([
-    undefined,
-    'http://gitlab.example',
-    'https://user:secret@gitlab.example',
-    'https://gitlab.example/project',
-    'https://gitlab.example?token=secret',
-    'https://gitlab.example#other',
-  ])('does not recover a native GitLab identity with invalid or missing instance: %s', instance => {
-    expect(
-      resolveLocalConnectorAuthHint(
-        JSON.stringify({ code: 'connector_auth_required', ...gitlabTarget, instance })
-      )
+      latestConnectorAuthMessage([
+        message('pluginKey=example\nconnectorSlug=account', { error: 'need_login' }),
+      ])
     ).toBeNull()
   })
 
-  test('does not convert a Git permission failure into a login request', () => {
-    expect(
-      resolveLocalConnectorAuthHint(
-        JSON.stringify({ code: 'git_permission_denied', status: 403, ...gitlabTarget })
-      )
-    ).toBeNull()
-  })
-
-  test('detects connector_auth_required payloads', () => {
-    expect(
-      messageRequiresConnectorAuth(
-        JSON.stringify({ error: 'connector_auth_required', pluginKey: 'weibo-api-wiki' })
-      )
-    ).toBe(true)
-    expect(
-      messageRequiresConnectorAuth(
-        '微博开放平台内部 WIKI 的登录会话已失效，需要通过 Wework 主机连接器重新认证。界面会显示二维码登录卡片'
-      )
-    ).toBe(false)
-    expect(
-      messageRequiresConnectorAuth(
-        '目前尚未登录微博开放平台内部 WIKI。Wework 宿主正在通过 weibo-wiki Connector 发起身份认证。请在界面出现二维码卡片后完成扫码登录'
-      )
-    ).toBe(false)
-    expect(messageRequiresConnectorAuth('all good')).toBe(false)
-  })
-
-  test('resolves auth hint from structured connector_auth_required payload', () => {
-    const hint = resolveLocalConnectorAuthHint(
-      JSON.stringify({
-        error: 'connector_auth_required',
-        pluginKey: 'weibo-api-wiki',
-        connectorSlug: 'weibo-wiki',
-      })
-    )
-    expect(hint).toEqual({
-      pluginKey: 'weibo-api-wiki',
-      connectorSlug: 'weibo-wiki',
-      displayName: 'weibo-api-wiki',
-    })
-  })
-
-  test.each([
-    '- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`',
-    '**pluginKey** : **github**\n**connectorSlug** : **wework-github-cli**',
-    'pluginKey = github\nconnectorSlug = wework-github-cli',
-  ])('resolves Markdown-formatted auth identity: %s', identity => {
-    expect(resolveLocalConnectorAuthHint(`connector_auth_required\n${identity}`)).toEqual({
+  it('recognizes adjacent Markdown protocol fields', () => {
+    const content =
+      '需要登录。\n\n- `connector_auth_required`\n- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`'
+    expect(latestConnectorAuthMessage([message(content)])?.hint).toMatchObject({
       pluginKey: 'github',
       connectorSlug: 'wework-github-cli',
-      displayName: 'github',
     })
   })
 
-  test('resolves a slug-only request as a cloud connector app', () => {
-    expect(resolveConnectorAuthHint('connector_auth_required\nconnectorSlug=dingtalk_log')).toEqual(
-      {
-        pluginKey: null,
-        connectorSlug: 'dingtalk_log',
-        displayName: 'dingtalk_log',
-      }
-    )
-    // Local plugin resolution stays strict and still requires both identities.
-    expect(
-      resolveLocalConnectorAuthHint('connector_auth_required\nconnectorSlug=dingtalk_log')
-    ).toBeNull()
-  })
-
-  test('routes an exact native identity through local authorization without losing its instance', () => {
-    expect(
-      resolveConnectorAuthHint(JSON.stringify({ code: 'connector_auth_required', ...gitlabTarget }))
-    ).toEqual({
-      ...gitlabTarget,
-      displayName: 'gitlab',
-    })
-  })
-
-  test('does not redirect an invalid native identity to cloud authorization', () => {
-    expect(
-      resolveConnectorAuthHint(
-        JSON.stringify({
-          code: 'connector_auth_required',
-          ...gitlabTarget,
-          instance: 'https://gitlab.example/project',
-        })
-      )
-    ).toBeNull()
-  })
-
-  test('does not treat generic connector query failures as auth resume', () => {
-    expect(
-      messageRequiresConnectorAuth(
-        '账号信息显示你有 2 个公开项目，但 GitHub 连接器的项目搜索结果暂时返回 0 个项目。可能是项目索引同步延迟或连接器查询异常。'
-      )
-    ).toBe(false)
-  })
-
-  test('only checks the latest assistant or system message for auth resume', () => {
-    const messages: WorkbenchMessage[] = [
-      {
-        id: 'assistant-old',
-        role: 'assistant',
-        content: 'weibo-wiki Connector needs login',
-      },
-      {
-        id: 'user-latest',
-        role: 'user',
-        content: 'continue',
-      },
-      {
-        id: 'assistant-latest',
-        role: 'assistant',
-        content: 'done',
-      },
-    ]
-
-    expect(latestConnectorAuthMessage(messages)).toBeNull()
-  })
-
-  test('bounds connector auth text and keeps auth details at the end of large tool output', () => {
-    const message: WorkbenchMessage = {
-      id: 'assistant-large-output',
-      role: 'assistant',
-      content: '',
-      blocks: [
+  it('recognizes structured MCP authorization errors with no local plugin', () => {
+    const error = JSON.stringify({
+      content: [
         {
-          id: 'tool-1',
-          type: 'tool',
-          status: 'error',
-          toolOutput: `${'x'.repeat(200_000)} connector_auth_required connectorSlug=weibo-wiki`,
-          renderPayload: { content: 'y'.repeat(200_000) },
-        },
-      ],
-    }
-
-    const text = connectorAuthMessageText(message)
-
-    expect(text.length).toBeLessThanOrEqual(64 * 1024 + 2)
-    expect(text).toContain('connector_auth_required')
-    expect(text).toContain('connectorSlug=weibo-wiki')
-    expect(text).not.toContain('yyyy')
-    expect(latestConnectorAuthMessage([message])?.message.id).toBe(message.id)
-  })
-
-  test('extracts structured auth fields without serializing arbitrary tool payloads', () => {
-    const message: WorkbenchMessage = {
-      id: 'assistant-structured-output',
-      role: 'assistant',
-      content: '',
-      blocks: [
-        {
-          id: 'tool-1',
-          type: 'tool',
-          status: 'error',
-          toolOutput: {
+          type: 'text',
+          text: JSON.stringify({
             error: 'connector_auth_required',
-            pluginKey: 'weibo-api-wiki',
-            connectorSlug: 'weibo-wiki',
-            unrelated: 'x'.repeat(200_000),
-          },
+            connectorSlug: 'dingtalk_docs',
+          }),
         },
       ],
-    }
-
-    const candidate = latestConnectorAuthMessage([message])
-
-    expect(candidate?.text).toContain('pluginKey=weibo-api-wiki')
-    expect(candidate?.text).toContain('connectorSlug=weibo-wiki')
-    expect(candidate?.text).not.toContain('xxxx')
-  })
-
-  test.each([
-    'need_login',
-    'connector_auth_required pluginKey=weibo-api-wiki',
-    'connector_auth_required connectorSlug=weibo-wiki',
-    'Login expired. Host is starting weibo-wiki Connector authentication.',
-    '以下是扫码登录配置：pluginKey=weibo-api-wiki connectorSlug=weibo-wiki',
-  ])('requires both plugin and connector identities: %s', text => {
-    expect(resolveLocalConnectorAuthHint(text)).toBeNull()
-  })
-
-  test('does not reopen an old authorization request after a new user message', () => {
-    const messages: WorkbenchMessage[] = [
-      {
-        id: 'old-auth',
-        role: 'assistant',
-        content: 'connector_auth_required pluginKey=wiki connectorSlug=wiki',
-      },
-      { id: 'new-user', role: 'user', content: 'Ask a different question' },
-    ]
-    expect(latestConnectorAuthMessage(messages)).toBeNull()
-  })
-
-  test('preserves the explicit connector slug', () => {
-    expect(extractConnectorAuthConnectorSlug('connectorSlug=wiki-login')).toBe('wiki-login')
+      isError: true,
+    })
+    expect(
+      latestConnectorAuthMessage([message('请连接钉钉文档。', { error })])?.hint
+    ).toMatchObject({
+      pluginKey: null,
+      connectorSlug: 'dingtalk_docs',
+    })
   })
 })

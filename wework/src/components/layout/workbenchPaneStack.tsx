@@ -1,5 +1,20 @@
-/* eslint-disable react-hooks/refs -- Pane hosts intentionally preserve live task sessions across layout changes. */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
+import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { useRuntimeTaskLifecycle } from '@/features/workbench/runtimeTaskLifecycle'
+import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import {
+  Resizable,
+  ResizableHandle,
+  ResizablePanel,
+} from '@wegent/collaboration/controls/Resizable'
+import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
   Columns2,
   Focus,
@@ -10,19 +25,18 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { Group, Panel, Separator } from 'react-resizable-panels'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
-import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
   WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
   WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
   type WorkbenchSidebarPaneDragData,
   type WorkbenchSidebarPaneDragEndData,
 } from './workbenchPaneDrag'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import {
+  getWorkbenchPaneKey,
+  workbenchPanesShareTask,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
 import {
   WorkbenchPaneHost,
   WorkbenchPanePortal,
@@ -44,6 +58,7 @@ const MIN_PANE_WIDTH = 320
 const MIN_PANE_HEIGHT = 240
 
 interface SplitWorkbenchPaneStackProps {
+  devices?: DeviceInfo[]
   activePane: WorkbenchPaneIdentity
   layout: WorkbenchLayoutState
   showWorkbenchBackground: boolean
@@ -52,7 +67,7 @@ interface SplitWorkbenchPaneStackProps {
   activeTestId: string | null
   workbenchVisible: boolean
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   onPaneFocus: (pane: WorkbenchPaneIdentity) => void
   onLayoutFocus: (paneId: string) => void
   onLayoutClose: (paneId: string) => WorkbenchLayoutState
@@ -91,6 +106,7 @@ interface LayoutLabels {
 }
 
 export function SplitWorkbenchPaneStack({
+  devices = [],
   activePane,
   layout,
   showWorkbenchBackground,
@@ -99,7 +115,7 @@ export function SplitWorkbenchPaneStack({
   activeTestId,
   workbenchVisible,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   onPaneFocus,
   onLayoutFocus,
   onLayoutClose,
@@ -110,10 +126,14 @@ export function SplitWorkbenchPaneStack({
 }: SplitWorkbenchPaneStackProps) {
   const { t } = useTranslation()
   const activeKey = getWorkbenchPaneKey(activePane)
-  const paneCacheRef = useRef(new Map<string, WorkbenchPaneIdentity>())
-  const paneHostCacheRef = useRef(new Map<string, HTMLDivElement>())
+  const [paneResources, setPaneResources] = useState(() => ({
+    signature: '',
+    mountKeys: new WeakMap<HTMLDivElement, string>(),
+    panes: new Map<string, WorkbenchPaneIdentity>(),
+    hosts: new Map<string, HTMLDivElement>(),
+  }))
   const sidebarDragActiveRef = useRef(false)
-  paneCacheRef.current.set(activeKey, activePane)
+  paneResources.panes.set(activeKey, activePane)
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [focusedViewPaneId, setFocusedViewPaneId] = useState<string | null>(null)
@@ -142,27 +162,46 @@ export function SplitWorkbenchPaneStack({
 
   const resolveCachedPane = useCallback(
     (paneKey: string) => {
-      const cached = paneCacheRef.current.get(paneKey)
+      const cached = paneResources.panes.get(paneKey)
       if (cached) return cached
       const resolved = resolvePane(paneKey)
       if (resolved && getWorkbenchPaneKey(resolved) === paneKey) {
-        paneCacheRef.current.set(paneKey, resolved)
+        paneResources.panes.set(paneKey, resolved)
       }
       return resolved
     },
-    [resolvePane]
+    [paneResources.panes, resolvePane]
   )
 
-  const getPaneHost = useCallback((paneKey: string) => {
-    const cached = paneHostCacheRef.current.get(paneKey)
+  const getPaneHost = (paneKey: string) => {
+    const cached = paneResources.hosts.get(paneKey)
     if (cached) return cached
+    const pane = paneResources.panes.get(paneKey)
+    const previous = [...paneResources.hosts].find(([key]) => {
+      const previousPane = paneResources.panes.get(key)
+      return (
+        !mountedPaneKeys.includes(key) &&
+        pane &&
+        previousPane &&
+        workbenchPanesShareTask(previousPane, pane, devices)
+      )
+    })
+    if (previous) {
+      const [key, host] = previous
+      paneResources.hosts.delete(key)
+      paneResources.panes.delete(key)
+      paneResources.hosts.set(paneKey, host)
+      host.dataset.workbenchPaneHost = paneKey
+      return host
+    }
     if (typeof document === 'undefined') return null
     const host = document.createElement('div')
     host.className = 'h-full min-h-0 min-w-0'
     host.dataset.workbenchPaneHost = paneKey
-    paneHostCacheRef.current.set(paneKey, host)
+    paneResources.hosts.set(paneKey, host)
+    paneResources.mountKeys.set(host, crypto.randomUUID())
     return host
-  }, [])
+  }
 
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
@@ -185,26 +224,28 @@ export function SplitWorkbenchPaneStack({
     retainedPaneKeys
   )
 
-  useEffect(() => {
-    const retainedKeys = new Set(
-      mountedPaneKeySignature ? mountedPaneKeySignature.split('\u0000') : []
-    )
-    paneHostCacheRef.current.forEach((host, paneKey) => {
-      if (retainedKeys.has(paneKey)) return
-      host.remove()
-      paneHostCacheRef.current.delete(paneKey)
-      paneCacheRef.current.delete(paneKey)
-    })
-  }, [mountedPaneKeySignature])
-
-  useEffect(() => {
-    if (!effectiveFocusedViewPaneId) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) setFocusedViewPaneId(null)
+  if (paneResources.signature !== mountedPaneKeySignature) {
+    for (const key of mountedPaneKeys) {
+      resolveCachedPane(key)
+      getPaneHost(key)
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [effectiveFocusedViewPaneId])
+    const retainedKeys = new Set(mountedPaneKeys)
+    // Host refs detach native nodes on commit. Hidden panes remain in the retained set.
+    setPaneResources({
+      signature: mountedPaneKeySignature,
+      mountKeys: paneResources.mountKeys,
+      panes: new Map([...paneResources.panes].filter(([key]) => retainedKeys.has(key))),
+      hosts: new Map([...paneResources.hosts].filter(([key]) => retainedKeys.has(key))),
+    })
+  }
+
+  useWindowEvent(
+    'keydown',
+    event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setFocusedViewPaneId(null)
+    },
+    { enabled: Boolean(effectiveFocusedViewPaneId) }
+  )
 
   const focusPane = useCallback(
     (paneId: string) => {
@@ -248,50 +289,41 @@ export function SplitWorkbenchPaneStack({
     [onLayoutPlace, onPaneFocus, resolveCachedPane, setFocusedViewPaneId]
   )
 
-  useEffect(() => {
-    const readDropTarget = (clientX: number, clientY: number): DropTarget | null => {
-      const element = document
-        .elementsFromPoint(clientX, clientY)
-        .map(candidate =>
-          candidate.closest<HTMLElement>('[data-workbench-pane-drop-target="true"]')
-        )
-        .find((candidate): candidate is HTMLElement => candidate !== null)
-      const paneId = element?.dataset.workbenchPaneId
-      const position = element?.dataset.workbenchPaneDropPosition as
-        | DropTarget['position']
-        | undefined
-      return paneId && position ? { paneId, position } : null
+  const readDropTarget = (clientX: number, clientY: number): DropTarget | null => {
+    const element = document
+      .elementsFromPoint(clientX, clientY)
+      .map(candidate => candidate.closest<HTMLElement>('[data-workbench-pane-drop-target="true"]'))
+      .find((candidate): candidate is HTMLElement => candidate !== null)
+    const paneId = element?.dataset.workbenchPaneId
+    const position = element?.dataset.workbenchPaneDropPosition as
+      | DropTarget['position']
+      | undefined
+    return paneId && position ? { paneId, position } : null
+  }
+  const handleDragStart = (event: Event) => {
+    const detail = (event as CustomEvent<WorkbenchSidebarPaneDragData>).detail
+    if (!detail?.paneKey) return
+    sidebarDragActiveRef.current = true
+    setDraggedPaneKey(detail.paneKey)
+  }
+  const handleDragMove = (event: PointerEvent) => {
+    if (!sidebarDragActiveRef.current) return
+    setDropTarget(readDropTarget(event.clientX, event.clientY))
+  }
+  const handleDragEnd = (event: Event) => {
+    const detail = (event as CustomEvent<WorkbenchSidebarPaneDragEndData | null>).detail
+    sidebarDragActiveRef.current = false
+    const target = detail ? readDropTarget(detail.clientX, detail.clientY) : null
+    if (detail && target) {
+      detail.handled = true
+      placeTask(detail.paneKey, target)
     }
-    const handleDragStart = (event: Event) => {
-      const detail = (event as CustomEvent<WorkbenchSidebarPaneDragData>).detail
-      if (!detail?.paneKey) return
-      sidebarDragActiveRef.current = true
-      setDraggedPaneKey(detail.paneKey)
-    }
-    const handleDragMove = (event: PointerEvent) => {
-      if (!sidebarDragActiveRef.current) return
-      setDropTarget(readDropTarget(event.clientX, event.clientY))
-    }
-    const handleDragEnd = (event: Event) => {
-      const detail = (event as CustomEvent<WorkbenchSidebarPaneDragEndData | null>).detail
-      sidebarDragActiveRef.current = false
-      const target = detail ? readDropTarget(detail.clientX, detail.clientY) : null
-      if (detail && target) {
-        detail.handled = true
-        placeTask(detail.paneKey, target)
-      }
-      setDraggedPaneKey(null)
-      setDropTarget(null)
-    }
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
-    window.addEventListener('pointermove', handleDragMove, true)
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
-    return () => {
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
-      window.removeEventListener('pointermove', handleDragMove, true)
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
-    }
-  }, [placeTask])
+    setDraggedPaneKey(null)
+    setDropTarget(null)
+  }
+  useDOMEvent('window', WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
+  useWindowEvent('pointermove', handleDragMove, { capture: true })
+  useDOMEvent('window', WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
 
   return (
     <>
@@ -301,7 +333,7 @@ export function SplitWorkbenchPaneStack({
         if (!pane || !host) return null
         return (
           <WorkbenchPanePortal
-            key={paneKey}
+            key={paneResources.mountKeys.get(host)}
             pane={pane}
             host={host}
             renderPane={renderPane}
@@ -334,7 +366,7 @@ export function SplitWorkbenchPaneStack({
           dragged={draggedPaneKey !== null}
           dropTarget={dropTarget}
           resolvePane={resolveCachedPane}
-          getPaneTitle={getPaneTitle}
+          runtimeWork={runtimeWork}
           getPaneHost={getPaneHost}
           labels={labels}
           focusedViewPaneId={effectiveFocusedViewPaneId}
@@ -392,7 +424,7 @@ function WorkbenchLayoutRenderer({
   dragged,
   dropTarget,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   getPaneHost,
   labels,
   focusedViewPaneId,
@@ -410,7 +442,7 @@ function WorkbenchLayoutRenderer({
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   getPaneHost: (paneKey: string) => HTMLDivElement | null
   labels: LayoutLabels
   focusedViewPaneId: string | null
@@ -432,7 +464,7 @@ function WorkbenchLayoutRenderer({
         dragged={dragged}
         dropTarget={dropTarget}
         resolvePane={resolvePane}
-        getPaneTitle={getPaneTitle}
+        runtimeWork={runtimeWork}
         getPaneHost={getPaneHost}
         labels={labels}
         onFocus={onFocus}
@@ -444,17 +476,17 @@ function WorkbenchLayoutRenderer({
   }
 
   return (
-    <Group
+    <Resizable
       id={node.id}
       orientation={node.orientation}
-      defaultLayout={Object.fromEntries(
-        node.children.map((child, index) => [
-          child.id,
-          node.sizes[index] ?? 100 / node.children.length,
-        ])
-      )}
-      onLayoutChanged={(sizes, meta) => {
-        if (meta.isUserInteraction) onSizesChanged(node.id, sizes)
+      defaultLayout={node.sizes}
+      onLayoutCommit={(sizes, details) => {
+        if (details.reason !== 'resize') {
+          onSizesChanged(
+            node.id,
+            Object.fromEntries(node.children.map((child, index) => [child.id, sizes[index]]))
+          )
+        }
       }}
       className="relative h-full w-full"
     >
@@ -469,7 +501,7 @@ function WorkbenchLayoutRenderer({
             dragged={dragged}
             dropTarget={dropTarget}
             resolvePane={resolvePane}
-            getPaneTitle={getPaneTitle}
+            runtimeWork={runtimeWork}
             getPaneHost={getPaneHost}
             labels={labels}
             focusedViewPaneId={focusedViewPaneId}
@@ -481,7 +513,7 @@ function WorkbenchLayoutRenderer({
           />
         </LayoutPanel>
       ))}
-    </Group>
+    </Resizable>
   )
 }
 
@@ -501,17 +533,16 @@ function LayoutPanel({
   return (
     <>
       {index > 0 ? (
-        <Separator
+        <ResizableHandle
           data-testid={`workbench-split-separator-${split.id}-${index}`}
           aria-label={labels.resize}
           className={cn(
             'group/separator relative z-critical shrink-0 bg-border/60 outline-none after:absolute after:inset-[-3px]',
-            'data-[separator=hover]:bg-primary/40 data-[separator=active]:bg-primary/60',
             split.orientation === 'horizontal' ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize'
           )}
         />
       ) : null}
-      <Panel
+      <ResizablePanel
         id={child.id}
         defaultSize={`${split.sizes[index] ?? 100 / split.children.length}%`}
         minSize={
@@ -520,7 +551,7 @@ function LayoutPanel({
         className="relative min-h-0 min-w-0 overflow-hidden"
       >
         {children}
-      </Panel>
+      </ResizablePanel>
     </>
   )
 }
@@ -535,7 +566,7 @@ function WorkbenchPaneView({
   dragged,
   dropTarget,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   getPaneHost,
   labels,
   onFocus,
@@ -552,7 +583,7 @@ function WorkbenchPaneView({
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   getPaneHost: (paneKey: string) => HTMLDivElement | null
   labels: LayoutLabels
   onFocus: (paneId: string) => void
@@ -561,7 +592,6 @@ function WorkbenchPaneView({
   onToggleFocusedView: (paneId: string) => void
 }) {
   const identity = pane.paneKey ? resolvePane(pane.paneKey) : null
-  const title = identity ? getPaneTitle(identity) : labels.emptyTitle
   const host = pane.paneKey ? getPaneHost(pane.paneKey) : null
   return (
     <section
@@ -583,15 +613,13 @@ function WorkbenchPaneView({
             focused && 'shadow-[inset_0_2px_0_0_hsl(var(--primary)/0.65)]'
           )}
         >
-          <button
-            type="button"
-            data-testid={`workbench-pane-title-${pane.id}`}
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
-            title={title}
-            onClick={() => onFocus(pane.id)}
-          >
-            {title}
-          </button>
+          <WorkbenchPaneTitle
+            paneId={pane.id}
+            identity={identity}
+            emptyTitle={labels.emptyTitle}
+            runtimeWork={runtimeWork}
+            onFocus={onFocus}
+          />
           <div
             id={`workbench-pane-header-actions-${pane.id}`}
             data-testid={`workbench-pane-header-actions-${pane.id}`}
@@ -601,7 +629,9 @@ function WorkbenchPaneView({
             )}
           />
           <TitlebarTooltip label={focusedView ? labels.restoreSplit : labels.focusTask} align="end">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid={`workbench-focus-pane-${pane.id}`}
               aria-label={focusedView ? labels.restoreSplit : labels.focusTask}
@@ -610,7 +640,7 @@ function WorkbenchPaneView({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               {focusedView ? <Columns2 className="h-4 w-4" /> : <Focus className="h-4 w-4" />}
-            </button>
+            </ControlButton>
           </TitlebarTooltip>
           <WorkbenchPaneMenu
             paneId={pane.id}
@@ -620,7 +650,9 @@ function WorkbenchPaneView({
             onClose={onClose}
           />
           <TitlebarTooltip label={labels.closePane} align="end">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid={`workbench-close-pane-${pane.id}`}
               aria-label={labels.closePane}
@@ -628,7 +660,7 @@ function WorkbenchPaneView({
               className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </TitlebarTooltip>
         </div>
       ) : null}
@@ -680,7 +712,8 @@ function WorkbenchPaneMenu({
       ariaLabel={labels.paneMenu}
       testId={`workbench-pane-menu-${paneId}`}
       placement="bottom-end"
-      triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+      density="dense"
+      triggerClassName="flex items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
       items={[
         {
           label: labels.splitLeft,
@@ -813,5 +846,47 @@ function DropArea({
       <Icon className="h-4 w-4 shrink-0" />
       <span>{label}</span>
     </div>
+  )
+}
+
+function WorkbenchPaneTitle({
+  paneId,
+  identity,
+  emptyTitle,
+  runtimeWork,
+  onFocus,
+}: {
+  paneId: string
+  identity: WorkbenchPaneIdentity | null
+  emptyTitle: string
+  runtimeWork: RuntimeWorkListResponse | null
+  onFocus: (paneId: string) => void
+}) {
+  const { t } = useTranslation('common')
+  const address = identity?.currentRuntimeTask
+  const listedTask = findRuntimeTask(runtimeWork, address)
+  const lifecycle = useRuntimeTaskLifecycle(listedTask ? null : address)
+  let title = emptyTitle
+  if (address) {
+    title =
+      truncateRuntimeTaskTitle((listedTask ?? lifecycle?.task)?.title) ??
+      t('workbench.task_fallback_title', {
+        defaultValue: '任务 {{taskId}}',
+        taskId: address.taskId,
+      })
+  } else if (identity) {
+    title = identity.currentProject?.name ?? t('workbench.new_chat', '新任务')
+  }
+  return (
+    <ControlButton
+      variant="unstyled"
+      type="button"
+      data-testid={`workbench-pane-title-${paneId}`}
+      className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
+      title={title}
+      onClick={() => onFocus(paneId)}
+    >
+      {title}
+    </ControlButton>
   )
 }

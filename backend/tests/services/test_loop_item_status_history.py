@@ -19,6 +19,7 @@ from app.services.loop_item_status_history import (
     is_processing_status,
     later_project_status,
     project_status_transition,
+    write_status_change,
 )
 from app.services.loop_items.service import loop_item_service
 from tests.utils.collaboration import authorize_project
@@ -51,6 +52,35 @@ def _history(item: LoopItem) -> list[dict]:
     metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
     history = metadata.get("status_history")
     return history if isinstance(history, list) else []
+
+
+def test_completion_owner_is_snapshotted_and_rules_do_not_inherit_their_creator():
+    project = CloudProject(metadata_json={})
+    metadata = {}
+    values = dict(
+        project=project,
+        from_status="in_progress",
+        to_status="completed",
+        trigger="user_update",
+        by_user_id=7,
+    )
+    write_status_change(metadata, **values)
+    assert metadata["completion_owner_user_id"] == 7
+    assert metadata["status_history"][-1]["completion_owner_user_id"] == 7
+    write_status_change(
+        metadata, **values, automation_context={"rule_id": "rule", "run_id": "run"}
+    )
+    assert metadata["completion_owner_user_id"] is None
+    assert metadata["status_history"][-1]["completion_owner_user_id"] is None
+    write_status_change(
+        metadata,
+        project=project,
+        from_status="completed",
+        to_status="pending",
+        trigger="user_update",
+        by_user_id=8,
+    )
+    assert "completion_owner_user_id" not in metadata
 
 
 def test_create_records_initial_entry(test_db, test_user) -> None:

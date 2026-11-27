@@ -41,13 +41,6 @@ fn context_user(payload: &Value) -> Result<i64, AppIpcError> {
 }
 
 impl RuntimeWorkRpcHandler {
-    async fn coordination_identity(&self, user: i64) -> Result<(), AppIpcError> {
-        if self.backend_connection_snapshot()?.is_some() {
-            self.verify_runtime_user(&json!({"userId":user})).await?;
-        }
-        Ok(())
-    }
-
     pub(in crate::runtime_work::handler) async fn coordination_rpc(
         &self,
         method: &str,
@@ -55,17 +48,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if method == "runtime.coordination.contexts" {
-            let mut contexts = store
-                .all_personal_stand_ins(&self.device_id)
-                .map_err(settings_error)?
-                .into_iter()
-                .map(|settings| {
-                    json!({"id":format!("personal:{}",settings["userId"]),
-                        "revision":LocalTaskStore::coordination_configuration_version(&settings),
-                        "enabled":enabled(&settings),"needsProcessing":true})
-                })
-                .collect::<Vec<_>>();
-            contexts.extend(self.arrangement_contexts(&store)?);
+            // Discovery can enqueue a due calendar run into personal intake.
+            let arrangements = self.arrangement_contexts(&store)?;
+            let mut contexts = self.personal_coordination_contexts(&store)?;
+            contexts.extend(arrangements);
             let projects = self.project_router_contexts(&store).await;
             contexts.extend(
                 projects["contexts"]
@@ -83,7 +69,7 @@ impl RuntimeWorkRpcHandler {
             return self.project_router_rpc(&store, method, &payload).await;
         }
         let user = context_user(&payload)?;
-        self.coordination_identity(user).await?;
+        self.verify_local_stand_in_owner(user)?;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
         let _guard = gate.lock().await;
         let settings = store
@@ -124,8 +110,10 @@ impl RuntimeWorkRpcHandler {
                 Ok(json!({"accepted":true}))
             }
             "runtime.coordination.snapshot" => {
-                self.coordination_snapshot(&store, user, &settings, &payload)
-                    .await
+                super::dispatch::boxed_rpc(|| {
+                    self.coordination_snapshot(&store, user, &settings, &payload)
+                })
+                .await
             }
             "runtime.coordination.commit" => {
                 self.coordination_commit(&store, user, &settings, &payload)
@@ -136,6 +124,40 @@ impl RuntimeWorkRpcHandler {
                 "Unknown coordination operation",
             )),
         }
+    }
+
+    fn personal_coordination_contexts(
+        &self,
+        store: &LocalTaskStore,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?
+            .into_iter()
+            .map(|settings| {
+                let user = settings["userId"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in owner"))?;
+                let enabled = enabled(&settings);
+                let needs_processing = enabled && self.personal_coordination_due(store, user)?;
+                Ok(json!({"id":format!("personal:{user}"),
+                    "revision":LocalTaskStore::coordination_configuration_version(&settings),
+                    "enabled":enabled,"needsProcessing":needs_processing}))
+            })
+            .collect()
+    }
+
+    fn personal_coordination_due(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+    ) -> Result<bool, AppIpcError> {
+        let state = store
+            .stand_in_processing_state(user)
+            .map_err(settings_error)?;
+        Ok(state["routingRetry"].is_object()
+            || store.stand_in_has_due_work(user).map_err(settings_error)?
+            || self.has_stand_in_work_change(user, &state))
     }
 
     async fn coordination_snapshot(
@@ -174,7 +196,9 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?;
         let assessment_blocked = assessment_pending
             || assessment_busy
-            || (!state["error"].is_null() && state["force"] != true);
+            || (state["snapshot"].is_object()
+                && !state["error"].is_null()
+                && state["force"] != true);
         self.observe_stand_in_work(store, user, &mut state)?;
         // Native routing is independent; never revoke a live or failed assessment batch.
         if !assessment_blocked {
@@ -206,9 +230,16 @@ impl RuntimeWorkRpcHandler {
                 json!(LocalTaskStore::coordination_event_version(&raw)),
             );
             let immediate = immediate_intake(&roles, event);
-            let binding = self
+            let binding = match self
                 .coordination_binding(store, user, settings, event)
-                .await?;
+                .await
+            {
+                Ok(binding) => binding,
+                Err(error) => {
+                    log_intake_failure(event, &error);
+                    continue;
+                }
+            };
             let dispatch = if binding.is_none()
                 && immediate
                 && matches!(
@@ -279,10 +310,9 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let Some(link) = self
-            .coordinator_work(user)
-            .into_iter()
-            .find(|link| Some(&link.local_task_id) == target.as_ref())
+        let Some(link) = target
+            .as_deref()
+            .and_then(|id| self.coordinator_work_by_id(user, id))
         else {
             return Ok(None);
         };
@@ -292,14 +322,11 @@ impl RuntimeWorkRpcHandler {
         }) else {
             return Ok(None);
         };
-        if self.validate_intake_role(role, event).is_err()
-            || self
-                .validate_followup_role(store, user, role, &link)
-                .await
-                .is_err()
-        {
+        if self.validate_intake_role(role, event).is_err() {
             return Ok(None);
         }
+        self.validate_followup_role(store, user, role, &link)
+            .await?;
         Ok(Some(
             json!({"workId":link.local_task_id,"revision":link.updated_at,"awaitingUser":waits_for_user(&link)}),
         ))
@@ -432,10 +459,13 @@ impl RuntimeWorkRpcHandler {
                             ));
                         }
                     }
-                    (
-                        kind,
-                        json!({"eventIds":ids,"taskId":work,"message":"Review the new authorized source events and follow up on this work. Preserve all pending user questions and approvals."}),
-                    )
+                    for id in ids {
+                        intents.push(json!({"kind":kind,"arguments":{
+                            "eventIds":[id],"taskId":work,
+                            "message":"Review the new authorized source event and follow up on this work. Preserve all pending user questions and approvals."
+                        }}));
+                    }
+                    continue;
                 }
                 _ => {
                     return Err(AppIpcError::new(
@@ -563,10 +593,25 @@ impl RuntimeWorkRpcHandler {
             Ok(receipt) if matches!(receipt["state"].as_str(), Some("settled" | "abandoned")) => {
                 return Ok(Some(receipt))
             }
+            Ok(receipt) if matches!(receipt["state"].as_str(), Some("failed" | "cancelled")) => {
+                let mut state = store
+                    .stand_in_processing_state(user)
+                    .map_err(settings_error)?;
+                if state["error"]["commandId"] == command {
+                    state["error"] = Value::Null;
+                    store
+                        .save_stand_in_processing_state(user, &state)
+                        .map_err(settings_error)?;
+                }
+                return Err(AppIpcError::new(
+                    "coordination_stopped",
+                    "The assessment turn ended without completing this batch",
+                ));
+            }
             Ok(receipt) => {
                 if matches!(
                     receipt["state"].as_str(),
-                    Some("failed" | "cancelled" | "recovery_required" | "awaiting_user")
+                    Some("recovery_required" | "awaiting_user")
                 ) {
                     let mut state = store
                         .stand_in_processing_state(user)

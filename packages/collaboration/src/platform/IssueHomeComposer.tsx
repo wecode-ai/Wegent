@@ -1,91 +1,80 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-  type ReactNode,
-} from "react";
-import type { Attachment } from "@wegent/chat-core/runtime";
-import { ChevronDown } from "lucide-react";
-import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
-import {
-  ProjectComposerBody,
-  ComposerToolbar,
-  type ComposerInputHandle,
-} from "../composer";
-import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
-import {
-  ComposerAttachmentBadges,
-  type ComposerAttachment,
-} from "../issue-detail/ComposerAttachmentBadges";
-import type { AttachmentImageServices } from "../issue-detail/AttachmentImageView";
-import { ComposerErrorBanner } from "../composer/ComposerErrorBanner";
-import type { CollaborationTranslate } from "../i18n";
+import { useId, useMemo, useState, useSyncExternalStore, type Ref, type ReactNode } from 'react'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import { ComposerProjectSelector } from '../composer/ComposerProjectSelector'
+import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
+import { ProjectComposerBody, ComposerToolbar, type ComposerInputHandle } from '../composer'
+import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
+import { ComposerAttachmentBadges } from '../issue-detail/ComposerAttachmentBadges'
+import type { AttachmentImageServices } from '../issue-detail/AttachmentImageView'
+import { ComposerErrorBanner } from '../composer/ComposerErrorBanner'
+import type { CollaborationTranslate } from '../i18n'
 import type {
   CollaborationMember,
   CollaborationProject,
   CollaborationWorkspace,
   CollaborationIssue,
-} from "../types";
-import { parseComposerMentions } from "../composer/composerMentions";
-import { IssueOwnerPicker } from "./IssueOwnerPicker";
-import { issueHomeOwners, type IssueHomeOwner } from "./issueHomeOwners";
-import type { CollaborationGroup } from "../types";
-import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
+} from '../types'
+import { parseComposerMentions } from '../composer/composerMentions'
+import { IssueOwnerPicker } from './IssueOwnerPicker'
+import {
+  createIssueHomeAttachmentDraft,
+  type IssueHomePendingFile,
+} from './issueHomeAttachmentDraft'
+import { issueHomeOwners, type IssueHomeOwner } from './issueHomeOwners'
+import type { CollaborationGroup } from '../types'
+import type { SharedWorkspaceApi, WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
+import { BrowserIssueHomeTask, type BrowserIssueHomeTaskDraft } from './BrowserIssueHomeTask'
+import { IssueHomeModeTabs } from './IssueHomeModeTabs'
 
-const emptyAgents: WorkspaceProjectAgent[] = [];
-const emptyGroups: CollaborationGroup[] = [];
+const emptyAgents: WorkspaceProjectAgent[] = []
+const emptyGroups: CollaborationGroup[] = []
 
-type PendingFile = Attachment & ComposerAttachment & { id: number; file: File };
+type PendingFile = IssueHomePendingFile
 export interface IssueHomeTaskComposerProps {
-  active?: boolean;
-  projects: CollaborationProject[];
-  workspaces?: CollaborationWorkspace[];
-  projectId: string;
-  onSelectProject(id: string): void;
-  projectLabel: string;
-  ref: Ref<ComposerInputHandle>;
-  value: string;
-  onChange(value: string): void;
-  onDraftChange?(value: string): void;
-  ownerControl?: ReactNode;
-  environmentNotice?: ReactNode;
-  onSubmit(
-    value: string,
-    standInDeviceId?: string,
-    standInId?: string,
-  ): Promise<boolean>;
-  disabled: boolean;
-  placeholder: string;
-  error: string | null;
-  members: ComposerExternalMentionCandidate[];
-  attachments: Attachment[];
-  onFileSelect(files: File | File[]): void;
-  onRemoveAttachment(id: number): void;
-  pendingFiles?: File[];
-  onRemovePendingFile(file: File): void;
-  onResetDraft?(): void;
-  onPendingChange?(pending: boolean): void;
-  projectControl?: ReactNode;
+  active?: boolean
+  projects: CollaborationProject[]
+  workspaces?: CollaborationWorkspace[]
+  projectId: string
+  onSelectProject(id: string): void
+  projectLabel: string
+  ref: Ref<ComposerInputHandle>
+  value: string
+  onChange(value: string): void
+  onDraftChange?(value: string): void
+  ownerControl?: ReactNode
+  environmentNotice?: ReactNode
+  onSubmit(value: string, standInDeviceId?: string, standInId?: string): Promise<boolean>
+  disabled: boolean
+  placeholder: string
+  error: string | null
+  members: ComposerExternalMentionCandidate[]
+  attachments: Attachment[]
+  onFileSelect(files: File | File[]): void
+  onRemoveAttachment(id: number): void
+  pendingFiles?: File[]
+  onRemovePendingFile(file: File): void
+  onResetDraft?(): void
+  onPendingChange?(pending: boolean): void
+  projectControl?: ReactNode
   onTaskCreated?(
     issue: CollaborationIssue,
-    task: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress,
-  ): void;
+    task: import('../ports/SharedWorkspaceApi').WorkspaceRuntimeTaskAddress,
+    confirmed?: boolean
+  ): void
 }
 const images: AttachmentImageServices<PendingFile> = {
-  identity: (item) => String(item.id),
+  identity: item => String(item.id),
   async load(item) {
-    const url = URL.createObjectURL(item.file);
-    return { url, release: () => URL.revokeObjectURL(url) };
+    const url = URL.createObjectURL(item.file)
+    return { url, release: () => URL.revokeObjectURL(url) }
   },
   async download(_item, url, filename) {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.click();
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
   },
-};
+}
 
 /** Issue creation uses the same editor, autocomplete, surface and toolbar as Tasks. */
 export function IssueHomeComposer({
@@ -108,121 +97,93 @@ export function IssueHomeComposer({
   error,
   environmentNotice,
   renderTaskComposer,
+  browserHome,
   currentUserId,
 }: {
-  currentUserId?: number;
-  ref: Ref<ComposerInputHandle>;
-  value: string;
-  onChange(value: string): void;
+  currentUserId?: number
+  ref: Ref<ComposerInputHandle>
+  value: string
+  onChange(value: string): void
   onSubmit(
     content: string,
     owner: IssueHomeOwner | null,
     files: File[],
     standInDeviceId?: string,
-    standInId?: string,
-  ): Promise<boolean>;
-  pending: boolean;
-  members: CollaborationMember[];
-  agents?: WorkspaceProjectAgent[];
-  groups?: CollaborationGroup[];
-  issues?: CollaborationIssue[];
-  projects: CollaborationProject[];
-  workspaces?: CollaborationWorkspace[];
-  projectId: string;
-  onSelectProject(id: string): void;
-  translate: CollaborationTranslate;
-  placeholder: string;
-  projectLabel: string;
-  memberLabel: string;
-  error: string | null;
-  environmentNotice?: ReactNode;
-  renderTaskComposer?(props: IssueHomeTaskComposerProps): ReactNode;
+    standInId?: string
+  ): Promise<boolean>
+  pending: boolean
+  members: CollaborationMember[]
+  agents?: WorkspaceProjectAgent[]
+  groups?: CollaborationGroup[]
+  issues?: CollaborationIssue[]
+  projects: CollaborationProject[]
+  workspaces?: CollaborationWorkspace[]
+  projectId: string
+  onSelectProject(id: string): void
+  translate: CollaborationTranslate
+  placeholder: string
+  projectLabel: string
+  memberLabel: string
+  error: string | null
+  environmentNotice?: ReactNode
+  renderTaskComposer?(props: IssueHomeTaskComposerProps): ReactNode
+  browserHome?: {
+    api: SharedWorkspaceApi
+    translate(key: string): string
+    onTaskCreated: NonNullable<IssueHomeTaskComposerProps['onTaskCreated']>
+  }
 }) {
-  const [files, setFiles] = useState<PendingFile[]>([]);
-  const [referenceError, setReferenceError] = useState(false);
-  const [automaticOwner, setAutomaticOwner] = useState<string | null>(null);
+  const [taskMode, setTaskMode] = useState(false)
+  const [taskPending, setTaskPending] = useState(false)
+  const [taskDrafts] = useState(() => new Map<string, BrowserIssueHomeTaskDraft>())
+  const composerId = useId()
+  const [attachmentDraft] = useState(createIssueHomeAttachmentDraft)
+  const files = useSyncExternalStore(
+    attachmentDraft.subscribe,
+    attachmentDraft.getSnapshot,
+    attachmentDraft.getSnapshot
+  )
+  const [referenceError, setReferenceError] = useState(false)
+  const [draft, setDraft] = useState({ external: value, value })
+  if (draft.external !== value) setDraft({ external: value, value })
   const [ownerOverride, setOwnerOverride] = useState<{
-    projectId: string;
-    id: string | null;
-  } | null>(null);
-  const nextId = useRef(0);
-  const previews = useRef(new Set<string>());
-  useEffect(
-    () => () => {
-      for (const url of previews.current) URL.revokeObjectURL(url);
-    },
-    [],
-  );
+    projectId: string
+    id: string | null
+  } | null>(null)
   const candidates = useMemo(
     () =>
-      issueHomeOwners(projectId, members, agents, groups, translate).map(
-        (candidate) =>
-          candidate.owner.kind === "user" &&
-          String(candidate.owner.id) === String(currentUserId)
-            ? {
-                ...candidate,
-                title: `${candidate.title} · ${translate("issue_creation.do_myself", "我来做")}`,
-              }
-            : candidate,
+      issueHomeOwners(projectId, members, agents, groups, translate).map(candidate =>
+        candidate.owner.kind === 'user' && String(candidate.owner.id) === String(currentUserId)
+          ? {
+              ...candidate,
+              title: `${candidate.title} · ${translate('issue_creation.do_myself', '我来做')}`,
+            }
+          : candidate
       ),
-    [members, agents, groups, projectId, translate, currentUserId],
-  );
-  const addFiles = (input: File | File[]) => {
-    const batch = (Array.isArray(input) ? input : [input]).map((file) => {
-      const preview = file.type.startsWith("image/")
-        ? URL.createObjectURL(file)
-        : undefined;
-      if (preview) previews.current.add(preview);
-      return {
-        id: ++nextId.current,
-        file,
-        filename: file.name,
-        mime_type: file.type,
-        file_extension: file.name.includes(".")
-          ? `.${file.name.split(".").pop()}`
-          : "",
-        file_size: file.size,
-        status: "ready" as const,
-        created_at: new Date().toISOString(),
-        local_preview_url: preview,
-      };
-    });
-    setFiles((current) => [...current, ...batch]);
-  };
-  const removeFiles = (matches: (item: PendingFile) => boolean) => {
-    for (const item of files.filter(matches)) {
-      if (
-        item.local_preview_url &&
-        previews.current.delete(item.local_preview_url)
-      )
-        URL.revokeObjectURL(item.local_preview_url);
-    }
-    setFiles((current) => current.filter((item) => !matches(item)));
-  };
-  const removeFile = (id: number | string) =>
-    removeFiles((item) => item.id === id);
-  const issueCandidates = issues.map((issue) => ({
+    [members, agents, groups, projectId, translate, currentUserId]
+  )
+  const addFiles = attachmentDraft.add
+  const removeFiles = attachmentDraft.remove
+  const removeFile = (id: number | string) => removeFiles(item => item.id === id)
+  const issueCandidates = issues.map(issue => ({
     id: `issue-${issue.id}`,
-    type: "issue" as const,
+    type: 'issue' as const,
     title: `#${issue.sequence_number} ${issue.title}`,
-    metaLabel: "Issue",
-    reference: `[$#${issue.sequence_number} ${issue.title.replace(/[\[\]\n]/g, "")}](wework-issue://${encodeURIComponent(projectId)}/${encodeURIComponent(issue.id)})`,
+    metaLabel: 'Issue',
+    reference: `[$#${issue.sequence_number} ${issue.title.replace(/[[\]\n]/g, '')}](wework-issue://${encodeURIComponent(projectId)}/${encodeURIComponent(issue.id)})`,
     testId: `collaboration-home-mention-issue-${issue.id}`,
     searchAliases: [issue.title, String(issue.sequence_number)],
-  }));
+  }))
   const firstMentionedMember = (draft: string) => {
     for (const mention of parseComposerMentions(draft)) {
-      const member = candidates.find(
-        (candidate) => candidate.reference === mention.reference,
-      );
-      if (member) return member.id;
+      const member = candidates.find(candidate => candidate.reference === mention.reference)
+      if (member) return member.id
     }
-    return null;
-  };
-  const draftChanged = (draft: string) =>
-    setAutomaticOwner(firstMentionedMember(draft));
-  const ownerId =
-    ownerOverride?.projectId === projectId ? ownerOverride.id : automaticOwner;
+    return null
+  }
+  const draftChanged = (nextValue: string) => setDraft({ external: value, value: nextValue })
+  const automaticOwner = firstMentionedMember(draft.external === value ? draft.value : value)
+  const ownerId = ownerOverride?.projectId === projectId ? ownerOverride.id : automaticOwner
   const ownerControl = (
     <IssueOwnerPicker
       showLabel={Boolean(renderTaskComposer)}
@@ -230,104 +191,73 @@ export function IssueHomeComposer({
       value={ownerId}
       disabled={pending}
       translate={translate}
-      onChange={(id) => setOwnerOverride({ projectId, id })}
+      onChange={id => setOwnerOverride({ projectId, id })}
     />
-  );
-  const selectedProject = projects.find((project) => project.id === projectId);
-  useEffect(() => {
-    setAutomaticOwner(firstMentionedMember(value));
-  }, [value, projectId, candidates]);
+  )
   const submit = async (
     draft: string,
     standInDeviceId?: string,
     standInId?: string,
+    startTask?: (content: string, files: File[]) => Promise<boolean>
   ) => {
-    const mentions = parseComposerMentions(draft);
+    const mentions = parseComposerMentions(draft)
     if (
       mentions.some(
-        (mention) =>
-          /\]\(wework-(member|agent|group|issue):\/\//.test(
-            mention.reference,
-          ) &&
+        mention =>
+          /\]\(wework-(member|agent|group|issue):\/\//.test(mention.reference) &&
           ![...candidates, ...issueCandidates].some(
-            (candidate) => candidate.reference === mention.reference,
-          ),
+            candidate => candidate.reference === mention.reference
+          )
       )
     ) {
-      setReferenceError(true);
-      return false;
+      setReferenceError(true)
+      return false
     }
-    setReferenceError(false);
+    setReferenceError(false)
     const selectedOwner =
-      ownerOverride?.projectId === projectId
-        ? ownerOverride.id
-        : firstMentionedMember(draft);
-    if (
-      selectedOwner &&
-      !candidates.some((candidate) => candidate.id === selectedOwner)
-    ) {
-      setReferenceError(true);
-      return false;
+      ownerOverride?.projectId === projectId ? ownerOverride.id : firstMentionedMember(draft)
+    if (selectedOwner && !candidates.some(candidate => candidate.id === selectedOwner)) {
+      setReferenceError(true)
+      return false
     }
-    let content = draft;
+    let content = draft
     for (const mention of [...mentions].reverse()) {
       if (/\]\(wework-(member|agent|group):\/\//.test(mention.reference)) {
-        content =
-          content.slice(0, mention.start) +
-          mention.name +
-          content.slice(mention.end);
+        content = content.slice(0, mention.start) + mention.name + content.slice(mention.end)
       }
     }
-    const accepted = await onSubmit(
-      content.trim(),
-      candidates.find((candidate) => candidate.id === selectedOwner)?.owner ??
-        null,
-      files.map((item) => item.file),
-      ...(standInDeviceId
-        ? [standInDeviceId, ...(standInId ? [standInId] : [])]
-        : []),
-    );
+    const pendingFiles = files.map(item => item.file)
+    const accepted = startTask
+      ? await startTask(content.trim(), pendingFiles)
+      : await onSubmit(
+          content.trim(),
+          candidates.find(candidate => candidate.id === selectedOwner)?.owner ?? null,
+          pendingFiles,
+          ...(standInDeviceId ? [standInDeviceId, ...(standInId ? [standInId] : [])] : [])
+        )
     if (accepted) {
-      resetDraft();
-      onChange("");
+      resetDraft()
+      onChange('')
     }
-    return accepted;
-  };
+    return accepted
+  }
   const resetDraft = () => {
-    removeFiles(() => true);
-    setOwnerOverride(null);
-    setAutomaticOwner(null);
-    for (const url of previews.current) URL.revokeObjectURL(url);
-    previews.current.clear();
-  };
+    attachmentDraft.reset()
+    setOwnerOverride(null)
+    setDraft({ external: value, value: '' })
+  }
   const projectSelector = (
-    <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
-      <label className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/30">
-        <span className="sr-only">{projectLabel}</span>
-        <span
-          data-testid="collaboration-issue-project-label"
-          className="max-w-48 truncate text-text-primary"
-        >
-          {selectedProject?.name ?? projectLabel}
-        </span>
-        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0" />
-        <select
-          data-testid="collaboration-issue-project"
-          aria-label={projectLabel}
-          value={projectId}
-          disabled={pending}
-          className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
-          onChange={(event) => onSelectProject(event.target.value)}
-        >
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
-  );
+    <ComposerProjectSelector
+      testId="collaboration-issue-project"
+      labelTestId="collaboration-issue-project-label"
+      label={browserHome?.translate('personalHome.collaborationProject') ?? projectLabel}
+      value={projectId}
+      disabled={pending || taskPending}
+      onChange={onSelectProject}
+      options={projects.map(project => ({ value: String(project.id), label: project.name }))}
+    />
+  )
+  const validationError = referenceError ? translate('issue_creation.invalid_reference') : null
   if (renderTaskComposer)
     return (
       <>
@@ -346,42 +276,54 @@ export function IssueHomeComposer({
           onSubmit: submit,
           disabled: pending,
           placeholder,
-          error: referenceError
-            ? translate(
-                "issue_creation.invalid_reference",
-                "The project changed. Remove or reselect mentions before creating the Issue.",
-              )
-            : error,
+          error: validationError ?? error,
           members: [...candidates, ...issueCandidates],
           attachments: files,
-          pendingFiles: files.map((item) => item.file),
-          onRemovePendingFile: (file) =>
-            removeFiles((item) => item.file === file),
+          pendingFiles: files.map(item => item.file),
+          onRemovePendingFile: file => removeFiles(item => item.file === file),
           onResetDraft: resetDraft,
           onFileSelect: addFiles,
           onRemoveAttachment: removeFile,
         })}
       </>
-    );
-  return (
+    )
+  const renderComposer = (task?: {
+    controls: ReactNode
+    pending: boolean
+    ready: boolean
+    error: string | null
+    submit(content: string, files: File[]): Promise<boolean>
+  }) => (
     <>
-      <ComposerErrorBanner error={error} />
-      {environmentNotice}
+      <ComposerErrorBanner error={validationError ?? task?.error ?? error} />
       <ProjectComposerBody
-        workBar={projectSelector}
+        workBar={
+          task ? (
+            <>
+              {projectSelector}
+              {task.controls}
+            </>
+          ) : (
+            projectSelector
+          )
+        }
         ref={ref}
         translate={translate}
         value={value}
-        onChange={(draft) => {
-          draftChanged(draft);
-          onChange(draft);
+        onChange={draft => {
+          draftChanged(draft)
+          onChange(draft)
         }}
-        onSubmit={(value) => submit(value)}
-        disabled={pending}
+        onSubmit={value => submit(value, undefined, undefined, task?.submit)}
+        disabled={pending || (task?.pending ?? false)}
         requireText
-        isModelSelectionReady
-        placeholder={placeholder}
-        inputTestId="collaboration-home-issue-content"
+        isModelSelectionReady={task?.ready ?? true}
+        placeholder={
+          browserHome && !task
+            ? browserHome.translate('issue_creation.web_record_placeholder')
+            : placeholder
+        }
+        inputTestId={task ? 'personal-home-task-content' : 'collaboration-home-issue-content'}
         attachments={[]}
         uploadingCount={0}
         attachmentErrorCount={0}
@@ -395,15 +337,15 @@ export function IssueHomeComposer({
             onRemoveAttachment={removeFile}
             imageServices={images}
             labels={{
-              removeAttachment: translate("todo.remove_attachment"),
-              pastedText: translate("todo.pasted_text_attachment"),
-              addingText: translate("todo.adding_pasted_text_attachment"),
-              showText: translate("todo.show_text_attachment"),
-              appshot: translate("todo.appshot_attachment"),
+              removeAttachment: translate('todo.remove_attachment'),
+              pastedText: translate('todo.pasted_text_attachment'),
+              addingText: translate('todo.adding_pasted_text_attachment'),
+              showText: translate('todo.show_text_attachment'),
+              appshot: translate('todo.appshot_attachment'),
             }}
           />
         )}
-        renderEditor={(props) => (
+        renderEditor={props => (
           <ComposerAutocompleteInput
             {...props}
             translate={translate}
@@ -411,25 +353,81 @@ export function IssueHomeComposer({
             externalMentionCandidates={[...candidates, ...issueCandidates]}
           />
         )}
-        renderToolbar={(props) => (
+        renderToolbar={props => (
           <ComposerToolbar
             {...props}
             translate={translate}
-            disabled={pending}
+            disabled={pending || task?.pending}
             showExecutionTools={false}
             models={[]}
             selectedModel={null}
             selectedModelOptions={{}}
-            isModelSelectionReady
+            isModelSelectionReady={task?.ready ?? true}
             renderModelSelector={() => null}
             onSelectModel={() => {}}
             onSelectModelOption={() => {}}
             onFileSelect={addFiles}
-            sendButtonTestId="collaboration-home-create-issue"
-            leadingContext={ownerControl}
+            sendButtonTestId={task ? 'personal-home-start-task' : 'collaboration-home-create-issue'}
+            sendButtonLabel={
+              browserHome
+                ? browserHome.translate(
+                    task ? 'issue_creation.create_task' : 'issue_creation.record_submit'
+                  )
+                : undefined
+            }
+            leadingContext={task ? undefined : ownerControl}
           />
         )}
       />
     </>
-  );
+  )
+  if (!browserHome)
+    return (
+      <>
+        {environmentNotice}
+        {renderComposer()}
+      </>
+    )
+  const runtime = browserHome.api.runtime
+  const project = projects.find(item => item.id === projectId)
+  const taskAvailable = Boolean(runtime && browserHome.api.taskBindings)
+  const mode = taskMode && taskAvailable ? 'task' : 'record'
+  return (
+    <section
+      className="flex w-full min-w-0 flex-col gap-3"
+      data-testid="collaboration-issue-workspace"
+    >
+      <IssueHomeModeTabs
+        id={composerId}
+        taskMode={mode === 'task'}
+        taskAvailable={taskAvailable}
+        disabled={pending || taskPending}
+        onChange={setTaskMode}
+        translate={browserHome.translate}
+      />
+      {environmentNotice}
+      <div
+        id={composerId + '-' + mode + '-panel'}
+        role="tabpanel"
+        aria-labelledby={composerId + '-' + mode + '-tab'}
+      >
+        {mode === 'task' && runtime && project ? (
+          <BrowserIssueHomeTask
+            key={project.id}
+            api={browserHome.api}
+            runtime={runtime}
+            project={project}
+            drafts={taskDrafts}
+            translate={translate}
+            onCreated={browserHome.onTaskCreated}
+            translateStatus={browserHome.translate}
+            onPendingChange={setTaskPending}
+            render={renderComposer}
+          />
+        ) : (
+          renderComposer()
+        )}
+      </div>
+    </section>
+  )
 }

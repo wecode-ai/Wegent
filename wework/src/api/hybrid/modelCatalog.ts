@@ -61,12 +61,13 @@ export function createModelCatalog(
       listeners.add(listener)
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return
-        if (request) {
+        queueMicrotask(() => {
+          if (listeners.size || !request) return
           const controller = request
           request = null
           loadStarted = false
           controller.abort()
-        }
+        })
       }
     },
   }

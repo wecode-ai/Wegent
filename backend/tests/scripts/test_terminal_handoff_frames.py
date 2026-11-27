@@ -12,7 +12,7 @@ from socketio.async_pubsub_manager import AsyncPubSubManager
 
 from tests.e2e.terminal_handoff_frames import intermediate_frame
 
-# Match backend-rs/crates/socket-events/src/socketio_emit.rs::emit_message.
+# Match backend-rs/socket-events/src/socketio_emit.rs::emit_message.
 RUST_STATUS = json.loads(
     '{"method":"emit","event":"task:status","data":[{"task_id":42,'
     '"status":"RUNNING"}],"binary":false,"namespace":"/chat",'

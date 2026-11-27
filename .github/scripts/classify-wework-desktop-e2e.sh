@@ -32,7 +32,7 @@ while IFS=$'\t' read -r name value pattern; do
     additional_path_target) additional_catalog_path_targets+=("$value"$'\t'"$pattern") ;;
     *) printf 'Unknown desktop catalog record: %s\n' "$name" >&2; exit 1 ;;
   esac
-done <<< "$catalog_records"
+done < <(printf '%s\n' "$catalog_records")
 
 validate_registered_checkpoint_coverage() {
   local script_dir
@@ -102,7 +102,8 @@ select_path_targets() {
   local record target pattern
   local matched=false
   for record in "$@"; do
-    IFS=$'\t' read -r target pattern <<< "$record"
+    target="${record%%$'\t'*}"
+    pattern="${record#*$'\t'}"
     if [[ "$path" == $pattern ]]; then
       select_target "$target"
       matched=true
@@ -138,13 +139,11 @@ select_plugin_sync_checkpoints() {
 }
 
 select_rendering_checkpoints() {
-  select_target "core:rendering-extensions"
-  select_target "core:streaming-content"
-  select_target "core:streaming-tools"
-  select_target "core:streaming-scroll"
-  select_target "core:streaming-message-order"
   select_target "core:streaming-conversation-switching"
-  select_target "core:streaming-subagents"
+  select_target "core:core-task-flow"
+  select_target "core:streaming-content"
+  select_target "core:transcript-sync"
+  select_target "core:streaming-subagent-guidance"
 }
 
 select_cloud_worktree_checkpoints() {
@@ -174,7 +173,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-telemetry"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
-  select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
   select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
@@ -182,7 +180,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
-  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }
@@ -225,7 +222,7 @@ build_matrix() {
   for shard_index in "${!core_shards[@]}"; do
     local selected_segments=()
     local shard_segments
-    IFS=',' read -ra shard_segments <<< "${core_shards[$shard_index]}"
+    IFS=',' read -ra shard_segments < <(printf '%s\n' "${core_shards[$shard_index]}")
     local segment
     for segment in "${shard_segments[@]}"; do
       if [[ "${selected[core:all]:-false}" == "true" || \
@@ -265,7 +262,7 @@ build_matrix() {
   for cloud_shard_index in "${!cloud_shards[@]}"; do
     local selected_cloud_segments=()
     local cloud_shard_segments
-    IFS=',' read -ra cloud_shard_segments <<< "${cloud_shards[$cloud_shard_index]}"
+    IFS=',' read -ra cloud_shard_segments < <(printf '%s\n' "${cloud_shards[$cloud_shard_index]}")
     local cloud_segment
     for cloud_segment in "${cloud_shard_segments[@]}"; do
       if [[ "${selected[cloud:all]:-false}" == "true" || \

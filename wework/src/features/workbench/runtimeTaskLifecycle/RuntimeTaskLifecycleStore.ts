@@ -10,6 +10,7 @@ import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
 import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { suppressesRuntimeTaskCompletionReminder } from '@/lib/runtime-task-visibility'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   emptyRuntimeTaskSummary,
@@ -30,6 +31,16 @@ import type {
 } from './types'
 
 type Listener = () => void
+type TaskChangesListener = (
+  keys: ReadonlySet<string>,
+  before: RuntimeTaskLifecycleStoreSnapshot['tasks'],
+  after: RuntimeTaskLifecycleStoreSnapshot['tasks']
+) => void
+interface TaskListener {
+  address: RuntimeTaskAddress
+  key: string
+  notify: Listener
+}
 
 interface SyncTranscriptOptions {
   preserveActiveTurn?: boolean
@@ -48,8 +59,18 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
   unreadTaskKeys: new Set(),
 }
 
+function sameTaskKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const key of left) if (!right.has(key)) return false
+  return true
+}
+
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
+  'getSidebarSnapshot',
+  'getActiveTurnAddresses',
   'subscribe',
+  'subscribeTask',
+  'subscribeTaskChanges',
   'getSnapshot',
   'getCurrentTask',
   'getTask',
@@ -67,14 +88,27 @@ export class RuntimeTaskLifecycleStore {
   private readonly previousRunningTaskKeys: Set<string>
   private readonly deferredGoalUnreadTaskKeys = new Set<string>()
   private readonly listeners = new Set<Listener>()
+  private readonly taskListeners = new Map<string, Set<TaskListener>>()
+  private readonly taskChangesListeners = new Set<TaskChangesListener>()
+  private removedTaskKeys = new Set<string>()
+  private aliasesChanged = false
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
   private currentTaskKey: string | null = null
+  private windowFocused = true
   private persistedUnreadSerialized: string | null = null
   private persistedRunningSerialized: string | null = null
   private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
+  private activeTurnAddresses: RuntimeTaskAddress[] = []
+  private sidebarSnapshot = {
+    runningTaskKeys: EMPTY_STORE_SNAPSHOT.runningTaskKeys,
+    waitingTaskKeys: new Set<string>() as ReadonlySet<string>,
+    busyTaskKeys: new Set<string>() as ReadonlySet<string>,
+  }
+  private batchDepth = 0
+  private publishPending = false
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
@@ -97,7 +131,50 @@ export class RuntimeTaskLifecycleStore {
     return () => this.listeners.delete(listener)
   }
 
+  subscribeTaskChanges = (listener: TaskChangesListener): (() => void) => {
+    this.taskChangesListeners.add(listener)
+    return () => this.taskChangesListeners.delete(listener)
+  }
+
+  subscribeTask(address: RuntimeTaskAddress, notify: Listener): () => void {
+    const key = this.taskSubscriptionKey(address)
+    const entry = { address, key, notify }
+    this.addTaskListener(entry)
+    return () => {
+      const group = this.taskListeners.get(entry.key)
+      group?.delete(entry)
+      if (!group?.size) this.taskListeners.delete(entry.key)
+    }
+  }
+
+  private taskSubscriptionKey(address: RuntimeTaskAddress): string {
+    return getRuntimeTaskLifecycleKey(this.canonicalizeAddress(address))
+  }
+
+  private addTaskListener(entry: TaskListener): void {
+    const group = this.taskListeners.get(entry.key) ?? new Set<TaskListener>()
+    group.add(entry)
+    this.taskListeners.set(entry.key, group)
+  }
+
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+  getSidebarSnapshot = () => this.sidebarSnapshot
+  getActiveTurnAddresses = (): readonly RuntimeTaskAddress[] => this.activeTurnAddresses
+
+  batch<T>(update: () => T): T {
+    this.batchDepth++
+    try {
+      return update()
+    } finally {
+      this.batchDepth--
+      if (this.batchDepth === 0 && this.publishPending) this.publish()
+    }
+  }
+
+  isNewlyUnread(key: string): boolean {
+    const state = this.unreadStateByTask.get(key)
+    return state?.unread === true && state.revision > 0
+  }
 
   getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
     if (!this.currentTaskKey) return null
@@ -132,19 +209,33 @@ export class RuntimeTaskLifecycleStore {
     return snapshot.tasks.get(getRuntimeTaskLifecycleKey(canonicalAddress)) ?? null
   }
 
-  syncRuntimeWork(runtimeWork: RuntimeWorkListResponse | null | undefined): void {
+  syncRuntimeWork(
+    runtimeWork: RuntimeWorkListResponse | null | undefined,
+    updatedAddress?: RuntimeTaskAddress
+  ): void {
     if (!runtimeWork) return
 
-    let changed = this.registerRuntimeWorkAliases(runtimeWork)
-    for (const { workspace, task } of collectRuntimeTasks(runtimeWork)) {
-      const address = getRuntimeTaskAddress(workspace, task)
-      const normalizedTask = normalizeRuntimeTaskSummary(task)
-      changed =
-        this.reduceMachine(address, {
-          type: 'executor_snapshot_received',
-          address,
-          task: normalizedTask,
-        }) || changed
+    // A point update patches tasks in existing workspaces and leaves their aliases intact.
+    let changed = !updatedAddress && this.registerRuntimeWorkAliases(runtimeWork)
+    for (const workspace of collectRuntimeWorkspaces(runtimeWork)) {
+      if (
+        updatedAddress &&
+        workspace.deviceId !== updatedAddress.deviceId &&
+        workspace.remoteHostId !== updatedAddress.deviceId
+      )
+        continue
+      const tasks = updatedAddress
+        ? workspace.tasks.filter(task => task.taskId === updatedAddress.taskId)
+        : workspace.tasks
+      for (const task of tasks) {
+        const address = getRuntimeTaskAddress(workspace, task)
+        changed =
+          this.reduceMachine(address, {
+            type: 'executor_snapshot_received',
+            address,
+            task: normalizeRuntimeTaskSummary(task),
+          }) || changed
+      }
     }
     if (changed) this.publish()
   }
@@ -167,7 +258,7 @@ export class RuntimeTaskLifecycleStore {
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
     for (const [alias, canonicalDeviceId] of aliases) {
       if (alias !== canonicalDeviceId) continue
-      changed = this.deviceAliases.delete(alias) || changed
+      if (this.deviceAliases.delete(alias)) this.aliasesChanged = changed = true
     }
     for (const [alias, canonicalDeviceId] of aliases) {
       if (alias === canonicalDeviceId) continue
@@ -279,6 +370,14 @@ export class RuntimeTaskLifecycleStore {
       return
     }
     this.publish()
+  }
+
+  setWindowFocused(focused: boolean): void {
+    if (focused === this.windowFocused) return
+    this.windowFocused = focused
+    if (!focused || !this.currentTaskKey) return
+    const currentMachine = this.machines.get(this.currentTaskKey)
+    if (currentMachine) this.dispatch(currentMachine.getState().address, { type: 'marked_read' })
   }
 
   sendRequested(
@@ -449,8 +548,10 @@ export class RuntimeTaskLifecycleStore {
   remove(address: RuntimeTaskAddress): void {
     const canonicalAddress = this.canonicalizeAddress(address)
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
+    const removed = this.machines.delete(key)
+    if (removed) this.removedTaskKeys.add(key)
     const changes = [
-      this.machines.delete(key),
+      removed,
       this.unreadStateByTask.delete(key),
       this.previousRunningTaskKeys.delete(key),
       this.deferredGoalUnreadTaskKeys.delete(key),
@@ -551,9 +652,10 @@ export class RuntimeTaskLifecycleStore {
     let changed = eventChanged
     const next = machine.getSnapshot()
     if (
-      previous.execution.phase !== next.execution.phase ||
-      previous.turn.phase !== next.turn.phase ||
-      canonicalEvent.type === 'send_accepted'
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' &&
+      (previous.execution.phase !== next.execution.phase ||
+        previous.turn.phase !== next.turn.phase ||
+        canonicalEvent.type === 'send_accepted')
     ) {
       logRuntimeTaskCreateStage('lifecycle-transition', {
         taskId: canonicalAddress.taskId,
@@ -587,11 +689,16 @@ export class RuntimeTaskLifecycleStore {
         executorSnapshotRunning: previous.task.running,
       })
     }
+    if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
+    else this.previousRunningTaskKeys.delete(key)
+    if (suppressesRuntimeTaskCompletionReminder(next.task ?? next.address)) {
+      return this.clearCompletionUnread(key, machine) || changed
+    }
+    // A task is read only while its pane is open and the window is focused.
+    // Background completion of the open task still needs an unread reminder.
+    const currentTaskVisible = next.key === this.currentTaskKey && this.windowFocused
     const becameBackgroundIdle =
-      wasRunning &&
-      !next.derived.isRunning &&
-      !next.derived.isQueued &&
-      next.key !== this.currentTaskKey
+      wasRunning && !next.derived.isRunning && !next.derived.isQueued && !currentTaskVisible
     if (becameBackgroundIdle && next.goalStatus === 'active') {
       this.deferredGoalUnreadTaskKeys.add(key)
     }
@@ -600,18 +707,16 @@ export class RuntimeTaskLifecycleStore {
       !next.derived.isRunning &&
       !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
-      next.key !== this.currentTaskKey
+      !currentTaskVisible
     ) {
       changed = machine.dispatch({ type: 'marked_unread' }) || changed
       this.deferredGoalUnreadTaskKeys.delete(key)
     }
-    if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
-    else this.previousRunningTaskKeys.delete(key)
-    if (next.derived.isRunning || next.key === this.currentTaskKey) {
+    if (next.derived.isRunning || currentTaskVisible) {
       this.deferredGoalUnreadTaskKeys.delete(key)
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
-    if (canonicalEvent.type === 'marked_read' || next.key === this.currentTaskKey) {
+    if (canonicalEvent.type === 'marked_read' || currentTaskVisible) {
       this.recordUnreadState(key, false)
     } else if (next.derived.isRunning) {
       // An old running projection must not acknowledge a newer completion on another alias.
@@ -622,8 +727,7 @@ export class RuntimeTaskLifecycleStore {
     return changed
   }
 
-  private ensureMachine(address: RuntimeTaskAddress): RuntimeTaskMachine {
-    const canonicalAddress = this.canonicalizeAddress(address)
+  private ensureMachine(canonicalAddress: RuntimeTaskAddress): RuntimeTaskMachine {
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
     const existing = this.machines.get(key)
     if (existing) return existing
@@ -642,6 +746,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private resolveDeviceId(deviceId: string): string {
+    if (!this.deviceAliases.has(deviceId)) return deviceId
     let current = deviceId
     const visited = new Set<string>()
     while (!visited.has(current)) {
@@ -669,6 +774,7 @@ export class RuntimeTaskLifecycleStore {
     if (this.resolveDeviceId(alias) === canonical) return false
 
     this.deviceAliases.set(alias, canonical)
+    this.aliasesChanged = true
     const prefix = `${alias}\0`
     const storedKeys = new Set([
       ...this.unreadStateByTask.keys(),
@@ -723,6 +829,7 @@ export class RuntimeTaskLifecycleStore {
     this.restoreMachineUnread(nextKey, nextMachine)
     if (!nextMachine.getSnapshot().derived.isRunning) this.previousRunningTaskKeys.delete(nextKey)
     this.machines.delete(previousKey)
+    this.removedTaskKeys.add(previousKey)
     if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
@@ -744,28 +851,38 @@ export class RuntimeTaskLifecycleStore {
 
   private restoreMachineUnread(key: string, machine: RuntimeTaskMachine): void {
     const snapshot = machine.getSnapshot()
-    const isCurrent = key === this.currentTaskKey
+    if (suppressesRuntimeTaskCompletionReminder(snapshot.task ?? snapshot.address)) {
+      this.clearCompletionUnread(key, machine)
+      return
+    }
+    const currentTaskVisible = key === this.currentTaskKey && this.windowFocused
     if (snapshot.execution.known && !snapshot.derived.isRunning) {
       const wasRunning = this.previousRunningTaskKeys.delete(key)
       if (
         wasRunning &&
         !snapshot.derived.isQueued &&
-        !isCurrent &&
+        !currentTaskVisible &&
         !this.unreadStateByTask.has(key)
       ) {
         if (snapshot.goalStatus === 'active') this.deferredGoalUnreadTaskKeys.add(key)
         else this.recordUnreadState(key, true)
       }
     }
-    if (snapshot.derived.isRunning || isCurrent) {
+    if (snapshot.derived.isRunning || currentTaskVisible) {
       machine.dispatch({ type: 'marked_read' })
-      if (isCurrent) this.recordUnreadState(key, false)
+      if (currentTaskVisible) this.recordUnreadState(key, false)
       else this.unreadStateByTask.delete(key)
       this.deferredGoalUnreadTaskKeys.delete(key)
     } else {
       const unread = this.unreadStateByTask.get(key)
       if (unread) machine.dispatch({ type: unread.unread ? 'marked_unread' : 'marked_read' })
     }
+  }
+
+  private clearCompletionUnread(key: string, machine: RuntimeTaskMachine): boolean {
+    this.deferredGoalUnreadTaskKeys.delete(key)
+    if (this.unreadStateByTask.get(key)?.unread) this.recordUnreadState(key, false)
+    return machine.dispatch({ type: 'marked_read' })
   }
 
   private recordUnreadState(key: string, unread: boolean): void {
@@ -813,18 +930,36 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private publish(): void {
+    if (this.batchDepth > 0) {
+      this.publishPending = true
+      return
+    }
+    this.publishPending = false
+    const previousTasks = this.snapshot.tasks
+    const trackTaskChanges = this.taskChangesListeners.size > 0
+    const changedKeys = this.removedTaskKeys
+    this.removedTaskKeys = new Set()
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
+    const activeTurnAddresses: RuntimeTaskAddress[] = []
     const runningTaskKeys = new Set<string>()
     const queuedTaskKeys = new Set<string>()
     const unreadTaskKeys = new Set<string>()
+    const waitingTaskKeys = new Set<string>()
+    const busyTaskKeys = new Set<string>()
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
+      if (task.turn.active) activeTurnAddresses.push(task.address)
+      if ((trackTaskChanges || this.taskListeners.has(key)) && previousTasks.get(key) !== task)
+        changedKeys.add(key)
       if (task.derived.isRunning) runningTaskKeys.add(key)
       if (task.derived.isQueued) queuedTaskKeys.add(key)
       if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
+      if (task.derived.shouldShowSidebarWaiting) waitingTaskKeys.add(key)
+      if (task.derived.isBusy) busyTaskKeys.add(key)
     }
     this.version += 1
+    this.activeTurnAddresses = activeTurnAddresses
     this.snapshot = {
       version: this.version,
       tasks,
@@ -832,18 +967,53 @@ export class RuntimeTaskLifecycleStore {
       queuedTaskKeys,
       unreadTaskKeys,
     }
+    const sidebar = this.sidebarSnapshot
+    const sameRunning = sameTaskKeys(sidebar.runningTaskKeys, runningTaskKeys)
+    const sameWaiting = sameTaskKeys(sidebar.waitingTaskKeys, waitingTaskKeys)
+    const sameBusy = sameTaskKeys(sidebar.busyTaskKeys, busyTaskKeys)
+    if (!sameRunning || !sameWaiting || !sameBusy) {
+      this.sidebarSnapshot = {
+        runningTaskKeys: sameRunning ? sidebar.runningTaskKeys : runningTaskKeys,
+        waitingTaskKeys: sameWaiting ? sidebar.waitingTaskKeys : waitingTaskKeys,
+        busyTaskKeys: sameBusy ? sidebar.busyTaskKeys : busyTaskKeys,
+      }
+    }
     this.persistUnreadKeys()
     this.persistRunningKeys()
+    const migratedListeners = this.reindexTaskListeners()
     this.listeners.forEach(listener => listener())
+    if (changedKeys.size)
+      this.taskChangesListeners.forEach(listener => listener(changedKeys, previousTasks, tasks))
+    for (const key of changedKeys) {
+      this.taskListeners.get(key)?.forEach(entry => entry.notify())
+    }
+    for (const entry of migratedListeners) {
+      if (!changedKeys.has(entry.key) && this.taskListeners.get(entry.key)?.has(entry))
+        entry.notify()
+    }
+  }
+
+  private reindexTaskListeners(): TaskListener[] {
+    if (!this.aliasesChanged) return []
+    this.aliasesChanged = false
+    const entries = [...this.taskListeners.values()].flatMap(group => [...group])
+    const migrated: TaskListener[] = []
+    this.taskListeners.clear()
+    for (const entry of entries) {
+      const key = this.taskSubscriptionKey(entry.address)
+      if (key !== entry.key) migrated.push(entry)
+      entry.key = key
+      this.addTaskListener(entry)
+    }
+    return migrated
   }
 
   private persistUnreadKeys(): void {
     if (typeof window === 'undefined') return
-    const keys = new Set(
-      [...this.unreadStateByTask].filter(([, state]) => state.unread).map(([key]) => key)
-    )
-    for (const [key, machine] of this.machines) {
-      if (!machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
+    const { tasks, unreadTaskKeys } = this.snapshot
+    const keys = new Set<string>()
+    for (const [key, state] of this.unreadStateByTask) {
+      if (state.unread && (!tasks.has(key) || unreadTaskKeys.has(key))) keys.add(key)
     }
     const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return
@@ -967,14 +1137,6 @@ function terminalTurnOutcome(
     return 'cancelled'
   }
   return 'succeeded'
-}
-
-function collectRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse
-): Array<{ workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }> {
-  return collectRuntimeWorkspaces(runtimeWork).flatMap(workspace =>
-    workspace.tasks.map(task => ({ workspace, task }))
-  )
 }
 
 function collectRuntimeWorkspaces(runtimeWork: RuntimeWorkListResponse): RuntimeDeviceWorkspace[] {

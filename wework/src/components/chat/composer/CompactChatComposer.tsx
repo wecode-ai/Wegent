@@ -1,3 +1,29 @@
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import type { CloudProject } from '@/api/deliveries'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import type { QuickPhrase } from '@/desktop/appPreferences'
+import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
+  runtimePermissionMode,
+} from '@/features/workbench/runtimePermissionMode'
+import { useTranslation } from '@/hooks/useTranslation'
+import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
+import type {
+  Attachment,
+  LocalDeviceApp,
+  LocalDeviceSkill,
+  ModelOptions,
+  UnifiedModel,
+} from '@/types/api'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
+import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowUp,
   Camera,
@@ -8,65 +34,45 @@ import {
   Image,
   Maximize2,
   Minimize2,
-  Plus,
   PencilLine,
-  Square,
+  Plus,
   ShieldCheck,
+  Square,
   Target,
   Zap,
 } from 'lucide-react'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import { useComposerModelSelector } from './useComposerModelSelector'
-import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
 } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import type {
-  Attachment,
-  LocalDeviceApp,
-  LocalDeviceSkill,
-  ModelOptions,
-  UnifiedModel,
-} from '@/types/api'
-import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
+import { debugComposerEvent, textMetrics } from './composerDebug'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import {
   ComposerTextarea,
   type ComposerSubmitOptions,
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
-import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
-import { useAutoResizeTextarea } from './useAutoResizeTextarea'
-import { debugComposerEvent, textMetrics } from './composerDebug'
-import { QuickPhraseMenu } from './QuickPhraseMenu'
-import { ModelSelector } from './ModelSelector'
-import type { QuickPhrase } from '@/desktop/appPreferences'
-import type { CloudProject } from '@/api/deliveries'
-import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
-import type {
-  ComposerCloudMentionCandidate,
-  ComposerConversationMentionCandidate,
-} from './composerMentionCandidates'
 import {
   primaryComposerSubmitOptions,
   type ComposerFollowUpBehavior,
 } from './composerTextareaTypes'
-import { applyWorkspacePathTransfer } from './composerPathTransfer'
+import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
+import { ModelSelector } from './ModelSelector'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { useComposerDrawing } from './useComposerDrawing'
-import {
-  RUNTIME_PERMISSION_MODE_OPTION,
-  runtimePermissionMode,
-} from '@/features/workbench/runtimePermissionMode'
+import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface CompactChatComposerProps {
   value: string
@@ -111,12 +117,14 @@ interface CompactChatComposerProps {
   selectedModel?: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
   onSelectModel?: (model: UnifiedModel | null) => boolean | void
   onSelectModelOption?: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   modelSelectorOverride?: ReactNode
   isModelSelectionReady?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   projectPhrases?: QuickPhrase[]
   sendKey?: 'enter' | 'cmd_enter'
@@ -168,14 +176,16 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       selectedModel,
       activeModel,
       selectedModelOptions = {},
+      permissionControls,
       onSelectModel,
       onSelectModelOption,
       onBlockedModelSelect,
       modelSelectorOverride,
       isModelSelectionReady = true,
       isStreaming = false,
+      showPauseButton = true,
       onPause,
-      projectPhrases = [],
+      projectPhrases,
       sendKey = 'enter',
       followUpBehavior = 'queue',
     },
@@ -193,9 +203,28 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const fullscreenInputRef = useRef<HTMLElement>(null)
     const [contextSheetOpen, setContextSheetOpen] = useState(false)
     const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
-    const [canExpandInput, setCanExpandInput] = useState(false)
-    const [hasText, setHasText] = useState(value.trim().length > 0)
+    const geometry = useElementGeometry([textareaRef])
+    const [textState, setTextState] = useState({
+      external: value,
+      hasText: value.trim().length > 0,
+    })
+    if (textState.external !== value)
+      setTextState({ external: value, hasText: value.trim().length > 0 })
+    const hasText = textState.hasText
     const [phraseError, setPhraseError] = useState<string | null>(null)
+    const selectedPermissionControls: ComposerPermissionControls | null | undefined =
+      permissionControls === undefined && onSelectModelOption
+        ? {
+            value: runtimePermissionMode(selectedModelOptions),
+            commandApproval: runtimeCommandApprovalMode(selectedModelOptions),
+            onCommandApprovalChange: mode =>
+              onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode),
+            onChange: (mode, approval) => {
+              if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+              onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+            },
+          }
+        : permissionControls
 
     useImperativeHandle(
       ref,
@@ -245,7 +274,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       selectedModel?.displayName ||
       selectedModel?.name ||
       t('workbench.model_picker_title', '选择模型')
-    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'mod+Enter'
     const primaryBusyLabel =
       followUpBehavior === 'guide'
         ? t('workbench.guide_current_turn', '引导当前回复')
@@ -257,15 +286,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       !submitDisabled
     const explicitLineCount = value.split('\n').length
 
-    useEffect(() => {
-      // Sync local hasText with external value changes (e.g. clear after submit).
-
-      setHasText(value.trim().length > 0)
-    }, [value])
-
     const handleComposerChange = useCallback(
       (nextValue: string) => {
-        setHasText(nextValue.trim().length > 0)
+        setTextState(current => ({ ...current, hasText: nextValue.trim().length > 0 }))
         onChange(nextValue)
       },
       [onChange]
@@ -281,7 +304,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onRemoveAttachment(attachment.id)
       window.requestAnimationFrame(() => textareaRef.current?.focus())
     }
-    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    const handleQuickPhraseSelect = useStableEvent((phrase: QuickPhrase) => {
       const activeComposer = fullscreenInputOpen
         ? fullscreenComposerRef.current
         : composerRef.current
@@ -303,7 +326,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-    }
+    })
 
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files
@@ -324,15 +347,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onSetPlanMode?.()
     }
 
-    useEffect(() => {
-      const textarea = textareaRef.current
-      if (!textarea) {
-        setCanExpandInput(explicitLineCount > 4)
-        return
-      }
-
-      setCanExpandInput(explicitLineCount > 4 || textarea.scrollHeight > 124)
-    }, [explicitLineCount, textareaRef, value])
+    const canExpandInput = explicitLineCount > 4 || (geometry?.elements[0]?.scrollHeight ?? 0) > 124
 
     const renderModelSelector = (control: ReturnType<typeof useComposerModelSelector>) => (
       <ModelSelector
@@ -364,7 +379,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           onShowTextAttachment={handleShowTextAttachment}
           onClearCodeComments={onClearCodeComments}
         />
-        <input
+        <ControlInput
           ref={imageInputRef}
           type="file"
           multiple
@@ -372,7 +387,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           data-testid="mobile-image-file-input"
           onChange={handleImageChange}
         />
-        <input
+        <ControlInput
           ref={cameraInputRef}
           type="file"
           accept="image/*"
@@ -435,7 +450,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           }}
         >
           {showAttachmentActions && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="add-context-button"
               onClick={() => !disabled && setContextSheetOpen(true)}
@@ -445,7 +462,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               aria-label={t('workbench.add_context', '添加上下文')}
             >
               <Plus className="h-6 w-6" />
-            </button>
+            </ControlButton>
           )}
           <QuickPhraseMenu
             compact
@@ -488,10 +505,6 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectCloudProject={onSelectCloudProject}
               className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
-              skillMenuClassName={[
-                'left-[-1rem]',
-                isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',
-              ].join(' ')}
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}
               models={models}
@@ -508,7 +521,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               isStreaming={isStreaming}
             />
             {canExpandInput && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="expand-input-button"
                 onClick={() => setFullscreenInputOpen(true)}
@@ -516,11 +530,13 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 aria-label={t('workbench.expand_input', '展开输入框')}
               >
                 <Maximize2 className="h-4 w-4" />
-              </button>
+              </ControlButton>
             )}
             {showSubmitButton &&
-              (isStreaming && !canSend ? (
-                <button
+              (showPauseButton && isStreaming && !canSend ? (
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="button"
                   data-testid="pause-response-button"
                   onClick={onPause}
@@ -528,22 +544,25 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   aria-label={t('workbench.pause_response', '暂停回复')}
                 >
                   <Square className="h-4 w-4 fill-current" />
-                </button>
+                </ControlButton>
               ) : isStreaming && canSend ? (
                 <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
-                  <button
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="submit"
                     data-testid={submitButtonTestId}
                     className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
                     aria-label={primaryBusyLabel}
                   >
                     <ArrowUp className="h-5 w-5" />
-                  </button>
+                  </ControlButton>
                   <ActionMenu
                     ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
                     testId="send-mode-menu-button"
                     icon={ChevronDown}
-                    triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
+                    density="dense"
+                    triggerClassName="flex items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
                     items={[
                       {
                         label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -584,13 +603,15 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                           onSubmit(composerRef.current?.getValue() ?? value, {
                             interruptWhenBusy: true,
                           }),
-                        shortcut: 'Command+Shift+Enter',
+                        shortcut: 'mod+Shift+Enter',
                       },
                     ]}
                   />
                 </div>
               ) : (
-                <button
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-testid={submitButtonTestId}
                   disabled={!canSend}
@@ -598,7 +619,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   aria-label={t('workbench.send_message', '发送消息')}
                 >
                   <ArrowUp className="h-5 w-5" />
-                </button>
+                </ControlButton>
               ))}
           </div>
         </form>
@@ -614,7 +635,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               onClick={event => event.stopPropagation()}
             >
               <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-border" />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="mobile-take-photo-button"
                 onClick={() => cameraInputRef.current?.click()}
@@ -622,8 +644,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               >
                 <Camera className="h-6 w-6 shrink-0 text-text-secondary" />
                 <span>{t('workbench.take_photo', '拍照')}</span>
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="mobile-upload-image-button"
                 onClick={() => imageInputRef.current?.click()}
@@ -631,9 +654,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               >
                 <Image className="h-6 w-6 shrink-0 text-text-secondary" />
                 <span>{t('workbench.upload_image', '上传文件')}</span>
-              </button>
+              </ControlButton>
               {openDrawing && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="mobile-draw-attachment-button"
                   onClick={() => {
@@ -644,10 +668,11 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 >
                   <PencilLine className="h-6 w-6 shrink-0 text-text-secondary" />
                   <span>{t('workbench.drawing.title')}</span>
-                </button>
+                </ControlButton>
               )}
               {onSetPlanMode && !planModeActive && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="mobile-set-plan-mode-button"
                   onClick={handleSetPlanMode}
@@ -655,10 +680,11 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 >
                   <ClipboardList className="h-6 w-6 shrink-0 text-text-secondary" />
                   <span>{t('workbench.plan_mode', '计划模式')}</span>
-                </button>
+                </ControlButton>
               )}
               {onSetGoal && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="mobile-set-goal-button"
                   onClick={handleSetGoal}
@@ -666,9 +692,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 >
                   <Target className="h-6 w-6 shrink-0 text-primary" />
                   <span>{t('workbench.pursue_goal', '追求目标')}</span>
-                </button>
+                </ControlButton>
               )}
-              {onSelectModelOption ? (
+              {selectedPermissionControls ? (
                 <div
                   data-testid="mobile-permission-mode-row"
                   className="flex h-14 w-full items-center justify-between gap-4 rounded-2xl px-4 text-text-primary"
@@ -678,9 +704,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                     <span>{t('workbench.permission_mode', '权限模式')}</span>
                   </span>
                   <PermissionModeSelector
-                    value={runtimePermissionMode(selectedModelOptions)}
-                    disabled={disabled}
-                    onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                    {...selectedPermissionControls}
+                    disabled={disabled || selectedPermissionControls.disabled}
                   />
                 </div>
               ) : null}
@@ -696,7 +721,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               {renderModelSelector(fullscreenModelSelectorControl)}
             </div>
             <div className="relative min-h-0 flex-1">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="collapse-input-button"
                 onClick={() => setFullscreenInputOpen(false)}
@@ -704,7 +730,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 aria-label={t('workbench.collapse_input', '折叠输入框')}
               >
                 <Minimize2 className="h-5 w-5" />
-              </button>
+              </ControlButton>
               <ComposerTextarea
                 ref={fullscreenComposerRef}
                 onOpenModelSelector={fullscreenModelSelectorControl.requestOpen}
@@ -730,7 +756,6 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 cloudSpaceEnabled={cloudSpaceEnabled}
                 onSelectCloudProject={onSelectCloudProject}
                 className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-primary outline-none"
-                skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
                 onListLocalSkills={onListLocalSkills}
                 onListLocalApps={onListLocalApps}
                 models={models}

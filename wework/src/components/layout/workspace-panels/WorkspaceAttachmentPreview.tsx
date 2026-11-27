@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react'
-import { Download } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type {
   WorkspaceAttachmentPreviewSource,
   WorkspaceTextFileResponse,
 } from '@/types/workspace-files'
-import { useTranslation } from '@/hooks/useTranslation'
-import { saveBlobToDownloads } from '@/lib/blobDownload'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Download } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { InlineDesktopImagePreview } from '@/components/chat/image-preview/DesktopImagePreview'
+import { useScopedImageEditor } from '@/components/chat/image-preview/ImageEditContext'
+import { useSavedImageMarkup } from '@/components/chat/image-preview/savedImageMarkupStore'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
@@ -15,102 +21,154 @@ export function WorkspaceAttachmentPreview({
   source: WorkspaceAttachmentPreviewSource
 }) {
   const { t } = useTranslation('common')
-  const [result, setResult] = useState<{
-    source: WorkspaceAttachmentPreviewSource
-    revision: number
-    file: File | null
-    text: WorkspaceTextFileResponse | null
-    error: string | null
-  } | null>(null)
   const [revision, setRevision] = useState(0)
-  const current = result?.source === source && result.revision === revision ? result : null
-  const file = current?.file ?? null
-  const text = current?.text ?? null
-  const error = current?.error ?? null
-  useEffect(() => {
-    let active = true
-    void source
-      .loadFile()
-      .then(async blob => {
-        const file = new File([blob], source.filename, { type: source.contentType || blob.type })
-        // Attachments use a read-only table viewer; workspace CSV/TSV files remain editable text.
-        const content =
-          !/\.(csv|tsv)$/i.test(file.name) &&
-          workspaceFilePreviewKind(file.name, file.type) === 'text'
-            ? await file.text()
-            : null
-        if (!active) return
-        setResult({
-          source,
-          revision,
-          file,
-          error: null,
-          text:
-            content !== null
-              ? {
-                  path: file.name,
-                  name: file.name,
-                  content,
-                  editable: false,
-                  revision: '',
-                  truncated: false,
-                  size: file.size,
-                }
-              : null,
-        })
-      })
-      .catch(cause => {
-        if (active)
-          setResult({
-            source,
-            revision,
-            file: null,
-            text: null,
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-      })
-    return () => {
-      active = false
-    }
-  }, [source, revision])
+  const viewerContainer = useRef<HTMLElement>(null)
+  const [focusRequest, setFocusRequest] = useState(0)
+  useFocusRequest(viewerContainer, focusRequest, {
+    enabled: focusRequest > 0,
+    preventScroll: true,
+  })
+  const [failedImage, setFailedImage] = useState<File | null>(null)
+  const originalDraftAttachmentId = source.image?.draftAttachmentId
+  const saved = useSavedImageMarkup(originalDraftAttachmentId)
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        'attachment-preview:' + revision,
+        () =>
+          saved
+            ? Promise.resolve({
+                file: saved.file,
+                text: null,
+                imageUrl: URL.createObjectURL(saved.file),
+                downloadError: undefined,
+              })
+            : loadAttachmentPreview(source),
+        {
+          release: result => {
+            if (result.imageUrl) URL.revokeObjectURL(result.imageUrl)
+          },
+        }
+      ),
+    [source, revision, saved]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const file = snapshot.data?.file ?? null
+  const draftAttachmentId = saved?.attachmentId ?? source.image?.draftAttachmentId
+  const scopedEditor = useScopedImageEditor(source.image?.editorScope)
+  const editor =
+    draftAttachmentId === undefined ||
+    scopedEditor?.hasDraftAttachment?.(draftAttachmentId) !== false
+      ? scopedEditor
+      : null
+  const text = snapshot.data?.text ?? null
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : String(snapshot.error)
+      : file && failedImage === file
+        ? t('image_preview.load_failed')
+        : (snapshot.data?.downloadError ?? null)
+
   return (
     <section
+      ref={viewerContainer}
+      tabIndex={-1}
       data-testid="composer-attachment-preview-panel"
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="min-w-0 flex-1 truncate text-sm" title={source.filename}>
-          {source.filename}
-        </span>
-        <button
-          type="button"
-          data-testid="composer-attachment-preview-download"
-          disabled={!file}
-          aria-label={t('todo.download_file')}
-          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted disabled:opacity-50"
-          onClick={() => {
-            if (file)
-              void saveBlobToDownloads(file, file.name).catch(cause => {
-                setResult(previous =>
-                  previous?.source === source && previous.revision === revision
-                    ? { ...previous, error: String(cause) }
-                    : previous
-                )
-              })
+      {file && snapshot.data?.imageUrl && failedImage !== file ? (
+        <InlineDesktopImagePreview
+          attachment={{
+            mime_type: file.type,
+            id: draftAttachmentId,
+            image_markup_comments: saved?.comments ?? source.image?.comments ?? [],
           }}
-        >
-          <Download className="h-4 w-4" />
-        </button>
-      </header>
-      <WorkspaceFilePreview
-        file={text}
-        binaryFile={
-          file && !text ? { file, name: file.name, path: file.name, size: file.size } : null
-        }
-        loading={!file && !error}
-        error={error}
-        onRetry={() => setRevision(value => value + 1)}
-      />
+          fromComposer={draftAttachmentId !== undefined}
+          sourceDraftAttachmentId={originalDraftAttachmentId}
+          filename={file.name}
+          localPath={saved ? null : source.image?.localPath}
+          editorScope={editor?.scope}
+          onEditCompleted={() => setFocusRequest(value => value + 1)}
+          url={snapshot.data.imageUrl}
+          loading={false}
+          loadFile={async () => file}
+          onDownload={async () => {
+            await saveBlobToDownloads(file, file.name)
+          }}
+          onError={() => setFailedImage(file)}
+        />
+      ) : (
+        <>
+          <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+            <span className="min-w-0 flex-1 truncate text-sm" title={source.filename}>
+              {source.filename}
+            </span>
+            <ControlButton
+              type="button"
+              data-testid="composer-attachment-preview-download"
+              disabled={!file}
+              aria-label={t('todo.download_file')}
+              className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted disabled:opacity-50"
+              onClick={() => {
+                if (file)
+                  void saveBlobToDownloads(file, file.name).catch(cause => {
+                    resource.update(previous =>
+                      previous ? { ...previous, downloadError: String(cause) } : previous
+                    )
+                  })
+              }}
+            >
+              <Download className="h-4 w-4" />
+            </ControlButton>
+          </header>
+          <WorkspaceFilePreview
+            file={text}
+            binaryFile={
+              file && !text ? { file, name: file.name, path: file.name, size: file.size } : null
+            }
+            loading={!file && !error}
+            error={error}
+            onRetry={() => setRevision(value => value + 1)}
+          />
+        </>
+      )}
     </section>
   )
+}
+
+async function loadAttachmentPreview(source: WorkspaceAttachmentPreviewSource): Promise<{
+  file: File
+  text: WorkspaceTextFileResponse | null
+  downloadError?: string
+  imageUrl?: string
+}> {
+  const blob = await source.loadFile()
+  const file = new File([blob], source.filename, { type: source.contentType || blob.type })
+  if (source.image) return { file, text: null, imageUrl: URL.createObjectURL(file) }
+  // Attachments use a read-only table viewer; workspace CSV/TSV files remain editable text.
+  const content =
+    !/\.(csv|tsv)$/i.test(file.name) && workspaceFilePreviewKind(file.name, file.type) === 'text'
+      ? await file.text()
+      : null
+  return {
+    file,
+    text:
+      content !== null
+        ? {
+            path: file.name,
+            name: file.name,
+            content,
+            editable: false,
+            revision: '',
+            truncated: false,
+            size: file.size,
+          }
+        : null,
+  }
 }

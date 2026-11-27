@@ -1,45 +1,58 @@
-import { ProviderSettingsSection } from './ProviderSettingsSection'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Switch } from '@wegent/collaboration/controls/Switch'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, ChevronDown, Loader2, RefreshCw, ShieldCheck, Upload } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { CloudModelsSection, DisconnectedCloudModelsSection } from './CloudModelsSection'
 import { CodexOfficialModelsSection } from './CodexOfficialModelsSection'
 import { LocalCodexModelRow } from './LocalCodexModelRow'
-import { CloudModelsSection, DisconnectedCloudModelsSection } from './CloudModelsSection'
-import { AlertCircle, ChevronDown, Loader2, RefreshCw, ShieldCheck, Upload } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LocalCodexTransportSettings } from './LocalCodexTransportSettings'
+import { ProviderSettingsSection } from './ProviderSettingsSection'
 
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
+import { listLocalCodexAccounts, type LocalCodexAccounts } from '@/api/local/codexAuth'
 import { getLocalCodexOfficialModels } from '@/api/local/codexOfficialModels'
-import {
-  cancelLocalCodexLogin,
-  listLocalCodexAccounts,
-  startLocalCodexLogin,
-  switchLocalCodexAccount,
-  type LocalCodexAccounts,
-} from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createModelApi } from '@/api/models'
-import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
+import { createUserApi } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { CodexOfficialModelList } from '@/features/model-settings/codexOfficialModels'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createLocalCodexAccountSession } from './localCodexAccountSession'
 
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
-import { openExternalUrl } from '@/lib/external-links'
 
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
 
 import type { DeviceInfo } from '@/types/devices'
 import {
+  SettingsGroup,
   SettingsPage,
   SettingsPageHeader,
-  SettingsSwitch,
-  SettingsGroup,
   SettingsRow,
+  SettingsSwitch,
 } from './settings-ui'
+
+const EMPTY_DEVICES: DeviceInfo[] = []
 
 interface CloudRuntimeSettingsConnection {
   isConnected: boolean
@@ -192,11 +205,12 @@ function CodexSettingsGroup({
         label={title}
         description={description}
         className="py-4"
-        control={
-          <button
+        children={
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid={`codex-${kind}-details-toggle`}
-            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-muted md:min-h-8"
             aria-expanded={expanded}
             onClick={() => setExpanded(value => !value)}
           >
@@ -204,7 +218,7 @@ function CodexSettingsGroup({
             <ChevronDown
               className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
             />
-          </button>
+          </ControlButton>
         }
       />
       {expanded && <div className="space-y-3 px-4 pb-4">{children}</div>}
@@ -274,35 +288,137 @@ export function ModelSettingsPage({
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [config, setConfig] = useState<UserRuntimeConfig | null>(null)
-  const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [selectedAuthSyncSource, setSelectedAuthSyncSource] = useState('local')
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [localAuthStatus, setLocalAuthStatus] = useState<LocalRuntimeAuthStatus | null>(null)
-  const [localCodexAccounts, setLocalCodexAccounts] = useState<LocalCodexAccounts | null>(null)
-  const [localAuthLoading, setLocalAuthLoading] = useState(true)
-  const [localAuthError, setLocalAuthError] = useState<string | null>(null)
-  const [switchingLocalAccountId, setSwitchingLocalAccountId] = useState<string | null>(null)
-  const [localLoginState, setLocalLoginState] = useState<
-    'idle' | 'starting' | 'waiting' | 'cancelling'
-  >('idle')
-  const [localLoginError, setLocalLoginError] = useState<string | null>(null)
-  const localLoginIdRef = useRef<string | null>(null)
-  const localLoginGenerationRef = useRef(0)
-  const [codexOfficialModels, setCodexOfficialModels] = useState<CodexOfficialModelList | null>(
-    null
-  )
-  const [codexOfficialLoading, setCodexOfficialLoading] = useState(true)
-  const [codexOfficialError, setCodexOfficialError] = useState<string | null>(null)
-
   const { enabled: subscriptionEnabled, loaded: subscriptionLoaded } =
     useLocalCodexSubscriptionEnabled()
+  const auth = useMemo(
+    () =>
+      createAsyncResource('local-codex-auth', async signal => {
+        await Promise.resolve()
+        signal.throwIfAborted()
+        const [status, accounts] = await Promise.all([
+          getLocalCodexAuthStatus(),
+          listLocalCodexAccounts(),
+        ])
+        return { status, accounts }
+      }),
+    []
+  )
+  const authSnapshot = useSyncExternalStore(
+    subscriptionEnabled ? auth.subscribe : subscribeIdleResource,
+    auth.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const localAuthStatus = authSnapshot.data?.status ?? null
+  const localCodexAccounts = authSnapshot.data?.accounts ?? null
+  const localAuthLoading =
+    subscriptionEnabled && (authSnapshot.status === 'idle' || authSnapshot.status === 'loading')
+  const localAuthError =
+    authSnapshot.status === 'error'
+      ? getErrorMessage(
+          authSnapshot.error,
+          t('workbench.local_codex_auth_load_failed', '读取本机 Codex auth 状态失败')
+        )
+      : null
+  const [accountSession] = useState(createLocalCodexAccountSession)
+  const account = useSyncExternalStore(
+    accountSession.subscribe,
+    accountSession.getSnapshot,
+    accountSession.getServerSnapshot
+  )
+  const {
+    loginState: localLoginState,
+    loginError: localLoginError,
+    switchingAccountId: switchingLocalAccountId,
+  } = account
+  const loadLocalAuthStatus = auth.reload
+  const handleLocalCodexLogin = () => accountSession.login(localAuthStatus, loadLocalAuthStatus, t)
+  const handleCancelLocalCodexLogin = () => accountSession.cancel(t)
+  const handleSwitchLocalCodexAccount = (accountId: string) =>
+    accountSession.switchAccount(accountId, data => auth.update(() => data), t)
+  const official = useMemo(
+    () =>
+      createAsyncResource(
+        'codex-official-models',
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          return getLocalCodexOfficialModels()
+        },
+        {
+          success() {
+            window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+          },
+        }
+      ),
+    []
+  )
+  const officialSnapshot = useSyncExternalStore(
+    subscriptionEnabled ? official.subscribe : subscribeIdleResource,
+    official.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const codexOfficialModels =
+    officialSnapshot.status === 'error' ? null : (officialSnapshot.data ?? null)
+  const codexOfficialLoading =
+    subscriptionEnabled &&
+    (officialSnapshot.status === 'idle' || officialSnapshot.status === 'loading')
+  const codexOfficialError =
+    officialSnapshot.status === 'error'
+      ? getErrorMessage(officialSnapshot.error, t('workbench.codex_official_models_load_failed'))
+      : null
+  const loadCodexOfficialModels = official.reload
+  const cloudQuery = useMemo(
+    () =>
+      createAsyncResource(runtime, async signal => {
+        await Promise.resolve()
+        signal.throwIfAborted()
+        const { deviceApi, userApi } = createRuntimeSettingsApis(cloudConnection)
+        const [config, devices] = await Promise.all([
+          userApi.getRuntimeConfig(runtime),
+          deviceApi.getAllDevices(),
+        ])
+        return { config, devices: devices.filter(isClaudeCodeDevice) }
+      }),
+    [cloudConnection, runtime]
+  )
+  const cloudSnapshot = useSyncExternalStore(
+    cloudConnection.isConnected ? cloudQuery.subscribe : subscribeIdleResource,
+    cloudQuery.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const config = cloudSnapshot.data?.config ?? null
+  const devices = cloudSnapshot.data?.devices ?? EMPTY_DEVICES
+  const loading =
+    cloudConnection.isConnected &&
+    (cloudSnapshot.status === 'idle' ||
+      (cloudSnapshot.status === 'loading' && !cloudSnapshot.settled))
+  const refreshing = cloudSnapshot.status === 'loading' && cloudSnapshot.settled
+  const loadRuntimeConfig = cloudQuery.reload
+  const setConfig = (config: UserRuntimeConfig) =>
+    cloudQuery.update(previous => ({ config, devices: previous?.devices ?? EMPTY_DEVICES }))
+  const [actionError, setActionError] = useState<{
+    owner: typeof cloudQuery
+    message: string | null
+  } | null>(null)
+  const [actionNotice, setActionNotice] = useState<{
+    owner: typeof cloudQuery
+    message: string | null
+  } | null>(null)
+  const setError = (message: string | null) => setActionError({ owner: cloudQuery, message })
+  const setNotice = (message: string | null) => setActionNotice({ owner: cloudQuery, message })
+  const error =
+    (actionError?.owner === cloudQuery ? actionError.message : null) ??
+    (cloudSnapshot.status === 'error'
+      ? getErrorMessage(
+          cloudSnapshot.error,
+          t('workbench.runtime_config_load_failed', '加载运行时配置失败')
+        )
+      : null)
+  const notice = actionNotice?.owner === cloudQuery ? actionNotice.message : null
   const [restartDialogOpen, setRestartDialogOpen] = useState(false)
   const [restartPending, setRestartPending] = useState(false)
   const pendingSubscriptionEnabledRef = useRef<boolean | null>(null)
@@ -363,206 +479,6 @@ export function ModelSettingsPage({
   const authSourceActionLabel = selectedAuthSyncSourceIsLocal
     ? t('workbench.runtime_config_choose_local_auth_action', '选择并保存')
     : t('workbench.runtime_config_import_action', '读取并保存')
-
-  const loadLocalAuthStatus = useCallback(async () => {
-    setLocalAuthLoading(true)
-    setLocalAuthError(null)
-    try {
-      const [status, accounts] = await Promise.all([
-        getLocalCodexAuthStatus(),
-        listLocalCodexAccounts(),
-      ])
-      setLocalAuthStatus(status)
-      setLocalCodexAccounts(accounts)
-    } catch (statusError) {
-      setLocalAuthError(
-        getErrorMessage(
-          statusError,
-          t('workbench.local_codex_auth_load_failed', '读取本机 Codex auth 状态失败')
-        )
-      )
-    } finally {
-      setLocalAuthLoading(false)
-    }
-  }, [t])
-
-  useEffect(() => {
-    if (!subscriptionEnabled) return
-    void Promise.resolve().then(loadLocalAuthStatus)
-  }, [loadLocalAuthStatus, subscriptionEnabled])
-
-  useEffect(
-    () => () => {
-      localLoginGenerationRef.current += 1
-      const loginId = localLoginIdRef.current
-      localLoginIdRef.current = null
-      if (loginId) {
-        void cancelLocalCodexLogin(loginId)
-      }
-    },
-    []
-  )
-
-  const handleLocalCodexLogin = async () => {
-    if (localLoginState !== 'idle') return
-    const generation = localLoginGenerationRef.current + 1
-    localLoginGenerationRef.current = generation
-    setLocalLoginState('starting')
-    setLocalLoginError(null)
-    try {
-      const initialAuthSha256 = localAuthStatus?.sha256 ?? null
-      const login = await startLocalCodexLogin()
-      if (localLoginGenerationRef.current !== generation) {
-        void cancelLocalCodexLogin(login.loginId)
-        return
-      }
-      localLoginIdRef.current = login.loginId
-      const opened = await openExternalUrl(login.authUrl, { target: 'system' })
-      if (!opened) {
-        throw new Error(t('workbench.local_codex_login_open_failed', '无法打开 Codex 登录页面'))
-      }
-      setLocalLoginState('waiting')
-      const deadline = Date.now() + 5 * 60 * 1000
-      while (localLoginGenerationRef.current === generation) {
-        const nextStatus = await getLocalCodexAuthStatus()
-        if (localLoginGenerationRef.current !== generation) return
-        if (nextStatus.exists && nextStatus.sha256 !== initialAuthSha256) {
-          localLoginIdRef.current = null
-          setLocalLoginState('idle')
-          await loadLocalAuthStatus()
-          return
-        }
-        if (Date.now() >= deadline) {
-          throw new Error(t('workbench.local_codex_login_timeout', 'Codex 登录已超时，请重试'))
-        }
-        await new Promise(resolve => window.setTimeout(resolve, 1000))
-      }
-    } catch (loginError) {
-      if (localLoginGenerationRef.current !== generation) return
-      const loginId = localLoginIdRef.current
-      localLoginIdRef.current = null
-      if (loginId) {
-        try {
-          await cancelLocalCodexLogin(loginId)
-        } catch {
-          // Preserve the primary login error.
-        }
-      }
-      setLocalLoginState('idle')
-      setLocalLoginError(
-        getErrorMessage(
-          loginError,
-          t('workbench.local_codex_login_failed', 'Codex 登录失败，请重试')
-        )
-      )
-    }
-  }
-
-  const handleSwitchLocalCodexAccount = async (accountId: string) => {
-    if (switchingLocalAccountId || localLoginState !== 'idle') return
-    setSwitchingLocalAccountId(accountId)
-    setLocalLoginError(null)
-    try {
-      setLocalCodexAccounts(await switchLocalCodexAccount(accountId))
-      setLocalAuthStatus(await getLocalCodexAuthStatus())
-      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
-    } catch (switchError) {
-      setLocalLoginError(
-        getErrorMessage(
-          switchError,
-          t(
-            'workbench.local_codex_account_switch_failed',
-            '切换失败，请等待正在运行的 Codex 任务结束后重试'
-          )
-        )
-      )
-    } finally {
-      setSwitchingLocalAccountId(null)
-    }
-  }
-
-  const handleCancelLocalCodexLogin = async () => {
-    const loginId = localLoginIdRef.current
-    if (!loginId || localLoginState !== 'waiting') return
-    localLoginGenerationRef.current += 1
-    localLoginIdRef.current = null
-    setLocalLoginState('cancelling')
-    setLocalLoginError(null)
-    try {
-      await cancelLocalCodexLogin(loginId)
-    } catch (cancelError) {
-      setLocalLoginError(
-        getErrorMessage(
-          cancelError,
-          t('workbench.local_codex_login_cancel_failed', '取消 Codex 登录失败')
-        )
-      )
-    } finally {
-      setLocalLoginState('idle')
-    }
-  }
-
-  const loadCodexOfficialModels = useCallback(async () => {
-    setCodexOfficialLoading(true)
-    setCodexOfficialError(null)
-    try {
-      const nextModels = await getLocalCodexOfficialModels()
-      setCodexOfficialModels(nextModels)
-      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
-    } catch (loadError) {
-      setCodexOfficialModels(null)
-      setCodexOfficialError(
-        getErrorMessage(loadError, t('workbench.codex_official_models_load_failed'))
-      )
-    } finally {
-      setCodexOfficialLoading(false)
-    }
-  }, [t])
-
-  useEffect(() => {
-    if (!subscriptionEnabled) return
-    void Promise.resolve().then(loadCodexOfficialModels)
-  }, [loadCodexOfficialModels, subscriptionEnabled])
-
-  const loadRuntimeConfig = useCallback(
-    async (refresh = false) => {
-      if (!cloudConnection.isConnected) {
-        setLoading(false)
-        setRefreshing(false)
-        return
-      }
-      if (refresh) {
-        setRefreshing(true)
-      } else {
-        setLoading(true)
-      }
-      setError(null)
-      try {
-        const { deviceApi, userApi } = createRuntimeSettingsApis(cloudConnection)
-        const [nextConfig, nextDevices] = await Promise.all([
-          userApi.getRuntimeConfig(runtime),
-          deviceApi.getAllDevices(),
-        ])
-        setConfig(nextConfig)
-        setDevices(nextDevices.filter(isClaudeCodeDevice))
-      } catch (loadError) {
-        setError(
-          getErrorMessage(
-            loadError,
-            t('workbench.runtime_config_load_failed', '加载运行时配置失败')
-          )
-        )
-      } finally {
-        setLoading(false)
-        setRefreshing(false)
-      }
-    },
-    [cloudConnection, runtime, t]
-  )
-
-  useEffect(() => {
-    void Promise.resolve().then(() => loadRuntimeConfig())
-  }, [loadRuntimeConfig])
 
   const handleToggleUseUserConfig = async () => {
     if (!config || !config.configured || updating) return
@@ -665,6 +581,7 @@ export function ModelSettingsPage({
   const restartConfirmDialog = (
     <ConfirmDialog
       open={restartDialogOpen}
+      focusCancel
       title={t('workbench.local_codex_subscription_restart_title', '需要重启 Wework 生效')}
       description={t(
         'workbench.local_codex_subscription_restart_description',
@@ -696,6 +613,7 @@ export function ModelSettingsPage({
                 void handleToggleLocalCodexSubscription(checked)
               }}
             />
+            {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
             <DisconnectedCloudCodexSyncSection
               status={localAuthStatus}
               accounts={localCodexAccounts}
@@ -736,12 +654,11 @@ export function ModelSettingsPage({
         title={t('workbench.model_settings_title', '模型设置')}
         description={t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
         actions={
-          <button
+          <IconButton
             type="button"
             data-testid="runtime-config-refresh-button"
-            onClick={() => void loadRuntimeConfig(true)}
+            onClick={() => void loadRuntimeConfig()}
             disabled={loading || refreshing}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             aria-label={t('workbench.runtime_config_refresh', '刷新')}
             title={t('workbench.runtime_config_refresh', '刷新')}
           >
@@ -750,7 +667,7 @@ export function ModelSettingsPage({
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-          </button>
+          </IconButton>
         }
       />
 
@@ -763,6 +680,7 @@ export function ModelSettingsPage({
               void handleToggleLocalCodexSubscription(checked)
             }}
           />
+          {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
           {loading ? (
             <div className="py-8 text-center text-sm text-text-secondary">
               {t('common.loading', '加载中...')}
@@ -810,25 +728,12 @@ export function ModelSettingsPage({
                       >
                         {statusLabel}
                       </span>
-                      <button
-                        type="button"
+                      <Switch
                         data-testid="runtime-config-toggle"
-                        role="switch"
-                        aria-checked={config?.use_user_config ?? false}
-                        onClick={handleToggleUseUserConfig}
+                        checked={config?.use_user_config ?? false}
+                        onCheckedChange={handleToggleUseUserConfig}
                         disabled={!config?.configured || updating}
-                        className={[
-                          'inline-flex h-6 items-center justify-center gap-1 rounded-full px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50',
-                          config?.use_user_config
-                            ? 'bg-primary text-primary-contrast'
-                            : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
-                        ].join(' ')}
-                      >
-                        {updating && <Loader2 className="h-3 w-3 animate-spin" />}
-                        {config?.use_user_config
-                          ? t('workbench.runtime_config_use_enabled', '自动同步开启')
-                          : t('workbench.runtime_config_use_disabled', '自动同步关闭')}
-                      </button>
+                      />
                     </div>
                     <p className="mt-1 text-xs leading-5 text-text-secondary">
                       {t(
@@ -854,7 +759,7 @@ export function ModelSettingsPage({
                   </div>
 
                   <div className="grid min-w-[320px] gap-1.5">
-                    <input
+                    <ControlInput
                       ref={fileInputRef}
                       type="file"
                       data-testid="runtime-config-file-input"
@@ -869,29 +774,40 @@ export function ModelSettingsPage({
                       {t('workbench.runtime_config_sync_source', '认证来源')}
                     </label>
                     <div className="flex flex-wrap items-center justify-end gap-2">
-                      <select
-                        id="runtime-config-sync-source"
-                        data-testid="runtime-config-sync-source-select"
-                        value={selectedAuthSyncSource}
-                        onChange={event => setSelectedAuthSyncSource(event.target.value)}
+                      <SelectRoot
+                        value={normalizeSelectValue(selectedAuthSyncSource)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue !== null)
+                            return setSelectedAuthSyncSource(selectedValue)
+                        }}
                         disabled={authSyncBusy}
-                        className="h-8 w-[152px] rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-text-muted"
                       >
-                        <option value="local">
-                          {t('workbench.runtime_config_current_device_source', '本机')}
-                        </option>
-                        {onlineDevices.map(device => (
-                          <option key={device.device_id} value={`device:${device.device_id}`}>
-                            {device.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
+                        <SelectTrigger
+                          id="runtime-config-sync-source"
+                          data-testid="runtime-config-sync-source-select"
+                          className="w-[152px]"
+                        />
+                        <SelectContent>
+                          <SelectItem value="local">
+                            {t('workbench.runtime_config_current_device_source', '本机')}
+                          </SelectItem>
+                          {onlineDevices.map(device => (
+                            <SelectItem
+                              key={device.device_id}
+                              value={String(`device:${device.device_id}`)}
+                            >
+                              {device.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
+                      <ControlButton
+                        variant="outline"
+                        size="sm"
                         type="button"
                         data-testid="runtime-config-sync-auth-button"
                         onClick={handleSyncAuthSource}
                         disabled={!canSyncAuthSource || authSyncBusy}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {authSyncBusy ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -899,7 +815,7 @@ export function ModelSettingsPage({
                           <Upload className="h-3.5 w-3.5" />
                         )}
                         {authSourceActionLabel}
-                      </button>
+                      </ControlButton>
                     </div>
                   </div>
                 </div>

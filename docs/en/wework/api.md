@@ -50,14 +50,38 @@ Every turn in a Codex conversation started from desktop, mobile, or the API rece
 | `base_url` | HTTP API address including `/api/v1`; `null` when no backend is configured |
 | `api_conversation_supported` | Whether the conversation supports the API; Codex standalone, project-directory, and worktree tasks are supported; does not indicate connectivity or authorization |
 | `conversation_id` | Current `conv_...` ID for conversation queries and follow-ups |
-| `response_id` | Current user turn's `resp_...` ID for querying, streaming, and cancellation |
 | `execution` | `type: "wework"` and the current `device_id` for new requests |
 | `model` | Full cloud model API ID, such as `public:default:0:my-model` |
 | `model_name`, `model_type` | Selected model name and source |
 
-These are HTTP API routing IDs, distinct from native Codex thread/turn IDs. A conversation ID encodes the device ID and Runtime-local task ID; project-directory and worktree tasks can use these IDs directly for retrieval and continuation. Follow-ups retain the conversation ID, receive a new response ID, and refresh the selected model information. Local models and selections without cloud catalog identity have `model: null`; choose an available model from `GET /models?execution=wework` for HTTP requests.
+A conversation ID encodes the device ID and Runtime-local task ID. Use it to retrieve or continue project-directory and worktree tasks. Follow-ups retain the conversation ID and refresh the selected model information. Local models and selections without cloud catalog identity have `model: null`. Choose an available model from `GET /models?execution=wework` for HTTP requests.
+
+The host and HTTP API manage the turn-specific `response_id`. Callers can read it from the response object's `id` to retrieve, stream, or cancel that turn.
 
 Each turn includes only these fields and brief usage guidance; full API instructions remain in this document to avoid repeating them in the context. Wait for the current turn to finish before continuing it, use either `conversation` or `previous_response_id`, and omit device and title. No personal API Keys, login tokens, or model secrets are injected; HTTP calls still require a separately supplied personal API Key.
+
+## Codex input and application context boundary
+
+Desktop, mobile, and cloud-compiled Codex requests share one contract: `prompt` retains the user's text, which the executor converts to `input` for `turn/start` or `turn/steer`; application information travels separately in `additionalContext`. Project references, terminal state, and other application context are no longer concatenated into user text.
+
+Preserve `kind: application` for application context and `kind: untrusted` for external source content. Never promote external content into application instructions. Models still read project details through authorized tools. Context fields grant no permissions. The pinned Codex 0.171.0 renders `application` as developer messages and `untrusted` as separate `function_call_output` items in the `agent` namespace; neither is concatenated into user text.
+
+When forwarding through the Responses model proxy, tool outputs without a call ID become separate user-role messages with the provenance marker `[tool_result without a matching tool_call]`. The user's prompt remains a separate message.
+
+```mermaid
+sequenceDiagram
+    participant C as Desktop or mobile
+    participant B as Backend (cloud path)
+    participant E as Executor
+    participant X as Codex
+    C->>B: message + additionalContext
+    B->>E: prompt = message, separate additionalContext
+    C->>E: Local path: prompt = message, separate additionalContext
+    E->>X: input = user text, additionalContext = typed context
+    X-->>C: Native user messages and execution results
+```
+
+Message display, search, and transcripts no longer parse or hide `<application_context>`. Historical messages and user-authored tags with that name are treated as ordinary text. Attachments and explicit references keep their existing paths. Claude retains its dedicated context transport.
 
 ## Create a task
 

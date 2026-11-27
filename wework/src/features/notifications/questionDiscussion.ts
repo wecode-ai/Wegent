@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useRef } from 'react'
-import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import { createContext, useContext, useId, useState, useSyncExternalStore } from 'react'
+import { createQuestionDiscussionPanels } from './questionDiscussionPanels'
+import type { Attachment, RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
   isImplementationPlanRequestUserInput,
@@ -80,20 +81,23 @@ export interface QuestionDiscussionSession {
   payload: RequestUserInputPayload
   address: RuntimeTaskAddress | null
   answers: Record<string, string>
+  optionAnswers?: Record<string, string>
+  attachments?: Record<string, Attachment[]>
   input?: string
 }
 
 export function questionDiscussionDrafts(
   sessions: Record<string, QuestionDiscussionSession>,
   source: RuntimeTaskAddress,
-  payload: RequestUserInputPayload
+  payload: RequestUserInputPayload,
+  field: 'answers' | 'optionAnswers' = 'answers'
 ): Record<string, string> {
   return Object.fromEntries(
     (payload.questions ?? []).flatMap(question => {
       if (!question.id) return []
       const target = requestUserInputQuestionTarget(payload, question.id)
       const answer =
-        sessions[questionDiscussionKey(source, target.payload)]?.answers[target.questionId]
+        sessions[questionDiscussionKey(source, target.payload)]?.[field]?.[target.questionId]
       return answer === undefined ? [] : [[question.id, answer]]
     })
   )
@@ -137,34 +141,28 @@ export function useQuestionDiscussion() {
   return useContext(QuestionDiscussionContext)
 }
 
-/** Route discussion commands only to the active pane of their source task. */
-export function useQuestionDiscussionWorkspacePanel({
+/** Observe real discussion panels owned by this pane and the current account. */
+export function useQuestionDiscussionPanels({
   address,
   active,
-  openTab,
 }: {
   address: RuntimeTaskAddress | null | undefined
   active: boolean
-  openTab(tab: QuestionDiscussionTab): void
 }) {
   const discussion = useQuestionDiscussion()
-  const request = discussion?.request
-  const consume = discussion?.consume
-  const handled = useRef<QuestionDiscussionRequest | null>(null)
-  useEffect(() => {
-    if (
-      !active ||
-      !request ||
-      handled.current === request ||
-      request.source.deviceId !== address?.deviceId ||
-      request.source.taskId !== address?.taskId
-    )
-      return
-    handled.current = request
-    consume?.(request)
-    const tab: QuestionDiscussionTab = `discussion:${request.key}`
-    openTab(tab)
-  }, [request, consume, active, address?.deviceId, address?.taskId, openTab])
+  const account = useContext(QuestionDiscussionStoreContext)
+  const owner = useId()
+  const [source] = useState(() => createQuestionDiscussionPanels(owner))
+  const view = source.observe({
+    accountKey: account?.accountKey ?? null,
+    authority: account?.requestPanel,
+    address,
+    active,
+    request: discussion?.request,
+    consume: discussion?.consume,
+  })
+  const snapshot = useSyncExternalStore(view.subscribe, view.getSnapshot, view.getSnapshot)
+  return { snapshot, close: view.close }
 }
 
 export function questionDiscussionPrompt(

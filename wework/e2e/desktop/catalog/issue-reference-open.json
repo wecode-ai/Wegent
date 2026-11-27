@@ -1,0 +1,12 @@
+{
+  "order": 125120,
+  "scenario": "./scenarios/issue-reference-open.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 74120,
+      "shard": 6,
+      "position": 5120
+    }
+  }
+}

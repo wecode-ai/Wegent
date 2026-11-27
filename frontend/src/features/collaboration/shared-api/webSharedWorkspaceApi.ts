@@ -101,7 +101,7 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   {
     capability: 'issues.create',
     status: 'supported',
-    endpoint: 'POST /v1/cloud-projects/{id}/loop-items',
+    endpoint: 'POST /v1/loop-items',
   },
   { capability: 'issues.update', status: 'supported', endpoint: 'PATCH /v1/loop-items/{id}' },
   {
@@ -523,6 +523,8 @@ export function createWebSharedWorkspaceApi(
 
   return {
     workspaces: sharedHttpApi.workspaces,
+    metrics: sharedHttpApi.metrics,
+    milestones: sharedHttpApi.milestones,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,
     projects: {
@@ -569,6 +571,20 @@ export function createWebSharedWorkspaceApi(
           '/v1/cloud-work-items/my-work'
         )
         return response.items
+      },
+      async page(input) {
+        const query = new URLSearchParams({ limit: String(input?.limit ?? 30) })
+        if (input?.cursor) query.set('cursor', input.cursor)
+        if (input?.scope) query.set('scope', input.scope)
+        if (input?.order) query.set('order', input.order)
+        if (input?.includeCompleted != null) {
+          query.set('include_completed', String(input.includeCompleted))
+        }
+        const response = await client.get<{
+          items: WorkspaceMyWorkItem[]
+          next_cursor?: string | null
+        }>(`/v1/cloud-work-items/my-work?${query}`)
+        return { items: response.items, nextCursor: response.next_cursor ?? null }
       },
     },
     issues: {
@@ -622,10 +638,10 @@ export function createWebSharedWorkspaceApi(
         return client.get(`/v1/loop-items/${encoded(issueId)}`)
       },
       create(projectId, input) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items`,
-          keysToSnakeCase(input)
-        )
+        return client.post('/v1/loop-items', {
+          project_id: String(projectId),
+          issue: keysToSnakeCase(input),
+        })
       },
       update(issueId, input) {
         return client.patch(`/v1/loop-items/${encoded(issueId)}`, keysToSnakeCase(input))

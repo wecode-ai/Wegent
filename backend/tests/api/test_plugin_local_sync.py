@@ -1,6 +1,7 @@
 """Opt-in account writes do not enumerate or wait for registered Devices."""
 
 from contextlib import contextmanager
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from app.models.kind import Kind
+from app.models.plugin_marketplace import Plugin
 from app.services import plugin_device_sync
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 
@@ -33,7 +35,10 @@ def markers(db, user):
 
 
 from app.services.plugin_marketplace_service import plugin_marketplace_service
-from tests.api.test_plugin_write_operations import plugin_requests  # noqa: F401
+from tests.api.test_plugin_write_operations import (  # noqa: F401
+    plugin_requests,
+    plugin_retry_clock,
+)
 
 
 @pytest.mark.parametrize("enabled", ["true", "false"])
@@ -109,6 +114,67 @@ def install(context, operation="install:1"):
     return context.client.post(
         f"/plugins/marketplace/{context.plugin_id}/install", params=query(operation)
     )
+
+
+@pytest.mark.parametrize("action", ["install", "ensure_builtin", "update", "uninstall"])
+def test_local_intent_retries_internal_contention_without_repeating_the_business_write(
+    local_context, monkeypatch, action
+):
+    from app.services import plugin_local_sync
+    from app.services.plugin_write_errors import PluginWriteError
+    from tests.api.test_plugin_write_operations import PLUGIN_KEY
+
+    c = local_context
+    installed_id = None
+    if action in {"update", "uninstall"}:
+        accepted = install(c)
+        assert accepted.status_code == 200
+        installed_id = accepted.json()["plugin"]["metadata"]["labels"]["id"]
+    acquire = plugin_local_sync.acquire_plugin_write_lock
+    faults = ["plugin_write_busy", "plugin_write_conflict"]
+
+    def contended(db, user_id, **scope):
+        name = scope.get("name", "")
+        if name and not name.startswith("@operation:") and faults:
+            raise PluginWriteError(faults.pop(0))
+        return acquire(db, user_id, **scope)
+
+    monkeypatch.setattr(plugin_local_sync, "acquire_plugin_write_lock", contended)
+    params = query("contended:1", 2)
+    if action == "install":
+        response = c.client.post(
+            f"/plugins/marketplace/{c.plugin_id}/install", params=params
+        )
+    elif action == "ensure_builtin":
+        response = c.client.post(
+            f"/plugins/builtin/{PLUGIN_KEY}/ensure-installed", params=params, json={}
+        )
+    elif action == "update":
+        response = c.client.put(
+            f"/plugins/installed/{installed_id}",
+            params=params,
+            json={"releaseId": c.upgraded_release_id},
+        )
+    else:
+        response = c.client.delete(f"/plugins/installed/{installed_id}", params=params)
+    assert response.status_code == (
+        204 if action == "uninstall" else 200
+    ), response.text
+    assert not faults
+    with c.sessions() as db:
+        saved = lookup_operation(db, c.user_id, "local:one", "contended:1")
+        assert saved["operationId"] == "contended:1"
+        assert saved["intentOrder"] == 2
+        assert (
+            db.query(Kind)
+            .filter_by(user_id=c.user_id, kind="InstalledPlugin", namespace="default")
+            .count()
+            == 1
+        )
+        row = db.get(Kind, saved["installedId"])
+        assert row.is_active == (action != "uninstall")
+        assert row.json["spec"]["revision"] == (2 if installed_id is not None else 1)
+    assert c.remote_calls == []
 
 
 def test_long_identifiers_reuse_existing_account_state_and_preserve_isolation(
@@ -293,11 +359,13 @@ def test_background_replay_reads_latest_removal_instead_of_old_install(
 ):
     from unittest.mock import AsyncMock
 
+    from app.services.device.runtime_route import runtime_route_resolver
+
     c = local_context
     monkeypatch.setattr(
-        plugin_device_sync.device_capability_sync_service,
-        "supports_plugin_delta",
-        AsyncMock(return_value=False),
+        runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=Mock(online_info={})),
     )
     seed_cloud_device(c)
     initial = install(c)
@@ -308,7 +376,7 @@ def test_background_replay_reads_latest_removal_instead_of_old_install(
     assert removed.status_code == 204
     c.run_background()
     assert c.account() is None
-    assert "background-plugin" in c.remote_calls or "recovery" in c.remote_calls
+    assert set(c.remote_calls) == {"recovery"}
 
 
 def test_cloud_failure_does_not_rollback_local_acceptance(local_context, monkeypatch):
@@ -501,6 +569,67 @@ def test_missing_catalog_is_explicitly_rejected_without_accepting_work(local_con
         assert len(markers(db, c.user_id)) == 0
 
 
+@pytest.mark.parametrize("later_order_on_other_plugin", [False, True])
+def test_stale_release_confirmation_is_a_terminal_local_rejection(
+    local_context, later_order_on_other_plugin
+):
+    c = local_context
+    initial = install(c)
+    installed_id = int(initial.json()["plugin"]["metadata"]["labels"]["id"])
+    with c.sessions.begin() as db:
+        db.get(Plugin, c.plugin_id).latest_release_id = c.upgraded_release_id
+    path = f"/plugins/installed/{installed_id}"
+    upgraded = c.client.put(path, json={"releaseId": c.upgraded_release_id})
+    assert upgraded.status_code == 200
+
+    if later_order_on_other_plugin:
+        with c.sessions.begin() as db:
+            original = db.get(Kind, installed_id)
+            document = deepcopy(original.json)
+            document["metadata"]["name"] = "other-plugin"
+            document["spec"]["pluginId"] = None
+            document["spec"]["source"]["pluginKey"] = "other-plugin"
+            other = Kind(
+                user_id=c.user_id,
+                kind=original.kind,
+                namespace=original.namespace,
+                name="other-plugin",
+                json=document,
+                is_active=True,
+            )
+            db.add(other)
+            db.flush()
+            other_id = other.id
+        later = c.client.put(
+            f"/plugins/installed/{other_id}",
+            params=query("other:update", 3),
+            json={"enabled": False},
+        )
+        assert later.status_code == 200, later.text
+        assert later.json()["spec"]["enabled"] is False
+
+    response = c.client.put(
+        path,
+        params=query("stale:update", 2),
+        json={
+            "releaseId": c.release_id,
+            "expectedCurrentReleaseId": c.upgraded_release_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "PLUGIN_UPDATE_RELEASE_CHANGED"
+    assert response.headers["X-Plugin-Operation-State"] == "rejected"
+    assert response.headers["X-Plugin-Operation-Id"] == "stale:update"
+    assert response.headers["X-Plugin-Intent-Order"] == "2"
+    with c.sessions() as db:
+        assert (
+            db.get(Kind, installed_id).json["spec"]["releaseId"]
+            == c.upgraded_release_id
+        )
+        assert lookup_operation(db, c.user_id, "local:one", "stale:update") is None
+
+
 @pytest.mark.parametrize(
     "status,detail",
     [
@@ -562,7 +691,7 @@ def test_previously_accepted_request_cannot_be_marked_unaccepted(
 
 
 def test_rejection_without_write_coordination_is_still_uncertain(
-    local_context, monkeypatch
+    local_context, monkeypatch, plugin_retry_clock
 ):
     from app.services import plugin_local_sync
     from app.services.plugin_write_errors import PluginWriteError
@@ -585,6 +714,7 @@ def test_rejection_without_write_coordination_is_still_uncertain(
     assert response.status_code == 503
     assert response.json()["detail"] == "plugin_write_busy"
     assert "X-Plugin-Operation-State" not in response.headers
+    assert plugin_retry_clock.now == 20
 
 
 def test_latest_marker_is_bounded_and_legacy_change_fences_lost_response(local_context):

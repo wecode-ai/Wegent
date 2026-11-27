@@ -201,9 +201,11 @@ console.log('HOOK_WRITES_COMPLETE')
         installed = true
         assert.equal(result.plugin.health.status, 'ready')
         assert.equal(result.plugin.handlers.length, 3)
+        await control.command('ensureLocalModelCatalogReady', 'body', { timeoutMs: uiTimeoutMs })
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
         assert.ok(model, 'No configured native Codex model')
+        assert.equal(model.provider, 'wework-e2e', 'The default model must route to the fixture')
         for (const [name, cwd] of [
           ['git', workspace],
           ['plain', plain],
@@ -226,7 +228,9 @@ console.log('HOOK_WRITES_COMPLETE')
               new_session: true,
               bot: [{ shell_type: 'Codex' }],
               model_config: {
-                model_id: model.local_model_id,
+                // The Git case exercises the native thread's default model;
+                // lifecycle metadata must not depend on a request override.
+                ...(name === 'git' ? {} : { model_id: model.local_model_id }),
                 model_provider: model.provider,
                 runtime_config: { codex: { use_user_config: true, configured: true } },
               },
@@ -301,19 +305,57 @@ console.log('HOOK_WRITES_COMPLETE')
       } finally {
         // The shared server's close callback is synchronous. Drain this fixture
         // while the native executor is still available, before returning verify.
-        await writeFile(marker('release'), 'release')
-        for (const taskId of tasks) await rpc('runtime.tasks.cancel', { taskId })
-        await waitForValue(
-          async () => {
-            const entered = await optionalFile(marker('entered'))
-            const finished = await optionalFile(marker('finished'))
-            const sorted = text => text.trim().split('\n').sort().join('\n')
-            return { entered: sorted(entered), finished: sorted(finished) }
-          },
-          value => value.entered === value.finished,
-          'Hook scripts did not finish before cleanup',
-          uiTimeoutMs
-        )
+        let drained = false
+        try {
+          await writeFile(marker('release'), 'release')
+          for (const taskId of tasks) await rpc('runtime.tasks.cancel', { taskId })
+          await waitForValue(
+            async () => {
+              const entered = await optionalFile(marker('entered'))
+              const finished = await optionalFile(marker('finished'))
+              const sorted = text => text.trim().split('\n').sort().join('\n')
+              return { entered: sorted(entered), finished: sorted(finished) }
+            },
+            value => value.entered === value.finished,
+            'Hook scripts did not finish before cleanup',
+            uiTimeoutMs
+          )
+          drained = true
+        } finally {
+          if (!verified || !drained) {
+            try {
+              // Top-level diagnostics survive runtime artifact compaction.
+              const queues = await readdir(join(root, 'logs', 'queues')).catch(() => [])
+              const workers = await Promise.all(
+                queues.map(async id => ({
+                  id,
+                  log: await optionalFile(join(root, 'logs', 'queues', id, 'worker.log')),
+                  pending: await readdir(join(root, 'logs', 'queues', id, 'pending')).catch(
+                    () => []
+                  ),
+                }))
+              )
+              const hooks = await rpc('runtime.hooks.list', {}).catch(error => ({
+                error: String(error),
+              }))
+              await writeFile(
+                join(resultDir, 'async-hooks-diagnostics.json'),
+                JSON.stringify(
+                  {
+                    workers,
+                    runs: hooks.plugins?.find(plugin => plugin.manifest.id === pluginId)
+                      ?.recentRuns,
+                    error: hooks.error,
+                  },
+                  null,
+                  2
+                )
+              ).catch(error => console.error('[async-hooks-diagnostics]', error))
+            } catch (diagnosticError) {
+              console.error('[async-hooks-diagnostics]', diagnosticError)
+            }
+          }
+        }
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
         if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
         await rm(root, { recursive: true, force: true })

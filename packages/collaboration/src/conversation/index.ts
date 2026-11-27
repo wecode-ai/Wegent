@@ -26,10 +26,12 @@ export { ScrollableMessageArea } from './ScrollableMessageArea'
 export type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
 export type { ConversationSearchTarget } from './useConversationSearchTarget'
 export { readConversationSearchContent } from './useConversationSearchTarget'
-export { getAssistantRenderProjection } from './assistantMessagePresentation'
+export { getAssistantContentPresentation, getAssistantSearchRegions } from './assistantMessagePresentation'
 export { projectConversationSearchRegion } from './conversationSearchProjection'
 export * from './TemporaryConversationLayout'
 
 export * from './ProcessingDurationLabel'
 
 export { AutomaticRetryStatus } from './AutomaticRetryStatus'
+
+export type { MessageSelectionContext, ConversationShareSelectionContext } from './messageTextSelectionState'

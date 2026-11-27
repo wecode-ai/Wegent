@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { isPopoutWindowRuntime } from '@/appWindowIdentity'
 import type { ProjectWithTasks, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import { navigateTo } from '@/lib/navigation'
@@ -7,8 +8,10 @@ import {
   useSelectProject,
   useSelectProjectWorkspace,
   useSelectStandaloneDevice,
+  useStartNewChat,
 } from './useWorkbenchNavigationCallbacks'
 
+vi.mock('@/appWindowIdentity', () => ({ isPopoutWindowRuntime: vi.fn() }))
 vi.mock('@/lib/navigation', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/navigation')>()),
   navigateTo: vi.fn(),
@@ -26,6 +29,51 @@ const state = {
   runtimeWork: null,
   standaloneDeviceId: null,
 } as unknown as WorkbenchState
+
+it('starts a blank chat without leaving the popout route', () => {
+  vi.mocked(isPopoutWindowRuntime).mockReturnValueOnce(true)
+  const dispatch = vi.fn()
+  const { result } = renderHook(() =>
+    useStartNewChat({
+      canNavigateWorkspaceTab: () => true,
+      state,
+      dispatch,
+      ownershipKey: 'popout-navigation-review',
+      workspaceTabId: undefined,
+      user: { id: 7 } as User,
+      setDraftInputForScope: vi.fn(),
+    })
+  )
+  act(result.current)
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'project_cleared' }))
+  expect(navigateTo).not.toHaveBeenCalled()
+})
+
+it('seeds a separate draft when starting a new chat with initial input', () => {
+  const dispatch = vi.fn()
+  const setDraftInputForScope = vi.fn()
+  const { result } = renderHook(() =>
+    useStartNewChat({
+      canNavigateWorkspaceTab: () => true,
+      state: { ...state, standaloneChatKey: 4 },
+      dispatch,
+      ownershipKey: 'recovery-navigation-review',
+      workspaceTabId: undefined,
+      user: { id: 7 } as User,
+      setDraftInputForScope,
+    })
+  )
+
+  act(() => result.current({ initialInput: 'original conversation reference' }))
+
+  expect(setDraftInputForScope).toHaveBeenCalledExactlyOnceWith(
+    'blank:5',
+    'original conversation reference'
+  )
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ type: 'project_cleared', startFreshChat: true })
+  )
+})
 
 it.each([
   ['select', 'project_selected'],

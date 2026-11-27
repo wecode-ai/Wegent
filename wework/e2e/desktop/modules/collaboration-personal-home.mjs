@@ -1,6 +1,7 @@
 import { inCollaborationSidebar } from './workspace-flows.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import {
   assistantMessage,
@@ -164,8 +165,7 @@ export async function verifyPersonalHomeStartWork(control, { scoped, project, vi
     { userId },
     10_000
   )
-  const template = previous.roles[0]
-  assert.ok(template, 'Personal assistants expose an existing role template')
+  const template = standInRoleFixture(previous.executionDeviceId)
   await requestExecutor(
     control,
     'runtime.stand_in.personal.save',
@@ -179,7 +179,6 @@ export async function verifyPersonalHomeStartWork(control, { scoped, project, vi
           name: `Home ${id}`,
           enabled: true,
           handlingPolicy: {
-            ...template.handlingPolicy,
             automatic: true,
             askBeforeAct: true,
             immediate: false,
@@ -321,7 +320,7 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
   )
   assert.ok(selectedTab.startsWith('personal-home-tab-'))
   const issueId = selectedTab.slice('personal-home-tab-'.length)
-  await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-header-${issueId}"]`), {
+  await control.command('waitFor', scoped(`[data-testid="personal-home-issue-${issueId}"]`), {
     text: HOME_ISSUE_TITLE,
   })
   await control.command(

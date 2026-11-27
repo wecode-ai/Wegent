@@ -6,6 +6,7 @@ import {
   clearLocalConnectorAuthHealthCache,
   isLocalBrowserConnector,
   isLocalConnector,
+  isLocalConnectorAuthBusy,
   isLocalQrConnector,
   localConnectorAuthHealth,
   localConnectorAuthPoll,
@@ -50,6 +51,18 @@ describe('pluginLocalConnectorAuthTarget', () => {
       new LocalConnectorAuthLogoutError({ status: 'error', errorCode: 'gh_logout_env_token' })
         .errorCode
     ).toBe('gh_logout_env_token')
+  })
+
+  test('recognizes exhausted Native contention across login and logout responses', () => {
+    const code = 'plugin_auth_busy_retry_later'
+    expect(isLocalConnectorAuthBusy(code)).toBe(true)
+    expect(isLocalConnectorAuthBusy(Object.assign(new Error('IPC error'), { code }))).toBe(true)
+    expect(
+      isLocalConnectorAuthBusy(
+        new LocalConnectorAuthLogoutError({ status: 'error', errorCode: code })
+      )
+    ).toBe(true)
+    expect(isLocalConnectorAuthBusy(new Error('plugin_write_busy'))).toBe(false)
   })
 })
 
@@ -157,6 +170,21 @@ describe('localConnectorAuthHealth cache', () => {
     await expect(
       localConnectorAuthStart({ pluginKey: 'wiki', connectorSlug: 'wiki' })
     ).rejects.toThrow('python_runtime_unavailable')
+  })
+
+  test('keeps a same-name connector scoped to its market for auth and health', async () => {
+    const connector = { slug: 'wiki', localAuth: GITHUB_CLI_TARGET.localAuth }
+    const first = pluginLocalConnectorAuthTarget('wiki', 'market-a', connector)!
+    const second = pluginLocalConnectorAuthTarget('wiki', 'market-b', connector)!
+
+    await localConnectorAuthHealth(first)
+    mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })
+    await expect(localConnectorAuthHealth(second)).resolves.toEqual({ status: 'need_login' })
+    await localConnectorAuthStart(second)
+    expect(mocks.requestLocalExecutor).toHaveBeenLastCalledWith(
+      'runtime.local_connector_auth.start',
+      expect.objectContaining({ marketplaceId: 'market-b', pluginKey: 'wiki' })
+    )
   })
 
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {

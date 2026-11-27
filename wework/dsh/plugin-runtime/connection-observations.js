@@ -21,10 +21,21 @@ export async function initializeObservation(registry, providerId, source, option
 }
 
 /** Drain a bounded provider cycle in Node; checkpoint and events commit together. */
-export async function collectObservation(registry, providerId, input, { signal } = {}) {
+export async function collectObservation(
+  registry,
+  providerId,
+  input,
+  { signal, publishProgress } = {}
+) {
   const events = []
   let checkpoint = input.checkpoint
   let resourceStates
+  const progress = () => ({ events, nextCheckpoint: checkpoint, hasMore: true, resourceStates })
+  const interrupted = error => ({
+    ...progress(),
+    errorCode: error.code ?? 'connection_collect_failed',
+    ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+  })
   const maxPages =
     registry.entries?.get(providerId)?.provider.collectionPagination === 'staged' ? 8 : 1
   for (let page = 0; page < maxPages; page++) {
@@ -45,23 +56,22 @@ export async function collectObservation(registry, providerId, input, { signal }
     } catch (error) {
       signal?.throwIfAborted()
       if (page === 0) throw error
-      return {
-        events,
-        nextCheckpoint: checkpoint,
-        hasMore: true,
-        resourceStates,
-        errorCode: error.code ?? 'connection_collect_failed',
-        ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
-      }
+      return interrupted(error)
     }
     signal?.throwIfAborted()
-    if (events.length && events.length + result.events.length > 1000)
-      return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates }
+    if (events.length && events.length + result.events.length > 1000) return progress()
     events.push(...result.events)
     checkpoint = result.nextCheckpoint
     resourceStates = result.resourceStates ?? resourceStates
     if (!result.hasMore || events.length >= 1000)
-      return { events, nextCheckpoint: checkpoint, hasMore: result.hasMore, resourceStates }
+      return {
+        events,
+        nextCheckpoint: checkpoint,
+        hasMore: result.hasMore,
+        resourceStates,
+        ...(Number.isSafeInteger(result.nextPollAt) ? { nextPollAt: result.nextPollAt } : {}),
+      }
+    publishProgress?.(interrupted)
   }
-  return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates }
+  return progress()
 }

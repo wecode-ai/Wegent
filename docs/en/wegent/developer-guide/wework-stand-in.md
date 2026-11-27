@@ -4,6 +4,14 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+My Assistant requires a cloud connection. When disconnected, the assistant page offers a Connect cloud action. Connected devices read the same account’s Bot and Ghost definitions. Users can select an execution device for a conversation. Moving a role transfers its source connection settings. The destination needs the corresponding providers and authorization. Git webhook subscriptions transfer receiver ownership using the subscription generation. The destination resumes from the last cloud-confirmed sequence. Delegated tasks retain the destination role’s device address and wait when that device is offline.
+
+## Local project directories and startup failures
+
+The stand-in runtime configuration stores the local project ID, workspace mode, and optional branch. When creating a task, the execution device reads the working directory from the project's current registration. Legacy copies of the directory are removed when the configuration is read. Updating the project directory keeps the stand-in configuration usable.
+
+When a cloud project Issue is assigned directly to you and your stand-in fails before task creation, the failure receipt and a private notification are saved together. The in-app notification appears under Collaboration in the notification center. Desktop alerts follow the Stand-in notification preference. If the working directory is unavailable, update the local project's registered directory and delegate the original Issue again. Consecutive startup failures for the same assignment produce one notification.
+
 ## IM reply callback routing
 
 DingTalk private messages share a persistent stand-in conversation, but each incoming message registers its own reply card. Python registration and Rust Socket.IO forwarding must use the same callback address: `runtime:{device_id}:{task_id}:{sha256(callback_id)}`, with a lowercase hexadecimal digest of the original UTF-8 bytes. Sources without `callback_id` retain the task address without a digest. Progress, final replies and errors must use the same message address. Looking up only the persistent conversation leaves its card at the initial progress state.
@@ -107,7 +115,11 @@ Settings writes and dispatch serialize per user. Configuration changes cancel un
 
 Scheduling selects executable actions in SQLite and reads this pass's evidence by event ID instead of deserializing all historical actions and events. Failed actions retain their event claims so polling cannot create another dispatch attempt. Existing manual work recovery and explicit assessment checks remain available. Snapshot, commit, event authorization, and action execution stages taking more than 250 milliseconds emit timing diagnostics without message bodies or credentials.
 
+The coordination plugin discovers contexts about every five seconds. For personal stand-ins, the Executor uses a SQLite index to check for runnable actions and due, unclaimed events, then checks for changes to owned tasks. Due arrangements enter intake during the same discovery pass, and a manual check can trigger its own pass. Idle personal contexts skip snapshot generation and processing-state writes. Building the index preserves legacy records and excludes unparseable history from the index.
+
 An explicit check can also recover routing that failed before task creation. The host records one retry request and drains the latest failed creation intents for unresolved events in the existing batches of 100, retaining their original IDs and revalidating current authority and native command receipts. A request never retries its own failed result or falls through to older duplicate failures; later failures do not join an earlier request. Inputs held by another action, partially consumed inputs, and foreign-account inputs are not retried. Existing, waiting-user, archived, and uncertain-outcome work retains its original recovery checks.
+
+Dispatch stops after three failures for the same source message or creation intent and retains the failure reason. The first failure counts toward the limit. A legacy failed record without a counter counts as one failure. The count survives explicit retries, restarts, and regrouping. Waiting for acceptance or user input does not increment it.
 
 An independent background job runs retention every minute, outside coordination snapshot requests. New event, action, route, and coordinator-state writes atomically maintain independent `stand_in_history` fields and `stand_in_history_refs` relations. Indexes cover user, type, status, batch, recovery command, and referenced event; an expression index covers resource type and update time. Cleanup reads these fields and relations without parsing historical JSON. Settled actions and unreferenced routes older than seven days can be deleted. Pending and sending actions, the current assessment batch, error recovery commands, the latest failed action for each unresolved event, and referenced evidence remain; arrangement execution actions are excluded. Unreferenced settled events become persistent deduplication markers. Legacy records are not backfilled: events, actions, and routes without indexed facts remain for seven days and are then deleted directly. Eligibility is planned in a WAL read snapshot without holding the writer. If a foreground write invalidates snapshot promotion, maintenance yields without applying stale decisions. Each pass commits at most four chunks of 25 records. Results and the durable continuation cursor commit in the same transaction; a failure rolls back only the current chunk. The 100 ms budget is a scheduling boundary between chunks, allowing an active transaction to finish and logging overruns rather than indefinitely timing out on one slow record. A busy database defers maintenance immediately. Resource types rotate, protected records also advance the cursor, and a completed scan wraps to recheck them. Foreign-key columns used by deletion are indexed to avoid full-table cascade checks. Original work conversations, source messages, arrangement executions, and native command recovery journals are unaffected.
 
@@ -414,3 +426,11 @@ Review coverage composes with the existing profile checkpoint, retaining every
 original assertion and sharing its build, startup and model protocol fixtures.
 No separate CI job is added. Screenshots and logs stay in test artifacts rather
 than repository commits.
+
+## Issue assignment wakeup diagnostics
+
+Correlate the Issue and assignment IDs across Python's `Stand-in Issue wakeup staged`, Rust Backend's `Stand-in Issue event page served`, and Executor's `issue_event_queued` and `Stand-in Issue event cursor saved`. The queued event's `intentId` links to `stand-in dispatch reconciliation`; `assignment_already_handled` identifies an already accepted assignment.
+
+`staged` describes a write attempt within the caller's transaction, not a commit. `allocated_sequence` is the sequence allocated for this attempt; a duplicate event can retain its original sequence. A served event page proves query visibility. Executor advances its cursor only after durable local enqueue. Logs contain identities and state, never Issue bodies or credentials.
+
+The current Python creation flow also suppresses wakeups when `notify_assignee=false`, logging `reason=notify_assignee_false`. API tests cover this distinction. An Executor protocol integration test uses simulated Backend event pages and real local persistence to verify enqueue, checkpoints and repeated collection. These diagnostics do not change intake policy or establish the cause of any historical Issue on their own.

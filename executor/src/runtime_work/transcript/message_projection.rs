@@ -50,6 +50,8 @@ struct AssistantTextPart {
     id: String,
     content: String,
     created_at: i64,
+    explicit_final: bool,
+    deduplicated_final_id: Option<String>,
 }
 
 enum AssistantItemIdentity {
@@ -173,12 +175,19 @@ impl AssistantTurnAccumulation {
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
-                        json!({
+                        let mut item = json!({
                             "id": part.id,
                             "type": "assistant_text",
                             "content": part.content,
                             "createdAt": part.created_at,
-                        })
+                        });
+                        if part.explicit_final {
+                            item["phase"] = json!("final_answer");
+                        }
+                        if let Some(final_id) = &part.deduplicated_final_id {
+                            item["deduplicatedFinalItemId"] = json!(final_id);
+                        }
+                        item
                     })
                 }
             })
@@ -186,7 +195,7 @@ impl AssistantTurnAccumulation {
     }
 }
 
-fn is_projected_guidance_block(block: &Value) -> bool {
+pub(super) fn is_projected_guidance_block(block: &Value) -> bool {
     string_field(block, "tool_name")
         .or_else(|| string_field(block, "toolName"))
         .is_some_and(|name| name == "conversation_guidance")
@@ -332,46 +341,7 @@ pub(crate) fn visible_user_request_content(content: &str) -> &str {
         .map(|index| &content[index + CODEX_REQUEST_MARKER.len()..])
         .filter(|request| !request.trim().is_empty())
         .unwrap_or(content);
-    strip_leading_application_context(request_content)
-}
-
-fn strip_leading_application_context(content: &str) -> &str {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with(APPLICATION_CONTEXT_OPEN) {
-        return trimmed;
-    }
-    let Some(close_index) = matching_application_context_close_index(trimmed) else {
-        return trimmed;
-    };
-    trimmed[close_index + APPLICATION_CONTEXT_CLOSE.len()..].trim_start()
-}
-
-fn matching_application_context_close_index(content: &str) -> Option<usize> {
-    let mut depth = 1;
-    let mut offset = APPLICATION_CONTEXT_OPEN.len();
-
-    while offset < content.len() {
-        let next_open = content[offset..]
-            .find(APPLICATION_CONTEXT_OPEN)
-            .map(|index| offset + index);
-        let next_close = content[offset..]
-            .find(APPLICATION_CONTEXT_CLOSE)
-            .map(|index| offset + index)?;
-
-        if let Some(next_open) = next_open.filter(|index| *index < next_close) {
-            depth += 1;
-            offset = next_open + APPLICATION_CONTEXT_OPEN.len();
-            continue;
-        }
-
-        depth -= 1;
-        if depth == 0 {
-            return Some(next_close);
-        }
-        offset = next_close + APPLICATION_CONTEXT_CLOSE.len();
-    }
-
-    None
+    request_content.trim_start()
 }
 
 pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &Value) {
@@ -665,16 +635,30 @@ pub(super) fn collect_assistant_message(
                 ));
             }
             AssistantMessagePhase::Final => {
-                if !duplicates_completed_plan_block(&content, &assistant.blocks)
-                    && !assistant
-                        .assistant_parts
-                        .iter()
-                        .any(|part| part.content == content)
+                let native_final = item["id"]
+                    .as_str()
+                    .filter(|id| !id.trim().is_empty())
+                    .filter(|_| {
+                        assistant_message_phase_name(item).as_deref() == Some("finalanswer")
+                    });
+                if let Some(part) = assistant
+                    .assistant_parts
+                    .iter_mut()
+                    .find(|part| part.content == content)
                 {
+                    if let Some(final_id) = native_final {
+                        // Keep the projected item's display identity and the actual terminal item's proof.
+                        part.deduplicated_final_id =
+                            (final_id != part.id).then(|| final_id.to_owned());
+                        part.explicit_final |= final_id == part.id;
+                    }
+                } else if !duplicates_completed_plan_block(&content, &assistant.blocks) {
                     assistant.assistant_parts.push(AssistantTextPart {
                         id: item_id(item, "assistant-text"),
                         content,
                         created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                        explicit_final: native_final.is_some(),
+                        deduplicated_final_id: None,
                     });
                 }
             }
@@ -726,7 +710,7 @@ fn assistant_message_phase(
 }
 
 pub(super) fn assistant_message_phase_name(item: &Value) -> Option<String> {
-    string_field(item, "phase").map(normalized_phase_or_status)
+    crate::codex_phase::codex_phase_name(item)
 }
 
 pub(super) fn normalized_phase_or_status(value: String) -> String {

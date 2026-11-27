@@ -4,6 +4,8 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { createPersonalIssueAccessRegression } from '../modules/personal-issue-access.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
+import { verifyCollaborationBatchTools } from '../modules/collaboration-batch-tools.mjs'
+import { createExecutorBatchToolsRegression } from '../modules/collaboration-executor-batch-tools.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const REPORT = 'PR review regression: this report must be visible in the Issue activity.'
@@ -21,6 +23,7 @@ export async function createDesktopScenario({
   const personalAccess = createPersonalIssueAccessRegression({
     uiTimeoutMs,
     modelResponseTimeoutMs,
+    additionalTools: createExecutorBatchToolsRegression({ uiTimeoutMs }),
   })
   let backendUrl
   let authToken
@@ -133,6 +136,7 @@ export async function createDesktopScenario({
         body: JSON.stringify({ title: 'MCP review reports appear in Issue activity' }),
       })
       await personalAccess.prepare(cloud, project, issue)
+      await verifyCollaborationBatchTools({ request, project })
     },
 
     async verify(control) {

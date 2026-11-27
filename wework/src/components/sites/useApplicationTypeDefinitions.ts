@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { useMemo, useSyncExternalStore } from 'react'
 import type { ApplicationTypeDescriptor, SitesApi } from '@/api/sites'
 import {
   defaultResolvedApplicationTypes,
@@ -86,28 +87,32 @@ function cacheApplicationTypes(items: ApplicationTypeDescriptor[]): void {
 }
 
 export function useApplicationTypeDefinitions(api: SitesApi): ResolvedApplicationTypeDefinition[] {
-  const [descriptors, setDescriptors] = useState<ApplicationTypeDescriptor[] | null>(() =>
-    readCachedApplicationTypes()
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        'application-types',
+        async () => {
+          try {
+            return { items: (await api.listApplicationTypes()).items, remote: true }
+          } catch {
+            return { items: readCachedApplicationTypes(), remote: false }
+          }
+        },
+        {
+          initialData: { items: readCachedApplicationTypes(), remote: false },
+          success: result => {
+            if (result.remote && result.items) cacheApplicationTypes(result.items)
+          },
+        }
+      ),
+    [api]
   )
-
-  useEffect(() => {
-    let cancelled = false
-
-    void api
-      .listApplicationTypes()
-      .then(response => {
-        if (cancelled) return
-        cacheApplicationTypes(response.items)
-        setDescriptors(response.items)
-      })
-      .catch(() => {
-        if (!cancelled) setDescriptors(readCachedApplicationTypes())
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [api])
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const descriptors = snapshot.data?.items ?? null
 
   return useMemo(() => {
     if (!descriptors) return defaultResolvedApplicationTypes()

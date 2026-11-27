@@ -1,4 +1,28 @@
+import {
+  emptyCodexUsageDisplay,
+  formatCodexUsageResetTime,
+  getLocalCodexUsageDisplay,
+  type CodexUsageDisplay,
+  type CodexUsageWindowDisplay,
+} from '@/api/local/codexUsage'
+import { emptyWegentUsageDisplay, getWegentUsageDisplay } from '@/api/wegentUsage'
+import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
+import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
+import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
+import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
+import {
+  calculateAppUpdateDownloadPercent,
+  formatAppUpdateVersion,
+} from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import type { User as UserProfile } from '@/types/api'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { ProgressRing } from '@wegent/collaboration/controls/ProgressBar'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ChevronDown,
   Download,
@@ -10,67 +34,26 @@ import {
   Settings,
   TriangleAlert,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  emptyCodexUsageDisplay,
-  formatCodexUsageResetTime,
-  getLocalCodexUsageDisplay,
-  type CodexUsageDisplay,
-  type CodexUsageWindowDisplay,
-} from '@/api/local/codexUsage'
-import {
-  emptyWegentUsageDisplay,
-  getWegentUsageDisplay,
-  type WegentUsageDisplay,
-} from '@/api/wegentUsage'
-import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
-import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
-import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
-import {
-  calculateAppUpdateDownloadPercent,
-  formatAppUpdateVersion,
-} from '@/features/app-update/app-update-format'
-import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
-import type { AppUpdateError } from '@/features/app-update/app-update-error'
-import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { User as UserProfile } from '@/types/api'
-
-function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
-  return (
-    <span
-      data-testid="app-update-download-icon-progress"
-      aria-label={`${progress}%`}
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
-      style={{
-        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-border)) 0)`,
-      }}
-    >
-      <span className="h-2 w-2 rounded-full bg-popover" />
-    </span>
-  )
-}
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onOpenAbout: () => void
   onLogout: () => void
+  onShowUpdateError: (error: AppUpdateError, retry: () => Promise<void>) => void
   onLogin?: () => void
   showLogout?: boolean
-  placement?: 'above' | 'below-right'
 }
 
 export function DesktopSettingsMenu({
   onOpenSettings,
   onOpenAbout,
   onLogout,
+  onShowUpdateError,
   onLogin,
   showLogout,
-  placement = 'above',
 }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
@@ -79,14 +62,27 @@ export function DesktopSettingsMenu({
   const [isCodexUsageExpanded, setIsCodexUsageExpanded] = useState(false)
   const [isWegentUsageExpanded, setIsWegentUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
-  const [wegentUsage, setWegentUsage] = useState<WegentUsageDisplay>(() =>
-    emptyWegentUsageDisplay()
+  const { isConnected, apiBaseUrl, token, serviceKey } = cloudConnection
+  const wegentQuotaResource = useMemo(
+    () =>
+      createAsyncResource(serviceKey ?? 'settings-wegent-quota', () =>
+        getWegentUsageDisplay({ isConnected, apiBaseUrl, token })
+      ),
+    [isConnected, apiBaseUrl, token, serviceKey]
   )
+  const wegentQuotaSnapshot = useSyncExternalStore(
+    isConnected ? wegentQuotaResource.subscribe : subscribeIdleResource,
+    wegentQuotaResource.getSnapshot,
+    wegentQuotaResource.getSnapshot
+  )
+  const wegentUsage = wegentQuotaSnapshot.data ?? emptyWegentUsageDisplay()
+  const wegentQuotaLoading = wegentQuotaSnapshot.status === 'loading'
+  const wegentQuotaError =
+    wegentQuotaSnapshot.status === 'error'
+      ? t('workbench.quota_load_failed', '额度信息获取失败')
+      : null
   const [codexQuotaLoading, setCodexQuotaLoading] = useState(false)
-  const [wegentQuotaLoading, setWegentQuotaLoading] = useState(false)
   const [codexQuotaError, setCodexQuotaError] = useState<string | null>(null)
-  const [wegentQuotaError, setWegentQuotaError] = useState<string | null>(null)
-  const [selectedUpdateError, setSelectedUpdateError] = useState<AppUpdateError | null>(null)
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
@@ -116,22 +112,8 @@ export function DesktopSettingsMenu({
   }
 
   const loadWegentUsage = () => {
-    if (wegentQuotaLoading) {
-      return
-    }
-
-    setWegentQuotaLoading(true)
-    setWegentQuotaError(null)
-    getWegentUsageDisplay(cloudConnection)
-      .then(data => {
-        setWegentUsage(data)
-      })
-      .catch(() => {
-        setWegentQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
-      })
-      .finally(() => {
-        setWegentQuotaLoading(false)
-      })
+    if (!isConnected || wegentQuotaResource.getSnapshot().status === 'loading') return
+    void wegentQuotaResource.reload()
   }
 
   const handleCodexUsageClick = () => {
@@ -151,30 +133,6 @@ export function DesktopSettingsMenu({
       loadWegentUsage()
     }
   }
-
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return
-
-    let cancelled = false
-    getWegentUsageDisplay({
-      isConnected: cloudConnection.isConnected,
-      apiBaseUrl: cloudConnection.apiBaseUrl,
-      token: cloudConnection.token,
-    })
-      .then(data => {
-        if (!cancelled) setWegentUsage(data)
-      })
-      .catch(() => undefined)
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    cloudConnection.apiBaseUrl,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-  ])
 
   const handleUpdateClick = async () => {
     if (availableUpdate && installUpdate) {
@@ -222,14 +180,7 @@ export function DesktopSettingsMenu({
     updateStatus === 'downloading' ? formatAppUpdateProgress(downloadProgress, t) : null
 
   return (
-    <div
-      data-testid="settings-menu"
-      className={
-        placement === 'below-right'
-          ? 'absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
-          : 'absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
-      }
-    >
+    <div data-testid="settings-menu" className="contents">
       {onLogin ? (
         <>
           <SettingsMenuItem
@@ -253,7 +204,11 @@ export function DesktopSettingsMenu({
         testId="check-app-update-button"
         icon={
           updateStatus === 'downloading' && downloadPercent !== null ? (
-            <UpdateDownloadProgressIcon progress={downloadPercent} />
+            <ProgressRing
+              value={downloadPercent}
+              label={t('workbench.app_update_downloading_progress', { progress: downloadPercent })}
+              testId="app-update-download-icon-progress"
+            />
           ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
           ) : (
@@ -296,14 +251,15 @@ export function DesktopSettingsMenu({
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1">{updateErrorSummary}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="app-update-error-details-button"
-                onClick={() => setSelectedUpdateError(updateError)}
+                onClick={() => onShowUpdateError(updateError, handleUpdateClick)}
                 className="shrink-0 rounded-sm text-focus underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:text-blue-600 wework:dark:text-blue-300"
               >
                 {t('workbench.app_update_error_details', '查看错误详情')}
-              </button>
+              </ControlButton>
             </div>
           ) : (
             updateMessage
@@ -422,18 +378,6 @@ export function DesktopSettingsMenu({
           onClick={onLogout}
         />
       ) : null}
-      {selectedUpdateError ? (
-        <AppUpdateErrorDetailsDialog
-          key={`${selectedUpdateError.code}:${selectedUpdateError.occurredAt}`}
-          open
-          error={selectedUpdateError}
-          onClose={() => setSelectedUpdateError(null)}
-          onRetry={async () => {
-            setSelectedUpdateError(null)
-            await handleUpdateClick()
-          }}
-        />
-      ) : null}
     </div>
   )
 }
@@ -485,7 +429,8 @@ function SettingsMenuItem({
   onClick,
 }: SettingsMenuItemProps) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -512,6 +457,6 @@ function SettingsMenuItem({
         />
       ) : null}
       {trailing}
-    </button>
+    </ControlButton>
   )
 }

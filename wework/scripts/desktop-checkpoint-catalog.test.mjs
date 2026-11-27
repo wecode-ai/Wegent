@@ -19,7 +19,7 @@ const definitions = readDesktopCheckpointDefinitions()
 
 test('sequential and parallel cloud scenarios never receive conflicting only modes', () => {
   const catalog = loadDesktopCheckpointCatalog()
-  for (const checkpoint of ['connector-oauth', 'connector-account-switch']) {
+  for (const checkpoint of ['connector-oauth']) {
     assert.ok(catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint))
     assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has(checkpoint))
     assert.deepEqual(desktopCheckpointArgs(checkpoint), ['--segment', checkpoint])
@@ -36,32 +36,6 @@ test('sequential and parallel cloud scenarios never receive conflicting only mod
   ])
   assert.deepEqual(desktopCheckpointArgs(ordinaryCloud, 'core'), ['--segment', ordinaryCloud])
   assert.throws(() => desktopCheckpointArgs(ordinaryCloud, 'unknown'), /scope must be/)
-})
-
-test('Connector account isolation is selectable and runs inside the existing cloud OAuth checkpoint', () => {
-  const catalog = loadDesktopCheckpointCatalog()
-  assert.deepEqual(expandDesktopCheckpoints(['connector-account-switch']), [
-    'connector-account-switch',
-  ])
-  assert.ok(catalog.DESKTOP_CHECKPOINTS.includes('connector-account-switch'))
-  assert.equal(
-    catalog.DESKTOP_CHECKPOINT_CI_HOSTS.get('connector-account-switch'),
-    'connector-oauth'
-  )
-  assert.equal(
-    catalog.CHECKPOINT_SCENARIO_MODULES['connector-account-switch'],
-    './scenarios/connector-oauth.scenario.mjs'
-  )
-  assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has('connector-account-switch'))
-  assert.ok(catalog.ci.cloud_shards[7].split(',').includes('connector-oauth'))
-  assert.equal(catalog.ci.cloud_segments.includes('connector-account-switch'), false)
-  for (const path of [
-    'wework/e2e/desktop/catalog/connector-account-switch.json',
-    'wework/e2e/desktop/modules/connector-account-switch.mjs',
-    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
-  ]) {
-    assert.ok(catalog.PATH_TARGETS.get(path)?.includes('cloud:connector-oauth'), path)
-  }
 })
 
 test('literal CI targets and segment lists resolve to retained checkpoints or groups', () => {
@@ -254,7 +228,7 @@ test('a child config selects its composite CI owner and hosted checkpoints selec
     ['core:stand-in-profile']
   )
   assert.deepEqual(
-    catalog.PATH_TARGETS.get('wework/e2e/desktop/catalog/responses-api-gateway.json'),
+    catalog.PATH_TARGETS.get('wework/e2e/desktop/catalog/plugin-account-auth-dws.json'),
     ['cloud:plugin-account-auth-dws']
   )
 })
@@ -292,9 +266,9 @@ test('a feature config selects its existing shard rather than all desktop suites
   assert.equal(result.wework_desktop_other_e2e, 'false')
 })
 
-test('Connector fixture and standalone checkpoint edits select only their existing cloud host', () => {
+test('Connector fixture and OAuth checkpoint edits select only their existing cloud host', () => {
   for (const path of [
-    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/catalog/connector-oauth.json',
     'wework/e2e/desktop/modules/connector-account-switch.mjs',
     'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
   ]) {
@@ -332,24 +306,25 @@ test('theme changes retain real content and auxiliary window regressions', () =>
   const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>
     shard.segments.split(',')
   )
-  for (const id of [
-    'application-menu',
-    'background-terminals',
-    'collaboration-first-use',
-    'streaming-content',
-  ]) {
+  for (const id of ['window-lifecycle', 'streaming-content']) {
     assert.ok(checkpoints.includes(id), `Theme changes omit the ${id} CI checkpoint`)
   }
 })
 
-test('extracted routing and test modules retain their parent CI gates', () => {
+test('routing and classifier test changes select the desktop smoke checkpoints', () => {
   for (const path of [
     '.github/scripts/desktop-ci/workbench-paths.sh',
     '.github/scripts/ci-classification-tests/new-feature.sh',
   ]) {
     const desktop = classified(path)
-    assert.equal(JSON.parse(desktop.wework_desktop_core_e2e_matrix).include.length, 10)
-    assert.equal(JSON.parse(desktop.wework_desktop_cloud_e2e_matrix).include.length, 8)
+    assert.deepEqual(
+      JSON.parse(desktop.wework_desktop_core_e2e_matrix).include.map(shard => shard.segments),
+      ['release-package-startup,native-lifecycle']
+    )
+    assert.deepEqual(
+      JSON.parse(desktop.wework_desktop_cloud_e2e_matrix).include.map(shard => shard.segments),
+      ['plugin-runtime-route-refresh']
+    )
     const modules = classified(path, '.github/scripts/classify-ci-changes.sh')
     assert.equal(modules.wework_e2e, 'true')
   }

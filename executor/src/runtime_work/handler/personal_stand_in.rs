@@ -2,10 +2,195 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, stand_in_identities,
+    project_role, role_project_matches, role_receives_participating_issues, stand_in_connection,
+    stand_in_identities, DINGTALK_PROVIDER,
 };
 
+fn active_dingtalk_delegation(primary: &Value) -> bool {
+    primary["enabled"] == true
+        && primary["delegation"]["authorized"] == true
+        && primary["delegation"]["paused"] == false
+}
+
+fn enabled_dingtalk_sources(primary: &Value) -> impl Iterator<Item = &Value> {
+    primary["connections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|source| {
+            source["providerId"] == DINGTALK_PROVIDER
+                && source["delegated"] == true
+                && source["paused"] != true
+        })
+}
+
+fn needs_dingtalk_read_preflight(primary: &Value, previous: &Value) -> bool {
+    if !active_dingtalk_delegation(primary) {
+        return false;
+    }
+    let delegation = &primary["delegation"];
+    let before = &previous["delegation"];
+    !active_dingtalk_delegation(previous)
+        || primary["model"] != previous["model"]
+        || ["profile", "accountId", "organizationId"]
+            .into_iter()
+            .any(|key| delegation[key] != before[key])
+        || ["document", "schedule", "process"]
+            .into_iter()
+            .any(|key| delegation["templates"][key] == true && before["templates"][key] != true)
+        || enabled_dingtalk_sources(primary).any(|source| {
+            !stand_in_connection(previous, source)
+                .is_some_and(|row| row["delegated"] == true && row["paused"] == false)
+        })
+}
+
+pub(super) fn verified_dingtalk_readiness<'a>(
+    readiness: &'a Value,
+    expected: &Value,
+    read: bool,
+) -> Result<&'a Value, AppIpcError> {
+    let identity = &readiness["identity"];
+    let organization = &identity["organizationId"];
+    if readiness["status"] == "permissions_required" {
+        return Err(AppIpcError::new(
+            "dingtalk_permissions_required",
+            "Check the message permissions for the selected DingTalk conversations",
+        ));
+    }
+    if readiness["status"] == "auth_required" {
+        return Err(AppIpcError::new(
+            "connector_auth_required",
+            "Reconnect the selected DingTalk account",
+        ));
+    }
+    if readiness["status"] == "identity_required"
+        || (readiness["status"] == "ready"
+            && (identity["profile"] != expected["profile"]
+                || identity["accountId"] != expected["accountId"]
+                || organization.as_str().map_or(true, str::is_empty)
+                || (!expected["organizationId"].is_null()
+                    && organization != &expected["organizationId"])))
+    {
+        return Err(AppIpcError::new(
+            "dingtalk_identity_changed",
+            "Confirm the DingTalk account and organization again",
+        ));
+    }
+    if readiness["status"] != "ready" || (read && readiness["permissions"]["read"] != "verified") {
+        return Err(AppIpcError::new(
+            "dingtalk_not_ready",
+            "Check the DingTalk authorization and message permissions before enabling",
+        ));
+    }
+    Ok(identity)
+}
+
+fn unique_native_codex_default(catalog: &Value) -> Option<Value> {
+    let mut defaults = catalog["models"].as_array()?.iter().filter(|model| {
+        model["runtime"] == "codex" && model["is_default"] == true && model["source"] != "cloud"
+    });
+    let model = defaults.next()?;
+    if defaults.next().is_some() {
+        return None;
+    }
+    Some(json!({
+        "runtime": "codex",
+        "provider": model["provider"],
+        "model_id": model["model_id"],
+    }))
+}
+
+pub(super) fn issue_role_config(
+    role: &Value,
+    user: i64,
+    project: &str,
+    kind: &str,
+    participant: bool,
+) -> Option<Value> {
+    let project_matches = role_project_matches(role, project, kind);
+    let participation = participant
+        && role_receives_participating_issues(role)
+        && role["participatingIssuesEnabledAfter"].is_string();
+    if !project_matches && !participation {
+        return None;
+    }
+    let mut config = project_role(role, user, project, kind);
+    if participation
+        && (!project_matches
+            || config["enabledAfter"].as_str().is_none()
+            || role["participatingIssuesEnabledAfter"].as_str() < config["enabledAfter"].as_str())
+    {
+        config["enabledAfter"] = role["participatingIssuesEnabledAfter"].clone();
+    }
+    Some(config)
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn issue_intake_roles(
+        &self,
+        roles: &[Value],
+        user: i64,
+        project: &str,
+        kind: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let participant = if roles.iter().any(role_receives_participating_issues) {
+            if kind == "local" {
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                store
+                    .participating_issue_ids(project, &[0, user])
+                    .map_err(settings_error)?
+                    .contains(issue_id)
+            } else {
+                self.verify_runtime_user(&json!({"userId":user})).await?;
+                let members = self
+                    .runtime_http(
+                        reqwest::Method::GET,
+                        &format!("/v1/loop-items/{issue_id}/collaborators"),
+                        None,
+                    )
+                    .await?;
+                members
+                    .as_array()
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "cloud_response_invalid",
+                            "Issue participants are not a list",
+                        )
+                    })?
+                    .iter()
+                    .any(|row| row["user_id"] == user)
+            }
+        } else {
+            false
+        };
+        Ok(roles
+            .iter()
+            .filter_map(|role| issue_role_config(role, user, project, kind, participant))
+            .collect())
+    }
+
+    pub(super) async fn cloud_issue_intake_configs(
+        &self,
+        settings: &[Value],
+        user: i64,
+        project: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let roles = settings
+            .iter()
+            .filter(|settings| {
+                settings["userId"] == user
+                    && settings["executionDeviceId"] == self.device_id
+                    && settings["lifecycle"]["status"].is_null()
+            })
+            .flat_map(stand_in_identities)
+            .collect::<Vec<_>>();
+        self.issue_intake_roles(&roles, user, project, "cloud", issue_id)
+            .await
+    }
+
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
@@ -81,7 +266,25 @@ impl RuntimeWorkRpcHandler {
             .list_projects()
             .map_err(settings_error)?
             .into_iter()
-            .flat_map(|project| self.stand_in_project_configs(&personal, &project.id, "local"))
+            .flat_map(|project| {
+                personal
+                    .iter()
+                    .filter(|settings| settings["executionDeviceId"] == self.device_id)
+                    .flat_map(stand_in_identities)
+                    .filter(|role| {
+                        role_project_matches(role, &project.id, "local")
+                            || role_receives_participating_issues(role)
+                    })
+                    .map(|role| {
+                        project_role(
+                            &role,
+                            role["userId"].as_i64().unwrap_or_default(),
+                            &project.id,
+                            "local",
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect())
     }
 
@@ -162,6 +365,184 @@ impl RuntimeWorkRpcHandler {
         self.apply_backend_connection(&mut request);
         Ok(request)
     }
+    pub(super) async fn stand_in_share_definition(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        self.verify_runtime_user(&payload).await?;
+        let kind = super::stand_in_tasks::required(&payload, "kind")?;
+        let id = super::stand_in_tasks::required(&payload, "id")?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .read_personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let definition =
+            crate::task_runtime::personal_stand_in::assistant_share_definition(&settings, kind, id)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "not_found",
+                        "Assistant or team is unavailable on this device",
+                    )
+                })?;
+        Ok(json!(definition))
+    }
+
+    pub(super) async fn copy_stand_in_share(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        let connection = self.require_runtime_connection()?;
+        if Self::connected_runtime_user(&connection).await? != user {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Share recipient must match the connected account",
+            ));
+        }
+        let owner = payload["ownerUserId"]
+            .as_i64()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| AppIpcError::new("bad_request", "Share owner is required"))?;
+        let (kind, source) = assistant_share_ref(&payload)?;
+        let share = Self::assistant_share_request_on(
+            &connection,
+            reqwest::Method::GET,
+            &format!("/v1/assistant-shares/{owner}/{kind}/{source}/snapshot/copy"),
+            None,
+        )
+        .await?;
+        let snapshot = serde_json::from_value::<
+            wegent_protocol::assistant_share::AssistantShareSnapshot,
+        >(share)
+        .map_err(|_| AppIpcError::new("server_error", "Invalid assistant share snapshot"))?;
+        if i64::from(snapshot.owner_user_id) != owner
+            || snapshot.root.definition.key() != (kind, source)
+        {
+            return Err(AppIpcError::new(
+                "server_error",
+                "Assistant share identity mismatch",
+            ));
+        }
+        if payload["expectedRevision"]
+            .as_u64()
+            .is_some_and(|version| version != snapshot.root.revision)
+        {
+            return Err(AppIpcError::new(
+                "version_conflict",
+                "Review the latest shared version before copying",
+            ));
+        }
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        store
+            .copy_assistant_share(
+                user,
+                &self.device_id,
+                &connection.backend_url,
+                &snapshot,
+                payload["update"] == true,
+            )
+            .map_err(settings_error)
+    }
+
+    pub(super) async fn share_stand_in_cloud(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        let connection = self.require_runtime_connection()?;
+        if Self::connected_runtime_user(&connection).await? != user {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Share account must match the connected account",
+            ));
+        }
+        use reqwest::Method;
+        match method {
+            "runtime.stand_in.share.list" => {
+                let mut response =
+                    Self::runtime_http_on(&connection, Method::GET, "/v1/assistant-shares", None)
+                        .await?;
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                let settings = store
+                    .read_personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                for entry in response["received"].as_array_mut().into_iter().flatten() {
+                    let revision = entry["owner_user_id"]
+                        .as_i64()
+                        .and_then(|owner| i32::try_from(owner).ok())
+                        .and_then(|owner| {
+                            crate::task_runtime::personal_stand_in::assistant_share_copy_revision(
+                                &settings,
+                                &connection.backend_url,
+                                owner,
+                                entry["resource_kind"].as_str()?,
+                                entry["source_id"].as_str()?,
+                            )
+                        });
+                    entry["local_revision"] = json!(revision);
+                }
+                Ok(response)
+            }
+            "runtime.stand_in.share.search_users" => {
+                let query = super::stand_in_tasks::required(&payload, "query")?;
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("q", query)
+                    .append_pair("limit", "20")
+                    .finish();
+                Self::runtime_http_on(
+                    &connection,
+                    Method::GET,
+                    &format!("/users/search?{query}"),
+                    None,
+                )
+                .await
+            }
+            "runtime.stand_in.share.publish" => {
+                Self::runtime_http_on(
+                    &connection,
+                    Method::POST,
+                    "/v1/assistant-shares",
+                    Some(&payload["share"]),
+                )
+                .await
+            }
+            "runtime.stand_in.share.direct" => {
+                let (kind, source) = assistant_share_ref(&payload)?;
+                let owner = payload["ownerUserId"]
+                    .as_i64()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| AppIpcError::new("bad_request", "Share owner is required"))?;
+                Self::assistant_share_request_on(
+                    &connection,
+                    Method::PATCH,
+                    &format!("/v1/assistant-shares/{owner}/{kind}/{source}"),
+                    Some(&json!({"enabled":true})),
+                )
+                .await
+            }
+            "runtime.stand_in.share.revoke" => {
+                let (kind, source) = assistant_share_ref(&payload)?;
+                let recipient = payload["recipientUserId"]
+                    .as_i64()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Share recipient is required")
+                    })?;
+                Self::runtime_http_on(
+                    &connection,
+                    Method::DELETE,
+                    &format!("/v1/assistant-shares/{kind}/{source}/recipients/{recipient}"),
+                    None,
+                )
+                .await
+            }
+            _ => Err(AppIpcError::new(
+                "bad_request",
+                "Unknown assistant share operation",
+            )),
+        }
+    }
+
     pub(super) async fn personal_stand_in_settings(
         &self,
         payload: Value,
@@ -172,20 +553,63 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            if let Some(route) = payload.get("delegationRoute") {
+                if payload.get("transferRoleId").is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "A role transfer cannot save a delegation route",
+                    ));
+                }
+                return store
+                    .save_stand_in_delegation_route(user, &self.device_id, route)
+                    .map_err(settings_error);
+            }
+            let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user}"));
+            let _git_settings = git_settings.lock().await;
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
             let _guard = gate.lock().await;
             let previous = store
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
-            store
+            if let Some(transfer) = payload.get("transferRoleId") {
+                let invalid =
+                    || AppIpcError::new("bad_request", "Invalid transferred stand-in role");
+                let id = transfer
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(invalid)?;
+                let role = settings["roles"]
+                    .as_array_mut()
+                    .and_then(|roles| roles.iter_mut().find(|role| role["id"] == id))
+                    .filter(|role| {
+                        role["migrationSource"]
+                            .as_str()
+                            .is_some_and(|source| !source.is_empty())
+                            && self.stand_in_role_runs_here(role)
+                    })
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(invalid)?;
+                role.remove("taskPermissions");
+            }
+            let normalized = store
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;
+            let verified_account = self
+                .preflight_dingtalk_delegation(user, &mut settings, &normalized, &previous)
+                .await?;
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
+            let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .save_personal_stand_in(user, &self.device_id, settings)
+                .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+                    user,
+                    &self.device_id,
+                    connection.as_ref().map(|entry| entry.backend_url.as_str()),
+                    settings,
+                    verified_account.as_ref(),
+                )
                 .map_err(settings_error)?;
             Ok(saved)
         } else {
@@ -193,6 +617,80 @@ impl RuntimeWorkRpcHandler {
                 .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
+    }
+
+    pub(super) async fn preflight_dingtalk_delegation(
+        &self,
+        user: i64,
+        settings: &mut Value,
+        normalized: &Value,
+        previous: &Value,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let primary = &normalized["primary"];
+        let before = &previous["primary"];
+        let delegation = &primary["delegation"];
+        let preparing = settings["primary"]["delegation"]["action"] == "prepare";
+        let verify_read = needs_dingtalk_read_preflight(primary, before);
+        if preparing || delegation != &before["delegation"] || verify_read {
+            self.verify_local_stand_in_owner(user)?;
+        }
+        if !preparing && !verify_read {
+            return Ok(None);
+        }
+        if !self.stand_in_role_runs_here(primary) {
+            return Err(AppIpcError::new(
+                "dingtalk_device_mismatch",
+                "Select the local executor to configure DingTalk delegation",
+            ));
+        }
+        let mut input = json!({"readiness":true,"profile":delegation["profile"]});
+        if verify_read {
+            input["sources"] = json!(enabled_dingtalk_sources(primary)
+                .map(|source| json!({"id":source["id"],"kind":source["kind"]}))
+                .collect::<Vec<_>>());
+        }
+        let readiness = self
+            .connection_call("check", Some(DINGTALK_PROVIDER), input)
+            .await?;
+        let identity = verified_dingtalk_readiness(&readiness, delegation, verify_read)?;
+        if verify_read {
+            let selected_model = primary
+                .get("model")
+                .filter(|model| !model.is_null())
+                .unwrap_or(&before["model"]);
+            settings["primary"]["model"] = self.preflight_dingtalk_model(selected_model).await?;
+        }
+        Ok(Some(identity.clone()))
+    }
+
+    async fn preflight_dingtalk_model(&self, selection: &Value) -> Result<Value, AppIpcError> {
+        let catalog = self.runner_catalog().await?;
+        let model = if selection.is_null() {
+            unique_native_codex_default(&catalog).unwrap_or(Value::Null)
+        } else {
+            selection.clone()
+        };
+        if model["runtime"] != "codex" {
+            return Err(AppIpcError::new(
+                "dingtalk_model_unavailable",
+                "Select an available Codex model for DingTalk delegation",
+            ));
+        }
+        let environment = json!({"mode":"fixed","environment_id":self.device_id});
+        let policy = json!({"mode":"fixed","model":model});
+        crate::task_runtime::runner_routing::validate_policies(Some(&environment), Some(&policy))
+            .map_err(settings_error)?;
+        let mut routing = json!({"runnerPolicy":{
+            "runtime":"codex","execution_policy":environment,"model_policy":policy
+        }});
+        crate::task_runtime::runner_routing::resolve_pending(
+            &mut routing,
+            Some(&catalog),
+            &self.device_id,
+        )
+        .map_err(settings_error)?;
+        self.materialize_runner_cloud_models(&mut routing).await?;
+        Ok(model)
     }
 
     pub(super) async fn prepare_connection_boundaries(
@@ -329,6 +827,7 @@ pub(super) fn automatic_assignment_roles<'a>(
 ) -> Vec<&'a Value> {
     matching_personal_roles(configs, issue)
         .into_iter()
+        .filter(|role| dispatch_authorizes_role(role, issue))
         // One automatic assignment selects one role; explicit role dispatch is separate.
         .min_by_key(|role| {
             if role["tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
@@ -339,6 +838,107 @@ pub(super) fn automatic_assignment_roles<'a>(
         })
         .into_iter()
         .collect()
+}
+
+fn dispatch_authorizes_role(role: &Value, issue: &Value) -> bool {
+    let metadata = &issue["metadata"];
+    let policy = metadata.get("assistant_autonomy_policy");
+    if policy
+        .and_then(|value| value.get("automatic"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if policy
+        .and_then(|value| value.get("ask_before_act"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return false;
+    }
+    let Some(endpoint) = metadata
+        .get("assistant_endpoint_ref")
+        .and_then(Value::as_str)
+    else {
+        return true;
+    };
+    endpoint
+        .rsplit_once(':')
+        .map(|(_, role_id)| role["id"].as_str() == Some(role_id))
+        .unwrap_or(true)
+}
+
+fn assistant_share_ref(payload: &Value) -> Result<(&str, &str), AppIpcError> {
+    let kind = super::stand_in_tasks::required(payload, "kind")?;
+    let source = super::stand_in_tasks::required(payload, "id")?;
+    if !matches!(kind, "assistant" | "team")
+        || source.len() > 64
+        || !source
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"@-_".contains(&byte))
+    {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Invalid assistant share reference",
+        ));
+    }
+    Ok((kind, source))
+}
+
+#[cfg(test)]
+mod delegation_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn only_activation_or_widening_requires_read_preflight() {
+        let active = json!({
+            "enabled": true,
+            "delegation": {
+                "authorized": true, "paused": false, "profile": "org:user", "accountId": "account",
+                "templates": {"document": true, "schedule": false, "process": true}
+            },
+            "connections": [{
+                "providerId": DINGTALK_PROVIDER, "delegated": true, "paused": false,
+                "profile": "org:user", "kind": "group", "id": "selected"
+            }]
+        });
+        let mut draft = active.clone();
+        draft["delegation"]["paused"] = json!(true);
+        assert!(!needs_dingtalk_read_preflight(&draft, &active));
+        assert!(needs_dingtalk_read_preflight(&active, &draft));
+        draft = active.clone();
+        draft["delegation"]["templates"]["document"] = json!(false);
+        assert!(!needs_dingtalk_read_preflight(&draft, &active));
+        draft["delegation"]["templates"]["schedule"] = json!(true);
+        assert!(needs_dingtalk_read_preflight(&draft, &active));
+        draft = active.clone();
+        draft["connections"][0]["id"] = json!("another");
+        assert!(needs_dingtalk_read_preflight(&draft, &active));
+    }
+
+    #[test]
+    fn account_verification_does_not_supply_message_access() {
+        let account = json!({"profile":"org:user","accountId":"account","organizationId":"org"});
+        let mut readiness =
+            json!({"status":"ready","identity":account,"permissions":{"read":"unchecked"}});
+        assert!(verified_dingtalk_readiness(&readiness, &account, false).is_ok());
+        assert_eq!(
+            verified_dingtalk_readiness(&readiness, &account, true)
+                .unwrap_err()
+                .code,
+            "dingtalk_not_ready"
+        );
+        readiness["permissions"]["read"] = json!("verified");
+        assert!(verified_dingtalk_readiness(&readiness, &account, true).is_ok());
+        readiness["identity"]["organizationId"] = json!("other");
+        assert_eq!(
+            verified_dingtalk_readiness(&readiness, &account, true)
+                .unwrap_err()
+                .code,
+            "dingtalk_identity_changed"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -362,5 +962,40 @@ mod automatic_role_selection_tests {
             "general"
         );
         assert!(automatic_assignment_roles(&roles[1..], &json!({"tags":["other"]})).is_empty());
+    }
+
+    #[test]
+    fn dispatch_limits_automatic_intake_to_the_authorized_roster_endpoint_and_policy() {
+        let roles = vec![json!({"id":"review"}), json!({"id":"general"})];
+        let issue = json!({
+            "metadata": {
+                "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": false}
+            }
+        });
+        assert_eq!(
+            automatic_assignment_roles(&roles, &issue)[0]["id"],
+            "review"
+        );
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": false, "ask_before_act": false}
+                }
+            })
+        )
+        .is_empty());
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": true}
+                }
+            })
+        )
+        .is_empty());
     }
 }

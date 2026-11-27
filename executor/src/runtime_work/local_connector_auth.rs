@@ -4,7 +4,7 @@
 //! artifacts without sending credentials to the cloud or LLM.
 
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     env, fs,
     path::{Component, Path, PathBuf},
     process::Stdio,
@@ -14,10 +14,15 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
-use tokio::{process::Command, sync::Mutex, task::JoinHandle};
+use tokio::{
+    process::Command,
+    sync::{watch, Mutex},
+    task::JoinHandle,
+};
 use uuid::Uuid;
 
 use crate::local::app_ipc::AppIpcError;
+use crate::local::plugin_cache::native_cache_segment;
 
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
@@ -25,7 +30,8 @@ use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 mod connection_tools;
 mod diagnostics;
 pub(crate) use connection_tools::{
-    connection_auth_target, run_connection_tool, run_declared_plugin_tool,
+    connection_auth_target, prepare_declared_plugin_tool, run_connection_tool,
+    run_declared_plugin_tool, PreparedPluginTool,
 };
 mod github_cli;
 pub(crate) mod gitlab_cli;
@@ -52,14 +58,148 @@ struct LocalAuthSpec {
 struct BrowserAuthSession {
     plugin_key: String,
     connector_slug: String,
+    marketplace_id: Option<String>,
+    plugin_root: Option<PathBuf>,
     state: Arc<Mutex<Value>>,
     task: JoinHandle<()>,
 }
 
 static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>>> =
     OnceLock::new();
+static MARKETPLACE_AUTH: OnceLock<std::sync::Mutex<MarketplaceAuth>> = OnceLock::new();
 
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
+
+#[derive(Default)]
+struct MarketplaceAuth {
+    removals: HashMap<PathBuf, MarketplaceRemovalPhase>,
+    qr_operations: HashMap<Uuid, (PathBuf, watch::Receiver<()>)>,
+}
+
+fn marketplace_auth() -> &'static std::sync::Mutex<MarketplaceAuth> {
+    MARKETPLACE_AUTH.get_or_init(Default::default)
+}
+
+enum MarketplaceRemovalPhase {
+    Draining,
+    CleaningUp(PathBuf),
+}
+
+impl MarketplaceAuth {
+    fn check_removal(&self, plugin_root: &Path) -> Result<(), AppIpcError> {
+        if self
+            .removals
+            .keys()
+            .any(|cache| plugin_root.starts_with(cache))
+        {
+            return Err(AppIpcError::new(
+                "marketplace_removal_in_progress",
+                "The plugin marketplace is being removed",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(super) struct MarketplaceRemoval(PathBuf);
+
+impl MarketplaceRemoval {
+    pub(super) fn begin(cache: PathBuf) -> Result<Self, AppIpcError> {
+        let mut auth = marketplace_auth().lock().unwrap();
+        let Entry::Vacant(entry) = auth.removals.entry(cache.clone()) else {
+            return Err(AppIpcError::new(
+                "marketplace_management_failed",
+                "This marketplace is already being removed",
+            ));
+        };
+        entry.insert(MarketplaceRemovalPhase::Draining);
+        Ok(Self(cache))
+    }
+
+    pub(super) fn begin_cleanup(&self, codex_home: &Path) {
+        *marketplace_auth()
+            .lock()
+            .unwrap()
+            .removals
+            .get_mut(&self.0)
+            .expect("marketplace removal guard is active") =
+            MarketplaceRemovalPhase::CleaningUp(codex_home.to_path_buf());
+    }
+
+    pub(super) fn cleaning_marketplaces(codex_home: &Path) -> Vec<String> {
+        marketplace_auth()
+            .lock()
+            .unwrap()
+            .removals
+            .iter()
+            .filter(|(_, phase)| {
+                matches!(phase, MarketplaceRemovalPhase::CleaningUp(home) if home == codex_home)
+            })
+            .filter_map(|(cache, _)| cache.file_name()?.to_str().map(str::to_owned))
+            .collect()
+    }
+
+    pub(super) async fn wait_for_qr_auth(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), AppIpcError> {
+        let pending: Vec<_> = marketplace_auth()
+            .lock()
+            .unwrap()
+            .qr_operations
+            .values()
+            .filter(|(root, _)| root.starts_with(&self.0))
+            .map(|(_, done)| done.clone())
+            .collect();
+        tokio::time::timeout_at(
+            deadline,
+            futures_util::future::join_all(pending.into_iter().map(|mut done| async move {
+                let _ = done.changed().await;
+            })),
+        )
+        .await
+        .map_err(|_| {
+            AppIpcError::new(
+                "marketplace_auth_busy",
+                "Wait for plugin authorization to finish and retry marketplace removal",
+            )
+        })?;
+        Ok(())
+    }
+}
+
+impl Drop for MarketplaceRemoval {
+    fn drop(&mut self) {
+        marketplace_auth().lock().unwrap().removals.remove(&self.0);
+    }
+}
+
+struct QrAuthOperation {
+    id: Uuid,
+    _done: watch::Sender<()>,
+}
+
+impl QrAuthOperation {
+    fn begin(plugin_root: &Path) -> Result<Self, AppIpcError> {
+        let mut auth = marketplace_auth().lock().unwrap();
+        let root = canonical_plugin_root(plugin_root)?;
+        auth.check_removal(&root)?;
+        let id = Uuid::new_v4();
+        let (done, receiver) = watch::channel(());
+        auth.qr_operations.insert(id, (root, receiver));
+        Ok(Self { id, _done: done })
+    }
+}
+
+impl Drop for QrAuthOperation {
+    fn drop(&mut self) {
+        marketplace_auth()
+            .lock()
+            .unwrap()
+            .qr_operations
+            .remove(&self.id);
+    }
+}
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     if gitlab_cli::is_target(&payload) {
@@ -114,6 +254,7 @@ pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
     if spec.kind == "browser_oauth" {
         return start_browser_auth(payload, plugin_root, spec).await;
     }
+    let _operation = QrAuthOperation::begin(&plugin_root)?;
     let tool = resolve_auth_tool(spec.tool.as_ref(), true).await?;
     let result = run_plugin_command(
         &plugin_root,
@@ -141,6 +282,7 @@ pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
     if spec.kind == "browser_oauth" {
         return poll_browser_auth(&payload).await;
     }
+    let _operation = QrAuthOperation::begin(&plugin_root)?;
     // Force non-blocking poll regardless of manifest args.
     let mut command = spec.poll.clone();
     ensure_wait_seconds_zero(&mut command);
@@ -162,28 +304,86 @@ pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
 
 pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
     if github_cli::is_target(&payload) {
-        cancel_connector_sessions("github", "wework-github-cli").await;
+        cancel_browser_auth_sessions(|session| {
+            session.plugin_root.is_none()
+                && session.plugin_key == "github"
+                && session.connector_slug == "wework-github-cli"
+        })
+        .await;
         return github_cli::logout().await;
     }
     let (plugin_root, spec) = resolve_request(&payload)?;
     let plugin_key = string_field(&payload, "pluginKey")
         .or_else(|| string_field(&payload, "plugin_key"))
         .unwrap_or_default();
-    cancel_connector_sessions(&plugin_key, &spec.connector_slug).await;
+    let root = canonical_plugin_root(&plugin_root)?;
+    let marketplace_id = string_field(&payload, "marketplaceId");
+    cancel_browser_auth_sessions(|session| {
+        session.plugin_key == plugin_key
+            && session.connector_slug == spec.connector_slug
+            && (session.plugin_root.as_deref() == Some(&root)
+                || (marketplace_id.is_some()
+                    && session.plugin_root.is_some()
+                    && session.marketplace_id == marketplace_id))
+    })
+    .await;
+    logout_with_spec(&plugin_root, &spec).await
+}
+
+pub(super) async fn logout_before_plugin_uninstall(root: &Path, manifest: &Value) {
+    let specs = manifest["connectors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|connector| {
+            let auth = connector["localAuth"].as_object()?;
+            let kind = auth
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("local_qr");
+            let opted_in = auth
+                .get("logoutOnUninstall")
+                .and_then(Value::as_bool)
+                .unwrap_or(kind == "local_qr");
+            connector["slug"].as_str().filter(|slug| !slug.is_empty())?;
+            opted_in
+                .then(|| parse_local_auth_connector(connector).ok())
+                .flatten()
+        });
+    futures_util::future::join_all(specs.map(|spec| async move {
+        if let Err(error) = logout_with_spec(root, &spec).await {
+            crate::logging::log_executor_event(
+                "plugin uninstall connector logout failed",
+                &[("error_code", error.code)],
+            );
+        }
+    }))
+    .await;
+}
+
+async fn logout_with_spec(root: &Path, spec: &LocalAuthSpec) -> Result<Value, AppIpcError> {
     logout::complete(
-        account_lifecycle(&plugin_root, &spec, "logout"),
-        logout_local(&plugin_root, &spec),
+        account_lifecycle(root, spec, "logout"),
+        logout_local(root, spec),
     )
     .await
 }
 
-async fn cancel_connector_sessions(plugin_key: &str, connector_slug: &str) {
+pub(super) async fn cancel_marketplace_plugin_sessions(plugin_dir: &Path) {
+    cancel_browser_auth_sessions(|session| {
+        session
+            .plugin_root
+            .as_deref()
+            .is_some_and(|root| root.starts_with(plugin_dir))
+    })
+    .await;
+}
+
+async fn cancel_browser_auth_sessions(matches: impl Fn(&BrowserAuthSession) -> bool) {
     let mut sessions = browser_auth_sessions().lock().await;
     let ids: Vec<_> = sessions
         .iter()
-        .filter(|(_, session)| {
-            session.plugin_key == plugin_key && session.connector_slug == connector_slug
-        })
+        .filter(|(_, session)| matches(session))
         .map(|(id, _)| id.clone())
         .collect();
     let tasks: Vec<_> = ids
@@ -277,6 +477,33 @@ fn is_safe_plugin_key(plugin_key: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+fn canonical_plugin_root(plugin_root: &Path) -> Result<PathBuf, AppIpcError> {
+    plugin_root.canonicalize().map_err(|_| {
+        AppIpcError::new(
+            "plugin_root_missing",
+            "The installed plugin package is unavailable",
+        )
+    })
+}
+
+fn push_plugin_versions(plugin_dir: PathBuf, candidates: &mut Vec<PathBuf>) {
+    if !plugin_dir.is_dir() {
+        return;
+    }
+    let before = candidates.len();
+    if let Ok(versions) = fs::read_dir(&plugin_dir) {
+        candidates.extend(
+            versions
+                .flatten()
+                .map(|version| version.path())
+                .filter(|path| path.is_dir()),
+        );
+    }
+    if candidates.len() == before {
+        candidates.push(plugin_dir);
+    }
+}
+
 fn push_codex_cache_candidates(cache_root: &Path, plugin_key: &str, candidates: &mut Vec<PathBuf>) {
     // Codex materializes installs as:
     //   plugins/cache/{marketplace}/{plugin_key}/{version}/
@@ -289,27 +516,7 @@ fn push_codex_cache_candidates(cache_root: &Path, plugin_key: &str, candidates: 
         return;
     };
     for marketplace in marketplaces.flatten() {
-        let marketplace_path = marketplace.path();
-        if !marketplace_path.is_dir() {
-            continue;
-        }
-        let plugin_dir = marketplace_path.join(plugin_key);
-        if !plugin_dir.is_dir() {
-            continue;
-        }
-        let mut found_version = false;
-        if let Ok(versions) = fs::read_dir(&plugin_dir) {
-            for version in versions.flatten() {
-                let version_path = version.path();
-                if version_path.is_dir() {
-                    candidates.push(version_path);
-                    found_version = true;
-                }
-            }
-        }
-        if !found_version {
-            candidates.push(plugin_dir);
-        }
+        push_plugin_versions(marketplace.path().join(plugin_key), candidates);
     }
 }
 
@@ -317,6 +524,23 @@ fn resolve_plugin_root_candidates(
     plugin_key: &str,
     payload: &Value,
 ) -> Result<Vec<PathBuf>, AppIpcError> {
+    if let Some(marketplace) = string_field(payload, "marketplaceId") {
+        if !native_cache_segment(&marketplace) || !native_cache_segment(plugin_key) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Invalid plugin marketplace identity",
+            ));
+        }
+        let mut candidates = Vec::new();
+        push_plugin_versions(
+            crate::agents::wework_codex_home()
+                .join("plugins/cache")
+                .join(marketplace)
+                .join(plugin_key),
+            &mut candidates,
+        );
+        return sort_installed_auth_candidates(plugin_key, candidates);
+    }
     if let Some(explicit) =
         string_field(payload, "pluginRoot").or_else(|| string_field(payload, "plugin_root"))
     {
@@ -374,7 +598,13 @@ fn installed_plugin_root_candidates(
     for cache_root in &cache_roots {
         push_codex_cache_candidates(cache_root, plugin_key, &mut candidates);
     }
+    sort_installed_auth_candidates(plugin_key, candidates)
+}
 
+fn sort_installed_auth_candidates(
+    plugin_key: &str,
+    mut candidates: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, AppIpcError> {
     // Prefer the newest version directory by name, then skip packages whose
     // manifest lacks the requested localAuth connector.
     candidates.sort();
@@ -432,24 +662,27 @@ fn parse_local_auth_spec(
     manifest: &Value,
     connector_slug: Option<&str>,
 ) -> Result<LocalAuthSpec, AppIpcError> {
-    let connectors = manifest
-        .get("connectors")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let connector = connectors.into_iter().find(|item| {
-        let slug = item.get("slug").and_then(Value::as_str).unwrap_or_default();
-        match connector_slug {
-            Some(expected) => slug == expected,
-            None => item.get("localAuth").is_some(),
-        }
-    });
+    let connector = manifest["connectors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            let slug = item.get("slug").and_then(Value::as_str).unwrap_or_default();
+            match connector_slug {
+                Some(expected) => slug == expected,
+                None => item.get("localAuth").is_some(),
+            }
+        });
     let connector = connector.ok_or_else(|| {
         AppIpcError::new(
             "local_auth_missing",
             "Plugin does not declare a localAuth connector",
         )
     })?;
+    parse_local_auth_connector(connector)
+}
+
+fn parse_local_auth_connector(connector: &Value) -> Result<LocalAuthSpec, AppIpcError> {
     let local_auth = connector
         .get("localAuth")
         .ok_or_else(|| AppIpcError::new("local_auth_missing", "localAuth is required"))?;
@@ -588,20 +821,23 @@ fn browser_auth_sessions() -> &'static Mutex<HashMap<String, BrowserAuthSession>
     BROWSER_AUTH_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn active_browser_auth_state(plugin_key: &str, connector_slug: &str) -> Option<Value> {
-    let state = {
-        let sessions = browser_auth_sessions().lock().await;
-        sessions
-            .values()
-            .find(|session| {
-                session.plugin_key == plugin_key
-                    && session.connector_slug == connector_slug
-                    && !session.task.is_finished()
-            })
-            .map(|session| Arc::clone(&session.state))
-    }?;
-    let response = state.lock().await.clone();
-    Some(response)
+fn active_browser_auth_state(
+    sessions: &HashMap<String, BrowserAuthSession>,
+    plugin_key: &str,
+    connector_slug: &str,
+    root: Option<&Path>,
+    marketplace_id: Option<&str>,
+) -> Option<Arc<Mutex<Value>>> {
+    sessions
+        .values()
+        .find(|session| {
+            session.plugin_key == plugin_key
+                && session.connector_slug == connector_slug
+                && session.plugin_root.as_deref() == root
+                && session.marketplace_id.as_deref() == marketplace_id
+                && !session.task.is_finished()
+        })
+        .map(|session| Arc::clone(&session.state))
 }
 
 async fn start_browser_auth(
@@ -616,8 +852,23 @@ async fn start_browser_auth(
         .or_else(|| string_field(&payload, "connector_slug"))
         .or_else(|| string_field(&payload, "slug"))
         .ok_or_else(|| AppIpcError::new("bad_request", "connectorSlug is required"))?;
-    if let Some(state) = active_browser_auth_state(&plugin_key, &connector_slug).await {
-        return Ok(state);
+    let marketplace_id = string_field(&payload, "marketplaceId");
+    // Check removal and register the task under the same lock used to cancel sessions.
+    let mut sessions = browser_auth_sessions().lock().await;
+    let session_root = canonical_plugin_root(&plugin_root)?;
+    marketplace_auth()
+        .lock()
+        .unwrap()
+        .check_removal(&session_root)?;
+    if let Some(state) = active_browser_auth_state(
+        &sessions,
+        &plugin_key,
+        &connector_slug,
+        Some(&session_root),
+        marketplace_id.as_deref(),
+    ) {
+        drop(sessions);
+        return Ok(state.lock().await.clone());
     }
     let session_id = Uuid::new_v4().to_string();
     let state = Arc::new(Mutex::new(browser_session_state(
@@ -697,11 +948,13 @@ async fn start_browser_auth(
         *task_state.lock().await = final_state;
     });
 
-    let mut sessions = browser_auth_sessions().lock().await;
     let stale_ids = sessions
         .iter()
         .filter(|(_, session)| {
-            session.plugin_key == plugin_key && session.connector_slug == connector_slug
+            session.plugin_key == plugin_key
+                && session.connector_slug == connector_slug
+                && session.plugin_root.as_deref() == Some(&session_root)
+                && session.marketplace_id == marketplace_id
         })
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
@@ -715,6 +968,8 @@ async fn start_browser_auth(
         BrowserAuthSession {
             plugin_key,
             connector_slug,
+            marketplace_id,
+            plugin_root: Some(session_root),
             state,
             task,
         },
@@ -765,7 +1020,10 @@ fn validate_session_identity(
         .or_else(|| string_field(payload, "connector_slug"))
         .or_else(|| string_field(payload, "slug"))
         .unwrap_or_default();
-    if plugin_key != session.plugin_key || connector_slug != session.connector_slug {
+    if plugin_key != session.plugin_key
+        || connector_slug != session.connector_slug
+        || string_field(payload, "marketplaceId") != session.marketplace_id
+    {
         return Err(AppIpcError::new(
             "local_auth_session_mismatch",
             "Authorization session does not belong to this connector",
@@ -1209,14 +1467,19 @@ mod tests {
             BrowserAuthSession {
                 plugin_key: plugin_key.clone(),
                 connector_slug: connector_slug.clone(),
+                marketplace_id: None,
+                plugin_root: None,
                 state,
                 task,
             },
         );
 
-        let reused = active_browser_auth_state(&plugin_key, &connector_slug)
-            .await
-            .expect("active session");
+        let state = {
+            let sessions = browser_auth_sessions().lock().await;
+            active_browser_auth_state(&sessions, &plugin_key, &connector_slug, None, None)
+                .expect("active session")
+        };
+        let reused = state.lock().await;
 
         assert_eq!(
             reused.get("sessionId").and_then(Value::as_str),
@@ -1228,6 +1491,210 @@ mod tests {
             .remove(&session_id)
             .expect("inserted session");
         session.task.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn marketplace_uninstall_uses_only_opted_in_connectors_from_the_installed_package() {
+        let package = tempfile::tempdir().unwrap();
+        fs::write(
+            package.path().join("logout.sh"),
+            "#!/bin/sh\nrm -- \"$1\"\nprintf '{\"status\":\"ok\"}\\n'\n",
+        )
+        .unwrap();
+        let connector = |slug, opted_in| {
+            json!({"slug": slug, "localAuth": {
+                "kind": "browser_oauth",
+                "health": ["logout.sh"],
+                "start": ["logout.sh"],
+                "logout": ["logout.sh", slug],
+                "logoutOnUninstall": opted_in,
+            }})
+        };
+        for marker in ["clear-auth", "keep-auth"] {
+            fs::write(package.path().join(marker), "authorized").unwrap();
+        }
+        let manifest = json!({"connectors": [
+            connector("clear-auth", true),
+            connector("keep-auth", false),
+        ]});
+
+        logout_before_plugin_uninstall(package.path(), &manifest).await;
+
+        assert!(!package.path().join("clear-auth").exists());
+        assert_eq!(
+            fs::read_to_string(package.path().join("keep-auth")).unwrap(),
+            "authorized"
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_with_explicit_root_preserves_same_name_session_at_another_root() {
+        let home = tempfile::tempdir().unwrap();
+        let first_root = home.path().join("first");
+        let other_root = home.path().join("other");
+        let plugin_key = format!("plugin-{}", Uuid::new_v4());
+        let connector_slug = "browser-auth";
+        let manifest = json!({"name": plugin_key, "connectors": [{
+            "slug": connector_slug, "localAuth": {
+                "kind": "browser_oauth", "health": ["auth.sh"], "start": ["auth.sh"]
+            }
+        }]});
+        for root in [&first_root, &other_root] {
+            write_plugin_manifest(root);
+            fs::write(root.join(".codex-plugin/plugin.json"), manifest.to_string()).unwrap();
+        }
+        let request = |root: &Path| json!({"pluginKey": plugin_key, "connectorSlug": connector_slug, "pluginRoot": root});
+        let mut ids = Vec::new();
+        for root in [&first_root, &other_root] {
+            let id = Uuid::new_v4().to_string();
+            browser_auth_sessions().lock().await.insert(
+                id.clone(),
+                BrowserAuthSession {
+                    plugin_key: plugin_key.clone(),
+                    connector_slug: connector_slug.into(),
+                    marketplace_id: None,
+                    plugin_root: Some(root.canonicalize().unwrap()),
+                    state: Arc::new(Mutex::new(browser_session_state(
+                        "waiting_browser",
+                        "",
+                        &id,
+                    ))),
+                    task: tokio::spawn(std::future::pending()),
+                },
+            );
+            ids.push(id);
+        }
+
+        assert_eq!(logout(request(&first_root)).await.unwrap()["status"], "ok");
+        let mut first_poll = request(&first_root);
+        first_poll["sessionId"] = json!(ids[0]);
+        let mut other_poll = request(&other_root);
+        other_poll["sessionId"] = json!(ids[1]);
+        assert_eq!(
+            poll(first_poll).await.unwrap_err().code,
+            "local_auth_session_missing"
+        );
+        let unaffected = poll(other_poll.clone()).await;
+        cancel(other_poll).await.unwrap();
+        assert_eq!(unaffected.unwrap()["status"], "waiting_browser");
+    }
+
+    #[tokio::test]
+    async fn marketplace_uninstall_cancels_and_blocks_auth_only_in_that_market() {
+        let home = tempfile::tempdir().unwrap();
+        let cache = home.path().canonicalize().unwrap().join("plugins/cache");
+        let plugin_key = format!("plugin-{}", Uuid::new_v4());
+        let removing_market = cache.join("custom");
+        let removed_package = removing_market.join(&plugin_key);
+        let current_root = removed_package.join("10.0.0");
+        let other_root = cache.join("other").join(&plugin_key).join("9.0.0");
+        let connector_slug = "same-connector";
+        let manifest = json!({
+            "name": plugin_key,
+            "connectors": [{
+                "slug": connector_slug,
+                "localAuth": {
+                    "kind": "browser_oauth",
+                    "start": ["auth.sh"],
+                    "health": ["auth.sh"]
+                }
+            }]
+        });
+        for root in [&current_root, &other_root] {
+            write_plugin_manifest(root);
+            fs::write(root.join(".codex-plugin/plugin.json"), manifest.to_string()).unwrap();
+        }
+        let payload = |root: &Path| {
+            json!({
+                "pluginKey": plugin_key,
+                "connectorSlug": connector_slug,
+                "pluginRoot": root
+            })
+        };
+        let old_id = Uuid::new_v4().to_string();
+        let other_id = Uuid::new_v4().to_string();
+        let session = |id, root| BrowserAuthSession {
+            plugin_key: plugin_key.clone(),
+            connector_slug: connector_slug.into(),
+            marketplace_id: None,
+            plugin_root: Some(root),
+            state: Arc::new(Mutex::new(browser_session_state("waiting_browser", "", id))),
+            task: tokio::spawn(std::future::pending()),
+        };
+        let old = session(&old_id, removed_package.join("9.0.0"));
+        let old_task = old.task.abort_handle();
+        {
+            let mut sessions = browser_auth_sessions().lock().await;
+            sessions.insert(old_id.clone(), old);
+            sessions.insert(other_id.clone(), session(&other_id, other_root.clone()));
+        }
+
+        let active = {
+            let sessions = browser_auth_sessions().lock().await;
+            active_browser_auth_state(
+                &sessions,
+                &plugin_key,
+                connector_slug,
+                Some(&other_root),
+                None,
+            )
+            .expect("the other market's session")
+        };
+        assert_eq!(active.lock().await["sessionId"], other_id);
+        let _removal = MarketplaceRemoval::begin(removing_market).unwrap();
+        cancel_marketplace_plugin_sessions(&removed_package).await;
+
+        let blocked = start(payload(&current_root)).await.unwrap_err();
+        assert_eq!(blocked.code, "marketplace_removal_in_progress");
+        let unaffected = start(payload(&other_root)).await.unwrap();
+        assert_eq!(unaffected["sessionId"], other_id);
+
+        let mut sessions = browser_auth_sessions().lock().await;
+        assert!(!sessions.contains_key(&old_id));
+        assert!(old_task.is_finished());
+        let other = sessions
+            .remove(&other_id)
+            .expect("same-name session in the other marketplace");
+        assert!(!other.task.is_finished());
+        other.task.abort();
+    }
+
+    #[tokio::test]
+    async fn marketplace_uninstall_waits_for_qr_and_rejects_new_start_and_poll() {
+        let home = tempfile::tempdir().unwrap();
+        let cache = home.path().canonicalize().unwrap().join("plugins/cache");
+        let market = cache.join("custom");
+        let package = market.join("qr-plugin/1.0.0");
+        let peer = cache.join("other/qr-plugin/1.0.0");
+        write_plugin_manifest(&package);
+        fs::create_dir_all(&peer).unwrap();
+        let manifest = json!({"name": "qr-plugin", "connectors": [{
+            "slug": "qr", "localAuth": {
+                "kind": "local_qr", "start": ["auth.sh"], "poll": ["auth.sh"],
+                "health": ["auth.sh"]
+            }
+        }]});
+        fs::write(
+            package.join(".codex-plugin/plugin.json"),
+            manifest.to_string(),
+        )
+        .unwrap();
+        let payload =
+            json!({"pluginKey": "qr-plugin", "connectorSlug": "qr", "pluginRoot": package});
+
+        let inflight = QrAuthOperation::begin(&package).unwrap();
+        let other = QrAuthOperation::begin(&peer).unwrap();
+        let removal = MarketplaceRemoval::begin(market).unwrap();
+        for result in [start(payload.clone()).await, poll(payload).await] {
+            assert_eq!(result.unwrap_err().code, "marketplace_removal_in_progress");
+        }
+        let drain = removal.wait_for_qr_auth(tokio::time::Instant::now() + Duration::from_secs(2));
+        tokio::pin!(drain);
+        assert!(futures_util::poll!(&mut drain).is_pending());
+        drop(inflight);
+        drain.await.unwrap();
+        drop(other);
     }
 
     #[test]

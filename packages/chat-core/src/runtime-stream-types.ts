@@ -69,6 +69,7 @@ export interface ChatErrorPayload {
   subtaskId?: string;
   error: string;
   type?: string;
+  errorInfo?: import("./api-types").ChatErrorInfo;
   deviceId?: string;
   shellType?: string;
   startedAt?: number;
@@ -112,6 +113,7 @@ export interface ChatBlockUpdatedPayload {
   blockId: string;
   content?: string;
   contentDelta?: string;
+  contentOffset?: number;
   toolOutput?: unknown;
   toolOutputDelta?: string;
   toolOutputTruncated?: boolean;
@@ -157,6 +159,7 @@ export interface RuntimeGuidanceAppliedPayload {
   guidanceId: string;
   clientGuidanceId?: string;
   message: string;
+  source?: import("./workbench-message-reducer").MessageSource;
   appliedAtMs: number;
 }
 
@@ -290,6 +293,15 @@ export interface ChatStreamHandlers {
   onRuntimeTransportReplaced?: (
     payload: RuntimeTransportReplacedPayload,
   ) => void;
-  onWeworkNotification?: () => void;
+  onWeworkNotification?: (payload?: {
+    id: string;
+    stored: boolean;
+    standInStartFailure?: {
+      userId: number;
+      itemTitle: string;
+      code: string;
+      url: string;
+    };
+  }) => void;
   onProjectTaskAssigned?: (payload: ProjectTaskAssignedPayload) => void;
 }

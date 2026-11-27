@@ -1,43 +1,72 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { expect, it, vi } from 'vitest'
+import type { CloudLoopItem } from '@/api/deliveries'
 import '@/i18n'
-import { IssueExistingTaskPicker } from './IssueExistingTaskPicker'
+import type { RuntimeDeviceWorkspace, RuntimeTaskSummary } from '@/types/api'
+import { IssueExistingTaskAction } from './IssueExistingTaskAction'
 
-const tasks = [
-  { title: 'Fix renderer', address: { deviceId: 'local', taskId: 'one' } },
-  { title: 'Review API', address: { deviceId: 'local', taskId: 'two' } },
-]
+function workspace(
+  deviceId: string,
+  taskId: string,
+  timestamps: Pick<RuntimeTaskSummary, 'recencyAt' | 'updatedAt' | 'createdAt'>
+): RuntimeDeviceWorkspace {
+  const workspacePath = `/workspaces/${deviceId}`
+  return {
+    deviceId,
+    available: true,
+    workspacePath,
+    tasks: [{ taskId, title: taskId, runtime: 'codex', workspacePath, ...timestamps }],
+  }
+}
 
-describe('IssueExistingTaskPicker', () => {
-  it('searches existing tasks and links the selected address without creating a task', async () => {
-    const user = userEvent.setup()
-    const onSelect = vi.fn().mockResolvedValue(undefined)
-    render(<IssueExistingTaskPicker tasks={tasks} onSelect={onSelect} />)
-    await user.click(screen.getByTestId('issue-link-existing-task'))
-    await user.type(screen.getByTestId('issue-existing-task-search'), 'renderer')
-    expect(screen.queryByText('Review API')).not.toBeInTheDocument()
-    await user.click(screen.getByText('Fix renderer'))
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith(tasks[0])
-    await waitFor(() =>
-      expect(screen.queryByTestId('issue-existing-task-picker')).not.toBeInTheDocument()
-    )
-  })
+it('shows the latest activity first across projects and chats and preserves it when searching', async () => {
+  const user = userEvent.setup()
+  render(
+    <IssueExistingTaskAction
+      source={{
+        work: {
+          projects: [
+            {
+              project: { key: 'local', name: 'Local project' },
+              deviceWorkspaces: [
+                workspace('local', 'release-project', {
+                  recencyAt: '2026-11-21T12:00:00Z',
+                  updatedAt: '2026-11-23T15:00:00Z',
+                }),
+              ],
+            },
+            {
+              project: { key: 'remote', name: 'Remote project' },
+              deviceWorkspaces: [
+                workspace('remote', 'review', { createdAt: '2026-11-22T12:00:00Z' }),
+              ],
+            },
+          ],
+          chats: [workspace('local', 'release-chat', { updatedAt: Date.UTC(2026, 10, 23) })],
+          totalTasks: 3,
+        },
+        port: { bindTask: vi.fn(), unbindTask: vi.fn() },
+      }}
+      issue={{ id: 'ISSUE-1' } as CloudLoopItem}
+      project={{ projectStore: 'local', projectId: 'project' }}
+      bindings={[]}
+      onLinked={vi.fn()}
+    />
+  )
 
-  it('keeps failures visible and allows another attempt', async () => {
-    const user = userEvent.setup()
-    const onSelect = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(undefined)
-    render(<IssueExistingTaskPicker tasks={tasks} onSelect={onSelect} />)
-    await user.click(screen.getByTestId('issue-link-existing-task'))
-    await user.click(screen.getByText('Fix renderer'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('offline')
-    await user.click(screen.getByText('Fix renderer'))
-    await waitFor(() =>
-      expect(screen.queryByTestId('issue-existing-task-picker')).not.toBeInTheDocument()
-    )
-    expect(onSelect).toHaveBeenCalledTimes(2)
-  })
+  await user.click(screen.getByTestId('issue-link-existing-task'))
+  const picker = within(screen.getByTestId('issue-existing-task-picker'))
+  const taskOrder = () => picker.getAllByRole('button').map(button => button.dataset.testid)
+  expect(taskOrder()).toEqual([
+    'issue-existing-task-local-release-chat',
+    'issue-existing-task-remote-review',
+    'issue-existing-task-local-release-project',
+  ])
+
+  await user.type(picker.getByTestId('issue-existing-task-search'), 'release')
+  expect(taskOrder()).toEqual([
+    'issue-existing-task-local-release-chat',
+    'issue-existing-task-local-release-project',
+  ])
 })

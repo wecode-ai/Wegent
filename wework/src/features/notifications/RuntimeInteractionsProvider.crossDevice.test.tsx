@@ -1,7 +1,7 @@
 // Register provider mocks before importing modules that consume them.
 import { context, harness, view } from './runtimeInteractionsProvider.fixtures'
 import { act, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   cacheNotificationPreferences,
@@ -83,6 +83,72 @@ async function discoverQuestions(focused: boolean) {
 }
 
 describe('cross-device human input', () => {
+  it('rediscovers tasks only when their relevant fields change', async () => {
+    vi.useFakeTimers()
+    try {
+      const task = {
+        ...interactionTask,
+        task: { ...interactionTask.task, updatedAt: null },
+      }
+      const rendered = view(interactionQuestion, task)
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(1)
+      expect(context!.loading).toBe(false)
+
+      const renamedTask = {
+        ...task,
+        task: { ...task.task, title: 'Renamed task', updatedAt: undefined },
+      }
+      rendered.rerenderSource({ ...rendered.taskSource, items: [renamedTask] })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(1)
+
+      rendered.rerenderSource({
+        ...rendered.taskSource,
+        items: [{ ...renamedTask, task: { ...renamedTask.task, updatedAt: 123 } }],
+      })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the visible state stable when background discovery finds no changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const rendered = view(interactionQuestion, interactionTask, false, undefined, false)
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(context!.loading).toBe(false)
+      const discovered = context
+      const reads = harness.list.mock.calls.length
+
+      await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+      expect(harness.list.mock.calls.length).toBeGreaterThan(reads)
+      expect(context).toBe(discovered)
+
+      rendered.rerenderSource({
+        ...rendered.taskSource,
+        items: [
+          {
+            ...interactionTask,
+            task: {
+              ...interactionTask.task,
+              interactionStatus: undefined,
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        ],
+      })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+
+      expect(context).toBe(discovered)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows in-app reminders for local and remote questions absent from the sidebar', async () => {
     await discoverQuestions(true)
     const questions = new Set<string>()

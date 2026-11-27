@@ -1,3 +1,33 @@
+import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import {
+  getRuntimeTaskLifecycleKey,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import { usePullToRefresh } from '@/hooks/usePullToRefresh'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { cn } from '@/lib/utils'
+import type {
+  CreateGitWorkspaceProjectRequest,
+  CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
+  DeviceInfo,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
+  GitBranch,
+  GitRepoInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+  User,
+} from '@/types/api'
+import type { RuntimeWorkLoadState } from '@/types/workbench'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlarmClock,
   ArrowDown,
@@ -16,42 +46,14 @@ import {
 } from 'lucide-react'
 import { useContext, useMemo, useRef, useState } from 'react'
 import { MobileRuntimeTaskRunningStatus } from './MobileRuntimeTaskRunningStatus'
-import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
-import type { RuntimeWorkLoadState } from '@/types/workbench'
-import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
-import { useTranslation } from '@/hooks/useTranslation'
-import { usePullToRefresh } from '@/hooks/usePullToRefresh'
-import { isImeEnterEvent } from '@/lib/ime'
-import { cn } from '@/lib/utils'
-import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import {
-  getRuntimeTaskLifecycleKey,
-  useRuntimeTaskLifecycleStoreSnapshot,
-} from '@/features/workbench/runtimeTaskLifecycle'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type {
-  CreateGitWorkspaceProjectRequest,
-  CreateProjectRequest,
-  DeleteDeviceWorkspaceRequest,
-  DeviceWorkspacePrepareRequest,
-  DeviceWorkspacePrepareResponse,
-  DeviceInfo,
-  GitBranch,
-  GitRepoInfo,
-  ProjectWithTasks,
-  RuntimeTaskAddress,
-  RuntimeWorkListResponse,
-  User,
-} from '@/types/api'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import {
-  getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
+  getRuntimeChatSidebarTaskItems,
+  getRuntimeSidebarTaskItems,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
-  getRuntimeSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
@@ -60,7 +62,7 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -130,7 +132,7 @@ export function MobileDrawer({
   onOpenRuntimeTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
-  useSidebarRelativeTimeRefresh()
+  const nowMs = useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const workbench = useContext(WorkbenchContext)
@@ -220,7 +222,8 @@ export function MobileDrawer({
     available: boolean
   ) => (
     <div className="flex shrink-0 items-center">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`${testIdPrefix}-queue-up-${address.taskId}`}
         disabled={
@@ -241,8 +244,9 @@ export function MobileDrawer({
         ) : (
           <ArrowUp className="h-4 w-4" />
         )}
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`${testIdPrefix}-queue-down-${address.taskId}`}
         disabled={
@@ -262,8 +266,9 @@ export function MobileDrawer({
         ) : (
           <ArrowDown className="h-4 w-4" />
         )}
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`${testIdPrefix}-force-start-${address.taskId}`}
         disabled={!available || !workbench || Boolean(forceStartingTaskId)}
@@ -277,7 +282,7 @@ export function MobileDrawer({
         ) : (
           <Sparkles className="h-4 w-4" />
         )}
-      </button>
+      </ControlButton>
     </div>
   )
 
@@ -357,7 +362,8 @@ export function MobileDrawer({
           {t('workbench.brand', 'Wework')}
         </h1>
         <div className="flex items-center gap-5">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-search-icon-button"
             onClick={() => setSearchOpen(open => !open)}
@@ -365,8 +371,9 @@ export function MobileDrawer({
             aria-label={t('workbench.search', '搜索')}
           >
             <Search className="h-7 w-7 stroke-[2.5]" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-button"
             onClick={() => closeAfter(onOpenSettings)}
@@ -374,18 +381,18 @@ export function MobileDrawer({
             aria-label={t('workbench.settings', '设置')}
           >
             {getUserInitials()}
-          </button>
+          </ControlButton>
         </div>
       </header>
 
       {searchOpen && (
         <div className="relative mx-6 mt-6 shrink-0">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-secondary" />
-          <input
+          <ControlInput
             data-testid="mobile-search-input"
             type="search"
             placeholder={t('workbench.search', '搜索')}
-            className="h-12 w-full select-text rounded-2xl border border-border bg-background pl-12 pr-4 text-base leading-5 text-text-primary outline-none placeholder:text-text-secondary focus:bg-muted"
+            className="h-12 w-full select-text pl-12 pr-4 text-base leading-5 placeholder:text-text-secondary focus:bg-muted"
             autoFocus
           />
         </div>
@@ -434,7 +441,8 @@ export function MobileDrawer({
           <section>
             <div className="space-y-1">
               <div className="relative">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="mobile-new-project-button"
                   onClick={() => openProjectCreateDialog()}
@@ -443,7 +451,7 @@ export function MobileDrawer({
                 >
                   <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
                   <span className="min-w-0 truncate">{t('workbench.new_project', '新建项目')}</span>
-                </button>
+                </ControlButton>
               </div>
               <section className="mt-5" data-testid="mobile-runtime-chat-section">
                 <div className="mb-2 px-6 text-heading-sm font-bold leading-6 text-text-primary">
@@ -451,7 +459,7 @@ export function MobileDrawer({
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
-                    runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                    runtimeWorkLoad && runtimeWork == null ? null : (
                       <div
                         data-testid="mobile-runtime-chat-empty"
                         className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
@@ -475,7 +483,8 @@ export function MobileDrawer({
                           key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                           className="mx-3 flex w-[calc(100%-24px)] items-center gap-1"
                         >
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid="mobile-chat-runtime-task-button"
                             disabled={disabled}
@@ -529,10 +538,12 @@ export function MobileDrawer({
                                 >
                                   <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
                                 </span>
-                                <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
+                                <span>
+                                  {formatRelativeSidebarTime(getRuntimeTaskTime(task), nowMs)}
+                                </span>
                               </span>
                             )}
-                          </button>
+                          </ControlButton>
                           {queued
                             ? renderQueuedTaskActions(
                                 taskAddress,
@@ -555,7 +566,8 @@ export function MobileDrawer({
 
                 return (
                   <div key={project.id}>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="mobile-project-item-button"
                       onClick={() => {
@@ -599,7 +611,7 @@ export function MobileDrawer({
                         <Folder className="h-6 w-6 shrink-0 stroke-[2.4]" />
                       )}
                       {renamingProjectId === project.id ? (
-                        <input
+                        <ControlInput
                           data-testid="mobile-inline-project-name-input"
                           value={renameValue}
                           autoFocus
@@ -618,12 +630,12 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none keyboard:focus:border-focus"
+                          className="min-w-0 flex-1 select-text text-heading-sm leading-6"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>
                       )}
-                    </button>
+                    </ControlButton>
                     {expanded && (
                       <div className="ml-[66px] mr-6 mt-1 space-y-1">
                         {(() => {
@@ -674,7 +686,8 @@ export function MobileDrawer({
                                     key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                                     className="flex w-full items-center gap-1"
                                   >
-                                    <button
+                                    <ControlButton
+                                      variant="unstyled"
                                       type="button"
                                       data-testid="mobile-runtime-task-button"
                                       disabled={disabled}
@@ -735,11 +748,14 @@ export function MobileDrawer({
                                             />
                                           )}
                                           <span>
-                                            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                            {formatRelativeSidebarTime(
+                                              getRuntimeTaskTime(task),
+                                              nowMs
+                                            )}
                                           </span>
                                         </span>
                                       )}
-                                    </button>
+                                    </ControlButton>
                                     {queued
                                       ? renderQueuedTaskActions(
                                           taskAddress,
@@ -754,7 +770,8 @@ export function MobileDrawer({
                               {(hasHiddenTasks || canCollapseTasks) && (
                                 <div className="flex h-10 items-center gap-2">
                                   {hasHiddenTasks ? (
-                                    <button
+                                    <ControlButton
+                                      variant="unstyled"
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-expand-${project.id}`}
                                       onClick={() =>
@@ -769,9 +786,10 @@ export function MobileDrawer({
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
                                       {t('workbench.show_more', '显示更多')}
-                                    </button>
+                                    </ControlButton>
                                   ) : (
-                                    <button
+                                    <ControlButton
+                                      variant="unstyled"
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-collapse-${project.id}`}
                                       onClick={() =>
@@ -784,7 +802,7 @@ export function MobileDrawer({
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
                                       {t('workbench.show_less', '收起')}
-                                    </button>
+                                    </ControlButton>
                                   )}
                                 </div>
                               )}
@@ -801,7 +819,9 @@ export function MobileDrawer({
         </div>
       </div>
 
-      <button
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="mobile-new-chat-button"
         onClick={() => closeAfter(onNewChat ?? onStartStandaloneChat)}
@@ -810,7 +830,7 @@ export function MobileDrawer({
       >
         <SquarePen className="h-6 w-6" />
         <span>{t('workbench.chat', '聊天')}</span>
-      </button>
+      </ControlButton>
       {projectCreateMode && (
         <ProjectCreateDialog
           open={projectCreateMode !== null}
@@ -847,7 +867,8 @@ export function MobileDrawer({
             style={actionMenuPosition}
             onClick={event => event.stopPropagation()}
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="mobile-rename-project-button"
               onClick={() => {
@@ -859,8 +880,10 @@ export function MobileDrawer({
             >
               <Edit3 className="h-6 w-6 shrink-0" />
               <span>{t('workbench.rename_project', '重命名项目')}</span>
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="destructive"
+              size="sm"
               type="button"
               data-testid="mobile-remove-project-button"
               onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
@@ -868,7 +891,7 @@ export function MobileDrawer({
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>
-            </button>
+            </ControlButton>
           </div>
         </div>
       )}

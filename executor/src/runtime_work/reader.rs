@@ -1,4 +1,4 @@
-//! The desktop's existing authenticated Runtime IPC read channel.
+//! Authenticated Runtime IPC with explicit operation allowlists.
 use std::{io::Read, time::Duration};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -42,10 +42,7 @@ impl RuntimeReader {
                     .connect_authenticated(socket_url, token)
                     .await
                     .map_err(|_| {
-                        AppIpcError::new(
-                            "cloud_unavailable",
-                            "Runtime read channel connection failed",
-                        )
+                        AppIpcError::new("cloud_unavailable", "Runtime relay connection failed")
                     })
             })
             .await?;
@@ -76,7 +73,68 @@ impl RuntimeReader {
                 "Only existing Runtime read operations are allowed",
             ));
         }
-        let id = format!("runtime-read-{}", uuid::Uuid::new_v4());
+        self.relay(device, method, params).await
+    }
+
+    pub(super) async fn start_role_task(
+        &self,
+        device: &str,
+        params: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.relay(device, "runtime.stand_in.role_task.start", params)
+            .await
+    }
+
+    pub(super) async fn assistant_share_definition(
+        &self,
+        device: &str,
+        user: i64,
+        id: &str,
+    ) -> Result<wegent_protocol::assistant_share::AssistantShareDefinition, AppIpcError> {
+        let value = self
+            .relay(
+                device,
+                wegent_protocol::assistant_share::ASSISTANT_SHARE_DEFINITION_METHOD,
+                json!({"userId": user, "kind": "assistant", "id": id}),
+            )
+            .await?;
+        let definition: wegent_protocol::assistant_share::AssistantShareDefinition =
+            serde_json::from_value(value).map_err(|_| invalid_response())?;
+        if definition.key() != ("assistant", id) {
+            return Err(invalid_response());
+        }
+        Ok(definition)
+    }
+
+    pub(super) async fn verify_role_task(
+        &self,
+        device: &str,
+        params: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.relay(device, "runtime.stand_in.role_task.verify", params)
+            .await
+    }
+
+    pub(super) async fn cancel_role_task(
+        &self,
+        device: &str,
+        params: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.relay(device, "runtime.stand_in.role_task.accept_cancel", params)
+            .await
+    }
+
+    pub(super) async fn role_task_status(
+        &self,
+        device: &str,
+        params: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.relay(device, "runtime.stand_in.role_task.status", params)
+            .await
+    }
+
+    async fn relay(&self, device: &str, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        let id = format!("runtime-relay-{}", uuid::Uuid::new_v4());
         // Match the desktop's operation budgets, bounded by this read's deadline.
         let timeout = Duration::from_secs(match method {
             "runtime.tasks.transcript" => 15,
@@ -105,7 +163,7 @@ impl RuntimeReader {
                             } else {
                                 "device_query_failed"
                             },
-                            "Runtime read request failed",
+                            "Runtime relay request failed",
                         )
                     })?;
                 // Socket.IO callbacks pass positional arguments as an array.
@@ -118,7 +176,7 @@ impl RuntimeReader {
                         ack["error"]["code"]
                             .as_str()
                             .unwrap_or("device_query_failed"),
-                        "The Runtime read channel rejected the request",
+                        "The Runtime relay rejected the request",
                     ));
                 }
                 let result = decode_response(ack["result"].clone())?;
@@ -212,14 +270,14 @@ fn check_success(result: &Value) -> Result<(), AppIpcError> {
                 .as_str()
                 .or_else(|| result["code"].as_str())
                 .unwrap_or("device_query_failed"),
-            "Runtime returned a failed read",
+            "Runtime returned a failed operation",
         ));
     }
     Ok(())
 }
 
 pub(super) fn invalid_response() -> AppIpcError {
-    AppIpcError::new("invalid_response", "Invalid Runtime read response")
+    AppIpcError::new("invalid_response", "Invalid Runtime relay response")
 }
 
 #[cfg(test)]

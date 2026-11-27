@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 
 from fastapi import HTTPException, status
@@ -143,7 +143,7 @@ class IssueAssignmentService:
         db: Session,
         *,
         workspace_id: int | None = None,
-        project_id: int | str,
+        project_id: int | str | None,
         issue_id: str,
         member_type: str,
         member_id: str,
@@ -163,11 +163,14 @@ class IssueAssignmentService:
         normalized_id = member_id.strip()
         # A newly inserted Issue cannot have history or index rows. Locking that
         # absent range would block independent first assignments in InnoDB.
-        current = (
-            {}
+        active = (
+            []
             if initial_assignment
-            else self._active_events(db, issue_id, for_update=True)
+            else self._uncancelled_events(
+                self._assignment_comments(db, [issue_id], for_update=True)
+            )
         )
+        current = {self._event_key(event): event for event in active}
         existing = current.get(
             (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
@@ -182,12 +185,13 @@ class IssueAssignmentService:
         if (
             normalized_type == "human" or replace_root_assignments
         ) and not self._workflow_step(workflow_step):
-            for previous in current.values():
+            for previous in active:
                 if previous.workflow_step:
                     continue
+                self._cancel_dispatch(previous, "superseded")
                 db.add(
                     LoopItemComment(
-                        cloud_project_id=str(project_id),
+                        cloud_project_id=str(project_id) if project_id else None,
                         loop_item_id=issue_id,
                         description="",
                         created_by_user_id=assigned_by_user_id,
@@ -215,13 +219,14 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
-            "receipt_tracking": True,
             **automation_history_actor(automation_context),
         }
+        if project_id:
+            metadata["receipt_tracking"] = True
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
             comment = LoopItemComment(
-                cloud_project_id=str(project_id),
+                cloud_project_id=str(project_id) if project_id else None,
                 loop_item_id=issue_id,
                 description=comment_body or "",
                 created_by_user_id=assigned_by_user_id,
@@ -233,6 +238,36 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
+        if (
+            normalized_type == "human"
+            and project_id
+            and notify
+            and not workflow_step
+            and trigger != "collaboration_round"
+        ):
+            from app.services.collaboration_human_assignments import (
+                direct_human_assignment_id,
+            )
+
+            metadata = {
+                **metadata,
+                "dispatch_receipt": {
+                    "projectId": str(project_id),
+                    "issueId": issue_id,
+                    "humanAssignmentId": direct_human_assignment_id(
+                        issue_id=issue_id, assignment_id=str(comment.id)
+                    ),
+                    "ownerUserId": int(normalized_id),
+                    "state": "queued",
+                    "reasonCode": "awaiting_device_ack",
+                    "runtimeTaskId": None,
+                    "deliveryId": None,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            comment.metadata_json = metadata
+            # Index refresh reloads comments with populate_existing.
+            db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
         if initial_assignment:
             self._insert_active_index(db, issue_id, [event])
@@ -270,6 +305,31 @@ class IssueAssignmentService:
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        self._unassign(db, item, assignment, user_id)
+        db.flush()
+        self._refresh_active_index(db, issue_id)
+        return assignment
+
+    def clear_direct_humans(self, db: Session, *, item: LoopItem, user_id: int) -> None:
+        """Append cancellation events under the caller's authorized Issue lock."""
+        direct = [
+            assignment
+            for assignment in self._uncancelled_events(
+                self._assignment_comments(db, [item.id], for_update=True)
+            )
+            if self._member_type(assignment.member_type) == "human"
+            and not assignment.workflow_step
+        ]
+        if direct:
+            for assignment in direct:
+                self._unassign(db, item, assignment, user_id)
+            db.flush()
+            self._refresh_active_index(db, item.id)
+
+    def _unassign(
+        self, db: Session, item: LoopItem, assignment: AssignmentEvent, user_id: int
+    ) -> None:
+        self._cancel_dispatch(assignment, "assignment_cancelled")
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,
             "action": "unassign",
@@ -282,8 +342,8 @@ class IssueAssignmentService:
             "trigger": "manual",
         }
         comment = LoopItemComment(
-            cloud_project_id=str(project_id),
-            loop_item_id=issue_id,
+            cloud_project_id=item.cloud_project_id or None,
+            loop_item_id=item.id,
             description="",
             created_by_user_id=user_id,
             updated_by_user_id=user_id,
@@ -291,9 +351,6 @@ class IssueAssignmentService:
             metadata_json=metadata,
         )
         db.add(comment)
-        db.flush()
-        self._refresh_active_index(db, issue_id)
-        return assignment
 
     @staticmethod
     def _lock_issue(db: Session, issue_id: str) -> None:
@@ -383,6 +440,22 @@ class IssueAssignmentService:
         return "agent", agent.id
 
     @staticmethod
+    def _cancel_dispatch(assignment: AssignmentEvent, reason: str) -> None:
+        receipt = assignment.metadata.get("dispatch_receipt")
+        if not isinstance(receipt, dict):
+            return
+        metadata = {
+            **assignment.metadata,
+            "dispatch_receipt": {
+                **receipt,
+                "state": "cancelled",
+                "reasonCode": reason,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        assignment.comment.metadata_json = metadata
+
+    @staticmethod
     def response_values(db: Session, assignment: AssignmentEvent) -> dict[str, object]:
         creator = db.get(User, assignment.assigned_by_user_id)
         return {
@@ -397,6 +470,11 @@ class IssueAssignmentService:
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
             "automation": assignment.metadata.get("automation"),
+            **(
+                {"dispatch_receipt": assignment.metadata["dispatch_receipt"]}
+                if "dispatch_receipt" in assignment.metadata
+                else {}
+            ),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),
@@ -479,6 +557,20 @@ class IssueAssignmentService:
     def _reduce_events(
         self, comments: list[LoopItemComment]
     ) -> dict[tuple[str, str, str], AssignmentEvent]:
+        return {
+            self._event_key(event): event
+            for event in self._uncancelled_events(comments)
+        }
+
+    def _event_key(self, event: AssignmentEvent) -> tuple[str, str, str]:
+        return (
+            self._member_type(event.member_type),
+            event.member_id,
+            self._workflow_step(event.workflow_step),
+        )
+
+    @staticmethod
+    def _uncancelled_events(comments: list[LoopItemComment]) -> list[AssignmentEvent]:
         cancelled_event_ids = {
             str(metadata.get("assignment_event_id") or "")
             for comment in comments
@@ -489,7 +581,7 @@ class IssueAssignmentService:
                 and metadata.get("action") == "unassign"
             )
         }
-        active: dict[tuple[str, str, str], AssignmentEvent] = {}
+        active: list[AssignmentEvent] = []
         for comment in comments:
             metadata = (
                 comment.metadata_json if isinstance(comment.metadata_json, dict) else {}
@@ -498,14 +590,9 @@ class IssueAssignmentService:
                 continue
             action = metadata.get("action")
             if action == "assign":
-                key = (
-                    self._member_type(str(metadata.get("target_type") or "")),
-                    str(metadata.get("target_id") or ""),
-                    self._workflow_step(str(metadata.get("workflow_step") or "")),
-                )
                 event = AssignmentEvent(comment=comment, metadata=metadata)
                 if event.id not in cancelled_event_ids:
-                    active[key] = event
+                    active.append(event)
         return active
 
     @staticmethod

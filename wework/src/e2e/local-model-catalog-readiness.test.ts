@@ -12,6 +12,7 @@ vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: () => ({ runtimeWorkApi: { prepareRuntimeModel } }),
 }))
 vi.mock('@/features/model-settings/localModelSettings', () => ({ listLocalModelConfigs }))
+vi.mock('./automation', () => ({ waitForDesktopE2ELocalModelSeed: () => Promise.resolve() }))
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -26,6 +27,7 @@ test('waits for catalog reconciliation before checking readiness', async () => {
     })
   )
   const ready = ensureLocalModelCatalogReady()
+  await vi.waitFor(() => expect(prepareRuntimeModel).toHaveBeenCalledOnce())
 
   expect(listLocalModelConfigs).not.toHaveBeenCalled()
   listLocalModelConfigs.mockReturnValue([{ id: 'fixture', catalogEntry: {}, catalogReady: true }])

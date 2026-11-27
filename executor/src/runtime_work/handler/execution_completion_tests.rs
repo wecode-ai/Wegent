@@ -16,46 +16,55 @@ fn active_task(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, u64) {
 
 #[test]
 fn completion_keeps_its_claim_until_the_terminal_state_is_written() {
-    let (handler, root, execution) = active_task("completion-claim");
-    let reader = handler.store.clone();
-    let (entered, entered_rx) = mpsc::channel();
-    let (release, release_rx) = mpsc::channel();
-    let locked = std::thread::spawn(move || {
-        reader.read_task("task", |_| {
-            entered.send(()).unwrap();
-            release_rx.recv().unwrap();
+    for cancelled in [false, true] {
+        let (handler, root, execution) = active_task("completion-claim");
+        if cancelled {
+            assert!(handler.request_active_turn_stop("task"));
+        }
+        let reader = handler.store.clone();
+        let (entered, entered_rx) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let locked = std::thread::spawn(move || {
+            reader.read_task("task", |_| {
+                entered.send(()).unwrap();
+                release_rx.recv().unwrap();
+            });
         });
-    });
-    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    let completing = handler.clone();
-    let (started, started_rx) = mpsc::channel();
-    let completed = std::thread::spawn(move || {
-        started.send(()).unwrap();
-        completing.finish_local_task("task", execution, None, "cancelled")
-    });
-    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let retained = loop {
-        match handler.active_local_executions.try_lock() {
-            Err(TryLockError::WouldBlock) => {}
-            Ok(active) if !active.contains_key("task") => break false,
-            Err(TryLockError::Poisoned(_)) => break false,
-            _ => {}
-        }
-        if Instant::now() >= deadline {
-            break true;
-        }
-        std::thread::yield_now();
-    };
-    release.send(()).unwrap();
-    locked.join().unwrap();
-    assert!(completed.join().unwrap());
-    assert!(
-        retained,
-        "stop must not acknowledge completion before the terminal state is written"
-    );
-    assert_eq!(handler.store.get_task("task").unwrap().status, "cancelled");
-    fs::remove_dir_all(root).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let completing = handler.clone();
+        let (started, started_rx) = mpsc::channel();
+        let completed = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            if cancelled {
+                completing.settle_cancelled_local_task_execution("task", execution)
+            } else {
+                completing.finish_local_task("task", execution, None, "cancelled")
+            }
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let retained = loop {
+            match handler.active_local_executions.try_lock() {
+                Err(TryLockError::WouldBlock) => {}
+                Ok(active) if !active.contains_key("task") => break false,
+                Err(TryLockError::Poisoned(_)) => break false,
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                break true;
+            }
+            std::thread::yield_now();
+        };
+        release.send(()).unwrap();
+        locked.join().unwrap();
+        assert!(completed.join().unwrap());
+        assert!(
+            retained,
+            "stop must not acknowledge completion before the terminal state is written"
+        );
+        assert_eq!(handler.store.get_task("task").unwrap().status, "cancelled");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]
@@ -115,6 +124,8 @@ fn completion_releases_execution_claims_before_telemetry_writes() {
             released,
             "SQLite telemetry cannot retain the execution-control mutex"
         );
+        drop(writer);
+        drop(facts);
         fs::remove_dir_all(root).unwrap();
     }
 }

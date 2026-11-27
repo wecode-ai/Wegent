@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn workspace_task_lookup_tracks_moves_rekeys_and_persisted_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let index = root.path().join("index.json");
+    let store = RuntimeWorkStore::new(index.clone());
+    let old = root.path().join("old").display().to_string();
+    let new = root.path().join("new").display().to_string();
+    let task_ids = |store: &RuntimeWorkStore, path: &str| {
+        store
+            .workspace_task_summaries(path, |_| true)
+            .into_iter()
+            .map(|task| task.local_task_id)
+            .collect::<Vec<_>>()
+    };
+    store.upsert_task(RuntimeTaskLink::new_pending(
+        "task".to_owned(),
+        old.clone(),
+        "Task".to_owned(),
+    ));
+    assert_eq!(task_ids(&store, &old), ["task"]);
+
+    store.update_task("task", |task| task.workspace_path = new.clone());
+    assert!(task_ids(&store, &old).is_empty());
+    assert_eq!(task_ids(&store, &new), ["task"]);
+
+    let reopened = RuntimeWorkStore::new(index);
+    assert_eq!(task_ids(&reopened, &new), ["task"]);
+    reopened.rekey_task("task", "renamed-task", |_| {}).unwrap();
+    assert_eq!(task_ids(&store, &new), ["renamed-task"]);
+    reopened.delete_task("renamed-task").unwrap();
+    assert!(task_ids(&store, &new).is_empty());
+}
+
+#[test]
 fn atomic_write_replaces_existing_index() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");
@@ -106,6 +139,15 @@ fn failed_store_write_does_not_update_index_signature() {
         .index_signature
         .lock()
         .expect("index signature lock should be available");
+
+    assert!(store
+        .try_upsert_task(RuntimeTaskLink::new_pending(
+            "unacknowledged-task".into(),
+            directory.path().to_string_lossy().into_owned(),
+            "Unacknowledged task".into(),
+        ))
+        .is_err());
+    assert!(store.get_task("unacknowledged-task").is_none());
 
     store.upsert_task(RuntimeTaskLink::new_pending(
         "failed-task".to_owned(),

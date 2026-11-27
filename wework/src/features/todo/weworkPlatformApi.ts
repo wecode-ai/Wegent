@@ -51,7 +51,8 @@ export function withoutDefaultWorkItemProject(api: SharedWorkspaceApi): SharedWo
 
 export function createWeworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
-  localWorkspaceApi: SharedWorkspaceApi | null
+  localWorkspaceApi: SharedWorkspaceApi | null,
+  getProjectStore?: (projectId: string) => 'local' | 'cloud' | undefined
 ): SharedWorkspaceApi | null {
   if (!localWorkspaceApi) return cloudApi ? withoutDefaultWorkItemProject(cloudApi) : null
   const localApi = localWorkspaceApi
@@ -63,7 +64,7 @@ export function createWeworkPlatformApi(
     return projects.find(project => String(project.id) === projectId)
   }
   const projectLocation = async (projectId: string) =>
-    (await localProject(projectId)) ? 'local' : 'cloud'
+    getProjectStore?.(projectId) ?? ((await localProject(projectId)) ? 'local' : 'cloud')
   const projectAutomations = async (projectId: string) => {
     const target = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
     if (!target.automations) {
@@ -218,6 +219,8 @@ export function createWeworkPlatformApi(
         return cloudApi.projects.create(input)
       },
       async get(projectId) {
+        const store = getProjectStore?.(projectId)
+        if (store) return (store === 'local' ? localApi : cloudApi).projects.get(projectId)
         return (await localProject(projectId)) ?? cloudApi.projects.get(projectId)
       },
       async update(projectId, input) {

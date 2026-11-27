@@ -1,4 +1,8 @@
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
+import { OpenAiCatalogStore } from './openai-catalog-store.js'
 import {
   assertStartupRecoverySender,
   StartupRecoveryService,
@@ -19,6 +23,7 @@ function createFixture() {
     prepareCleanup: vi.fn(async () => undefined),
     clearRuntimeFiles: vi.fn(async () => undefined),
     clearUserFiles: vi.fn(async () => undefined),
+    clearOpenAiCatalog: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
     clearAppStorage: vi.fn(async () => undefined),
     clearUserStorage: vi.fn(async () => undefined),
@@ -52,6 +57,7 @@ describe('StartupRecoveryService', () => {
     expect(dependencies.prepareCleanup).toHaveBeenCalledOnce()
     expect(dependencies.clearRuntimeFiles).toHaveBeenCalledOnce()
     expect(dependencies.clearUserFiles).not.toHaveBeenCalled()
+    expect(dependencies.clearOpenAiCatalog).not.toHaveBeenCalled()
     expect(dependencies.clearUserStorage).not.toHaveBeenCalled()
     expect(dependencies.clearCache).toHaveBeenCalledOnce()
     expect(dependencies.prepareCleanup.mock.invocationCallOrder[0]).toBeLessThan(
@@ -77,9 +83,37 @@ describe('StartupRecoveryService', () => {
     expect(dependencies.clearUserStorage).toHaveBeenCalledOnce()
     expect(dependencies.disablePlugin).not.toHaveBeenCalled()
     expect(dependencies.clearUserFiles).toHaveBeenCalledOnce()
+    expect(dependencies.clearOpenAiCatalog).toHaveBeenCalledOnce()
     expect(dependencies.clearRuntimeFiles).toHaveBeenCalledOnce()
     expect(dependencies.relaunch).toHaveBeenCalledOnce()
     expect(dependencies.shutdown).toHaveBeenCalledOnce()
+  })
+
+  test('reports a catalog cleanup failure and still resets user state and relaunches', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-recovery-catalog-'))
+    try {
+      const path = join(root, 'plugin-cache', 'openai-official-catalog.json')
+      await mkdir(path, { recursive: true })
+      const catalog = new OpenAiCatalogStore(root)
+      const { dependencies, recovery } = createFixture()
+      dependencies.clearOpenAiCatalog.mockImplementation(() => catalog.clear())
+
+      await recovery.run('app-state')
+
+      expect(dependencies.log).toHaveBeenCalledWith(
+        'startup-recovery-clear-openai-catalog',
+        'failed',
+        { errorType: expect.any(String) }
+      )
+      expect((await stat(path)).isDirectory()).toBe(true)
+      expect(dependencies.rendererStorage.clear).toHaveBeenCalledOnce()
+      expect(dependencies.preferences.clear).toHaveBeenCalledOnce()
+      expect(dependencies.cloudCredentials.clear).toHaveBeenCalledOnce()
+      expect(dependencies.relaunch).toHaveBeenCalledOnce()
+      expect(dependencies.shutdown).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   test('shares one recovery operation across repeated clicks', async () => {

@@ -24,6 +24,9 @@ const SAFE_DETAIL_KEYS = new Set([
   'previousHeight',
   'heightDelta',
   'width',
+  'previousWidth',
+  'virtualizerEnabled',
+  'pendingResize',
   'intersection',
   'elapsedMs',
   'rootHeight',
@@ -149,7 +152,8 @@ export type ConversationDiagnosticEventName =
   | 'search-delete'
   | 'search-input'
   | 'search-debounce'
-  | 'search-status'
+  | 'search-transcript-request'
+  | 'search-hydration-request'
   | 'search-commit'
   | 'search-frame'
   | 'search-index'

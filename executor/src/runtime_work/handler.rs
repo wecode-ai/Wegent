@@ -124,13 +124,17 @@ mod active_text;
 mod active_transcript;
 mod archives;
 mod assignment_receipts;
+mod assignment_runtime_states;
 mod async_questions;
+mod question_replies;
+use question_replies::PreparedQuestionReply;
 mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
 mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
+pub(crate) use codex_accounts::read_codex_auth_status;
 mod codex_config;
 mod collection;
 mod command_items;
@@ -149,6 +153,8 @@ mod fork_transfer;
 mod git_connections;
 mod git_source_workspace;
 mod git_webhook_setup;
+mod goal_model_route;
+mod goal_status;
 mod hooks;
 pub(super) mod lifecycle;
 mod mcp_app_source;
@@ -181,27 +187,42 @@ mod stand_in_calendar;
 mod stand_in_connection_guidance;
 mod stand_in_context;
 mod stand_in_conversations;
+mod stand_in_delegation;
 mod stand_in_diagnostics;
 mod stand_in_dispatches;
 mod stand_in_events;
 mod stand_in_execution;
+mod stand_in_ghost_evaluation;
 mod stand_in_history;
+mod stand_in_identity_rework;
 mod stand_in_ingress;
 mod stand_in_issue_mentions;
 mod stand_in_issue_replies;
+mod stand_in_issue_training;
 mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_memory_progress;
 mod stand_in_memory_review;
+mod stand_in_personal_issues;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
+mod stand_in_role_cancellation;
+mod stand_in_role_delegation;
+mod stand_in_role_dependencies;
+mod stand_in_role_results;
 mod stand_in_schedules;
+mod stand_in_share_sync;
+mod stand_in_shared_conversation;
 mod stand_in_source_tasks;
+mod stand_in_task_permissions;
 mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;
+mod stand_in_training;
+mod stand_in_training_connections;
+mod stand_in_training_progress;
 mod stand_in_work;
 mod stand_in_workspace;
 mod submitted_model;
@@ -218,6 +239,7 @@ mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
+mod workspace_read;
 mod workspaces;
 
 use super::{
@@ -257,8 +279,9 @@ use super::{
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
         merge_assistant_transcript_message, set_runtime_handle_messages,
-        set_transcript_snapshot_messages, transcript_snapshot_messages,
-        transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
+        set_transcript_snapshot_messages, transcript_snapshot_message_refs,
+        transcript_snapshot_messages, transcript_snapshot_pagination, user_message_presentations,
+        visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{normalized_user_request_content, notification_item, transcript_messages},
@@ -544,6 +567,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    transcript_transfer_cleanup: Arc<super::transcript_transport::TransferCleanup>,
     #[cfg(test)]
     transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
@@ -555,11 +579,14 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    goal_status_revisions:
+        Arc<Mutex<HashMap<String, Weak<Mutex<goal_status::GoalStatusRevision>>>>>,
     cancelled_pending_sends: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     connection_goal_reconciliations: Arc<Mutex<HashMap<String, u64>>>,
+    connection_observation_activations: Arc<tokio::sync::RwLock<()>>,
     restore_startup_semaphore: Arc<Semaphore>,
     command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
@@ -569,6 +596,7 @@ pub struct RuntimeWorkRpcHandler {
     preparing_turns: Arc<Mutex<HashMap<String, PreparingTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
+    training_preflights: Arc<Mutex<HashMap<String, stand_in_training_progress::TrainingPreflight>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -599,9 +627,11 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    stand_in_intake_workers: Arc<Mutex<stand_in_processing::StandInIntakeWorkers>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
-    connection_scheduler_started: Arc<AtomicBool>,
+    connection_dispatcher_started: Arc<AtomicBool>,
+    connection_subscribers: Arc<Mutex<stand_in_ingress::ConnectionSubscribers>>,
     connection_observation_wakeup: Arc<tokio::sync::Notify>,
 }
 
@@ -637,6 +667,7 @@ struct ActiveLocalExecution {
 
 #[derive(Debug, PartialEq, Eq)]
 struct PreparingTurn {
+    owner_request: Option<Value>,
     cancellation_requested: bool,
 }
 
@@ -670,6 +701,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
+    goal_model_route: Option<crate::agents::ModelActionRegistration>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -782,6 +814,7 @@ impl RuntimeThreadEventRoute {
         generation: u64,
     ) -> Self {
         Self {
+            goal_model_route: None,
             local_task_id,
             request,
             event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
@@ -818,11 +851,12 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let mut persisted_turns =
-            turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
-                log_executor_event("runtime turn queue restore failed", &[("error", error)]);
-                turns::RuntimeTurnQueueState::default()
-            });
+        let persisted_turns = turns::read_runtime_turn_state(&turn_queue_path);
+        let turn_queue_read = persisted_turns.is_ok();
+        let mut persisted_turns = persisted_turns.unwrap_or_else(|error| {
+            log_executor_event("runtime turn queue restore failed", &[("error", error)]);
+            turns::RuntimeTurnQueueState::default()
+        });
         quota_recovery::restore_dispatches(&mut persisted_turns);
         for command in persisted_turns.commands.values_mut() {
             if command.is_owner_abandoned()
@@ -930,7 +964,17 @@ impl RuntimeWorkRpcHandler {
                 &[("count", removed_worktree_turn_count.to_string())],
             );
         }
+        let automation_store =
+            AutomationStore::new(super::store::runtime_work_dir().join("automations.json"));
+        if turn_queue_read {
+            automation_rpc::reconcile_interrupted_runs(
+                &automation_store,
+                &queued_turns,
+                &active_goal_turns,
+            );
+        }
         let handler = Self {
+            transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
             transcript_test_workers: None,
             device_id,
@@ -945,6 +989,7 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            goal_status_revisions: Arc::new(Mutex::new(HashMap::new())),
             cancelled_pending_sends: Arc::new(Mutex::new(HashMap::new())),
             stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
@@ -953,6 +998,7 @@ impl RuntimeWorkRpcHandler {
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
             connection_goal_reconciliations: Arc::new(Mutex::new(HashMap::new())),
+            connection_observation_activations: Arc::new(tokio::sync::RwLock::new(())),
             command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
@@ -962,6 +1008,7 @@ impl RuntimeWorkRpcHandler {
             preparing_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_text_generations: Arc::new(Mutex::new(HashMap::new())),
+            training_preflights: Default::default(),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -977,9 +1024,7 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::new(
-                super::store::runtime_work_dir().join("automations.json"),
-            ),
+            automation_store,
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
@@ -993,9 +1038,11 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection,
+            stand_in_intake_workers: Arc::new(Mutex::new(Default::default())),
             backend_device_route,
             cloud_connection_observations: Arc::new(AtomicBool::new(false)),
-            connection_scheduler_started: Arc::new(AtomicBool::new(false)),
+            connection_dispatcher_started: Arc::new(AtomicBool::new(false)),
+            connection_subscribers: Arc::new(Mutex::new(Default::default())),
             connection_observation_wakeup: Arc::new(tokio::sync::Notify::new()),
         };
         for (local_task_id, turn) in handler
@@ -1097,7 +1144,7 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
-        handler.start_connection_scheduler();
+        handler.start_connection_dispatcher();
         if has_backend {
             handler.start_backend_services();
         }
@@ -1123,13 +1170,12 @@ impl RuntimeWorkRpcHandler {
     fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
-        self.start_connection_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
-            self.sync_stand_in_issue_replies(&link.local_task_id);
+            self.sync_public_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
     }
@@ -1309,17 +1355,21 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.telemetry.")
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.memory.rework_report"
+        || method == "runtime.stand_in.share.definition"
         || method == "runtime.stand_in.binding"
         || method == "runtime.stand_in.personal.lifecycle"
     {
         return false;
     }
+    // Task inventory remains readable while worktrees and queued turns recover.
     !matches!(
         method,
         "runtime.tasks.running_count"
             | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
+            | "runtime.tasks.list"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"

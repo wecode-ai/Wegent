@@ -16,10 +16,14 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod assignment_receipts;
+pub mod board_receipts;
 mod code_projects;
+#[cfg(test)]
+mod empty_write_tests;
 pub mod execution_workspace;
 mod human_requests;
 mod stand_in_dispatches;
+mod stand_in_role_requests;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
@@ -85,6 +89,9 @@ pub mod personal_stand_in;
 #[path = "stand_in_lifecycle.rs"]
 mod stand_in_lifecycle;
 
+#[path = "stand_in_ghost_proposals.rs"]
+mod stand_in_ghost_proposals;
+pub use stand_in_ghost_proposals::GHOST_LEARNING_AXES;
 #[path = "stand_in_proposals.rs"]
 mod stand_in_proposals;
 
@@ -93,8 +100,20 @@ mod stand_in_memories;
 #[path = "stand_in_memory_progress.rs"]
 mod stand_in_memory_progress;
 
+#[path = "stand_in_collected_observations.rs"]
+mod stand_in_collected_observations;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
+#[path = "stand_in_rework.rs"]
+mod stand_in_rework;
+#[path = "stand_in_rework_verification.rs"]
+mod stand_in_rework_verification;
+#[path = "stand_in_training_connections.rs"]
+mod stand_in_training_connections;
+pub use stand_in_collected_observations::connection_message_millis;
+pub use stand_in_training_connections::{
+    AcceptedReply, DeliveryRole, IdentityReplyItem, ObservedReply,
+};
 
 #[path = "stand_in_processing.rs"]
 mod stand_in_processing;
@@ -129,12 +148,20 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("project discovery failed: {0}")]
+    ProjectDiscovery(String),
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]
     TaskNotFound,
     #[error("task changed")]
     VersionConflict,
+    #[error("This request reached its specialist task limit")]
+    StandInRoleRequestLimit,
+    #[error("This delegation branch or request has been cancelled")]
+    StandInRoleRequestCancelled,
+    #[error("A prerequisite must be an existing task in this delegation scope")]
+    StandInRoleDependencyInvalid,
     #[error("This fact or its evidence was forgotten or corrected; do not reconstruct it")]
     MemorySuppressed,
     #[error("task provider '{0}' is not implemented yet")]
@@ -185,6 +212,7 @@ impl LocalTaskStore {
         if schema_is_current(&connection)?
             && default_work_item_project_is_current(&connection)?
             && stand_in_history_index::schema_is_current(&connection)?
+            && schema::runtime_query_indexes_are_current(&connection)?
         {
             return Ok(Self {
                 connection: Arc::new(Mutex::new(connection)),

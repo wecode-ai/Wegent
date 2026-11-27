@@ -1,0 +1,569 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `GET /api/v1/loop-items/{item_id}/assignments` — the active assignments of
+//! one loop item.
+//!
+//! Resolve the current Issue scope and access before projecting active
+//! assignment events and their receipts. External Issues keep the provider's
+//! detail permission check.
+use brz_http_server::StatusCode;
+use brz_mysql::{MysqlService, MysqlTransaction};
+use serde::Serialize;
+
+use crate::board_snapshot::repository::{ProjectAccess, ProjectRow};
+use crate::http_compat::FastApiError;
+use crate::loop_item_pages::PageIssue;
+use crate::loop_item_pages::projection::{LoopItemResponse, issue_response};
+use crate::state::AppState;
+
+use super::assignment_repository::{self, LoopItemGetRow};
+use super::auth::FlexibleUser;
+use super::http_error::HttpError;
+use super::item_access::IssueReadScope;
+use super::loop_repository::{LoopItemRepository, has_permission};
+use wegent_project_coordination::loop_tasks::assignment_events::ActiveEvent;
+#[cfg(test)]
+use wegent_project_coordination::loop_tasks::assignment_events::member_type_key;
+pub(crate) use wegent_project_coordination::loop_tasks::assignment_events::{
+    active_events, uncancelled_events,
+};
+pub(crate) use wegent_project_coordination::loop_tasks::item_access::{
+    assignment_error as internal, item_number, require_cloud_project_role, todo_not_found,
+};
+
+/// One `IssueAssignmentResponse` row.
+#[derive(Debug, Serialize)]
+pub(super) struct IssueAssignmentResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    automation: Option<serde_json::Value>,
+    pub(super) id: String,
+    issue_id: String,
+    pub(super) target_type: String,
+    pub(super) target_id: String,
+    target_name: String,
+    workflow_step: Option<String>,
+    body: String,
+    comment_id: String,
+    created_by_user_id: i32,
+    created_by_user_name: Option<String>,
+    status: String,
+    created_at: String,
+    updated_at: String,
+    receipt_tracking: bool,
+    human_read_at: Option<String>,
+    stand_in_received_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dispatch_receipt: Option<serde_json::Value>,
+}
+
+/// `IssueAssignmentListResponse`.
+#[derive(Debug, Serialize)]
+pub(super) struct IssueAssignmentListResponse {
+    pub(super) items: Vec<IssueAssignmentResponse>,
+}
+
+/// GET /api/v1/loop-items/{item_id}/assignments.
+#[brz_http_server::get("/api/v1/loop-items/:item_id/assignments")]
+async fn list_issue_assignments(
+    #[inject(state)] state: &AppState,
+    item_id: &str,
+    #[auth] current_user: FlexibleUser,
+) -> Result<IssueAssignmentListResponse, FastApiError> {
+    list_assignments(state, item_id, &current_user).await
+}
+
+pub(super) async fn list_assignments(
+    state: &AppState,
+    item_id: &str,
+    current_user: &FlexibleUser,
+) -> Result<IssueAssignmentListResponse, FastApiError> {
+    require_issue_read_for_user(state, item_id, current_user.id).await?;
+    let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
+    for item in &mut result.items {
+        if let Some(receipt) = item.dispatch_receipt.as_mut() {
+            super::assignment_receipts::project_delivery(&state.mysql, receipt).await?;
+            super::assignment_receipts::project_device_wait(state, receipt).await;
+        }
+    }
+    Ok(result)
+}
+
+/// Read and render assignments after the existing Issue access checks.
+pub(super) async fn list_assignment_items(
+    mysql: &MysqlService,
+    item_id: &str,
+    current_user: &FlexibleUser,
+) -> Result<IssueAssignmentListResponse, FastApiError> {
+    let comments = LoopItemRepository::new(mysql)
+        .list_assignment_comments(item_id)
+        .await
+        .map_err(internal)?;
+    let mut items = Vec::new();
+    for event in active_events(&comments) {
+        items.push(assignment_response(mysql, &event, current_user).await?);
+    }
+    Ok(IssueAssignmentListResponse { items })
+}
+
+pub(crate) async fn require_issue_read_for_user(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<IssueReadScope, FastApiError> {
+    let item = load_issue_scope(state, item_id, user_id)
+        .await?
+        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Issue not found"))?;
+    let Some(project_id) = item.project_id.as_deref() else {
+        item.require(&state.mysql, item_id, user_id).await?;
+        return Ok(item);
+    };
+    let project = assignment_repository::project(&state.mysql, project_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
+    // `issue_assignment_service.list`.
+    let access = match require_cloud_project_role(&state.mysql, &project.id, user_id).await {
+        Ok(access) => access,
+        Err(error) => {
+            if error.status() == StatusCode::NOT_FOUND
+                && super::issue_invitation::permits_read(&state.mysql, item_id, user_id)
+                    .await
+                    .map_err(internal)?
+            {
+                return Ok(item);
+            }
+            return Err(error);
+        }
+    };
+    // `_require_issue_project` re-reads the item through the session's identity
+    // map, so it issues no statement.
+    if is_external_provider(&access.project) {
+        provider_get(state, item_id, user_id).await?;
+    } else if !can_view_item_with_level(state, &access, item_id, item.security_level(), user_id)
+        .await?
+    {
+        return Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Issue not found",
+        ));
+    }
+
+    Ok(item)
+}
+
+/// `can_view_item(db, access, item, user_id)`.
+pub(crate) async fn can_view_item(
+    state: &AppState,
+    access: &ProjectAccess,
+    item: &LoopItemGetRow,
+    user_id: i32,
+) -> Result<bool, FastApiError> {
+    let level = item
+        .metadata
+        .as_ref()
+        .and_then(|json| json.0.value.as_ref())
+        .and_then(|metadata| metadata.security_level.as_ref())
+        .and_then(|value| value.as_str());
+    can_view_item_with_level(state, access, &item.id, level, user_id).await
+}
+
+async fn can_view_item_with_level(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    level: Option<&str>,
+    user_id: i32,
+) -> Result<bool, FastApiError> {
+    let security = match level {
+        Some("open") => "open",
+        Some("related") => "related",
+        _ => access.project.default_issue_security(),
+    };
+    if has_permission(&access.role, "Maintainer") || security == "open" {
+        return Ok(true);
+    }
+    LoopItemRepository::new(&state.mysql)
+        .is_related_item(item_id, user_id)
+        .await
+        .map_err(internal)
+}
+
+pub(super) async fn load_issue_scope(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<Option<IssueReadScope>, FastApiError> {
+    let scope = IssueReadScope::load(&state.mysql, item_id)
+        .await
+        .map_err(HttpError::internal)?;
+    if scope.is_some() || !ensure_known_issue(state, item_id, user_id).await? {
+        return Ok(scope);
+    }
+    IssueReadScope::load(&state.mysql, item_id)
+        .await
+        .map_err(|error| HttpError::internal(error).into_fastapi())
+}
+
+pub(crate) async fn ensure_shadow(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
+    if ensure_known_issue(state, item_id, user_id).await? {
+        Ok(())
+    } else {
+        Err(todo_not_found())
+    }
+}
+
+async fn ensure_known_issue(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<bool, FastApiError> {
+    // Any stored task, including a deleted shadow, owns its identifier.
+    if state
+        .mysql
+        .with_transaction(async |tx| {
+            tx.fetch_optional::<_, _, (String,)>(
+                "SELECT id FROM loop_items WHERE id=? AND resource_type='task'",
+                (item_id,),
+            )
+            .await
+        })
+        .await
+        .map_err(internal)?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    let Some(project) = LoopItemRepository::new(&state.mysql)
+        .find_external_project(item_id)
+        .await
+        .map_err(internal)?
+    else {
+        return Ok(false);
+    };
+    super::external_shadow::create(state, &project.id, item_id, user_id).await?;
+    Ok(true)
+}
+
+/// `is_external_provider(project)`: `task_provider in {"github", "gitlab"}`.
+fn is_external_provider(project: &ProjectRow) -> bool {
+    matches!(project.task_provider().as_str(), "github" | "gitlab")
+}
+
+/// `external_loop_item_provider.get(db, item_id, user_id)`. The source discards
+/// the returned mapping, so only its dependencies and error mapping are
+/// observable.
+async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(), FastApiError> {
+    let repository = LoopItemRepository::new(&state.mysql);
+    // `_resolve_project` -> `_find_project`; `None` maps to 404 "TODO not found".
+    let project = repository
+        .find_external_project(item_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(todo_not_found)?;
+    let access = require_cloud_project_role(&state.mysql, &project.id, user_id).await?;
+    require_provider_issue_view(state, &access, item_id, user_id)
+        .await
+        .map(|_| ())
+}
+
+/// Read an external issue through the provider's normal detail permission check.
+pub(crate) async fn require_provider_issue_view(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    user_id: i32,
+) -> Result<PageIssue, FastApiError> {
+    visible_provider_issue(state, access, item_id, user_id)
+        .await
+        .map(|(issue, _)| issue)
+}
+
+/// Share the authorized provider response with local shadow creation.
+pub(super) async fn visible_provider_issue(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(PageIssue, LoopItemResponse), FastApiError> {
+    let project = &access.project;
+    let number = item_number(item_id).ok_or_else(todo_not_found)?;
+    let issue = get_issue(state, project, number).await?;
+    let response = issue_response(&state.mysql, project, &access.role, user_id, &issue)
+        .await
+        .map_err(internal)?;
+    if !response.can_view_detail() {
+        return Err(todo_not_found());
+    }
+    Ok((issue, response))
+}
+
+/// `_get_issue` -> `_request`: one provider issue by number.
+pub(crate) async fn get_issue(
+    state: &AppState,
+    project: &ProjectRow,
+    number: i64,
+) -> Result<PageIssue, FastApiError> {
+    crate::loop_item_pages::get_issue(&state.attachment_http, &state.auth.jwt_key, project, number)
+        .await
+}
+
+/// `issue_assignment_service.response_values(db, row)`.
+async fn assignment_response(
+    mysql: &MysqlService,
+    event: &ActiveEvent<'_>,
+    current_user: &FlexibleUser,
+) -> Result<IssueAssignmentResponse, FastApiError> {
+    let comment = event.comment;
+    let metadata = event.metadata;
+    let assigned_by = comment.created_by_user_id.unwrap_or(0);
+    // `creator = db.get(User, assignment.assigned_by_user_id)`: the session's
+    // identity map already holds the authenticated user, so an equal id issues
+    // no statement.
+    let creator_name = if assigned_by == current_user.id {
+        Some(current_user.user_name.clone())
+    } else {
+        assignment_repository::user_by_id(mysql, i64::from(assigned_by))
+            .await
+            .map_err(internal)?
+            .map(|user| user.user_name)
+    };
+    Ok(IssueAssignmentResponse {
+        automation: metadata.automation.clone(),
+        id: comment.id.clone(),
+        issue_id: comment.loop_item_id.clone().unwrap_or_default(),
+        target_type: metadata.target_type.clone().unwrap_or_default(),
+        target_id: metadata.target_id.clone().unwrap_or_default(),
+        target_name: metadata
+            .target_name
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        workflow_step: metadata
+            .workflow_step
+            .clone()
+            .filter(|step| !step.is_empty()),
+        body: comment.description.clone().unwrap_or_default(),
+        comment_id: comment.id.clone(),
+        created_by_user_id: assigned_by,
+        created_by_user_name: creator_name,
+        status: "active".to_string(),
+        created_at: datetime_value(comment.created_at)?,
+        updated_at: datetime_value(comment.updated_at)?,
+        receipt_tracking: metadata.receipt_tracking.unwrap_or(false),
+        human_read_at: metadata.human_read_at.clone(),
+        stand_in_received_at: metadata.stand_in_received_at.clone(),
+        dispatch_receipt: metadata.dispatch_receipt.clone(),
+    })
+}
+
+/// `database_datetime_as_utc`: reinterpret the configured database-session
+/// datetime convention and serialize an aware UTC datetime, as Python does.
+fn datetime_value(value: Option<chrono::NaiveDateTime>) -> Result<String, FastApiError> {
+    super::item_response::utc_datetime_string(value).ok_or_else(|| {
+        FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loop_tasks::loop_repository::CommentRow;
+    use brz_json::JsonProjection;
+    use brz_mysql::Json;
+
+    fn comment(id: &str, metadata: serde_json::Value) -> CommentRow {
+        CommentRow {
+            id: id.to_string(),
+            loop_item_id: Some("EXAMPLE-5".to_string()),
+            description: Some(String::new()),
+            created_by_user_id: Some(7),
+            created_at: chrono::NaiveDateTime::parse_from_str(
+                "2026-10-10 13:57:44",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .ok(),
+            updated_at: chrono::NaiveDateTime::parse_from_str(
+                "2026-10-10 13:57:44",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .ok(),
+            metadata: Some(Json(JsonProjection::from(metadata))),
+        }
+    }
+
+    fn assign(id: &str, target: &str, target_id: &str, step: &str) -> CommentRow {
+        comment(
+            id,
+            serde_json::json!({
+                "event_type": "assignment",
+                "action": "assign",
+                "target_type": target,
+                "target_id": target_id,
+                "target_name": "test-user",
+                "workflow_step": step,
+                "trigger": "manual",
+            }),
+        )
+    }
+
+    fn unassign(id: &str, cancelled: &str) -> CommentRow {
+        comment(
+            id,
+            serde_json::json!({
+                "event_type": "assignment",
+                "action": "unassign",
+                "assignment_event_id": cancelled,
+            }),
+        )
+    }
+
+    #[test]
+    fn keeps_the_newest_event_at_the_first_position() {
+        let comments = vec![
+            assign("1", "human", "7", ""),
+            assign("2", "human", "7", ""),
+            assign("3", "agent", "42", ""),
+        ];
+        let active = active_events(&comments);
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].comment.id, "2");
+        assert_eq!(active[1].comment.id, "3");
+        assert_eq!(
+            member_type_key(active[0].metadata.target_type.as_deref()),
+            "human"
+        );
+        assert_eq!(
+            member_type_key(active[1].metadata.target_type.as_deref()),
+            "agent"
+        );
+    }
+
+    #[test]
+    fn reception_metadata_does_not_change_assignment_reduction() {
+        let comments = vec![comment(
+            "1",
+            serde_json::json!({
+                "event_type":"assignment", "action":"assign", "target_type":"human", "target_id":"7",
+                "human_read_at":"2026-10-27T02:00:00Z", "stand_in_received_at":"2026-10-27T02:01:00Z",
+            }),
+        )];
+        let events = active_events(&comments);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].metadata.human_read_at.as_deref(),
+            Some("2026-10-27T02:00:00Z")
+        );
+        assert_eq!(
+            events[0].metadata.stand_in_received_at.as_deref(),
+            Some("2026-10-27T02:01:00Z")
+        );
+        let mut cancelled = comments;
+        cancelled.push(unassign("2", "1"));
+        assert!(active_events(&cancelled).is_empty());
+    }
+
+    #[test]
+    fn drops_events_cancelled_by_an_unassign() {
+        let comments = vec![assign("1", "human", "7", ""), unassign("9", "1")];
+        assert!(active_events(&comments).is_empty());
+    }
+
+    #[test]
+    fn workflow_step_separates_member_keys() {
+        let comments = vec![
+            assign("1", "human", "7", ""),
+            assign("2", "human", "7", "review"),
+        ];
+        assert_eq!(active_events(&comments).len(), 2);
+    }
+
+    #[test]
+    fn parses_external_item_numbers() {
+        assert_eq!(item_number("EXAMPLE-5"), Some(5));
+        assert_eq!(item_number("plain"), None);
+        assert_eq!(item_number("KEY-abc"), None);
+    }
+
+    #[test]
+    fn assignment_datetimes_are_rfc3339_utc_from_the_non_utc_database_session() {
+        let base =
+            chrono::NaiveDateTime::parse_from_str("2026-10-10 13:57:44", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let rendered = datetime_value(Some(base)).unwrap();
+        assert_eq!(rendered, "2026-10-10T05:57:44Z");
+        let parsed = chrono::DateTime::parse_from_rfc3339(&rendered).unwrap();
+        assert_eq!(parsed.offset().local_minus_utc(), 0);
+        assert!(datetime_value(None).is_err());
+        let fractional = chrono::NaiveDateTime::parse_from_str(
+            "2026-10-10 13:57:44.123456",
+            "%Y-%m-%d %H:%M:%S%.f",
+        )
+        .unwrap();
+        assert_eq!(
+            datetime_value(Some(fractional)).unwrap(),
+            "2026-10-10T05:57:44.123456Z"
+        );
+    }
+
+    #[test]
+    fn serializes_the_assignment_shape() {
+        let comments = vec![assign("101", "human", "7", "")];
+        let event = active_events(&comments);
+        let mut row = IssueAssignmentResponse {
+            automation: None,
+            id: event[0].comment.id.clone(),
+            issue_id: "EXAMPLE-5".to_string(),
+            target_type: event[0].metadata.target_type.clone().unwrap_or_default(),
+            target_id: event[0].metadata.target_id.clone().unwrap_or_default(),
+            target_name: "test-user".to_string(),
+            workflow_step: None,
+            body: String::new(),
+            comment_id: event[0].comment.id.clone(),
+            created_by_user_id: 7,
+            created_by_user_name: Some("test-user".to_string()),
+            status: "active".to_string(),
+            created_at: datetime_value(event[0].comment.created_at).unwrap(),
+            updated_at: datetime_value(event[0].comment.updated_at).unwrap(),
+            receipt_tracking: false,
+            human_read_at: None,
+            stand_in_received_at: None,
+            dispatch_receipt: None,
+        };
+        let value = crate::json_contract_tests::serialized(&row).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "id": "101",
+                "issue_id": "EXAMPLE-5",
+                "target_type": "human",
+                "target_id": "7",
+                "target_name": "test-user",
+                "workflow_step": null,
+                "body": "",
+                "comment_id": "101",
+                "created_by_user_id": 7,
+                "created_by_user_name": "test-user",
+                "status": "active",
+                "created_at": "2026-10-10T05:57:44Z",
+                "updated_at": "2026-10-10T05:57:44Z",
+                "receipt_tracking": false,
+                "human_read_at": null,
+                "stand_in_received_at": null,
+            })
+        );
+        let automation = serde_json::json!({
+            "rule_id": "rule-1", "rule_name": "Review new Issues", "run_id": "run-1"
+        });
+        row.automation = Some(automation.clone());
+        let automated = crate::json_contract_tests::serialized(row).unwrap();
+        assert_eq!(automated["automation"], automation);
+        assert_eq!(automated["created_by_user_id"], 7);
+    }
+}

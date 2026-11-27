@@ -1,5 +1,4 @@
 use super::*;
-use crate::task_runtime::personal_stand_in::{project_role, role_project_matches};
 
 #[cfg(test)]
 #[path = "project_intake_boundary_tests.rs"]
@@ -13,18 +12,45 @@ impl RuntimeWorkRpcHandler {
         role: &Value,
         event: &Value,
     ) -> Result<(Value, Value), AppIpcError> {
-        let project = super::stand_in_tasks::required(event, "projectId")?;
         let storage = super::stand_in_tasks::required(event, "projectStore")?;
         let id = super::stand_in_tasks::required(event, "issueId")?;
-        let config = project_role(role, user, project, storage);
-        if !role_project_matches(role, project, storage)
-            || config["handlingPolicy"]["automatic"] != true
-        {
-            return Err(AppIpcError::new(
-                "source_removed",
-                "Project source is no longer connected or automatic",
-            ));
+        if storage == super::stand_in_personal_issues::INDEPENDENT {
+            let config = super::stand_in_personal_issues::personal_issue_role(role, user)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "source_removed",
+                        "Independent Issues are no longer connected",
+                    )
+                })?;
+            let assignment = super::stand_in_tasks::required(event, "assignmentId")?;
+            let issue = self.current_personal_issue(user, id, assignment).await?;
+            if !super::stand_in_personal_issues::personal_assignment_after_enable(&issue, &config)
+                || super::personal_stand_in::automatic_assignment_roles(
+                    std::slice::from_ref(&config),
+                    &issue,
+                )
+                .is_empty()
+            {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Assignment predates or no longer matches this assistant connection",
+                ));
+            }
+            let binding = issue["human_task_binding"].clone();
+            return Ok((issue, binding));
         }
+        let project = super::stand_in_tasks::required(event, "projectId")?;
+        let config = self
+            .issue_intake_roles(std::slice::from_ref(role), user, project, storage, id)
+            .await?
+            .into_iter()
+            .find(|config| config["handlingPolicy"]["automatic"] == true)
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "source_removed",
+                    "Issue scope is no longer automatic or connected",
+                )
+            })?;
         let (issue, binding) = if storage == "cloud" {
             self.read_cloud_assignment_intake(user, &config, event)
                 .await?

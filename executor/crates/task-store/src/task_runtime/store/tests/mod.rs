@@ -573,9 +573,9 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         ["executionRequest"]["system_prompt"]
         .as_str()
         .expect("member system prompt");
-    assert!(member_system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-    assert!(member_system_prompt.contains("不要调用 add_board_item_comment"));
-    assert!(member_system_prompt.contains("必须调用 upload_item_attachment"));
+    assert!(member_system_prompt.contains("The Executor records this run in the current Issue"));
+    assert!(member_system_prompt.contains("Do not call add_board_item_comment"));
+    assert!(member_system_prompt.contains("Use upload_item_attachment"));
     assert_eq!(
         first_member_execution.execution_payload.as_ref().unwrap()["executionRequest"]["bot"][0]
             ["id"],

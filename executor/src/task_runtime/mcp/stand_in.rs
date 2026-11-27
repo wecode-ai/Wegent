@@ -1,6 +1,12 @@
 //! A context-bound surface for inspecting identities and proposing reviewed changes.
 use super::*;
+use crate::task_runtime::stand_in_projection::{
+    project_visible_work, sanitize_task_summary, VisibleWork,
+};
 use crate::task_runtime::LocalTaskStore;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 #[path = "stand_in_processing.rs"]
 mod processing;
@@ -16,6 +22,155 @@ mod action_record_tests;
 fn batch_fingerprint(batch: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(batch.as_bytes()))
+}
+
+/// The request prepared for this turn, together with memory pages returned on its MCP handle.
+#[derive(Debug, Clone)]
+pub(super) struct DeliveryContext {
+    ghost: Option<String>,
+    pub(super) role_device: String,
+    injected: String,
+    memory: Arc<Mutex<DeliveryMemory>>,
+}
+
+#[derive(Debug, Default)]
+struct DeliveryMemory {
+    native_turn: Option<String>,
+    active: bool,
+    unbound_read: bool,
+    reads: BTreeSet<String>,
+}
+
+impl DeliveryContext {
+    fn from_request(request: &ExecutionRequest) -> Option<Self> {
+        let context = request.extra.get("standInDeliveryContext")?;
+        let ghost = context["ghostVersion"].as_str().map(str::to_owned);
+        let role_device = context["roleDeviceId"].as_str()?.to_owned();
+        let memory = request.extra.get("additionalContext")?["wework.stand-in.memories"]["value"]
+            .as_str()?;
+        Some(Self {
+            ghost,
+            role_device,
+            injected: batch_fingerprint(memory),
+            memory: Default::default(),
+        })
+    }
+
+    fn remember_page(&self, page: &Value) {
+        if page["items"].as_array().map_or(true, Vec::is_empty) && page["itemChunk"].is_null() {
+            return;
+        }
+        if let Ok(mut memory) = self.memory.lock() {
+            if memory.active {
+                memory.reads.insert(batch_fingerprint(
+                    &json!([page["items"], page["itemChunk"]]).to_string(),
+                ));
+            } else if memory.native_turn.is_none() {
+                memory.unbound_read = true;
+            }
+        }
+    }
+
+    pub(super) fn versions(&self) -> Option<(&str, String)> {
+        self.versions_for(None)
+    }
+
+    fn versions_for(&self, native_turn: Option<&str>) -> Option<(&str, String)> {
+        let memory = self.memory.lock().ok()?;
+        let bound_turn = memory.native_turn.as_deref()?;
+        if memory.unbound_read || !native_turn.map_or(memory.active, |id| id == bound_turn) {
+            return None;
+        }
+        let memory = if memory.reads.is_empty() {
+            self.injected.clone()
+        } else {
+            batch_fingerprint(&json!([self.injected, memory.reads]).to_string())
+        };
+        Some((self.ghost.as_deref()?, memory))
+    }
+}
+
+// A native completion and the MCP server it used need the very same memory-read set.
+// The opaque registration lives only for the executing worker; a restored request
+// cannot borrow a previous turn's witness.
+fn deliveries() -> &'static std::sync::Mutex<BTreeMap<String, DeliveryContext>> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, DeliveryContext>>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+pub(crate) struct StandInTurnWitness(String);
+
+impl Drop for StandInTurnWitness {
+    fn drop(&mut self) {
+        if let Ok(mut live) = deliveries().lock() {
+            if let Some(delivery) = live.remove(&self.0) {
+                if let Ok(mut memory) = delivery.memory.lock() {
+                    memory.active = false;
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn begin_stand_in_turn_witness(
+    request: &mut ExecutionRequest,
+) -> Option<StandInTurnWitness> {
+    if !matches!(
+        request.extra.get("origin")?["type"].as_str(),
+        Some("stand_in_identity" | "issue_dispatch" | "connection_work" | "dingtalk_work")
+    ) {
+        return None;
+    }
+    let context = DeliveryContext::from_request(request)?;
+    let key = uuid::Uuid::new_v4().to_string();
+    deliveries().lock().ok()?.insert(key.clone(), context);
+    request
+        .extra
+        .insert("standInTurnWitness".into(), json!(key));
+    Some(StandInTurnWitness(key))
+}
+
+fn active_delivery(request: &ExecutionRequest) -> Option<DeliveryContext> {
+    let key = request.extra.get("standInTurnWitness")?.as_str()?;
+    deliveries().lock().ok()?.get(key).cloned()
+}
+
+/// Only a native turn that accepted the host's prepared additional context can
+/// attest to the injected versions. Goal continuations use the same MCP handle.
+pub(crate) fn bind_stand_in_turn_context(request: &ExecutionRequest, turn_id: &str) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if memory.native_turn.is_none() {
+            memory.native_turn = Some(turn_id.to_owned());
+            memory.active = true;
+        }
+    };
+}
+
+pub(crate) fn observe_stand_in_turn_boundary(
+    request: &ExecutionRequest,
+    active_turn: Option<&str>,
+) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if active_turn.is_none() || active_turn != memory.native_turn.as_deref() {
+            memory.active = false;
+        }
+    };
+}
+
+pub(crate) fn stand_in_turn_versions(
+    request: &ExecutionRequest,
+    native_turn: &str,
+) -> Option<(String, String)> {
+    let delivery = active_delivery(request)?;
+    let (ghost, memory) = delivery.versions_for(Some(native_turn))?;
+    Some((ghost.to_owned(), memory))
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +252,21 @@ pub(crate) fn stand_in_mcp_client_config(
         request.auth_token.clone(),
     );
     context.surface = WeworkMcpSurface::StandIn;
+    context.current_device_id = Some(identity.device.clone());
+    context.principal_id = Some(identity.user.to_string());
+    context.stand_in_delivery =
+        active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
+    let origin = &request.extra["origin"];
+    context.stand_in_role_delegation =
+        (crate::task_runtime::personal_stand_in::supports_role_delegation(origin)
+            && !request
+                .extra
+                .get("source")
+                .is_some_and(|source| source["source"] == "im"))
+            || (origin["type"] == "stand_in_task"
+                && origin["roleDelegation"].is_object()
+                && origin["roleDelegation"]["team"] != true);
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
         crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
@@ -137,6 +306,7 @@ fn profile_settings_schema() -> Value {
     },"required":["automatic","askBeforeAct","immediate"]});
     let collaboration = json!({"type":"object","properties":{
         "enabled":{"type":"boolean"},"allProjects":{"type":"boolean"},
+        "includeParticipatingIssues":{"type":"boolean"},
         "projects":{"type":"array","items":project},
         "excludedProjects":{"type":"array","items":project},
         "tags":{"type":"array","items":{"type":"string"},"description":"Incoming Issue tag filter, not descriptive role keywords. Use [] to receive all assigned Issues; only restrict tags when the user requests it."},"policy":policy
@@ -206,6 +376,10 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .is_some_and(|identity| identity.readonly_worker)
     {
         let mut tools = super::stand_in_tasks::read_tools();
+        if context.stand_in_role_delegation {
+            tools.extend(super::stand_in_tasks::role_delegation_tools());
+            return tools;
+        }
         tools.push(json!({"name":"list_connection_providers","description":"List only host-captured delegated source references and their provider read schemas. This cannot discover ungranted resources or change subscriptions.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}));
         let mut read = connections::read_tool(false);
         read["annotations"] = json!({"readOnlyHint":true,"openWorldHint":true});
@@ -250,7 +424,7 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         connections::read_tool(false),
         json!({"name":"connect_source","description":"Discover resources for a requested stand-in source subscription through its installed provider. Use after list_connection_providers when the user needs that subscription or its read_source capability. This is not a required preflight for all one-time reads through installed execution plugins. Inspect resourceQuerySchema in the catalog; query must encode its public discovery parameters as a JSON object when declared. Ask a structured question for missing parameters rather than guessing an instance. Returns exact login identity or secure setup requirements when blocked; never request passwords in chat. Available resources still require an explicit scope choice and propose_profile confirmation to become subscriptions. Does not claim access to message contents or create schedules.","inputSchema":{"type":"object","properties":{"providerId":{"type":"string"},"kind":{"type":"string"},"query":{"type":"string"}},"required":["providerId","kind"]}}),
         json!({"name":"search_connections","description":"Search a Wework connection provider for real resources and exact IDs. Never invent IDs or silently expand intake.","inputSchema":{"type":"object","properties":{"providerId":{"type":"string"},"kind":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"}},"required":["providerId","kind","query"]}}),
-        json!({"name":"list_projects","description":"List real local and cloud projects accessible to the current user before proposing project connections.","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"list_projects","description":"List real local and cloud projects accessible to the current user before proposing project connections. Returns items and coverage; available projects remain usable when coverage.complete is false. Inspect coverage.sources and report unavailable sources rather than claiming complete discovery.","inputSchema":{"type":"object","properties":{}}}),
         json!({"name":"list_work","description":"Read work summaries for this role, or all roles when speaking to the primary stand-in. Fetch business details only when relevant.","inputSchema":{"type":"object","properties":{}}}),
     ];
     if context
@@ -298,6 +472,9 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
             tools.push(read);
         }
     }
+    if context.stand_in_role_delegation {
+        tools.extend(super::stand_in_tasks::role_delegation_tools());
+    }
     tools
 }
 
@@ -316,6 +493,7 @@ pub(super) async fn call(
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
             .chain(super::stand_in_tasks::memory_review_tools())
+            .chain(super::stand_in_tasks::role_delegation_tools())
             .any(|tool| tool["name"] == name)
     {
         return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
@@ -344,31 +522,140 @@ pub(super) async fn call(
         };
     }
     if name == "list_projects" {
-        return call_tool_with_runtime_context(runtime, "list_spaces", json!({}), context).await;
+        return match batch::discovered_projects(runtime, context).await {
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
     let result = match name {
-        "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
-        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => memory_call(store, identity, name, arguments),
+        "configure_git_webhook" | "git_webhook_plan" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
+        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => {
+            let role_device = context
+                .stand_in_delivery
+                .as_ref()
+                .map(|turn| turn.role_device.as_str());
+            let result = memory_call(role_device, store, identity, name, arguments);
+            if name == "search_memories" {
+                if let (Some(delivery), Ok(page)) = (&context.stand_in_delivery, &result) {
+                    delivery.remember_page(page);
+                }
+            }
+            result
+        }
         "connect_source" => connections::connect_source(arguments).await,
         "read_source" => connections::read_source(runtime, identity, arguments).await,
         "get_profile" => store
             .personal_stand_in(identity.user, &identity.device)
             .map_err(|e| e.to_string()),
-        "propose_profile" => super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await,
-        "list_work" => store.list_stand_in_work(identity.user,identity.role.as_deref()).map(|items| json!({"items":items,"runtime":crate::runtime_work::dingtalk::runtime_work_summaries(identity.user,identity.role.as_deref())})).map_err(|e|e.to_string()),
+        "propose_profile" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
+        "list_work" => list_visible_work(store, identity),
         "read_work" => read_connected_work(runtime, identity, &arguments).await,
-        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email").await,
-        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write").await,
-        "prepare_git_workspace"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
-        "list_connection_providers" => connections::list_providers(identity).await,
-        "search_connections" => crate::runtime_work::connection_host::call("listResources", arguments["providerId"].as_str(), arguments.clone())
+        "reply" | "send_email" => {
+            reply_to_work(
+                runtime,
+                identity,
+                &arguments,
+                name == "send_email",
+                context.stand_in_delivery.as_ref(),
+            )
             .await
-            .map_err(|e| format!("{}: {}", e.code, e.message)),
+        }
+        "git_read" | "git_write" => {
+            super::git_connections::call(
+                runtime,
+                identity,
+                arguments,
+                name == "git_write",
+                context.stand_in_delivery.as_ref(),
+            )
+            .await
+        }
+        "prepare_git_workspace" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
+        "list_connection_providers" => connections::list_providers(identity).await,
+        "search_connections" => crate::runtime_work::connection_host::call(
+            "listResources",
+            arguments["providerId"].as_str(),
+            arguments.clone(),
+        )
+        .await
+        .map_err(|e| format!("{}: {}", e.code, e.message)),
         _ => Err(format!("Unknown {STAND_IN_MCP_SERVER_NAME} tool: {name}")),
     };
     match result {
         Ok(value) => text_result(value.to_string(), false),
         Err(error) => text_result(error, true),
+    }
+}
+
+fn list_visible_work(
+    store: &LocalTaskStore,
+    identity: &StandInMcpIdentity,
+) -> Result<Value, String> {
+    let settings = store
+        .configured_personal_stand_in(identity.user, &identity.device)
+        .map_err(|error| error.to_string())?;
+    let items = store
+        .list_stand_in_work(identity.user, identity.role.as_deref())
+        .map_err(|error| error.to_string())?;
+    let mut visible_items: Vec<VisibleWork> = Vec::with_capacity(items.len());
+    let mut hidden_work_task_ids = BTreeSet::new();
+    for work in items {
+        let task_id = work["taskId"].as_str().map(str::to_owned);
+        let messages = store
+            .stand_in_messages(identity.user, work["id"].as_str().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        if let Some(visible) = project_visible_work(&settings, work, messages) {
+            visible_items.push(visible);
+        } else if let Some(task_id) = task_id {
+            hidden_work_task_ids.insert(task_id);
+        }
+    }
+    let visible_work_values = visible_items
+        .iter()
+        .map(|visible| visible.work.clone())
+        .collect::<Vec<_>>();
+    let mut runtime = crate::runtime_work::dingtalk::runtime_work_summaries(
+        identity.user,
+        identity.role.as_deref(),
+    );
+    runtime.retain(|run| work_runtime_visible(run, &visible_work_values, &hidden_work_task_ids));
+    for run in &mut runtime {
+        let origin = &run["runtimeHandle"]["origin"];
+        if let Some(visible) = visible_items.iter().find(|visible| {
+            visible.work["id"] == run["taskId"]
+                || visible.work["id"] == origin["workId"]
+                || visible.work["taskId"] == origin["sourceTaskId"]
+        }) {
+            *run =
+                sanitize_task_summary(run.clone(), &visible.work, visible.hidden_messages_removed);
+        }
+    }
+    Ok(json!({
+        "items":visible_items.into_iter().map(|visible| visible.work).collect::<Vec<_>>(),
+        "runtime":runtime
+    }))
+}
+
+fn work_runtime_visible(
+    run: &Value,
+    visible_items: &[Value],
+    hidden_work_task_ids: &BTreeSet<String>,
+) -> bool {
+    let origin = &run["runtimeHandle"]["origin"];
+    match origin["type"].as_str() {
+        Some("connection_work" | "dingtalk_work") => visible_items
+            .iter()
+            .any(|work| work["id"] == origin["workId"]),
+        Some("stand_in_task") => !origin["sourceTaskId"]
+            .as_str()
+            .is_some_and(|task_id| hidden_work_task_ids.contains(task_id)),
+        _ => true,
     }
 }
 
@@ -427,19 +714,23 @@ fn read_connected_work_store(
     let messages = store
         .stand_in_messages(identity.user, id)
         .map_err(|error| error.to_string())?;
-    if messages.iter().any(|message| {
+    let Some(visible) = project_visible_work(&settings, work, messages) else {
+        return Err("Work has no source events visible to the current account".into());
+    };
+    if visible.messages.iter().any(|message| {
         crate::task_runtime::personal_stand_in::stand_in_connection(role, &message["source"])
             .is_none()
     }) {
         return Err("A source connection was removed; its content cannot be read here".into());
     }
-    let mut result = super::connection_context::work_messages(&messages, arguments)?;
-    result["work"] = super::connection_context::summarize(work);
+    let mut result = super::connection_context::work_messages(&visible.messages, arguments)?;
+    result["work"] = super::connection_context::summarize(visible.work);
     result["readOnly"] = json!(true);
     Ok(result)
 }
 
 fn memory_call(
+    read_device: Option<&str>,
     store: &LocalTaskStore,
     identity: &StandInMcpIdentity,
     name: &str,
@@ -455,21 +746,35 @@ fn memory_call(
         if work["roleId"].as_str() != identity.role.as_deref() {
             return Err("Work belongs to another role".into());
         }
-        let source = &work["source"];
-        Some(crate::task_runtime::personal_stand_in::connection_memory_scope(source))
+        let settings = store
+            .personal_stand_in(identity.user, &identity.device)
+            .map_err(|error| error.to_string())?;
+        let messages = store
+            .stand_in_messages(identity.user, work["id"].as_str().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        let visible = project_visible_work(&settings, work, messages)
+            .ok_or("Work has no source events visible to the current account")?;
+        let mut scopes = Vec::new();
+        for message in visible.messages {
+            let scope =
+                crate::task_runtime::personal_stand_in::connection_memory_scope(&message["source"]);
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+        }
+        if scopes.len() != 1 {
+            return Err("Work contains multiple visible source scopes; bind one source".into());
+        }
+        scopes.pop()
     } else {
         None
     };
     if matches!(name, "search_memories" | "list_memory_forgetting_rules") {
+        let device = read_device.unwrap_or(&identity.device);
         let memories = if name == "list_memory_forgetting_rules" {
-            store.recall_stand_in_memory_rules(
-                identity.user,
-                &identity.device,
-                role,
-                source.as_ref(),
-            )
+            store.recall_stand_in_memory_rules(identity.user, device, role, source.as_ref())
         } else {
-            store.recall_stand_in_memories(identity.user, &identity.device, role, source.as_ref())
+            store.recall_stand_in_memories(identity.user, device, role, source.as_ref())
         }
         .map_err(|error| error.to_string())?;
         return LocalTaskStore::page_stand_in_memories(
@@ -546,6 +851,7 @@ async fn reply_to_work(
     identity: &StandInMcpIdentity,
     arguments: &Value,
     email: bool,
+    delivery: Option<&DeliveryContext>,
 ) -> Result<Value, String> {
     let store = runtime.stand_in_store();
     let work = identity.work.as_deref().ok_or("No work is bound")?;
@@ -558,15 +864,17 @@ async fn reply_to_work(
     let messages = store
         .stand_in_messages(identity.user, work)
         .map_err(|e| e.to_string())?;
+    let settings = store
+        .configured_personal_stand_in(identity.user, &identity.device)
+        .map_err(|e| e.to_string())?;
+    let visible = project_visible_work(&settings, record.clone(), messages)
+        .ok_or("Work belongs to a different DingTalk account")?;
     let message = super::connection_context::exact_message(
-        &messages,
+        &visible.messages,
         arguments["messageId"]
             .as_str()
             .ok_or("messageId is required")?,
     )?;
-    let settings = store
-        .personal_stand_in(identity.user, &identity.device)
-        .map_err(|e| e.to_string())?;
     let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
     let role = identities
         .iter()
@@ -575,12 +883,28 @@ async fn reply_to_work(
     let source =
         crate::task_runtime::personal_stand_in::stand_in_connection(role, &message["source"])
             .ok_or("Source connection was removed; reply was not sent")?;
+    if !email && crate::task_runtime::personal_stand_in::is_primary_dingtalk(role, source) {
+        if source["delegated"] == true || !identity.ask_before_act {
+            return Err(
+                "Automatic primary DingTalk replies require an eligible delegation decision".into(),
+            );
+        }
+        if !crate::task_runtime::personal_stand_in::matches_delegation_account(
+            &settings,
+            &record["roleId"],
+            &message["source"],
+        ) {
+            return Err("Work belongs to a different DingTalk account".into());
+        }
+    }
     if !identity.ask_before_act
         && (role["enabled"] != true || source["policy"]["automatic"] != true)
     {
         return Err("Automatic reply authorization was revoked; reply was not sent".into());
     }
-    if email {
+    let text = arguments["text"].as_str().unwrap_or_default();
+    let versions = delivery.and_then(DeliveryContext::versions);
+    let result = if email {
         if crate::task_runtime::personal_stand_in::source_provider(source)
             != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
             || (source["policy"]["askBeforeAct"] == true && !identity.ask_before_act)
@@ -600,33 +924,82 @@ async fn reply_to_work(
             "continuous_reply"
         });
         input["action"] = json!("send_email");
-        return crate::runtime_work::connection_host::call(
+        crate::runtime_work::connection_host::call(
             "executeAction",
             Some(crate::task_runtime::personal_stand_in::EMAIL_PROVIDER),
             input,
         )
         .await
-        .map_err(|e| format!("{}: {}", e.code, e.message));
-    }
-    if crate::task_runtime::personal_stand_in::source_provider(source)
-        != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    } else {
+        if crate::task_runtime::personal_stand_in::source_provider(source)
+            != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        {
+            return Err("This connection does not support the DingTalk reply operation".into());
+        }
+        if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
+            return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
+        }
+        crate::runtime_work::dingtalk::reply(
+            source,
+            message,
+            work,
+            text,
+            &arguments["mentionOpenDingTalkIds"],
+        )
+        .await
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    };
+    let (accepted, native_id, request) = if email {
+        (
+            result["status"] == "sent"
+                && result["duplicate"] != true
+                && arguments["reply"] != false,
+            result["messageId"].as_str(),
+            result["inReplyTo"]
+                .as_str()
+                .or(message["id"].as_str())
+                .unwrap_or_default(),
+        )
+    } else {
+        (
+            result["success"] == true,
+            result["result"]["openMessageId"].as_str(),
+            message["id"].as_str().unwrap_or_default(),
+        )
+    };
+    if accepted
+        && role["selfLearningEnabled"] == true
+        && store
+            .record_training_reply(
+                DeliveryRole {
+                    user: identity.user,
+                    device: &identity.device,
+                    role_device: delivery
+                        .map_or(&identity.device, |snapshot| &snapshot.role_device),
+                    role: role["id"].as_str().unwrap_or_default(),
+                },
+                &message["source"],
+                AcceptedReply {
+                    request,
+                    text,
+                    native_id,
+                    versions: versions
+                        .as_ref()
+                        .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                },
+            )
+            .is_err()
     {
-        return Err("This connection does not support the DingTalk reply operation".into());
+        crate::logging::log_executor_event("Stand-in reply training receipt unavailable", &[]);
     }
-    if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
-        return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
-    }
-    crate::runtime_work::dingtalk::reply(
-        source,
-        message,
-        work,
-        arguments["text"].as_str().unwrap_or_default(),
-        &arguments["mentionOpenDingTalkIds"],
-    )
-    .await
-    .map_err(|e| format!("{}: {}", e.code, e.message))
+    Ok(result)
 }
 
 #[cfg(test)]
 #[path = "stand_in_memory_tests.rs"]
 mod memory_tests;
+
+#[cfg(test)]
+#[path = "stand_in_account_tests.rs"]
+mod account_tests;

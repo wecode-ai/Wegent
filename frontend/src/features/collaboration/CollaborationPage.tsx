@@ -8,11 +8,23 @@ import { createBrowserRuntimeDeviceAccess } from './runtimeDeviceAccess'
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 
 import { deviceApis } from '@/apis/devices'
+import {
+  projectViewFromQuery,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type ComponentProps,
+} from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   CollaborationPlatformApp,
+  saveBrowserIssueAttachment,
   type CollaborationLocale,
   type CollaborationPlatformHostAdapter,
   type CollaborationPlatformLocation,
@@ -20,6 +32,13 @@ import {
   type ProjectSettingsSectionId,
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
+import {
+  BrowserPersonalHomeIssue,
+  createPersonalIssueTranslator,
+  IndependentIssueDialog,
+  PersonalIssuesView,
+  PersonalIssueTranslation,
+} from '@wegent/collaboration/platform'
 import { toast } from 'sonner'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
 import { GitAccountConfigurationProvider } from '@wegent/collaboration/controls'
@@ -45,6 +64,7 @@ import { listGroups } from '@/apis/groups'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationContextSidebar } from '@/features/collaboration/CollaborationContextSidebar'
+import { webPersonalIssuesApi } from './webPersonalIssues'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
@@ -75,47 +95,49 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   return 'home'
 }
 
-function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: ReactNode }) {
-  const pathname = usePathname()
+function CollaborationWebShell({
+  main,
+  sidebar,
+  mobileNavigation,
+}: {
+  main: ReactNode
+  sidebar: ReactNode
+  mobileNavigation?: { open: boolean; setOpen(open: boolean): void }
+}) {
   const { t } = useTranslation('common')
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    setIsMobileSidebarOpen(false)
-  }, [pathname])
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      <ResizableSidebar
-        minWidth={220}
-        maxWidth={360}
-        defaultWidth={244}
-        storageKey="collaboration-sidebar-width"
-      >
-        <CollaborationContextSidebar workspaceTree={sidebar} />
-      </ResizableSidebar>
-      {isMobileSidebarOpen ? (
+      {mobileNavigation?.open ? (
         <div className="fixed inset-0 z-50 flex lg:hidden">
           <button
             type="button"
             className="absolute inset-0 bg-black/30"
             aria-label={t('collaboration_sidebar.close_navigation')}
-            onClick={() => setIsMobileSidebarOpen(false)}
+            onClick={() => mobileNavigation.setOpen(false)}
           />
           <div className="relative h-full">
-            <CollaborationContextSidebar
-              workspaceTree={sidebar}
-              mobile
-              onNavigate={() => setIsMobileSidebarOpen(false)}
-            />
+            <CollaborationContextSidebar workspaceTree={sidebar} mobile />
           </div>
         </div>
-      ) : null}
+      ) : (
+        <ResizableSidebar
+          flush
+          minWidth={220}
+          maxWidth={360}
+          defaultWidth={244}
+          storageKey="collaboration-sidebar-width"
+        >
+          <CollaborationContextSidebar workspaceTree={sidebar} />
+        </ResizableSidebar>
+      )}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="lg:hidden">
           <TopNavigation
             variant="with-sidebar"
-            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            onMobileSidebarToggle={
+              mobileNavigation ? () => mobileNavigation.setOpen(true) : undefined
+            }
             isSidebarCollapsed={false}
           />
         </div>
@@ -130,10 +152,15 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
   )
 }
 
-export function CollaborationPage() {
+export function CollaborationPage({
+  featureFlags,
+}: { featureFlags?: ProjectSurfaceFeatureFlags } = {}) {
   const theme = useDocumentTheme()
   const { user, isLoading: userLoading } = useUser()
   const accountScope = String(apiClient.getCacheScope())
+  const [issueCreationScope, setIssueCreationScope] = useState<string>()
+  const [personalIssueRevision, setPersonalIssueRevision] = useState(0)
+  const [directIssuePath, setDirectIssuePath] = useState<string>()
   const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
@@ -233,6 +260,7 @@ export function CollaborationPage() {
     [api]
   )
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
+  const issueTranslate = useMemo(() => createPersonalIssueTranslator(locale), [locale])
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
   const [workspaceOwnerOptions, setWorkspaceOwnerOptions] = useState([
     { label: personalOwnerLabel, namespace: 'default' },
@@ -267,8 +295,8 @@ export function CollaborationPage() {
   const workspaceRoute = segments[1] === 'workspaces'
   const workspaceId = workspaceRoute && segments[2] ? decodeURIComponent(segments[2]) : null
   const projectRoute = workspaceRoute && segments[3] === 'projects'
-  const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
-  const issueId =
+  const workspaceProjectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
+  const workspaceIssueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
   const removedRootRoute = [
     '/collaboration/resources',
@@ -285,7 +313,15 @@ export function CollaborationPage() {
     legacyProjectId && segments[2] === 'issues' && segments[3]
       ? decodeURIComponent(segments[3])
       : null
-  const projectView = (searchParams.get('view') || 'board') as CollaborationView
+  const directPath = JSON.stringify([accountScope, pathname])
+  const openDirectIssue = !!legacyIssueId && directIssuePath === directPath
+  const projectId = openDirectIssue ? legacyProjectId : workspaceProjectId
+  const issueId = openDirectIssue ? legacyIssueId : workspaceIssueId
+  const projectView = projectViewFromQuery(searchParams, {
+    'collab.projectSurfaces.v1':
+      featureFlags?.['collab.projectSurfaces.v1'] ??
+      process.env.NEXT_PUBLIC_COLLAB_PROJECT_SURFACES_V1 === 'true',
+  }) as CollaborationView
   const section = searchParams.get('section')
   const projectSettingsSection =
     projectView === 'manage' &&
@@ -313,6 +349,10 @@ export function CollaborationPage() {
       .then(project => {
         if (!active) return
         if (!project.workspace_id) {
+          if (legacyIssueId) {
+            setDirectIssuePath(directPath)
+            return
+          }
           toast.error('该项目未关联协作空间')
           router.replace('/collaboration')
           return
@@ -330,13 +370,107 @@ export function CollaborationPage() {
       })
       .catch(error => {
         if (!active) return
+        if (legacyIssueId && error instanceof ApiError && [403, 404].includes(error.status)) {
+          // The Issue's own authorization can permit an invitee without a project grant.
+          setDirectIssuePath(directPath)
+          return
+        }
         toast.error(error instanceof Error ? error.message : '项目加载失败')
         router.replace('/collaboration')
       })
     return () => {
       active = false
     }
-  }, [api, legacyIssueId, legacyProjectId, projectView, removedRootRoute, router])
+  }, [api, directPath, legacyIssueId, legacyProjectId, projectView, removedRootRoute, router])
+
+  const renderPersonalIssues = useCallback(
+    (
+      scope: ComponentProps<typeof PersonalIssuesView>['scope'],
+      projects: ComponentProps<typeof PersonalIssuesView>['projects'],
+      onOpenIssue: ComponentProps<typeof PersonalIssuesView>['onOpenIssue'],
+      home?: ComponentProps<typeof PersonalIssuesView>['home']
+    ) => {
+      if (!user) return null
+      const open = (id?: string) => {
+        const params = new URLSearchParams(searchParams.toString())
+        if (id) params.set('personalIssueId', id)
+        else params.delete('personalIssueId')
+        router.push(params.size ? `${pathname}?${params}` : pathname)
+      }
+      return (
+        <PersonalIssuesView
+          key={`${accountScope}:${scope}`}
+          scope={scope}
+          sources={[api]}
+          projects={projects}
+          userId={user.id}
+          active={home?.contentVisible ?? true}
+          home={home}
+          language={locale}
+          translate={issueTranslate}
+          onOpenIssue={issue => {
+            if (!home) {
+              onOpenIssue(issue)
+            } else if (issue.cloud_project_id && issue.can_view_detail !== false) {
+              router.push(
+                `/collaboration/${encodeURIComponent(issue.cloud_project_id)}/issues/${encodeURIComponent(issue.id)}`
+              )
+            }
+          }}
+          renderIssueDetail={
+            home
+              ? context => (
+                  <BrowserPersonalHomeIssue
+                    api={api}
+                    locale={locale}
+                    context={context}
+                    translate={issueTranslate}
+                  />
+                )
+              : undefined
+          }
+          onOpenProject={project => router.push(`/collaboration/${encodeURIComponent(project.id)}`)}
+          independent={{
+            api: webPersonalIssuesApi,
+            userId: user.id,
+            revision: personalIssueRevision,
+            create: () => setIssueCreationScope(accountScope),
+          }}
+          independentSelection={{
+            id: searchParams.get('personalIssueId') ?? undefined,
+            select: open,
+          }}
+          renderIndependentIssue={drawer => (
+            <IndependentIssueDialog
+              key={drawer.issueId}
+              {...drawer}
+              api={webPersonalIssuesApi}
+              collaborationApi={api}
+              userId={user.id}
+              presentation="embedded"
+              saveAttachment={saveBrowserIssueAttachment}
+              onMovedToProject={(project, issue) =>
+                router.replace(
+                  `/collaboration/${encodeURIComponent(project)}/issues/${encodeURIComponent(issue)}`
+                )
+              }
+            />
+          )}
+        />
+      )
+    },
+    [
+      accountScope,
+      api,
+      issueTranslate,
+      locale,
+      pathname,
+      personalIssueRevision,
+      router,
+      searchParams,
+      user,
+    ]
+  )
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
@@ -368,8 +502,15 @@ export function CollaborationPage() {
         dingtalkAitable: false,
         projectLocation: 'cloud',
         workspaceLocations: ['cloud'],
-        sidebarPresentation: 'context',
+        sidebarPresentation: 'full',
+        projectNavigation: 'projects',
       },
+      templateNavigation: true,
+      createIndependentIssue: user ? () => setIssueCreationScope(accountScope) : undefined,
+      renderPersonalHome: home =>
+        renderPersonalIssues('home', home.projects, home.onOpenIssue, home),
+      renderIssueList: ({ scope, projects, onOpenIssue }) =>
+        renderPersonalIssues(scope, projects, onOpenIssue),
       location: {
         platformView: 'spaces',
         rootView,
@@ -391,6 +532,17 @@ export function CollaborationPage() {
           nextLocation.issueId !== issueId
         if (updatesCurrentIssueDrawer) {
           window.history.pushState(null, '', nextPath)
+          return
+        }
+        // Settings sections share a mounted page; a delayed route focus must not close its pickers.
+        if (
+          projectId &&
+          nextLocation.workspaceId === workspaceId &&
+          nextLocation.projectId === projectId &&
+          projectView === 'manage' &&
+          nextLocation.projectView === 'manage'
+        ) {
+          router.push(nextPath, { scroll: false })
           return
         }
         router.push(nextPath)
@@ -416,12 +568,14 @@ export function CollaborationPage() {
     }),
     [
       accountScope,
+      api,
       issueId,
       pathname,
       projectId,
       projectView,
       projectSettingsSection,
       rootView,
+      renderPersonalIssues,
       router,
       user,
       workspaceId,
@@ -460,7 +614,7 @@ export function CollaborationPage() {
     )
   }
 
-  if (legacyProjectId) {
+  if (legacyProjectId && !openDirectIssue) {
     return (
       <CollaborationWebShell
         sidebar={<div className="h-full" />}
@@ -483,14 +637,36 @@ export function CollaborationPage() {
           },
         }}
       >
-        <CollaborationPlatformApp
-          api={api}
-          host={platformHost}
-          locale={locale}
-          renderShell={({ main, sidebar }) => (
-            <CollaborationWebShell main={main} sidebar={sidebar} />
-          )}
-        />
+        <PersonalIssueTranslation.Provider value={issueTranslate}>
+          <CollaborationPlatformApp
+            api={api}
+            host={platformHost}
+            locale={locale}
+            renderShell={shell => <CollaborationWebShell {...shell} />}
+          />
+          {user && issueCreationScope === accountScope ? (
+            <IndependentIssueDialog
+              api={webPersonalIssuesApi}
+              collaborationApi={api}
+              issueId={null}
+              userId={user.id}
+              saveAttachment={saveBrowserIssueAttachment}
+              onClose={() => setIssueCreationScope(undefined)}
+              onOpenChildTask={issue => {
+                setIssueCreationScope(undefined)
+                router.push(
+                  `/collaboration/created?personalIssueId=${encodeURIComponent(issue.id)}`
+                )
+              }}
+              onSaved={() => setPersonalIssueRevision(value => value + 1)}
+              onOpenProjectIssue={(targetProject, targetIssue) =>
+                router.push(
+                  `/collaboration/${encodeURIComponent(targetProject)}/issues/${encodeURIComponent(targetIssue)}`
+                )
+              }
+            />
+          ) : null}
+        </PersonalIssueTranslation.Provider>
       </GitAccountConfigurationProvider>
     </CollaborationTheme>
   )

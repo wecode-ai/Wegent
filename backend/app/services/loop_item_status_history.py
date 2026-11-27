@@ -20,6 +20,11 @@ from app.schemas.cloud_project import CloudProjectBoardConfig, default_board_sta
 from app.services.loop_item_history_actor import automation_history_actor
 
 STATUS_HISTORY_KEY = "status_history"
+UNLINKED_ISSUE_STATUSES = {
+    "pending": "待开始",
+    "in_progress": "进行中",
+    "completed": "已完成",
+}
 
 
 @dataclass(frozen=True)
@@ -134,8 +139,10 @@ def automatic_project_status(
     return candidate_status
 
 
-def status_name(project: CloudProject, status_id: str) -> str:
+def status_name(project: CloudProject | None, status_id: str) -> str:
     """Display name for a status id; empty when the id is not on the board."""
+    if project is None:
+        return UNLINKED_ISSUE_STATUSES.get(status_id, "")
     for entry_id, entry_name in project_board_statuses(project):
         if entry_id == status_id:
             return entry_name
@@ -145,12 +152,13 @@ def status_name(project: CloudProject, status_id: str) -> str:
 def write_status_change(
     metadata: dict[str, Any],
     *,
-    project: CloudProject,
+    project: CloudProject | None,
     from_status: str,
     to_status: str,
     trigger: str,
     by_user_id: int | None,
     automation_context: dict[str, Any] | None = None,
+    completion_owner_user_id: int | None = None,
 ) -> None:
     """Append one transition to ``metadata["status_history"]`` in place."""
     current = metadata.get(STATUS_HISTORY_KEY)
@@ -159,6 +167,19 @@ def write_status_change(
     # metadata content-equal to it, which SQLAlchemy then skips on flush.
     history = list(current) if isinstance(current, list) else []
     now = datetime.now(timezone.utc)
+    actor = automation_history_actor(automation_context)
+    # Snapshot the completing person rather than consulting a mutable assignee.
+    owner = (
+        by_user_id
+        if trigger in {"user_update", "create"} and automation_context is None
+        else None
+    )
+    if completion_owner_user_id is not None and completion_owner_user_id > 0:
+        owner = completion_owner_user_id
+    if to_status == "completed":
+        metadata["completion_owner_user_id"] = owner
+    else:
+        metadata.pop("completion_owner_user_id", None)
     history.append(
         {
             "from_status": from_status,
@@ -169,7 +190,8 @@ def write_status_change(
             "to_status_name": status_name(project, to_status) if to_status else "",
             "trigger": trigger,
             "by_user_id": by_user_id,
-            **automation_history_actor(automation_context),
+            **actor,
+            **({"completion_owner_user_id": owner} if to_status == "completed" else {}),
             "at": now.isoformat(),
         }
     )

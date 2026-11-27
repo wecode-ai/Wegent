@@ -74,22 +74,37 @@ This feature requires matching backend, desktop, and local executor support. Whe
 
 ## Manage Codex plugins and Wework plugins
 
-In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
+In the Wework desktop app, open **Plugins → Manage plugins** to switch between management tabs.
 
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
 - **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
+- **Marketplace sources** lists Git and local-folder marketplaces added by the user and counts their installations on this device.
 
-From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Before every installation or update, a native confirmation shows the source and execution risk: the plugin and its dependencies may execute code and access files and networks with the current user's permissions. Execution starts only after **Allow installation** or **Allow update**. **Cancel** is the default; cancelling or closing the window leaves the plugin configuration unchanged. The same policy covers direct API calls, accepts any npm, Git, or absolute local-directory source, and applies only to that operation. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
+In **Codex plugins**, select a plugin name to open the same detail page used by the marketplace, including capabilities, app authorizations, and available actions. Plugins you created also show sharing and new-version submission prompts on that page, depending on ownership and version state. An installed plugin with a newer published release shows the current and target versions. Choose **Update** in its row and confirm to sync the release to this device.
+
+From **Wework plugins**, choose **Install plugin** and enter an npm package, Git source, or absolute local directory to install a plugin, or search installed plugins by name, package name, or source. Before every installation or update, a native confirmation shows the source and execution risk: the plugin and its dependencies may execute code and access files and networks with the current user's permissions. Execution starts only after **Allow installation** or **Allow update**. **Cancel** is the default; cancelling or closing the window leaves the plugin configuration unchanged. The same policy covers direct API calls, accepts any npm, Git, or absolute local-directory source, and applies only to that operation. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
 Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. Installation and updates keep the current runtime active without applying incomplete changes. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
 
 Starting a plugin development instance also requires confirmation of the linked absolute source directory. Cancellation preserves the current development instance and starts no process. Once allowed, the development session executes that source and its subsequent HMR changes.
+
+## Check a Git marketplace for updates
+
+In **Marketplace sources**, choose **Check for updates** for a Git marketplace you added. Wework reads the configured branch or tag and shows any newer versions in **Codex plugins**. The check provides version information.
+
+## Remove a custom plugin marketplace
+
+Open **Left sidebar → Plugins → Manage plugins → Marketplace sources**. In the marketplace row, choose **More actions → Remove marketplace**. Review the plugins installed on this device from the marketplace. If the dialog lists any plugins, choose **Uninstall and remove**. If the installations change before removal, review the updated list and confirm again.
+
+Removal processes each plugin's logout and uninstall in sequence. If logout times out, removal stops and leaves that plugin and later plugins installed. Completed uninstalls are not rolled back; review the current list before retrying removal.
 
 ## Import a personal plugin
 
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
+
+When connected to your organization server, installing or importing a plugin you created first completes the local installation. Wework then installs it for your account in the background so your cloud devices can sync it. The first sync uploads a version available only to you if the plugin has no cloud version. You can keep using the local plugin if cloud sync fails.
 
 ## Managed local Python
 
@@ -115,6 +130,8 @@ During preparation, a validated local Python can temporarily run a plugin only w
 `version` is the accepted local interpreter major and minor version; ranges are unsupported. `dependencies` must explicitly be empty. The host searches its executable path and verifies the interpreter version and baseline standard library in isolation without executing plugin code. Temporary execution uses `-B -E -s -S` to ignore Python environment variables and user/global site-packages. Only that plugin child's interpreter and search path change; no dependencies are installed. Chat scripts, Python account adapters, and direct Python commands support this selection. Shell wrappers continue waiting for managed Python, as do plugins with missing declarations, unknown dependencies, or failed validation. Background installation continues, and the notice identifies the temporary local Python version. Running processes retain their interpreter; new invocations prefer managed Python once ready.
 
 Codex and ClaudeCode chats receive host-owned execution instructions that route plugin Skill examples using `python`, `python3`, or `uv` to `"$WEGENT_EXECUTOR_BINARY" plugin-python /absolute/plugin/path/scripts/example.py [script arguments]`; PowerShell uses `& $env:WEGENT_EXECUTOR_BINARY plugin-python <script-path> <arguments>`. The runner checks that the script belongs to a package with a valid plugin manifest, prepares managed Python on demand, and preserves the task working directory, script arguments, output, and exit code. Python environment cleanup and the host-selected interpreter apply only to the plugin child; ordinary project scripts keep their existing environment. This routing does not intercept arbitrary shell commands. Preparation failures stop the current plugin invocation; after retrying preparation, the user can ask to continue execution.
+
+For plugins that Wework syncs to this device, stdio MCP can declare a `python` or `python3` command, a package-relative working directory, and a bundled `.py` script. Wework selects managed Python in the runtime copy and preserves plugin identity, script arguments, and MCP approval behavior. Services that explicitly set or inherit `PATH` or Python environment variables continue to use their declared environment.
 
 Background account synchronization and revocation only check managed runtime readiness. Python connectors are deferred until background preparation or explicit preparation completes; maintenance then resumes before creating a migration intent or claiming a revocation lease. Python and non-Python connectors within the same plugin are also independent: waiting for Python or a preparation failure does not block other connectors. Each synchronization or revocation cycle runs at most four provider operations concurrently; preparation does not occupy an operation slot. Identity and plugin definitions are validated again when claiming an operation. External callers should create manual migration intents after Python is ready so downloading does not consume their five-minute lifetime. An intent that expires while waiting is rejected and must be created again.
 
@@ -219,7 +236,11 @@ Built-in application plugins use `visibility=workspace`, so Sites use `plugin://
 
 The Sites list contains both Sites you own and Sites where you are a collaborator. A Site owner can use **… → Manage collaborators** to add or remove collaborators by username. Collaborators can continue development, edit, publish, delete, configure environment variables, and update internal Site access, but cannot manage collaborators. For an internal Site, use **… → Access permissions** to allow anonymous users, signed-in users, project members only, or project members plus specified users; project owners and collaborators always retain access. Clicking a Site URL in the list opens it in the system browser. **Continue developing** makes sure `wegent-sites` is installed on the selected device and inserts both the plugin reference and Site reference into a fresh task composer so the AI receives the Site workflow and target-project context together.
 
+Access and collaborator dialogs read only the current Site. Switching Sites or account connections reloads data and clears the old draft. Failed access reads prevent saving and offer Retry. Failed collaborator reads show an error and Retry rather than an empty member list. A collaborator added while the initial list is loading remains visible when that older read completes.
+
 Use **… → Environment variables** on a Site row to add, change, or remove `Plain` and `Secret` variables as one update. Secret values are never returned by the server; leave an already configured Secret empty to keep its value unchanged. A saved revision takes effect on the next deployment. Static Sites inject variables into the browser bundle, so their Secret values are visible to Site visitors and are suitable only for internal audiences.
+
+The application list loads only the visible Sites or Mini Programs type. Switching types clears search, and late search or pagination results cannot enter the current list. An environment configuration deep link opens its dialog after the target Site loads. Closing the dialog clears those configuration parameters, so refreshing the list does not reopen it.
 
 Wegent marketplace publication and upload accept packages containing either `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Backend adds the missing runtime manifest before storing the package, so every installed plugin is synchronized into both the Codex and Claude Code plugin directories on each device.
 
@@ -240,6 +261,8 @@ without launching an external browser. Restored sessions reuse the plugin set re
 were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
+
+The collaboration home uses the same slash picker when creating an Issue task. Skills become selectable once their catalog is available, without waiting for plugin icons to load.
 
 ### Inspect and toggle individual Skills
 

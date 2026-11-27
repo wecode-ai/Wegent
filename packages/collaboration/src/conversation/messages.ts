@@ -1,3 +1,5 @@
+import { assistantErrorMessages } from "./assistantErrorMessages";
+
 export const conversationMessages: Record<
   "zh-CN" | "en",
   Record<string, string>
@@ -77,110 +79,7 @@ export const conversationMessages: Record<
     "conversation.continue_in_new_task": "在新任务中继续",
     "conversation.assistant_status.stopped": "已停止",
     "conversation.assistant_status.stopped_after": "你在 {{duration}} 后停止了",
-    "conversation.assistant_error.details": "错误详情",
-    "conversation.assistant_error.git_access.title": "Git 仓库访问失败",
-    "conversation.assistant_error.git_access.credentials-required":
-      "{{domain}} 需要目标设备上的 Git 凭据。请在设置 → 集成 → Git 账户配置对应域；本机执行请配置本机 Git 或 SSH 后重试。",
-    "conversation.assistant_error.git_access.authentication-failed":
-      "{{domain}} 的 Git 认证被拒绝。请检查设置 → 集成 → Git 账户中的令牌或目标设备的 SSH 密钥后重试。",
-    "conversation.assistant_error.git_access.ssh-authentication-failed":
-      "{{domain}} 的 SSH 认证被拒绝。请配置目标设备的 SSH 密钥后重试，云端 Git 令牌不能替代 SSH 密钥。",
-    "conversation.assistant_error.git_access.repository-inaccessible":
-      "请检查仓库地址和账户的仓库访问权限；不一定是登录问题。",
-    "conversation.assistant_error.git_access.network-error":
-      "请检查目标设备网络、代理、TLS 证书和 SSH 主机信任后重试。",
-    "conversation.assistant_error.git_access.git-unavailable":
-      "目标设备无法启动 Git，请安装或修复 Git 后重试。",
-    "conversation.assistant_error.git_access.invalid-url":
-      "请使用不含凭据或查询参数的合法仓库地址。",
-    "conversation.assistant_error.git_access.clone-failed":
-      "仓库访问检查已通过，但克隆失败。请检查分支、目标目录、磁盘空间和设备权限。",
-    "conversation.assistant_error.actions.switch_model_retry": "切换模型并重试",
-    "conversation.assistant_error.actions.retry": "重试",
-    "conversation.assistant_error.types.context_length_exceeded.title":
-      "对话内容超出当前模型的上下文长度限制",
-    "conversation.assistant_error.types.context_length_exceeded.description":
-      "建议切换到支持更大上下文的模型，或开始一个新对话。",
-    "conversation.assistant_error.types.quota_exceeded.title":
-      "当前模型的使用额度已耗尽",
-    "conversation.assistant_error.types.quota_exceeded.description":
-      "请切换到其他可用模型，或稍后在额度恢复后继续。",
-    "conversation.assistant_error.types.rate_limit.title":
-      "请求过于频繁，请稍后再试",
-    "conversation.assistant_error.types.rate_limit.description":
-      "请等待片刻后重试，或切换到其他可用模型。",
-    "conversation.assistant_error.types.payload_too_large.title":
-      "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
-    "conversation.assistant_error.types.payload_too_large.description":
-      "请减少附件或上下文内容后重试。",
-    "conversation.assistant_error.types.model_service_connection_error.title":
-      "无法连接模型服务",
-    "conversation.assistant_error.types.model_service_connection_error.description":
-      "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。",
-    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
-      "连接错误：向 {{endpoint}} 发送请求失败。请检查网络或 VPN 连接后重试。",
-    "conversation.assistant_error.types.network_error.title":
-      "网络连接失败：请检查网络连接后重试",
-    "conversation.assistant_error.types.network_error.description":
-      "当前连接中断或服务暂时不可达，请稍后重试。",
-    "conversation.assistant_error.types.timeout_error.title":
-      "请求超时：服务响应时间过长，请稍后重试",
-    "conversation.assistant_error.types.timeout_error.description":
-      "服务暂时没有及时响应，可以稍后重新发送。",
-    "conversation.assistant_error.types.llm_error.title":
-      "模型调用失败：模型暂时不可用，请稍后重试",
-    "conversation.assistant_error.types.llm_error.description":
-      "模型服务当前不可用，可以稍后重试或切换模型。",
-    "conversation.assistant_error.types.llm_unsupported.title":
-      "当前模型不支持此请求，请更换其他模型",
-    "conversation.assistant_error.types.llm_unsupported.description":
-      "当前输入或附件类型不被该模型支持，请切换兼容模型。",
-    "conversation.assistant_error.types.invalid_parameter.title":
-      "参数错误：请求参数不正确，请检查输入内容",
-    "conversation.assistant_error.types.invalid_parameter.description":
-      "请求参数与模型要求不匹配，请调整输入后重试。",
-    "conversation.assistant_error.types.forbidden.title":
-      "访问被拒绝：您没有使用此资源的权限",
-    "conversation.assistant_error.types.forbidden.description":
-      "请确认账号、设备或模型权限后重试。",
-    "conversation.assistant_error.types.container_oom.title":
-      "执行环境内存不足",
-    "conversation.assistant_error.types.container_oom.description":
-      "请开始新对话重试，或联系管理员增加执行环境内存。",
-    "conversation.assistant_error.types.container_error.title": "执行环境异常",
-    "conversation.assistant_error.types.container_error.description":
-      "容器或本地任务服务暂时不可用，请稍后重试。",
-    "conversation.assistant_error.types.content_filter.title":
-      "内容触发安全审核，请修改敏感内容后重试",
-    "conversation.assistant_error.types.content_filter.description":
-      "请调整输入中可能触发安全策略的内容。",
-    "conversation.assistant_error.types.provider_error.title":
-      "模型服务异常，请稍后再试",
-    "conversation.assistant_error.types.provider_error.description":
-      "上游模型服务返回异常，可以稍后重试或切换模型。",
-    "conversation.assistant_error.types.image_too_large.title":
-      "图片超出大小限制，请压缩图片后重试",
-    "conversation.assistant_error.types.image_too_large.description":
-      "请压缩图片或减少图片数量后重新发送。",
-    "conversation.assistant_error.types.model_protocol_error.title":
-      "模型与当前运行协议不匹配",
-    "conversation.assistant_error.types.model_protocol_error.description":
-      "当前模型不支持此请求格式。请切换兼容模型后重试。",
-    "conversation.assistant_error.types.model_protocol_error.description_with_model":
-      "{{model}} 不支持当前运行协议。请切换兼容模型后重试。",
-    "conversation.assistant_error.types.invalid_role.title":
-      "模型参数异常：消息角色格式不兼容",
-    "conversation.assistant_error.types.invalid_role.description":
-      "当前模型不支持此消息格式，建议切换模型后重试。",
-    "conversation.assistant_error.types.permission_denied.title":
-      "无权限使用当前模型，请切换到有权限的模型",
-    "conversation.assistant_error.types.permission_denied.description":
-      "请确认模型访问权限，或切换到权限范围内的模型。",
-    "conversation.assistant_error.types.generic_error.title": "消息生成失败",
-    "conversation.assistant_error.types.generic_error.description":
-      "请求未能完成。你可以稍后重试，或查看错误详情。",
-    "conversation.assistant_error.types.generic_error.description_without_details":
-      "请求未能完成。你可以稍后重试。",
+    ...assistantErrorMessages["zh-CN"],
     "conversation.message_actions.copy": "复制",
     "conversation.message_actions.copied": "已复制",
     "conversation.message_actions.copy_message": "复制消息",
@@ -317,6 +216,10 @@ export const conversationMessages: Record<
     "conversation.request_user_input.collapse": "收起",
     "conversation.request_user_input.ignore": "取消",
     "conversation.request_user_input.submit": "提交",
+    "conversation.request_user_input.skip": "跳过",
+    "conversation.request_user_input.skipped_reply": "已跳过 · 回复问题",
+    "conversation.request_user_input.files_unavailable":
+      "当前会话的附件服务不可用，请重试。",
     "conversation.subagent.active_count": "进行中 · {{count}}",
     "conversation.subagent.activity": "子代理活动",
     "conversation.subagent.agent": "子代理",
@@ -351,8 +254,6 @@ export const conversationMessages: Record<
     "conversation.tool_activity.call_done": "调用 {{name}}",
     "conversation.tool_activity.call_error": "调用 {{name}} 失败",
     "conversation.tool_activity.call_running": "调用 {{name}}",
-    "conversation.tool_activity.chatgpt_network_unavailable":
-      "当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？",
     "conversation.tool_activity.command": "命令",
     "conversation.tool_activity.command_action": "运行命令",
     "conversation.tool_activity.create_action": "创建文件",
@@ -384,16 +285,27 @@ export const conversationMessages: Record<
     "conversation.tool_activity.open_proxy_settings": "设置代理",
     "conversation.tool_activity.other": "其他工具",
     "conversation.tool_activity.other_action": "调用工具",
-    "conversation.tool_activity.reconnecting": "连接中断，正在重连…",
     "conversation.tool_activity.retrying": "正在自动重试…",
+    "conversation.tool_activity.reconnecting": "正在重新连接…",
+    "conversation.tool_activity.server_overloaded_retry":
+      "服务器繁忙，正在重新连接…",
+    "conversation.tool_activity.retry_progress":
+      "{{status}}（{{attempt}}/{{total}}）",
     "conversation.tool_activity.rate_limit_wait": "模型限流，等待自动重试…",
-    "conversation.tool_activity.overload_retry_in": "模型繁忙，将在 {{remaining}} 后用原模型重试…",
-    "conversation.tool_activity.overload_retrying": "模型繁忙，正在用原模型重试…",
-    "conversation.tool_activity.overload_waiting": "模型繁忙，等待用原模型自动重试。",
-    "conversation.tool_activity.quota_waiting": "额度已用完，等待用原模型自动继续。",
-    "conversation.tool_activity.quota_wait_unknown": "额度已用完，正在查询恢复时间，将用原模型自动继续。",
-    "conversation.tool_activity.quota_wait_until": "额度已用完，将在 {{remaining}} 后用原模型自动继续。",
-    "conversation.tool_activity.quota_checking": "正在检查额度恢复情况，恢复后将用原模型自动继续…",
+    "conversation.tool_activity.overload_retry_in":
+      "模型繁忙，将在 {{remaining}} 后用原模型重试…",
+    "conversation.tool_activity.overload_retrying":
+      "模型繁忙，正在用原模型重试…",
+    "conversation.tool_activity.overload_waiting":
+      "模型繁忙，等待用原模型自动重试。",
+    "conversation.tool_activity.quota_waiting":
+      "额度已用完，等待用原模型自动继续。",
+    "conversation.tool_activity.quota_wait_unknown":
+      "额度已用完，正在查询恢复时间，将用原模型自动继续。",
+    "conversation.tool_activity.quota_wait_until":
+      "额度已用完，将在 {{remaining}} 后用原模型自动继续。",
+    "conversation.tool_activity.quota_checking":
+      "正在检查额度恢复情况，恢复后将用原模型自动继续…",
     "conversation.tool_activity.renamed_file": "重命名 {{filename}}",
     "conversation.tool_activity.search": "搜索",
     "conversation.tool_activity.search_action": "搜索代码",
@@ -404,11 +316,16 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "调用 {{count}} 个工具",
     "conversation.tool_activity.tool_input": "输入",
     "conversation.tool_activity.tool_no_output": "工具未返回内容",
+    "conversation.tool_activity.event_provider_summary":
+      "连接事件来源 {{total}} 个，{{ready}} 个已就绪",
+    "conversation.tool_activity.show_full_result": "查看完整结果",
+    "conversation.tool_activity.hide_full_result": "收起完整结果",
     "conversation.tool_activity.tool_output": "输出",
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
     "conversation.tool_activity.wait_running": "等待工具结果",
     "conversation.workbench.fill_selection_to_answer": "填入回答",
+    "conversation.workbench.share_selection_as_issue": "分享给他人",
     "conversation.workbench.add_selection_to_conversation": "添加到对话",
     "conversation.workbench.ask_selection_in_sidebar": "在侧边栏中提问",
     "conversation.file_changes.editing_files": "正在编辑 {{count}} 个文件",
@@ -444,7 +361,8 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
-    "conversation.connection_event_received": "Connection event received; continuing",
+    "conversation.connection_event_received":
+      "Connection event received; continuing",
     "conversation.tool_activity.command_done": "Ran {{name}}",
     "conversation.tool_activity.command_running": "Running {{name}}",
     "conversation.tool_activity.command_error": "Command failed: {{name}}",
@@ -523,114 +441,7 @@ export const conversationMessages: Record<
     "conversation.assistant_status.stopped": "Stopped",
     "conversation.assistant_status.stopped_after":
       "You stopped after {{duration}}",
-    "conversation.assistant_error.details": "Error details",
-    "conversation.assistant_error.git_access.title":
-      "Git repository access failed",
-    "conversation.assistant_error.git_access.credentials-required":
-      "{{domain}} requires Git credentials on the selected device. Configure the domain under Settings → Integrations → Git accounts; for local execution, configure local Git or SSH and retry.",
-    "conversation.assistant_error.git_access.authentication-failed":
-      "Git authentication for {{domain}} was rejected. Check the token under Settings → Integrations → Git accounts or the device SSH key, then retry.",
-    "conversation.assistant_error.git_access.ssh-authentication-failed":
-      "SSH authentication for {{domain}} was rejected. Configure the target device SSH key and retry; cloud Git tokens cannot replace SSH keys.",
-    "conversation.assistant_error.git_access.repository-inaccessible":
-      "Check the repository URL and account access; this is not necessarily a login problem.",
-    "conversation.assistant_error.git_access.network-error":
-      "Check the device network, proxy, TLS certificate and SSH host trust, then retry.",
-    "conversation.assistant_error.git_access.git-unavailable":
-      "Git cannot start on the selected device. Install or repair Git and retry.",
-    "conversation.assistant_error.git_access.invalid-url":
-      "Use a valid repository URL without credentials or query parameters.",
-    "conversation.assistant_error.git_access.clone-failed":
-      "Repository access passed, but cloning failed. Check the branch, destination, disk space and device permissions.",
-    "conversation.assistant_error.actions.switch_model_retry":
-      "Switch model and retry",
-    "conversation.assistant_error.actions.retry": "Retry",
-    "conversation.assistant_error.types.context_length_exceeded.title":
-      "The conversation is too long for this model's context window",
-    "conversation.assistant_error.types.context_length_exceeded.description":
-      "Try a model with a larger context window, or start a fresh conversation.",
-    "conversation.assistant_error.types.quota_exceeded.title":
-      "The model's usage quota has been exhausted",
-    "conversation.assistant_error.types.quota_exceeded.description":
-      "Switch to another available model, or continue after quota is restored.",
-    "conversation.assistant_error.types.rate_limit.title":
-      "Too many requests. Please wait a moment before trying again",
-    "conversation.assistant_error.types.rate_limit.description":
-      "Wait briefly and retry, or switch to another available model.",
-    "conversation.assistant_error.types.payload_too_large.title":
-      "Content too large: conversation history or attachment exceeds the limit",
-    "conversation.assistant_error.types.payload_too_large.description":
-      "Reduce attachments or context content, then retry.",
-    "conversation.assistant_error.types.model_service_connection_error.title":
-      "Unable to connect to the model service",
-    "conversation.assistant_error.types.model_service_connection_error.description":
-      "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
-    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
-      "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry.",
-    "conversation.assistant_error.types.network_error.title":
-      "Network error: Please check your connection and try again",
-    "conversation.assistant_error.types.network_error.description":
-      "The connection was interrupted or the service is temporarily unreachable.",
-    "conversation.assistant_error.types.timeout_error.title":
-      "Request timeout: Service response time exceeded",
-    "conversation.assistant_error.types.timeout_error.description":
-      "The service did not respond in time. Try sending the message again later.",
-    "conversation.assistant_error.types.llm_error.title":
-      "Model error: The model is temporarily unavailable",
-    "conversation.assistant_error.types.llm_error.description":
-      "The model service is unavailable. Try again later or switch models.",
-    "conversation.assistant_error.types.llm_unsupported.title":
-      "Current model does not support this request",
-    "conversation.assistant_error.types.llm_unsupported.description":
-      "This input or attachment type is not supported by the model. Switch to a compatible model.",
-    "conversation.assistant_error.types.invalid_parameter.title":
-      "Invalid parameter: Request parameters are incorrect",
-    "conversation.assistant_error.types.invalid_parameter.description":
-      "The request does not match the model requirements. Adjust the input and retry.",
-    "conversation.assistant_error.types.forbidden.title":
-      "Access denied: You do not have permission to use this resource",
-    "conversation.assistant_error.types.forbidden.description":
-      "Check your account, device, or model permissions and retry.",
-    "conversation.assistant_error.types.container_oom.title":
-      "Executor out of memory",
-    "conversation.assistant_error.types.container_oom.description":
-      "Start a new conversation to retry, or contact an administrator to increase memory.",
-    "conversation.assistant_error.types.container_error.title":
-      "Task service error",
-    "conversation.assistant_error.types.container_error.description":
-      "The container or runtime task service is temporarily unavailable. Try again later.",
-    "conversation.assistant_error.types.content_filter.title":
-      "Content triggered security review and was rejected",
-    "conversation.assistant_error.types.content_filter.description":
-      "Modify the parts that may trigger the safety policy and retry.",
-    "conversation.assistant_error.types.provider_error.title":
-      "Model service error. Please try again later",
-    "conversation.assistant_error.types.provider_error.description":
-      "The upstream model service returned an error. Retry later or switch models.",
-    "conversation.assistant_error.types.image_too_large.title":
-      "Image exceeds size limit. Please compress the image and retry",
-    "conversation.assistant_error.types.image_too_large.description":
-      "Compress the image or reduce the number of images, then send again.",
-    "conversation.assistant_error.types.model_protocol_error.title":
-      "Model and runtime protocol do not match",
-    "conversation.assistant_error.types.model_protocol_error.description":
-      "The current model does not support this request format. Switch to a compatible model and retry.",
-    "conversation.assistant_error.types.model_protocol_error.description_with_model":
-      "{{model}} does not support the current runtime protocol. Switch to a compatible model and retry.",
-    "conversation.assistant_error.types.invalid_role.title":
-      "Model parameter error: Message role format is incompatible",
-    "conversation.assistant_error.types.invalid_role.description":
-      "The current model does not support this message format. Switch models and retry.",
-    "conversation.assistant_error.types.permission_denied.title":
-      "No permission to use the current model",
-    "conversation.assistant_error.types.permission_denied.description":
-      "Check model access permissions, or switch to a model within your permissions.",
-    "conversation.assistant_error.types.generic_error.title":
-      "Message generation failed",
-    "conversation.assistant_error.types.generic_error.description":
-      "The request could not be completed. Try again later, or view the error details.",
-    "conversation.assistant_error.types.generic_error.description_without_details":
-      "The request could not be completed. Try again later.",
+    ...assistantErrorMessages["en"],
     "conversation.message_actions.copy": "Copy",
     "conversation.message_actions.copied": "Copied",
     "conversation.message_actions.copy_message": "Copy message",
@@ -779,6 +590,11 @@ export const conversationMessages: Record<
     "conversation.request_user_input.collapse": "Collapse",
     "conversation.request_user_input.ignore": "Cancel",
     "conversation.request_user_input.submit": "Submit",
+    "conversation.request_user_input.skip": "Skip",
+    "conversation.request_user_input.skipped_reply":
+      "Skipped · Answer question",
+    "conversation.request_user_input.files_unavailable":
+      "Attachment services are unavailable for this conversation. Try again.",
     "conversation.subagent.active_count": "Active · {{count}}",
     "conversation.subagent.activity": "Subagent activity",
     "conversation.subagent.agent": "Subagent",
@@ -815,8 +631,6 @@ export const conversationMessages: Record<
     "conversation.tool_activity.call_done": "Called {{name}}",
     "conversation.tool_activity.call_error": "Failed to call {{name}}",
     "conversation.tool_activity.call_running": "Call {{name}}",
-    "conversation.tool_activity.chatgpt_network_unavailable":
-      "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
     "conversation.tool_activity.command": "Commands",
     "conversation.tool_activity.command_action": "Run command",
     "conversation.tool_activity.create_action": "Create file",
@@ -852,18 +666,28 @@ export const conversationMessages: Record<
     "conversation.tool_activity.open_proxy_settings": "Configure proxy",
     "conversation.tool_activity.other": "Other tools",
     "conversation.tool_activity.other_action": "Call tool",
-    "conversation.tool_activity.reconnecting":
-      "Connection interrupted. Reconnecting…",
     "conversation.tool_activity.retrying": "Retrying automatically…",
+    "conversation.tool_activity.reconnecting": "Reconnecting…",
+    "conversation.tool_activity.server_overloaded_retry":
+      "Server is busy, reconnecting…",
+    "conversation.tool_activity.retry_progress":
+      "{{status}} ({{attempt}}/{{total}})",
     "conversation.tool_activity.rate_limit_wait":
       "Model rate limited. Waiting to retry…",
-    "conversation.tool_activity.overload_retry_in": "Model at capacity. Retrying the same model in {{remaining}}…",
-    "conversation.tool_activity.overload_retrying": "Model at capacity. Retrying the same model…",
-    "conversation.tool_activity.overload_waiting": "Model at capacity. Waiting to retry the same model automatically.",
-    "conversation.tool_activity.quota_waiting": "Usage limit reached. Waiting to continue with the same model automatically.",
-    "conversation.tool_activity.quota_wait_unknown": "Usage limit reached. Checking the reset time to continue with the same model.",
-    "conversation.tool_activity.quota_wait_until": "Usage limit reached. Continuing with the same model in {{remaining}}.",
-    "conversation.tool_activity.quota_checking": "Checking usage availability to continue with the same model…",
+    "conversation.tool_activity.overload_retry_in":
+      "Model at capacity. Retrying the same model in {{remaining}}…",
+    "conversation.tool_activity.overload_retrying":
+      "Model at capacity. Retrying the same model…",
+    "conversation.tool_activity.overload_waiting":
+      "Model at capacity. Waiting to retry the same model automatically.",
+    "conversation.tool_activity.quota_waiting":
+      "Usage limit reached. Waiting to continue with the same model automatically.",
+    "conversation.tool_activity.quota_wait_unknown":
+      "Usage limit reached. Checking the reset time to continue with the same model.",
+    "conversation.tool_activity.quota_wait_until":
+      "Usage limit reached. Continuing with the same model in {{remaining}}.",
+    "conversation.tool_activity.quota_checking":
+      "Checking usage availability to continue with the same model…",
     "conversation.tool_activity.renamed_file": "Renamed {{filename}}",
     "conversation.tool_activity.search": "Searches",
     "conversation.tool_activity.search_action": "Search code",
@@ -875,11 +699,16 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "Called {{count}} tools",
     "conversation.tool_activity.tool_input": "Input",
     "conversation.tool_activity.tool_no_output": "Tool returned no content",
+    "conversation.tool_activity.event_provider_summary":
+      "Connection event providers: {{total}} total, {{ready}} ready",
+    "conversation.tool_activity.show_full_result": "Show full result",
+    "conversation.tool_activity.hide_full_result": "Hide full result",
     "conversation.tool_activity.tool_output": "Output",
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",
     "conversation.tool_activity.wait_running": "Wait for tool result",
     "conversation.workbench.fill_selection_to_answer": "Fill answer",
+    "conversation.workbench.share_selection_as_issue": "Share with others",
     "conversation.workbench.add_selection_to_conversation":
       "Add to conversation",
     "conversation.workbench.ask_selection_in_sidebar": "Ask in sidebar",

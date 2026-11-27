@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const workflow = readFileSync(
@@ -143,14 +143,18 @@ assert.ok(
   workflow.includes("RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ " + gate + " }}"),
 );
 
-const summary = workflow
-  .split("  wework-e2e-summary:\n")[1]
-  .split("  wework-desktop-memory-e2e:")[0];
-const script = summary
-  .split("        run: |\n")[1]
-  .split("\n")
-  .map((line) => line.slice(10))
-  .join("\n");
+const script = execFileSync(
+  "ruby",
+  [
+    "-ryaml",
+    "-e",
+    `jobs = YAML.safe_load(STDIN.read).fetch("jobs")
+     steps = jobs.fetch("wework-e2e-summary").fetch("steps")
+     check = steps.find { |step| step["name"] == "Check Wework E2E results" }
+     print check.fetch("run")`,
+  ],
+  { input: workflow, encoding: "utf8" },
+);
 for (const [buildResult, shardResult, expected] of [
   ["success", "success", 0],
   ["skipped", "success", 1],

@@ -1,14 +1,19 @@
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type SetStateAction,
 } from 'react'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
@@ -56,6 +61,16 @@ function initialDisplay(
   )
 }
 
+const EMPTY_ITEMS: never[] = []
+const cleanDirtyState = () => ({
+  tags: false,
+  display: false,
+  statuses: false,
+  visibility: false,
+  providerRepository: false,
+  providerToken: false,
+})
+
 export function ProjectManageView<
   Project extends ProjectManageProject,
   Member extends ProjectManageMember,
@@ -88,28 +103,34 @@ export function ProjectManageView<
 }) {
   const { GitBranch, LockKeyhole } = host.icons
   const [error, setError] = useState<string | null>(null)
-  const [itemResult, setItemResult] = useState<{
-    projectId: string
-    items: Item[]
-  }>({
-    projectId: project.id,
-    items: [],
-  })
-  const items = useMemo(
-    () => (itemResult.projectId === project.id ? itemResult.items : []),
-    [itemResult, project.id]
+  const catalogResource = useMemo(
+    () =>
+      createAsyncResource<Item[]>(
+        'project-tag-items:' + project.id,
+        async () => (await api.listItems(project.id)).items,
+        { refreshOnSubscribe: true }
+      ),
+    [api, project.id]
   )
+  const [tagLoadRevision, setTagLoadRevision] = useState(0)
+  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
+  const subscribeCatalog = useCallback(
+    (listener: () => void) => catalogResource.subscribe(listener, tagLoadRevision),
+    [catalogResource, tagLoadRevision]
+  )
+  const tagSnapshot = useSyncExternalStore(
+    tagCatalogProjectId === project.id && (section === 'all' || section === 'overview')
+      ? subscribeCatalog
+      : subscribeIdleResource,
+    catalogResource.getSnapshot,
+    catalogResource.getSnapshot
+  )
+  const items = tagSnapshot.data ?? EMPTY_ITEMS
   const setItems = useCallback(
     (next: SetStateAction<Item[]>) => {
-      setItemResult(current => ({
-        projectId: project.id,
-        items:
-          typeof next === 'function'
-            ? next(current.projectId === project.id ? current.items : [])
-            : next,
-      }))
+      catalogResource.update(current => (typeof next === 'function' ? next(current ?? []) : next))
     },
-    [project.id]
+    [catalogResource]
   )
   const [tags, setTags] = useState(project.tags ?? [])
   const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
@@ -131,13 +152,6 @@ export function ProjectManageView<
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [tagBusy, setTagBusy] = useState(false)
-  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
-  const [tagLoadRevision, setTagLoadRevision] = useState(0)
-  const [tagLoadState, setTagLoadState] = useState<{
-    projectId: string
-    error: string | null
-    loading: boolean
-  } | null>(null)
   const [displayBusy, setDisplayBusy] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [visibilityBusy, setVisibilityBusy] = useState(false)
@@ -162,94 +176,75 @@ export function ProjectManageView<
   const [providerToken, setProviderToken] = useState('')
   const [providerBusy, setProviderBusy] = useState(false)
   const [providerSaved, setProviderSaved] = useState(false)
-  const synchronizedProjectIdRef = useRef(project.id)
-  const synchronizedProjectVersionRef = useRef(project.version)
+  const [synchronizedVersion, setSynchronizedVersion] = useState(project.version)
+  const [dirty, setDirty] = useState(cleanDirtyState)
   const [savedProjectScope, setSavedProjectScope] = useState<{
+    api: typeof api
     projectId: string
     mutationQueue: VersionMutationQueue<Project>
   }>(() => ({
+    api,
     projectId: project.id,
     mutationQueue: createVersionMutationQueue(project.version),
   }))
   let projectScope = savedProjectScope
-  if (savedProjectScope.projectId !== project.id) {
+  if (savedProjectScope.projectId !== project.id || savedProjectScope.api !== api) {
     projectScope = {
+      api,
       projectId: project.id,
       mutationQueue: createVersionMutationQueue(project.version),
     }
     setSavedProjectScope(projectScope)
+    setSynchronizedVersion(project.version)
+    setDirty(cleanDirtyState())
+    setTags(project.tags ?? [])
+    setDisplay(initialDisplay(project, boardCardDisplay))
+    setStatuses(project.board_config?.statuses ?? [])
+    setVisibility(project.visibility ?? 'private')
+    setPublicAccessRole(project.public_access?.role ?? 'Viewer')
+    setDefaultIssueSecurity(project.default_issue_security ?? 'open')
+    setProviderRepository(repositoryAddress(project))
+    setProviderToken('')
+    setProviderBusy(false)
+    setProviderSaved(false)
+    setError(null)
+    setTagComposerOpen(false)
+    setNewTag('')
+    setRenamingTag(null)
+    setRenameValue('')
+    setTagBusy(false)
+    setTagCatalogProjectId(null)
+    setDisplayBusy(false)
+    setStatusBusy(false)
+    setVisibilityBusy(false)
   }
   const projectScopeRef = useRef(projectScope)
   useLayoutEffect(() => {
     projectScopeRef.current = projectScope
   }, [projectScope])
-  const dirtyRef = useRef({
-    tags: false,
-    display: false,
-    statuses: false,
-    visibility: false,
-    providerRepository: false,
-    providerToken: false,
-  })
-
-  useEffect(() => {
-    const projectChanged = synchronizedProjectIdRef.current !== project.id
-    synchronizedProjectIdRef.current = project.id
-    if (!projectChanged) projectScopeRef.current.mutationQueue.synchronize(project.version)
-
-    if (projectChanged) {
-      synchronizedProjectVersionRef.current = project.version
-      dirtyRef.current = {
-        tags: false,
-        display: false,
-        statuses: false,
-        visibility: false,
-        providerRepository: false,
-        providerToken: false,
-      }
-      setTags(project.tags ?? [])
-      setDisplay(initialDisplay(project, boardCardDisplay))
-      setStatuses(project.board_config?.statuses ?? [])
-      setVisibility(project.visibility ?? 'private')
-      setPublicAccessRole(project.public_access?.role ?? 'Viewer')
-      setDefaultIssueSecurity(project.default_issue_security ?? 'open')
-      setProviderRepository(repositoryAddress(project))
-      setProviderToken('')
-      setProviderBusy(false)
-      setProviderSaved(false)
-      setError(null)
-      setTagComposerOpen(false)
-      setNewTag('')
-      setRenamingTag(null)
-      setRenameValue('')
-      setTagBusy(false)
-      setTagCatalogProjectId(null)
-      setTagLoadState(null)
-      setDisplayBusy(false)
-      setStatusBusy(false)
-      setVisibilityBusy(false)
-      return
-    }
-
-    const serverVersionChanged = synchronizedProjectVersionRef.current !== project.version
-    synchronizedProjectVersionRef.current = project.version
-    if (!serverVersionChanged) return
-
-    if (!dirtyRef.current.tags) setTags(project.tags ?? [])
-    if (!dirtyRef.current.display) setDisplay(initialDisplay(project, boardCardDisplay))
-    if (!dirtyRef.current.statuses) setStatuses(project.board_config?.statuses ?? [])
-    if (!dirtyRef.current.visibility) {
+  useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => projectScope.mutationQueue.subscribe(listener, project.version),
+      [projectScope, project.version]
+    ),
+    projectScope.mutationQueue.getSnapshot,
+    projectScope.mutationQueue.getSnapshot
+  )
+  if (synchronizedVersion !== project.version) {
+    setSynchronizedVersion(project.version)
+    if (!dirty.tags) setTags(project.tags ?? [])
+    if (!dirty.display) setDisplay(initialDisplay(project, boardCardDisplay))
+    if (!dirty.statuses) setStatuses(project.board_config?.statuses ?? [])
+    if (!dirty.visibility) {
       setVisibility(project.visibility ?? 'private')
       setPublicAccessRole(project.public_access?.role ?? 'Viewer')
       setDefaultIssueSecurity(project.default_issue_security ?? 'open')
     }
-    if (!dirtyRef.current.providerRepository) {
-      setProviderRepository(repositoryAddress(project))
-    }
-    if (!dirtyRef.current.providerToken) {
-      setProviderToken('')
-    }
-  }, [boardCardDisplay, project])
+    if (!dirty.providerRepository) setProviderRepository(repositoryAddress(project))
+    if (!dirty.providerToken) setProviderToken('')
+  }
+  const markDirty = (key: keyof typeof dirty, value: boolean) =>
+    setDirty(current => ({ ...current, [key]: value }))
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
     setError(cause instanceof Error ? cause.message : fallback)
@@ -271,29 +266,13 @@ export function ProjectManageView<
   })
 
   const tagLoadFailed = host.translate('todo.load_tag_catalog_failed', '加载标签目录失败')
-  useEffect(() => {
-    if (tagCatalogProjectId !== project.id || (section !== 'all' && section !== 'overview')) return
-    let active = true
-    setTagLoadState({ projectId: project.id, loading: true, error: null })
-    void api.listItems(project.id).then(
-      response => {
-        if (!active) return
-        setItems(response.items)
-        setTagLoadState({ projectId: project.id, loading: false, error: null })
-      },
-      cause => {
-        if (!active) return
-        setTagLoadState({
-          projectId: project.id,
-          loading: false,
-          error: requestFailureMessage(cause, tagLoadFailed),
-        })
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, project.id, section, setItems, tagCatalogProjectId, tagLoadFailed, tagLoadRevision])
+  const tagLoadState = {
+    loading: tagSnapshot.status === 'idle' || tagSnapshot.status === 'loading',
+    error:
+      tagSnapshot.status === 'error'
+        ? requestFailureMessage(tagSnapshot.error, tagLoadFailed)
+        : null,
+  }
 
   const allTags = useMemo(
     () => collectProjectTags({ tags, board_views: project.board_views }, items),
@@ -333,7 +312,7 @@ export function ProjectManageView<
     if (visibilityBusy || visibility === next) return
     const scope = projectScopeRef.current
     const previous = visibility
-    dirtyRef.current.visibility = true
+    markDirty('visibility', true)
     setVisibility(next)
     setVisibilityBusy(true)
     try {
@@ -341,12 +320,12 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setVisibility(updated.visibility ?? next)
       setPublicAccessRole(updated.public_access?.role ?? 'Viewer')
-      dirtyRef.current.visibility = false
+      markDirty('visibility', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.visibility = false
+      markDirty('visibility', false)
       setVisibility(previous)
       reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
     } finally {
@@ -363,7 +342,7 @@ export function ProjectManageView<
     if (visibilityBusy) return
     const scope = projectScopeRef.current
     setVisibilityBusy(true)
-    dirtyRef.current.visibility = true
+    markDirty('visibility', true)
     try {
       const updated = await updateProject(values, scope)
       if (projectScopeRef.current !== scope) return
@@ -375,7 +354,7 @@ export function ProjectManageView<
       reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
     } finally {
       if (projectScopeRef.current === scope) {
-        dirtyRef.current.visibility = false
+        markDirty('visibility', false)
         setVisibilityBusy(false)
       }
     }
@@ -386,7 +365,7 @@ export function ProjectManageView<
     const scope = projectScopeRef.current
     const previous = display
     const next = { ...display, [key]: checked }
-    dirtyRef.current.display = true
+    markDirty('display', true)
     setDisplay(next)
     setDisplayBusy(true)
     try {
@@ -402,12 +381,12 @@ export function ProjectManageView<
         scope
       )
       if (projectScopeRef.current !== scope) return
-      dirtyRef.current.display = false
+      markDirty('display', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.display = false
+      markDirty('display', false)
       setDisplay(previous)
       reportError(cause, host.translate('todo.save_card_display_failed', '保存卡片显示设置失败'))
     } finally {
@@ -419,7 +398,7 @@ export function ProjectManageView<
     if (statusBusy) return
     const scope = projectScopeRef.current
     const previous = statuses
-    dirtyRef.current.statuses = true
+    markDirty('statuses', true)
     setStatuses(next)
     setStatusBusy(true)
     try {
@@ -436,12 +415,12 @@ export function ProjectManageView<
       )
       if (projectScopeRef.current !== scope) return
       setStatuses(updated.board_config?.statuses ?? next)
-      dirtyRef.current.statuses = false
+      markDirty('statuses', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.statuses = false
+      markDirty('statuses', false)
       setStatuses(previous)
       reportError(cause, host.translate('todo.save_statuses_failed', '保存状态设置失败'))
     } finally {
@@ -454,7 +433,7 @@ export function ProjectManageView<
     scope: typeof projectScope,
     boardViews?: ProjectManageUpdate['board_views']
   ) {
-    dirtyRef.current.tags = true
+    markDirty('tags', true)
     try {
       const updated = await updateProject(
         { tags: next, ...(boardViews ? { board_views: boardViews } : {}) },
@@ -463,7 +442,7 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setTags(updated.tags ?? next)
     } finally {
-      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
+      if (projectScopeRef.current === scope) markDirty('tags', false)
     }
   }
 
@@ -495,7 +474,7 @@ export function ProjectManageView<
 
   async function changeTag(source: string, target: string | null, scope: typeof projectScope) {
     setError(null)
-    dirtyRef.current.tags = true
+    markDirty('tags', true)
     try {
       const updated = await updateProject({ tag_change: { source, target } }, scope)
       if (projectScopeRef.current !== scope) return
@@ -512,7 +491,7 @@ export function ProjectManageView<
       )
       setTagLoadRevision(current => current + 1)
     } finally {
-      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
+      if (projectScopeRef.current === scope) markDirty('tags', false)
     }
   }
 
@@ -596,8 +575,8 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setProviderRepository(repositoryAddress(updated))
       setProviderToken('')
-      dirtyRef.current.providerRepository = false
-      dirtyRef.current.providerToken = false
+      markDirty('providerRepository', false)
+      markDirty('providerToken', false)
       setProviderSaved(true)
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
@@ -689,7 +668,8 @@ export function ProjectManageView<
               )}
             >
               {visibilityOptions.map(value => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={value}
                   type="button"
                   aria-pressed={visibility === value}
@@ -702,53 +682,63 @@ export function ProjectManageView<
                   )}
                 >
                   {visibilityLabels[value]}
-                </button>
+                </ControlButton>
               ))}
             </div>
             <p className="mt-2 text-sm text-text-secondary">{visibilityDescriptions[visibility]}</p>
             {visibility === 'public' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.public_access_role', '所有登录用户的角色')}</span>
-                <select
-                  data-testid="cloud-project-public-access-role"
-                  value={publicAccessRole}
+                <SelectRoot
                   disabled={visibilityBusy}
-                  onChange={event =>
-                    void saveAccessSettings({
+                  value={String(publicAccessRole)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return void saveAccessSettings({
                       public_access: {
-                        role: event.target.value as 'Viewer',
+                        role: selectedValue as 'Viewer',
                       },
                     })
-                  }
-                  className="h-8 rounded-lg border border-border bg-background px-2"
+                  }}
                 >
-                  <option value="Viewer">
-                    {host.translate('todo.permission_viewer', '只读成员')}
-                  </option>
-                </select>
+                  <SelectTrigger
+                    data-testid="cloud-project-public-access-role"
+                    className="h-8 rounded-lg border border-border bg-background px-2"
+                  />
+                  <SelectContent>
+                    <SelectItem value="Viewer">
+                      {host.translate('todo.permission_viewer', '只读成员')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
             {project.task_provider !== 'dingtalk_aitable' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.default_issue_security', '新任务默认可见范围')}</span>
-                <select
-                  data-testid="cloud-project-default-issue-security"
-                  value={defaultIssueSecurity}
+                <SelectRoot
                   disabled={visibilityBusy}
-                  onChange={event =>
-                    void saveAccessSettings({
-                      default_issue_security: event.target.value as 'open' | 'related',
+                  value={String(defaultIssueSecurity)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return void saveAccessSettings({
+                      default_issue_security: selectedValue as 'open' | 'related',
                     })
-                  }
-                  className="h-8 rounded-lg border border-border bg-background px-2"
+                  }}
                 >
-                  <option value="open">
-                    {host.translate('todo.issue_security_open', '项目可访问者可见')}
-                  </option>
-                  <option value="related">
-                    {host.translate('todo.issue_security_related', '仅相关人员可见')}
-                  </option>
-                </select>
+                  <SelectTrigger
+                    data-testid="cloud-project-default-issue-security"
+                    className="h-8 rounded-lg border border-border bg-background px-2"
+                  />
+                  <SelectContent>
+                    <SelectItem value="open">
+                      {host.translate('todo.issue_security_open', '项目可访问者可见')}
+                    </SelectItem>
+                    <SelectItem value="related">
+                      {host.translate('todo.issue_security_related', '仅相关人员可见')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
           </section>
@@ -767,67 +757,70 @@ export function ProjectManageView<
         )}
 
         {(section === 'all' || section === 'overview') && (
-          <details
+          <CollapsibleRoot
             key={project.id}
             className="border-t border-border py-6"
             data-testid="cloud-project-manage-tags"
-            onToggle={event => {
-              if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+            onOpenChange={open => {
+              if (open) setTagCatalogProjectId(project.id)
             }}
           >
-            <summary
+            <CollapsibleTrigger
               className="cursor-pointer text-heading-md font-semibold"
               data-testid="cloud-project-manage-tags-toggle"
             >
               <h2 className="inline text-heading-md font-semibold">
                 {host.translate('todo.project_tags', '标签')}
               </h2>
-            </summary>
-            {tagCatalogProjectId === project.id &&
-              (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
-                <p
-                  role="status"
-                  data-testid="cloud-project-manage-tags-loading"
-                  className="mt-3 text-sm text-text-muted"
-                >
-                  {host.translate('common.loading', '正在加载…')}
-                </p>
-              ) : tagLoadState.error ? (
-                <div
-                  role="alert"
-                  data-testid="cloud-project-manage-tags-error"
-                  className="mt-3 text-sm text-text-primary"
-                >
-                  {tagLoadState.error}
-                  <button
-                    type="button"
-                    className="ml-2 underline"
-                    data-testid="cloud-project-manage-tags-retry"
-                    onClick={() => setTagLoadRevision(revision => revision + 1)}
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              {tagCatalogProjectId === project.id &&
+                (tagLoadState.loading ? (
+                  <p
+                    role="status"
+                    data-testid="cloud-project-manage-tags-loading"
+                    className="mt-3 text-sm text-text-muted"
                   >
-                    {host.translate('common.retry', '重试')}
-                  </button>
-                </div>
-              ) : (
-                <ProjectTagsSection
-                  host={host}
-                  className="mt-3"
-                  allTags={allTags}
-                  renamingTag={renamingTag}
-                  renameValue={renameValue}
-                  tagComposerOpen={tagComposerOpen}
-                  newTag={newTag}
-                  tagBusy={tagBusy}
-                  setTagComposerOpen={setTagComposerOpen}
-                  setNewTag={setNewTag}
-                  setRenamingTag={setRenamingTag}
-                  setRenameValue={setRenameValue}
-                  createTag={createTag}
-                  renameTag={renameTag}
-                  deleteTag={deleteTag}
-                />
-              ))}
-          </details>
+                    {host.translate('common.loading', '正在加载…')}
+                  </p>
+                ) : tagLoadState.error ? (
+                  <div
+                    role="alert"
+                    data-testid="cloud-project-manage-tags-error"
+                    className="mt-3 text-sm text-text-primary"
+                  >
+                    {tagLoadState.error}
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      className="ml-2 underline"
+                      data-testid="cloud-project-manage-tags-retry"
+                      onClick={() => setTagLoadRevision(revision => revision + 1)}
+                    >
+                      {host.translate('common.retry', '重试')}
+                    </ControlButton>
+                  </div>
+                ) : (
+                  <ProjectTagsSection
+                    host={host}
+                    className="mt-3"
+                    allTags={allTags}
+                    renamingTag={renamingTag}
+                    renameValue={renameValue}
+                    tagComposerOpen={tagComposerOpen}
+                    newTag={newTag}
+                    tagBusy={tagBusy}
+                    setTagComposerOpen={setTagComposerOpen}
+                    setNewTag={setNewTag}
+                    setRenamingTag={setRenamingTag}
+                    setRenameValue={setRenameValue}
+                    createTag={createTag}
+                    renameTag={renameTag}
+                    deleteTag={deleteTag}
+                  />
+                ))}
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         )}
 
         {(section === 'all' || section === providerSettingsSection) && (
@@ -850,12 +843,12 @@ export function ProjectManageView<
             <div className="mt-4 grid gap-2 rounded-xl bg-muted p-3 sm:grid-cols-[1fr_1fr_auto]">
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
                 <GitBranch className="h-4 w-4 text-text-muted" />
-                <input
+                <ControlInput
                   data-testid="cloud-project-provider-manage-repository"
                   value={providerRepository}
                   onChange={event => {
                     setProviderRepository(event.target.value)
-                    dirtyRef.current.providerRepository = true
+                    markDirty('providerRepository', true)
                     setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"
@@ -864,13 +857,13 @@ export function ProjectManageView<
               </label>
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
                 <LockKeyhole className="h-4 w-4 text-text-muted" />
-                <input
+                <ControlInput
                   data-testid="cloud-project-provider-manage-token"
                   type="password"
                   value={providerToken}
                   onChange={event => {
                     setProviderToken(event.target.value)
-                    dirtyRef.current.providerToken = true
+                    markDirty('providerToken', true)
                     setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"
@@ -881,7 +874,8 @@ export function ProjectManageView<
                   }
                 />
               </label>
-              <button
+              <ControlButton
+                variant="primary"
                 type="button"
                 data-testid="cloud-project-provider-manage-save"
                 disabled={providerBusy || !providerRepository.trim()}
@@ -891,7 +885,7 @@ export function ProjectManageView<
                 {providerSaved
                   ? host.translate('todo.saved', '已保存')
                   : host.translate('common.save', '保存')}
-              </button>
+              </ControlButton>
             </div>
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">

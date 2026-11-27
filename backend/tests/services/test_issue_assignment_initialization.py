@@ -51,3 +51,48 @@ def test_new_issue_writes_initial_assignment_and_index_without_history_locks(
     index = test_db.query(LoopItemActiveAssignment).filter_by(parent_id=item.id).all()
     assert len(index) == 2
     assert {row.loop_item_id for row in index} == {None, comment.id}
+
+
+def test_direct_dispatch_is_queued_and_old_receipt_is_superseded(test_db, test_user):
+    project = CloudProject(
+        public_id=str(uuid.uuid4()),
+        project_key="RECEIPT",
+        name="Receipts",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    authorize_project(test_db, project)
+    test_db.commit()
+    issue = loop_item_service.create(
+        test_db, int(project.id), test_user.id, LoopItemCreate(title="Receipt")
+    )
+    values = dict(
+        project_id=project.id,
+        issue_id=issue.id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step=None,
+        notify=True,
+        trigger="manual",
+    )
+    first, created = issue_assignment_service.record(test_db, **values)
+    assert created
+    receipt = first.metadata["dispatch_receipt"]
+    assert receipt["state"] == "queued"
+    assert receipt["reasonCode"] == "awaiting_device_ack"
+    assert receipt["runtimeTaskId"] is None
+    assert receipt["deliveryId"] is None
+    repeated, created = issue_assignment_service.record(test_db, **values)
+    assert not created
+    assert repeated.id == first.id
+    second, created = issue_assignment_service.record(
+        test_db, **values, replace_root_assignments=True
+    )
+    assert created
+    assert (
+        second.metadata["dispatch_receipt"]["humanAssignmentId"]
+        != receipt["humanAssignmentId"]
+    )
+    assert first.comment.metadata_json["dispatch_receipt"]["state"] == "cancelled"
+    assert first.comment.metadata_json["dispatch_receipt"]["reasonCode"] == "superseded"

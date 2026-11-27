@@ -8,5 +8,6 @@
       "shard": 8,
       "position": 1000
     }
-  }
+  },
+  "paths": ["wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs"]
 }

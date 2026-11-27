@@ -1,5 +1,34 @@
 use super::*;
 
+fn append_hidden_old_message(database: &Path, work_id: &str) -> Value {
+    let message = json!({
+        "id":"hidden-old-message",
+        "recordId":"hidden-old-record",
+        "userId":7,
+        "roleId":"default",
+        "text":"hidden old-account content",
+        "at":"2026-01-03T00:00:00Z",
+        "workId":work_id,
+        "source":{
+            "providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+            "profile":"current",
+            "accountId":"account-old",
+            "kind":"direct",
+            "id":"old-peer",
+            "delegated":true
+        }
+    });
+    let connection = rusqlite::Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at)
+             VALUES (?1,'stand_in_message',?2,?3,?3)",
+            rusqlite::params!["hidden-old-message", message.to_string(), "9999-12-31"],
+        )
+        .unwrap();
+    message
+}
+
 pub(super) fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
@@ -13,6 +42,7 @@ pub(super) fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Va
     handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] = json!([{ "providerId":"@wegent/dsh-connection-dingtalk/dingtalk", "id":"group", "profile":"default", "kind":"group", "name":"Group", "policy":{"automatic":true,"askBeforeAct":true,"immediate":false} }]);
@@ -22,6 +52,270 @@ pub(super) fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Va
 
 pub(super) fn connection_event() -> Value {
     json!({"roleScoped":true,"kind":"connection","source":{"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","id":"group","profile":"default","kind":"group"},"message":{"id":"event","text":"Source message","at":chrono::Utc::now().to_rfc3339()},"roleIds":["default"]})
+}
+
+#[tokio::test]
+async fn followup_rejects_source_bindings_for_hidden_work_messages() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    let role = &settings["roles"][0];
+    let source = role["connections"][0].clone();
+    let work = store
+        .ingest_stand_in_message(
+            7,
+            "default",
+            &source,
+            &json!({"id":"visible","text":"current message","at":"2026-01-02T00:00:00Z"}),
+            None,
+        )
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let hidden = append_hidden_old_message(handler.task_store_path.as_ref(), work_id);
+    let actor = RuntimeTaskLink {
+        local_task_id: work_id.into(),
+        runtime: "codex".into(),
+        title: "work".into(),
+        runtime_handle: json!({
+            "origin":{"type":"connection_work","userId":7,"deviceId":"mac","standInId":"default","workId":work_id},
+            "executionRequest":{"user_id":7}
+        }),
+        ..Default::default()
+    };
+    let mut hidden_binding = actor.clone();
+    hidden_binding.runtime_handle["executionRequest"]["standInSourceBindings"] =
+        json!([{"recordId":hidden["recordId"]}]);
+    let error = handler
+        .validate_followup_role(&store, 7, role, &hidden_binding)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "permission_denied");
+
+    let visible = store.stand_in_messages(7, work_id).unwrap()[0].clone();
+    let mut visible_binding = actor;
+    visible_binding.runtime_handle["executionRequest"]["standInSourceBindings"] =
+        json!([{"recordId":visible["recordId"]}]);
+    handler
+        .validate_followup_role(&store, 7, role, &visible_binding)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn followup_rejects_source_tasks_created_from_hidden_work_messages() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    let source = settings["roles"][0]["connections"][0].clone();
+    let mut settings = settings;
+    settings["primary"] = json!({
+        "enabled":true,"prompt":"","preferences":"","connections":[source.clone()]
+    });
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let work = store
+        .ingest_stand_in_message(
+            7,
+            "@primary",
+            &source,
+            &json!({
+                "id":"visible-owner-request",
+                "text":"Fix the current account request",
+                "at":"2026-01-02T00:00:00Z",
+                "isOwn":true,
+                "isSelfConversation":true
+            }),
+            None,
+        )
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let visible = store.stand_in_messages(7, work_id).unwrap().remove(0);
+    let hidden = append_hidden_old_message(handler.task_store_path.as_ref(), work_id);
+    let origin = json!({
+        "type":"connection_work",
+        "initiatedBy":"stand_in",
+        "userId":7,
+        "deviceId":"mac",
+        "standInId":"@primary",
+        "workId":work_id
+    });
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: work_id.into(),
+        runtime: "codex".into(),
+        runtime_handle: json!({
+            "origin":origin,
+            "executionRequest":{
+                "user_id":7,
+                "origin":origin,
+                "standInSourceBindings":[{"recordId":visible["recordId"],"source":visible["source"]}]
+            }
+        }),
+        ..Default::default()
+    });
+    let mut child = RuntimeTaskLink {
+        local_task_id: "source-task".into(),
+        runtime: "codex".into(),
+        runtime_handle: json!({
+            "origin":{
+                "type":"stand_in_task",
+                "initiatedBy":"stand_in",
+                "userId":7,
+                "deviceId":"mac",
+                "standInId":"@primary",
+                "sourceTaskId":work_id
+            },
+            "executionRequest":{
+                "user_id":7,
+                "standInDelegation":{
+                    "userId":7,
+                    "sourceTaskId":work_id,
+                    "sourceMessageId":hidden["recordId"],
+                    "readSources":[]
+                }
+            }
+        }),
+        ..Default::default()
+    };
+    let role = json!({"id":"@primary"});
+    assert!(handler
+        .validate_followup_role(&store, 7, &role, &child)
+        .await
+        .is_err());
+
+    child.runtime_handle["executionRequest"]["standInDelegation"]["sourceMessageId"] =
+        visible["recordId"].clone();
+    handler.upsert_local_task(child.clone());
+    assert!(handler
+        .validate_followup_role(&store, 7, &role, &child)
+        .await
+        .is_ok());
+    assert_eq!(settings["primary"]["enabled"], true);
+}
+
+#[tokio::test]
+async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
+    use axum::{extract::Path, http::StatusCode, routing::get, Router};
+
+    let root = tempfile::tempdir().unwrap();
+    let (mut handler, store, mut settings) = fixture(root.path());
+    let release_issue = Arc::new(tokio::sync::Notify::new());
+    let issue_gate = release_issue.clone();
+    let router = Router::new().route(
+        "/api/v1/loop-items/{id}",
+        get(move |Path(id): Path<String>| {
+            let issue_gate = issue_gate.clone();
+            async move {
+                if id == "missing" {
+                    issue_gate.notified().await;
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url,
+        auth_token: "test-session".into(),
+        authenticated_user_id: Some(7),
+        ..Default::default()
+    })));
+    handler.verify_local_stand_in_owner(7).unwrap();
+    settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":"project","store":"cloud"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+    let mut issue_events = Vec::new();
+    for issue in ["missing", "unavailable"] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: issue.into(),
+            status: "done".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","userId":7,"standInId":"default","cloudProjectId":"project","projectStore":"cloud","loopItemId":issue}}),
+            ..Default::default()
+        });
+        issue_events.push(
+            store
+                .enqueue_stand_in_event(
+                    7,
+                    json!(issue),
+                    json!({"kind":"work_state","taskId":issue,"roleIds":["default"]}),
+                )
+                .unwrap(),
+        );
+    }
+    for round in [1, 2] {
+        let mut incoming = connection_event();
+        incoming["message"]["id"] = json!(format!("connection-{round}"));
+        let healthy = store
+            .enqueue_stand_in_event(7, json!(round), incoming)
+            .unwrap();
+        let snapshot = handler
+            .coordination_snapshot_for_test(&store, 7)
+            .await
+            .unwrap();
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == healthy["id"]));
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["kind"] == "connection"));
+        if round == 1 {
+            assert_eq!(
+                store
+                    .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                    .unwrap()["status"],
+                "pending",
+                "The source is routable before the slow Issue read returns"
+            );
+            release_issue.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    handler
+                        .coordination_snapshot_for_test(&store, 7)
+                        .await
+                        .unwrap();
+                    if store
+                        .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                        .unwrap()["status"]
+                        == "cancelled"
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            store.stand_in_processing_state(7).unwrap()["error"],
+            Value::Null
+        );
+    }
+    for (event, status) in issue_events.iter().zip(["cancelled", "pending"]) {
+        assert_eq!(
+            store
+                .stand_in_event(7, event["id"].as_str().unwrap())
+                .unwrap()["status"],
+            status
+        );
+    }
+    assert_eq!(
+        handler.verify_local_stand_in_owner(8).unwrap_err().code,
+        "permission_denied"
+    );
+    handler
+        .backend_connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(8);
+    assert!(handler.verify_local_stand_in_owner(7).is_err());
+    server.abort();
 }
 
 #[tokio::test]
@@ -116,6 +410,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,
+        guidance_turn_id: None,
     };
     handler
         .command_journal
@@ -339,82 +634,87 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
 }
 
 #[test]
-fn configuration_starts_observation_before_fast_work_completes() {
+fn routine_work_does_not_wake_coordination_even_when_it_completes_before_observation() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
     let mut state = store.stand_in_processing_state(7).unwrap();
     let since = state["observedSince"]
         .as_i64()
         .expect("configuration establishes the observation boundary");
-    for (id, created_at) in [("historical", since - 10), ("new-fast-work", since + 1)] {
+    for (id, status, turn_status) in [
+        ("fast-completion", "done", Some("completed")),
+        ("status-only-completion", "done", None),
+        ("routine-progress", "running", Some("inProgress")),
+    ] {
         handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: id.into(), status: "done".into(), turn_status: Some("completed".into()),
-            created_at, completed_at: Some(since + 2),
+            local_task_id: id.into(), status: status.into(), turn_status: turn_status.map(str::to_owned),
+            created_at: since + 1, updated_at: since + 2,
+            completed_at: (status == "done").then_some(since + 2),
             runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
             ..Default::default()
         });
     }
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    let events = store.stand_in_events(7).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["taskId"], "new-fast-work");
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "unstarted".into(), status: "active".into(), created_at: since + 1,
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    });
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "status-only-completion".into(),
-        status: "done".into(), created_at: since + 1,
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    });
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    let events = store.stand_in_events(7).unwrap();
-    assert_eq!(events.len(), 2);
-    assert!(events
-        .iter()
-        .any(|event| event["taskId"] == "status-only-completion"));
-}
-
-#[test]
-fn work_changes_are_observed_once_without_waking_for_historical_completion() {
-    let root = tempfile::tempdir().unwrap();
-    let (handler, store, _) = fixture(root.path());
-    let mut link = RuntimeTaskLink {
-        local_task_id: "work".into(),
-        status: "active".into(),
-        turn_status: Some("completed".into()),
-        completed_at: Some(10),
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    };
-    handler.upsert_local_task(link.clone());
-    let mut state = json!({});
+    assert!(!handler.has_stand_in_work_change(7, &state));
     handler
         .observe_stand_in_work(&store, 7, &mut state)
         .unwrap();
     assert!(store.stand_in_events(7).unwrap().is_empty());
-    link.completed_at = Some(20);
+}
+
+#[test]
+fn only_new_failures_and_followup_states_wake_coordination_once() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"].as_i64().unwrap();
+    for (id, status, turn_status, interaction, updated_at) in [
+        ("historical", "failed", None, None, since - 1),
+        ("task-failed", "failed", None, None, since + 1),
+        ("turn-failed", "active", Some("failed"), None, since + 1),
+        ("cancelled", "cancelled", None, None, since + 1),
+        (
+            "waiting",
+            "done",
+            Some("completed"),
+            Some("waitingForUserInput"),
+            since + 1,
+        ),
+    ] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(), status: status.into(), turn_status: turn_status.map(str::to_owned),
+            interaction_status: interaction.map(str::to_owned), created_at: since - 2, updated_at,
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    assert!(handler.has_stand_in_work_change(7, &state));
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    assert!(!handler.has_stand_in_work_change(7, &state));
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    let mut task_ids: Vec<_> = events
+        .iter()
+        .map(|event| event["taskId"].as_str().unwrap())
+        .collect();
+    task_ids.sort_unstable();
+    assert_eq!(
+        task_ids,
+        ["cancelled", "task-failed", "turn-failed", "waiting"]
+    );
+
+    let mut link = handler.local_task_link("waiting").unwrap();
+    link.interaction_status = None;
+    link.updated_at = since + 2;
     handler.upsert_local_task(link);
+    assert!(!handler.has_stand_in_work_change(7, &state));
     handler
         .observe_stand_in_work(&store, 7, &mut state)
         .unwrap();
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    assert_eq!(store.stand_in_events(7).unwrap().len(), events.len());
 }
 
 #[tokio::test]
@@ -460,7 +760,7 @@ fn coordinator_is_persistent_but_absent_from_normal_task_lists() {
         ..Default::default()
     });
     assert!(handler.local_task_link(&task_id(7)).is_some());
-    assert!(handler.collect_cached_links(false).is_empty());
+    assert!(handler.collect_cached_links(false, |_| true).0.is_empty());
     let mut link = handler.local_task_link(&task_id(7)).unwrap();
     link.status = "failed".into();
     link.runtime_handle["lastError"] = json!("Model disconnected");

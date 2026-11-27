@@ -1,5 +1,6 @@
-import { useContext, type ComponentProps } from 'react'
+import { useContext, useMemo, type ComponentProps } from 'react'
 import { MessageCircle } from 'lucide-react'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
@@ -20,6 +21,11 @@ import { DesktopConversationTranslation } from './DesktopConversationTranslation
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { AttachmentBadges } from './composer/AttachmentBadges'
+import {
+  getDesktopComposerEditorServices,
+  desktopComposerTransferServices,
+} from './composer/desktopComposerServices'
 import {
   isRequestUserInputBlock,
   requestUserInputPayloadKey,
@@ -113,6 +119,47 @@ export function RequestUserInputCard({
     discussion && address && props.onSubmit && canDiscussQuestion(props.payload)
   )
   const question = props.payload.questions?.[0]
+  const composerServices = useMemo(
+    () => ({
+      editorServices: getDesktopComposerEditorServices(),
+      transferServices: desktopComposerTransferServices,
+      uploadAttachment: pane?.services.attachmentApi?.uploadAttachment,
+      deleteAttachment: pane?.services.attachmentApi?.deleteAttachment,
+      renderAttachments: ({
+        state,
+        remove,
+        dismissError,
+      }: {
+        state: import('@wegent/collaboration/composer').MultiAttachmentUploadState
+        remove(id: number): void
+        dismissError(filename: string): void
+      }) => (
+        <AttachmentBadges
+          {...state}
+          onRemoveAttachment={remove}
+          onDismissAttachmentError={dismissError}
+        />
+      ),
+    }),
+    [pane?.services.attachmentApi]
+  )
+  const savedAttachments =
+    store && address
+      ? {
+          ...props.draftAttachments,
+          ...Object.fromEntries(
+            (props.payload.questions ?? []).flatMap(question => {
+              if (!question.id) return []
+              const target = requestUserInputQuestionTarget(props.payload, question.id)
+              const attachments =
+                store.sessions[questionDiscussionKey(address, target.payload)]?.attachments?.[
+                  target.questionId
+                ]
+              return attachments ? [[question.id, attachments]] : []
+            })
+          ),
+        }
+      : props.draftAttachments
   const questionId = question?.id
   const callId = questionId?.startsWith('mcp_tool_call_approval_')
     ? questionId.slice('mcp_tool_call_approval_'.length)
@@ -219,6 +266,86 @@ export function RequestUserInputCard({
     <DesktopConversationTranslation>
       <SharedRequestUserInputCard
         {...props}
+        allowSkip={canDiscussQuestion(props.payload)}
+        composerServices={props.composerServices ?? composerServices}
+        draftAttachments={savedAttachments}
+        draftOptionAnswers={
+          store && address
+            ? {
+                ...props.draftOptionAnswers,
+                ...questionDiscussionDrafts(
+                  store.sessions,
+                  address,
+                  props.payload,
+                  'optionAnswers'
+                ),
+              }
+            : props.draftOptionAnswers
+        }
+        onDraftOptionAnswersChange={answers => {
+          props.onDraftOptionAnswersChange?.(answers)
+          if (!store || !address) return
+          for (const question of props.payload.questions ?? []) {
+            if (!question.id) continue
+            const target = requestUserInputQuestionTarget(props.payload, question.id)
+            store.update(questionDiscussionKey(address, target.payload), current => {
+              const optionAnswers = { ...current?.optionAnswers }
+              if (question.id! in answers) optionAnswers[target.questionId] = answers[question.id!]
+              else delete optionAnswers[target.questionId]
+              return {
+                ...current,
+                source: address,
+                payload: current?.payload ?? target.payload,
+                address: current?.address ?? null,
+                answers: current?.answers ?? {},
+                optionAnswers,
+              }
+            })
+          }
+        }}
+        onDraftAttachmentsChange={attachments => {
+          props.onDraftAttachmentsChange?.(attachments)
+        }}
+        onDraftAttachmentDelta={change => {
+          props.onDraftAttachmentDelta?.(change)
+          if (!store || !address) return
+          const target = requestUserInputQuestionTarget(props.payload, change.questionId)
+          const previousById = new Map(change.previous.map(file => [file.id, file] as const))
+          const nextIds = new Set(change.next.map(file => file.id))
+          const removedIds = new Set(
+            change.previous.filter(file => !nextIds.has(file.id)).map(file => file.id)
+          )
+          const added = change.next.filter(file => !previousById.has(file.id))
+          const changedById = new Map(
+            change.next
+              .filter(
+                file =>
+                  previousById.has(file.id) &&
+                  JSON.stringify(previousById.get(file.id)) !== JSON.stringify(file)
+              )
+              .map(file => [file.id, file] as const)
+          )
+          store.update(questionDiscussionKey(address, target.payload), current => {
+            const retained = (current?.attachments?.[target.questionId] ?? [])
+              .filter(file => !removedIds.has(file.id))
+              .map(file =>
+                changedById.has(file.id) &&
+                JSON.stringify(file) === JSON.stringify(previousById.get(file.id))
+                  ? changedById.get(file.id)!
+                  : file
+              )
+            const retainedIds = new Set(retained.map(file => file.id))
+            const files = [...retained, ...added.filter(file => !retainedIds.has(file.id))]
+            return {
+              ...current,
+              source: address,
+              payload: current?.payload ?? target.payload,
+              address: current?.address ?? null,
+              answers: current?.answers ?? {},
+              attachments: { ...current?.attachments, [target.questionId]: files },
+            }
+          })
+        }}
         payload={
           canDiscuss && !isImplementationPlanRequestUserInput(payload)
             ? {
@@ -249,7 +376,8 @@ export function RequestUserInputCard({
         }}
         additionalActions={
           canDiscuss ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="request-user-input-discuss"
               disabled={props.disabled}
@@ -258,7 +386,7 @@ export function RequestUserInputCard({
             >
               <MessageCircle className="h-4 w-4" aria-hidden="true" />
               {t('question_discussion.open')}
-            </button>
+            </ControlButton>
           ) : (
             props.additionalActions
           )

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useClock } from '../clock'
 import type { CollaborationTranslate } from '../i18n'
 import { formatDuration } from './blocks/processingDuration'
 
 type AutomaticRetryStatusProps = {
   reason: 'overload' | 'quota'
   retryAt?: number | null
+  progress?: { attempt: number; total: number }
   translate: CollaborationTranslate
 }
 
@@ -12,13 +13,8 @@ export function AutomaticRetryStatus(props: AutomaticRetryStatusProps) {
   return <RetryCountdown key={props.retryAt ?? 'unknown'} {...props} />
 }
 
-function RetryCountdown({ reason, retryAt, translate }: AutomaticRetryStatusProps) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (!retryAt) return
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [retryAt])
+function RetryCountdown({ reason, retryAt, progress, translate }: AutomaticRetryStatusProps) {
+  const now = useClock(Boolean(retryAt), { until: retryAt ?? undefined })
   const remaining = retryAt ? Math.max(0, retryAt - now) : 0
   const key =
     reason === 'quota'
@@ -34,15 +30,21 @@ function RetryCountdown({ reason, retryAt, translate }: AutomaticRetryStatusProp
     remaining: formatDuration(Math.ceil(remaining / 1000) * 1000, translate.locale),
   })
   const waiting = remaining > 0
+  const withProgress = (status: string) =>
+    progress
+      ? translate('conversation.tool_activity.retry_progress', undefined, { status, ...progress })
+      : status
   return (
     <div
       className="min-w-0 py-1 text-sm text-text-muted"
       data-testid={`runtime-${reason}-wait-status`}
     >
       <span role="status" className={waiting ? 'sr-only' : undefined}>
-        {waiting ? translate(`conversation.tool_activity.${reason}_waiting`) : message}
+        {withProgress(
+          waiting ? translate(`conversation.tool_activity.${reason}_waiting`) : message
+        )}
       </span>
-      {waiting && <span>{message}</span>}
+      {waiting && <span>{withProgress(message)}</span>}
     </div>
   )
 }

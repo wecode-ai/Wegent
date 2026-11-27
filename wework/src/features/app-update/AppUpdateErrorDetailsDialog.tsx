@@ -1,9 +1,10 @@
-import { Check, Copy, Loader2, TriangleAlert, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Copy, Loader2, TriangleAlert, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AppUpdateError } from './app-update-error'
 import {
   formatAppUpdateErrorFeature,
@@ -17,15 +18,6 @@ interface AppUpdateErrorDetailsDialogProps {
   onClose: () => void
   onRetry: () => Promise<void>
 }
-
-const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  '[href]',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ')
 
 export function AppUpdateErrorDetailsDialog({
   open,
@@ -65,40 +57,7 @@ export function AppUpdateErrorDetailsDialog({
     [affectedFeature, error.code, error.detail, errorType, occurredAt, t]
   )
 
-  useEscapeKey(onClose, open && !retrying)
-
-  useEffect(() => {
-    if (!open) return
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus()
-    }
-  }, [error, open])
-
   if (!open) return null
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab') return
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
-    )
-    if (focusable.length === 0) return
-    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-    const nextIndex = event.shiftKey
-      ? currentIndex <= 0
-        ? focusable.length - 1
-        : currentIndex - 1
-      : currentIndex === focusable.length - 1
-        ? 0
-        : currentIndex + 1
-    event.preventDefault()
-    focusable[nextIndex]?.focus()
-  }
 
   const retryLabel =
     error.kind === 'network'
@@ -115,24 +74,27 @@ export function AppUpdateErrorDetailsDialog({
     <div
       data-testid="app-update-error-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
-      // Keep the owning menu mounted until portaled dialog actions receive their click.
-      onPointerDown={event => event.stopPropagation()}
-      onMouseDown={event => event.stopPropagation()}
       onClick={event => {
         if (event.target === event.currentTarget && !retrying) onClose()
       }}
     >
-      <div
-        ref={dialogRef}
-        data-testid="app-update-error-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-update-error-dialog-title"
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        className="relative w-full max-w-[420px] rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
+      <DialogSurface
+        initialFocus={() => closeButtonRef.current}
+        onClose={() => {
+          if (open && !retrying) onClose()
+        }}
+        render={
+          <div
+            ref={dialogRef}
+            data-testid="app-update-error-dialog"
+            aria-labelledby="app-update-error-dialog-title"
+            tabIndex={-1}
+            className="relative w-full max-w-[420px] rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
+          />
+        }
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           ref={closeButtonRef}
           type="button"
           data-testid="app-update-error-dialog-close"
@@ -142,7 +104,7 @@ export function AppUpdateErrorDetailsDialog({
           className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-45"
         >
           <X className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </ControlButton>
 
         <div className="flex items-start gap-3 pr-10">
           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning wework:bg-orange-500/10 wework:text-orange-600 wework:dark:text-orange-400">
@@ -184,7 +146,9 @@ export function AppUpdateErrorDetailsDialog({
         </dl>
 
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="app-update-error-copy"
             disabled={copyState === 'copying'}
@@ -206,9 +170,11 @@ export function AppUpdateErrorDetailsDialog({
               <Copy className="h-4 w-4" aria-hidden="true" />
             )}
             {copyLabel}
-          </button>
+          </ControlButton>
           {error.retryable !== false ? (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="app-update-error-retry"
               disabled={retrying}
@@ -220,10 +186,10 @@ export function AppUpdateErrorDetailsDialog({
             >
               {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
               {retryLabel}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

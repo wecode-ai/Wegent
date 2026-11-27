@@ -1,65 +1,130 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
 import type {
   Attachment,
-  RequestUserInputResponse,
   RequestUserInputPayload,
+  RequestUserInputResponse,
   TurnFileChangesSummary,
-} from "@wegent/chat-core/runtime";
+} from '@wegent/chat-core/runtime'
 import type {
-  WorkbenchMessage,
-  SubagentBlock,
   RuntimeConversationTurn,
-} from "@wegent/chat-core/runtime-conversation";
-import { getRuntimeMessageActiveThinking } from "@wegent/chat-core/runtime-thinking";
+  SubagentBlock,
+  WorkbenchMessage,
+} from '@wegent/chat-core/runtime-conversation'
+import { getRuntimeMessageActiveThinking } from '@wegent/chat-core/runtime-thinking'
+import { ChevronDown } from 'lucide-react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import type { AttachmentImageServices } from '../issue-detail/AttachmentImageView'
+import { AssistantMarkdown, type AssistantMarkdownProps } from '../markdown/AssistantMarkdown'
+import { Button as ControlButton } from '../markdown/Button'
+import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
+import { AssistantErrorCard } from './AssistantErrorCard'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
+import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
+import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
+import { useConversationTranslation } from './ConversationTranslation'
+import { FileChangesCard } from './FileChangesCard'
+import { GeneratedImageGallery, getGeneratedImages } from './GeneratedImageGallery'
+import { MessageHoverActions } from './MessageHoverActions'
+import { ProcessingDurationLabel } from './ProcessingDurationLabel'
+import { useToolInteractionServices } from './ToolInteractionServices'
 import {
-  AssistantMarkdown,
-  type AssistantMarkdownProps,
-} from "../markdown/AssistantMarkdown";
-import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
-import type { AttachmentImageServices } from "../issue-detail/AttachmentImageView";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { useToolInteractionServices } from "./ToolInteractionServices";
-import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
-import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
-import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
-import { ProcessingDurationLabel } from "./ProcessingDurationLabel";
+  getAssistantRenderProjection,
+  getMessageDisplayStateKey,
+  getMessageTimestampMs,
+  getProcessingSummaryStartMs,
+  getStoppedElapsedDuration,
+  getWebSearchToolBlocks,
+  hasSameAssistantRenderInputs,
+  hasRunningProcessingBlocks,
+  isCancelledAssistantMessage,
+  shouldShowAssistantThinkingIndicator,
+  splitProcessingBlocks,
+} from './assistantMessagePresentation'
+import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { WebSearchSourcesChip } from './blocks/WebSearchSources'
+import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
 import {
   collapsePersistentProcessingExpansions,
   getProcessingDetailStateKey,
   useAnyPersistentProcessingExpansion,
   usePersistentProcessingExpansion,
-} from "./blocks/processingExpansionState";
-import { WebSearchSourcesChip } from "./blocks/WebSearchSources";
-import { getWebSearchSourceItems } from "./blocks/webSearchActivity";
-import { CodexMemoryCitations, CodexReferenceList } from "./CodexTurnArtifacts";
-import { getAssistantReferences } from "./codexReferences";
-import { FileChangesCard } from "./FileChangesCard";
-import type { AssistantPlanOpenRequest } from "./AssistantPlanCard";
-import { MessageHoverActions } from "./MessageHoverActions";
-import { AssistantErrorCard } from "./AssistantErrorCard";
-import {
-  getGeneratedImages,
-  GeneratedImageGallery,
-} from "./GeneratedImageGallery";
-import {
-  getMessageTimestampMs,
-  getStoppedElapsedDuration,
-  getProcessingSummaryStartMs,
-  isCancelledAssistantMessage,
-  getAssistantRenderProjection,
-  getWebSearchToolBlocks,
-  getMessageDisplayStateKey,
-  hasRunningProcessingBlocks,
-  getProcessingPhase,
-  splitProcessingBlocks,
-  shouldShowAssistantThinkingIndicator,
-} from "./assistantMessagePresentation";
+} from './blocks/processingExpansionState'
+import { getWebSearchSourceItems } from './blocks/webSearchActivity'
+import { getAssistantReferences } from './codexReferences'
 
-export function AssistantMessage({
+export type RenderMessageVisualization = (
+  part: Parameters<NonNullable<AssistantMarkdownProps['renderVisualization']>>[0],
+  fileChanges: TurnFileChangesSummary | undefined
+) => ReactNode
+
+interface AssistantMessageProps {
+  imageServices: AttachmentImageServices<Attachment>
+  showProcessingStatus?: boolean
+  renderVisualization?: RenderMessageVisualization
+  message: WorkbenchMessage
+  runtimeTurn?: RuntimeConversationTurn
+  conversationKey?: string | number | null
+  isActiveTurn?: boolean
+  isHistoricalTurn?: boolean
+  forceExpanded?: boolean
+  devices: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
+  onRetryFailedMessage?: (message: WorkbenchMessage) => void
+  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
+  onLoadFileChangesDiff?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
+  onOpenFileChangesReview?: (request: {
+    subtaskId: string
+    loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
+    focusFilePath?: string
+  }) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
+  onFork?: () => Promise<void> | void
+}
+
+export function AssistantMessage(props: AssistantMessageProps) {
+  const { message } = props
+  const [projected, setProjected] = useState(() => ({
+    message,
+    result: getAssistantRenderProjection(message),
+  }))
+  let renderProjection = projected.result
+  // Reasoning is rendered separately. Keep the tool and prose projections
+  // stable when the only thing that changed was the current reasoning text.
+  if (projected.message !== message && !hasSameAssistantRenderInputs(projected.message, message)) {
+    renderProjection = getAssistantRenderProjection(message)
+    const previousBlocks = projected.result.blocks
+    // Prose updates must not invalidate the unchanged processing history.
+    if (
+      renderProjection.blocks.length === previousBlocks.length &&
+      renderProjection.blocks.every((block, index) => block === previousBlocks[index])
+    ) {
+      renderProjection = { ...renderProjection, blocks: previousBlocks }
+    }
+    setProjected({ message, result: renderProjection })
+  }
+  // Updating the projection retries this render before React renders its child.
+  // Keep the message presentation out of that retry.
+  return <AssistantMessageContent {...props} renderProjection={renderProjection} />
+}
+
+function AssistantMessageContent({
   imageServices,
   renderVisualization,
-  assistantMessageStyle = "plain",
   showProcessingStatus = true,
   message,
   runtimeTurn,
@@ -68,6 +133,7 @@ export function AssistantMessage({
   isHistoricalTurn = false,
   forceExpanded = false,
   devices,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -82,121 +148,79 @@ export function AssistantMessage({
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onFork,
-}: {
-  imageServices: AttachmentImageServices<Attachment>;
-  assistantMessageStyle?: "plain" | "bubble";
-  showProcessingStatus?: boolean;
-  renderVisualization?: (
-    part: { file: string; mode?: "wide"; title?: string },
-    message: WorkbenchMessage,
-  ) => ReactNode;
-  message: WorkbenchMessage;
-  runtimeTurn?: RuntimeConversationTurn;
-  conversationKey?: string | number | null;
-  isActiveTurn?: boolean;
-  isHistoricalTurn?: boolean;
-  forceExpanded?: boolean;
-  devices: Array<{ device_id: string; status: string }>;
-  onRetryFailedMessage?: (message: WorkbenchMessage) => void;
-  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void;
-  onLoadFileChangesDiff?: (
-    subtaskId: string,
-    fileChanges?: TurnFileChangesSummary,
-  ) => Promise<string>;
-  onRevertFileChanges?: (
-    subtaskId: string,
-    fileChanges?: TurnFileChangesSummary,
-  ) => Promise<TurnFileChangesSummary>;
-  onOpenFileChangesReview?: (request: {
-    subtaskId: string;
-    loadDiff: () => Promise<string>;
-    reviewTitle?: string;
-    defaultFileTreeVisible?: boolean;
-    focusFilePath?: string;
-  }) => void;
-  fileChangesDiffPreviewDisabledSubtaskId?: string | null;
-  onOpenWorkspaceFile?: (
-    path: string,
-    options?: WorkspaceFileOpenOptions,
-  ) => void;
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void;
-  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void;
-  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void;
-  onOpenSubagent?: (block: SubagentBlock) => void;
-  hideRequestUserInputBlocks?: boolean;
-  hiddenRequestUserInputIds?: ReadonlySet<string>;
-  onFork?: () => Promise<void> | void;
-}) {
-  const { t } = useConversationTranslation();
-  const interactions = useToolInteractionServices();
-  const isCancelled = isCancelledAssistantMessage(message);
+  renderProjection,
+}: AssistantMessageProps & { renderProjection: ReturnType<typeof getAssistantRenderProjection> }) {
+  const { t } = useConversationTranslation()
+  const interactions = useToolInteractionServices()
+  const isCancelled = isCancelledAssistantMessage(message)
   const stoppedElapsedDuration =
     showProcessingStatus && isCancelled && message.stoppedNotice !== false
       ? getStoppedElapsedDuration(message, runtimeTurn)
-      : null;
-  const shouldShowStoppedNotice =
-    isCancelled && message.stoppedNotice !== false;
-  const renderProjection = useMemo(
-    () => getAssistantRenderProjection(message),
-    [message],
-  );
+      : null
+  const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
   const {
     content: visibleContent,
     hidden: shouldHideContent,
     blocks: displayBlocks,
-  } = renderProjection;
+    interleaved: hasProcessingAfterContent,
+    segments: orderedRuntimeSegments,
+  } = renderProjection
   const hiddenErrorContent =
-    message.status === "failed" && shouldHideContent
-      ? message.content.trim()
-      : undefined;
+    message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const fileEditDurationsBySourceBlock = useMemo(
     () => getFileEditDurationsBySourceBlock(displayBlocks),
-    [displayBlocks],
-  );
-  const processingSegments = splitProcessingBlocks(displayBlocks);
-  const hasBlocks = displayBlocks.length > 0;
+    [displayBlocks]
+  )
+  const { processingSegments, lastToolSegment, lastNarrativeSegment } = useMemo(() => {
+    const processingSegments = hasProcessingAfterContent ? [] : splitProcessingBlocks(displayBlocks)
+    const lastIndex = processingSegments.length - 1
+    const endsWithTool = processingSegments[lastIndex]?.kind === 'tool'
+    return {
+      processingSegments,
+      lastToolSegment: endsWithTool ? lastIndex : lastIndex - 1,
+      lastNarrativeSegment: endsWithTool ? lastIndex - 1 : lastIndex,
+    }
+  }, [displayBlocks, hasProcessingAfterContent])
+  const hasBlocks = displayBlocks.length > 0
   const hasProcessingActivity =
-    hasBlocks || message.blocks?.some((block) => block.type === "thinking");
-  const hasVisibleContent = Boolean(visibleContent.trim());
-  const isStreaming =
-    !isHistoricalTurn && !isCancelled && message.status === "streaming";
-  const activeThinkingContent = isStreaming
-    ? getRuntimeMessageActiveThinking(message)
-    : "";
-  const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks);
+    hasBlocks || message.blocks?.some(block => block.type === 'thinking')
+  const hasVisibleContent = Boolean(visibleContent.trim())
+  const isStreaming = !isHistoricalTurn && !isCancelled && message.status === 'streaming'
+  const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
+  const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantSettled =
-    isHistoricalTurn ||
-    isCancelled ||
-    message.status === "done" ||
-    message.status === "failed";
-  const isAssistantRunning =
-    !isAssistantSettled && (isStreaming || hasRunningBlocks);
-  const canShowFinalArtifacts = !isAssistantRunning;
-  const shouldShowProcessingSummary = hasBlocks;
-  const processingStateKey = getMessageDisplayStateKey(
-    conversationKey,
-    message,
-  );
+    isHistoricalTurn || isCancelled || message.status === 'done' || message.status === 'failed'
+  const isAssistantRunning = !isAssistantSettled && (isStreaming || hasRunningBlocks)
+  const canShowFinalArtifacts = !isAssistantRunning
+  const shouldShowProcessingSummary = hasBlocks
+  const processingStateKey = getMessageDisplayStateKey(conversationKey, message)
   // Guidance reconciliation can reanchor an assistant view within the same turn.
   // Tool and group state belongs to stable turn members, not that view's ID.
   const processingItemScopeKey = message.turnId
-    ? `${conversationKey ?? "default"}:turn:${message.turnId}`
-    : processingStateKey;
-  const [finalProcessingExpanded, setFinalProcessingExpanded] =
-    usePersistentProcessingExpansion(`${processingStateKey}:final-processing`);
+    ? `${conversationKey ?? 'default'}:turn:${message.turnId}`
+    : processingStateKey
+  const [finalProcessingExpanded, setFinalProcessingExpanded] = usePersistentProcessingExpansion(
+    `${processingStateKey}:final-processing`
+  )
   const isProcessingOnlyBeforeGuidance =
-    Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent;
+    Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
   const hasPlanResponse = displayBlocks.some(
-    (block) => block.type === "plan" && Boolean(block.content.trim()),
-  );
-  const orderedRuntimeSegments = renderProjection.segments;
-  const hasProcessingAfterContent = renderProjection.interleaved;
-  const expandedToolDetailStateKeys = displayBlocks.map((block) =>
-    getProcessingDetailStateKey(processingItemScopeKey, block.id),
-  );
-  const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
-    expandedToolDetailStateKeys,
-  );
+    block => block.type === 'plan' && Boolean(block.content.trim())
+  )
+  const orderedProcessingSegments = useMemo(
+    () =>
+      hasProcessingAfterContent
+        ? orderedRuntimeSegments.map(segment =>
+            segment.kind === 'content' ? [] : splitProcessingBlocks(segment.blocks)
+          )
+        : [],
+    [hasProcessingAfterContent, orderedRuntimeSegments]
+  )
+  const expandedToolDetailStateKeys = useMemo(
+    () => displayBlocks.map(block => getProcessingDetailStateKey(processingItemScopeKey, block.id)),
+    [displayBlocks, processingItemScopeKey]
+  )
+  const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(expandedToolDetailStateKeys)
   const usesFinalProcessingShell =
     showProcessingStatus &&
     hasBlocks &&
@@ -209,84 +233,69 @@ export function AssistantMessage({
     ((isProcessingOnlyBeforeGuidance && !isActiveTurn) ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
-        !message.runtimeGuidanceContinuation));
+        !message.runtimeGuidanceContinuation))
   const isFinalProcessingExpanded =
-    forceExpanded || finalProcessingExpanded || hasExpandedToolDetail;
+    forceExpanded || finalProcessingExpanded || hasExpandedToolDetail
   const toggleFinalProcessing = () => {
     if (isFinalProcessingExpanded) {
-      setFinalProcessingExpanded(false);
-      collapsePersistentProcessingExpansions(expandedToolDetailStateKeys);
-      return;
+      setFinalProcessingExpanded(false)
+      collapsePersistentProcessingExpansions(expandedToolDetailStateKeys)
+      return
     }
-    setFinalProcessingExpanded(true);
-  };
+    setFinalProcessingExpanded(true)
+  }
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     blocks: displayBlocks,
     hasVisibleContent,
-  });
+  })
   const webSearchSources = isStreaming
     ? []
-    : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks));
-  const memoryCitations = message.memoryCitations ?? [];
+    : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
+  const memoryCitations = message.memoryCitations ?? []
   const generatedImages = useMemo(
     () =>
-      getGeneratedImages(
-        displayBlocks,
-        t("tool_activity.image_generation_alt"),
-      ),
-    [displayBlocks, t],
-  );
-  const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false);
+      displayBlocks.length
+        ? getGeneratedImages(displayBlocks, t('tool_activity.image_generation_alt'))
+        : [],
+    [displayBlocks, t]
+  )
+  const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  const renderMessageVisualization = useMemo<
-    AssistantMarkdownProps["renderVisualization"]
-  >(
-    () =>
-      renderVisualization
-        ? (part) => renderVisualization(part, message)
-        : undefined,
-    [renderVisualization, message],
-  );
-  const references = getAssistantReferences(
-    message.references,
-    visibleContent,
-    message.fileChanges,
-  );
-  const processingTimeline = shouldShowProcessingSummary
+  const { fileChanges } = message
+  const renderMessageVisualization = useMemo<AssistantMarkdownProps['renderVisualization']>(
+    () => (renderVisualization ? part => renderVisualization(part, fileChanges) : undefined),
+    [renderVisualization, fileChanges]
+  )
+  const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
+  const showProcessingTimeline =
+    shouldShowProcessingSummary &&
+    (hasBlocks || isStreaming) &&
+    !hasProcessingAfterContent &&
+    (!usesFinalProcessingShell || isFinalProcessingExpanded)
+  const processingTimeline = showProcessingTimeline
     ? processingSegments.map((segment, index) => (
         <ToolBlocksDisplay
           key={`${segment.kind}:${segment.blocks[0]?.id}`}
           blocks={segment.blocks}
           fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
-          startedAt={getProcessingSummaryStartMs(
-            message,
-            segment.blocks,
-            isStreaming,
-          )}
-          forceExpanded={segment.kind === "narrative"}
+          startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
+          forceExpanded={segment.kind === 'narrative'}
           processingPhase={
             segment.blocks.length === 0
-              ? "live"
+              ? 'live'
               : usesFinalProcessingShell
-                ? "intermediate"
-                : getProcessingPhase(
-                    processingSegments,
-                    index,
-                    hasVisibleContent,
-                  )
+                ? 'intermediate'
+                : hasVisibleContent && index >= lastToolSegment
+                  ? 'final'
+                  : index < lastNarrativeSegment
+                    ? 'intermediate'
+                    : 'live'
           }
-          showInterToolThinking={
-            isStreaming &&
-            !hasVisibleContent &&
-            segment.kind === "tool" &&
-            !processingSegments
-              .slice(index + 1)
-              .some((candidate) => candidate.kind === "tool")
-          }
+          showInterToolThinking={isStreaming && !hasVisibleContent && index === lastToolSegment}
           thinkingContent={activeThinkingContent}
-          showSummary={segment.kind === "tool"}
+          showSummary={segment.kind === 'tool'}
           stateKey={`${processingStateKey}:${segment.blocks[0]?.id}`}
           detailStateScopeKey={processingItemScopeKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
@@ -298,21 +307,16 @@ export function AssistantMessage({
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
       ))
-    : null;
+    : null
   const orderedRuntimeTimeline = hasProcessingAfterContent
     ? orderedRuntimeSegments.map((segment, segmentIndex) => {
-        if (segment.kind === "content") {
+        if (segment.kind === 'content') {
           return (
             <div
               key={`content:${segment.id}`}
               data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
-              className={
-                assistantMessageStyle === "bubble"
-                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
-                  : undefined
-              }
               data-search-region-id={segment.id}
             >
               <AssistantMarkdown
@@ -322,10 +326,10 @@ export function AssistantMessage({
                 renderVisualization={renderMessageVisualization}
               />
             </div>
-          );
+          )
         }
 
-        const segments = splitProcessingBlocks(segment.blocks);
+        const segments = orderedProcessingSegments[segmentIndex]
         return (
           <Fragment key={`processing:${segment.id}`}>
             {segments.map((processingSegment, processingIndex) => (
@@ -337,22 +341,20 @@ export function AssistantMessage({
                 startedAt={getProcessingSummaryStartMs(
                   message,
                   processingSegment.blocks,
-                  isStreaming,
+                  isStreaming
                 )}
-                forceExpanded={processingSegment.kind === "narrative"}
+                forceExpanded={processingSegment.kind === 'narrative'}
                 processingPhase={
-                  segmentIndex === orderedRuntimeSegments.length - 1
-                    ? "live"
-                    : "intermediate"
+                  segmentIndex === orderedRuntimeSegments.length - 1 ? 'live' : 'intermediate'
                 }
                 showInterToolThinking={
                   isStreaming &&
                   segmentIndex === orderedRuntimeSegments.length - 1 &&
-                  processingSegment.kind === "tool" &&
+                  processingSegment.kind === 'tool' &&
                   processingIndex === segments.length - 1
                 }
                 thinkingContent={activeThinkingContent}
-                showSummary={processingSegment.kind === "tool"}
+                showSummary={processingSegment.kind === 'tool'}
                 stateKey={`${processingStateKey}:ordered:${processingSegment.blocks[0]?.id}`}
                 detailStateScopeKey={processingItemScopeKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
@@ -365,16 +367,14 @@ export function AssistantMessage({
               />
             ))}
           </Fragment>
-        );
+        )
       })
-    : null;
-  const lastProcessingBlock = displayBlocks.at(-1) ?? message.blocks?.at(-1);
+    : null
+  const lastProcessingBlock = displayBlocks.at(-1) ?? message.blocks?.at(-1)
   const processingStartedAt = runtimeTurn
     ? runtimeTurn.startedAt
-    : getProcessingSummaryStartMs(message, message.blocks ?? [], false);
-  const turnCompletedAt = runtimeTurn
-    ? getMessageTimestampMs(runtimeTurn.completedAt)
-    : undefined;
+    : getProcessingSummaryStartMs(message, message.blocks ?? [], false)
+  const turnCompletedAt = runtimeTurn ? getMessageTimestampMs(runtimeTurn.completedAt) : undefined
   const processingCompletedAt = runtimeTurn
     ? isAssistantRunning
       ? undefined
@@ -383,15 +383,15 @@ export function AssistantMessage({
       ? undefined
       : (getMessageTimestampMs(message.completedAt) ??
         lastProcessingBlock?.completedAt ??
-        lastProcessingBlock?.createdAt);
+        lastProcessingBlock?.createdAt)
   const hasTurnDuration =
     runtimeTurn?.durationMs !== undefined ||
     (processingStartedAt !== undefined &&
       turnCompletedAt !== undefined &&
-      turnCompletedAt >= processingStartedAt);
+      turnCompletedAt >= processingStartedAt)
   const processingDurationLabel =
     !isAssistantRunning && runtimeTurn && !hasTurnDuration ? (
-      <span>{t("processing_complete")}</span>
+      <span>{t('processing_complete')}</span>
     ) : (
       <ProcessingDurationLabel
         startedAt={processingStartedAt}
@@ -399,7 +399,7 @@ export function AssistantMessage({
         durationMs={isAssistantRunning ? undefined : runtimeTurn?.durationMs}
         isRunning={isAssistantRunning}
       />
-    );
+    )
 
   return (
     <div className="min-w-0 max-w-full text-chat text-text-primary">
@@ -416,15 +416,14 @@ export function AssistantMessage({
               className="mb-3 w-full pb-1 text-xs text-text-muted"
             >
               {stoppedElapsedDuration
-                ? t("assistant_status.stopped_after", {
+                ? t('assistant_status.stopped_after', {
                     duration: stoppedElapsedDuration,
                   })
-                : t("assistant_status.stopped")}
+                : t('assistant_status.stopped')}
             </div>
           ) : null}
           {showProcessingStatus &&
-          (hasProcessingActivity ||
-            (message.status === "failed" && hasTurnDuration)) &&
+          (hasProcessingActivity || (message.status === 'failed' && hasTurnDuration)) &&
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div
@@ -435,11 +434,9 @@ export function AssistantMessage({
             </div>
           ) : null}
           {usesFinalProcessingShell ? (
-            <div
-              className="mb-3 min-w-0 w-full pb-2"
-              data-testid="final-processing-timeline"
-            >
-              <button
+            <div className="mb-3 min-w-0 w-full pb-2" data-testid="final-processing-timeline">
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="final-processing-toggle"
                 aria-expanded={isFinalProcessingExpanded}
@@ -448,50 +445,39 @@ export function AssistantMessage({
               >
                 {processingDurationLabel}
                 <ChevronDown
-                  className={`h-4 w-4 transition-transform ${isFinalProcessingExpanded ? "" : "-rotate-90"}`}
+                  className={`h-4 w-4 transition-transform ${isFinalProcessingExpanded ? '' : '-rotate-90'}`}
                   strokeWidth={2}
                   aria-hidden="true"
                 />
-              </button>
-              {isFinalProcessingExpanded ? (
-                <div className="mt-1">{processingTimeline}</div>
-              ) : null}
+              </ControlButton>
+              {isFinalProcessingExpanded ? <div className="mt-1">{processingTimeline}</div> : null}
             </div>
           ) : hasProcessingAfterContent ? (
             orderedRuntimeTimeline
           ) : (
             processingTimeline
           )}
-          {displayBlocks.map((block) =>
-            block.type === "tool" && block.mcpServer ? (
+          {displayBlocks.map(block =>
+            block.type === 'tool' && block.mcpServer ? (
               <Fragment key={`mcp-app:${block.id}`}>
                 {interactions.renderMcpApp?.(block, message.turnId)}
               </Fragment>
-            ) : null,
+            ) : null
           )}
           {showProcessingStatus && shouldShowThinking && !hasVisibleContent && (
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? (
-            <GeneratedImageGallery
-              services={imageServices}
-              images={generatedImages}
-            />
+            <GeneratedImageGallery services={imageServices} images={generatedImages} />
           ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div
               data-runtime-item-id={
-                message.runtimeDisplayItems
-                  ?.filter((item) => item.type === "assistant_text")
-                  .at(-1)?.id
+                message.runtimeDisplayItems?.filter(item => item.type === 'assistant_text').at(-1)
+                  ?.id
               }
               data-message-selectable-text
               data-testid="assistant-message-content"
-              className={
-                assistantMessageStyle === "bubble"
-                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
-                  : undefined
-              }
               data-search-region-id={renderProjection.finalRegion.id}
             >
               <AssistantMarkdown
@@ -502,31 +488,23 @@ export function AssistantMessage({
               />
             </div>
           ) : null}
-          {canShowFinalArtifacts &&
-            hasVisibleContent &&
-            webSearchSources.length > 0 && (
-              <WebSearchSourcesChip sources={webSearchSources} />
-            )}
-          {canShowFinalArtifacts && memoryCitations.length > 0 && (
-            <CodexMemoryCitations
-              citations={memoryCitations}
-              onOpenFile={onOpenWorkspaceFile}
-            />
+          {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
+            <WebSearchSourcesChip sources={webSearchSources} />
           )}
-          {canShowFinalArtifacts &&
-            references.length > 0 &&
-            onOpenWorkspaceFile && (
-              <CodexReferenceList
-                references={references}
-                onOpenFile={onOpenWorkspaceFile}
-              />
-            )}
-          {message.status === "failed" && (
+          {canShowFinalArtifacts && memoryCitations.length > 0 && (
+            <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
+          )}
+          {canShowFinalArtifacts && references.length > 0 && onOpenWorkspaceFile && (
+            <CodexReferenceList references={references} onOpenFile={onOpenWorkspaceFile} />
+          )}
+          {message.status === 'failed' && (
             <AssistantErrorCard
               error={message.error}
               errorType={message.errorType}
+              errorInfo={message.errorInfo}
               rawError={hiddenErrorContent}
               message={message}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetry={onRetryFailedMessage}
               onSwitchModel={onSwitchModelForFailedMessage}
             />
@@ -540,23 +518,21 @@ export function AssistantMessage({
               subtaskId={message.subtaskId}
               summary={message.fileChanges}
               deviceOnline={devices.some(
-                (device) =>
-                  device.device_id === message.fileChanges?.device_id &&
-                  device.status === "online",
+                device =>
+                  device.device_id === message.fileChanges?.device_id && device.status === 'online'
               )}
               onLoadDiff={onLoadFileChangesDiff}
               onRevert={onRevertFileChanges}
               onOpenReview={onOpenFileChangesReview}
               diffPreviewDisabled={
-                fileChangesDiffPreviewDisabledSubtaskId ===
-                String(message.subtaskId)
+                fileChangesDiffPreviewDisabledSubtaskId === String(message.subtaskId)
               }
             />
           ) : null}
         </div>
-        {message.status !== "streaming" &&
+        {message.status !== 'streaming' &&
           !isCancelled &&
-          (hasVisibleContent || message.status === "failed") && (
+          (hasVisibleContent || message.status === 'failed') && (
             <MessageHoverActions
               message={message}
               align="left"
@@ -566,5 +542,5 @@ export function AssistantMessage({
           )}
       </div>
     </div>
-  );
+  )
 }

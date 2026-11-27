@@ -822,6 +822,14 @@
       "approve": "Authorize",
       "authorization_failed": "Authorization failed"
     },
+    "connector_authorize": {
+      "title": "Authorize a Connector",
+      "description": "Connect {{slug}} to your Wegent account {{user}}.",
+      "invalid": "This authorization link is invalid or expired. Request a new link from the calling app.",
+      "wrong_account": "This link belongs to another Wegent account. Switch accounts to continue.",
+      "switch_account": "Switch account",
+      "complete": "Authorization complete. Return to the app that sent you here to continue."
+    },
     "oauth_authorize": {
       "invalid_title": "Invalid OAuth authorization link",
       "loading": "Loading authorization request",
@@ -1133,7 +1141,8 @@
   },
   "appPreview": {
     "button": "Preview",
-    "title": "App Preview"
+    "title": "App Preview",
+    "unavailable": "This app preview URL is unavailable."
   },
   "userSearch": {
     "searchFailed": "Search failed. Please try again.",
@@ -1359,6 +1368,7 @@
     "batch_updating": "Batch updating..."
   },
   "models": {
+    "group_icons_load_failed": "Could not load group icons",
     "label": "Model",
     "title": "Model Management",
     "description": "Manage your AI model configurations",

@@ -1,8 +1,11 @@
 """Boundary tests for buffered card updates and terminal delivery."""
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 
 from app.services.channels.dingtalk import emitter as emitter_module
@@ -328,12 +331,24 @@ async def test_write_deadline_preserves_answer_and_allows_recovery(
     emitter = StreamingResponseEmitter(object(), object(), "card-1")
     emitter.set_shared_content_key("shared-card")
     await emitter.emit_start(1, 2)
-    emitter.WRITE_TIMEOUT_SECONDS = 0.02
+    scopes: list[anyio.CancelScope] = []
+
+    @contextmanager
+    def controlled_deadline(delay: float) -> Iterator[anyio.CancelScope]:
+        assert 0 < delay <= emitter.WRITE_TIMEOUT_SECONDS
+        with anyio.fail_after(None) as scope:
+            scopes.append(scope)
+            yield scope
+
+    monkeypatch.setattr(emitter_module, "fail_after", controlled_deadline)
     card = card_factory[0]
     started, release = block_update(card, "final")
+    pending = asyncio.create_task(emitter.emit_done(1, 2, {"value": "final"}))
     try:
+        await asyncio.wait_for(started.wait(), 5)
+        scopes[-1].deadline = anyio.current_time()
         with pytest.raises(TimeoutError):
-            await emitter.emit_done(1, 2, {"value": "final"})
+            await pending
         assert started.is_set()
         assert card.finished == []
         assert not emitter._finished
@@ -347,4 +362,6 @@ async def test_write_deadline_preserves_answer_and_allows_recovery(
         assert card_factory[1].finished == ["final"]
         await recovered.close()
     finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
         await emitter.close()

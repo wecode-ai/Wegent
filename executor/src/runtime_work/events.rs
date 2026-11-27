@@ -80,7 +80,10 @@ pub(super) fn apply_runtime_event_conversation_context(
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
     }
-    if super::util::is_private_discussion(request) {
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    if origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true {
+        payload["conversationContext"] = json!("stand_in_memory_review");
+    } else if super::util::is_private_discussion(request) {
         payload["conversationContext"] = json!("private_discussion");
     }
 }
@@ -167,6 +170,9 @@ pub(crate) fn emit_response_event(
         if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
             payload_object.insert("source".to_owned(), source.clone());
         }
+    }
+    if let Some(sources) = request.extra.get("standInGuidanceSources") {
+        payload["payload"]["standInGuidanceSources"] = sources.clone();
     }
     if terminal {
         if let Some(title) = runtime_task_title(request) {
@@ -390,6 +396,8 @@ impl CodexNotificationEventMapper {
             );
         }
         match notification.method.as_str() {
+            // Codex diagnostics and recovery handle startup status outside the transcript.
+            "mcpServer/startupStatus/updated" => {}
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
                     self.emit_subagent_text_delta(
@@ -808,6 +816,7 @@ impl CodexNotificationEventMapper {
 
         self.reset_process_text();
 
+        let display = &params["weworkGuidanceDisplay"];
         emit_response_event(
             context.event_tx,
             context.device_id,
@@ -817,7 +826,8 @@ impl CodexNotificationEventMapper {
             json!({
                 "guidanceId": item_id(item, "guidance"),
                 "clientGuidanceId": item_client_id,
-                "message": extract_text(item).unwrap_or_default(),
+                "message": string_field(display, "content").or_else(|| extract_text(item)).unwrap_or_default(),
+                "source": display.get("source"),
                 "appliedAtMs": params
                     .get("completedAtMs")
                     .or_else(|| params.get("completed_at_ms"))
@@ -1180,6 +1190,7 @@ impl CodexNotificationEventMapper {
                     "block_id": process_text.id.clone(),
                     "updates": {
                         "content_delta": pending_delta,
+                        "content_offset": process_text.content[..content_offset].chars().count(),
                         "status": "streaming",
                     }
                 }),
@@ -1413,6 +1424,7 @@ impl CodexNotificationEventMapper {
         let block_id = plan_block_id(params);
         let content = self.plan_blocks.entry(block_id.clone()).or_default();
         let is_new = content.is_empty();
+        let content_offset = content.chars().count();
         content.push_str(&delta);
 
         if is_new {
@@ -1445,6 +1457,7 @@ impl CodexNotificationEventMapper {
                 "block_id": block_id,
                 "updates": {
                     "content_delta": delta,
+                    "content_offset": content_offset,
                     "status": "streaming",
                 }
             }),
@@ -1812,6 +1825,7 @@ fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> 
         }
         return json!({
             "content_delta": delta,
+            "content_offset": streamed_content.chars().count(),
             "status": "done",
         });
     }
@@ -2747,6 +2761,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mcp_startup_failures_stay_out_of_transcript_but_tool_errors_remain_visible() {
+        let (event_tx, mut events) = broadcast::channel(8);
+        let event_tx = Some(event_tx);
+        let request = ExecutionRequest::default();
+        let mut mapper = CodexNotificationEventMapper::default();
+        for (name, status) in [
+            ("calendar", "starting"),
+            ("calendar", "failed"),
+            ("mail", "failed"),
+            ("search", "cancelled"),
+        ] {
+            mapper.map(
+                &event_tx,
+                "device",
+                "task",
+                &request,
+                json!({"method":"mcpServer/startupStatus/updated",
+                    "params":{"name":name, "status":status,
+                        "failureReason":"startup detail"}}),
+            );
+        }
+        assert_eq!(
+            events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        );
+
+        for item in [
+            json!({"id":"tool", "type":"mcpToolCall", "server":"calendar", "tool":"read",
+                "status":"failed", "error":{"message":"connection timed out"}}),
+            json!({"id":"answer", "type":"agentMessage", "phase":"final_answer",
+                "text":"Independent work completed."}),
+        ] {
+            mapper.map(
+                &event_tx,
+                "device",
+                "task",
+                &request,
+                json!({"method":"item/completed", "params":{"item":item}}),
+            );
+        }
+        let tool_error = events.try_recv().unwrap();
+        assert_eq!(tool_error["event"], "response.block.updated");
+        let updates = &tool_error["payload"]["data"]["updates"];
+        assert_eq!(updates["status"], "error");
+        assert_eq!(updates["tool_output"], "connection timed out");
+        let answer = events.try_recv().unwrap();
+        assert_eq!(answer["event"], "response.output_text.done");
+        assert_eq!(
+            answer["payload"]["data"]["text"],
+            "Independent work completed."
+        );
+        assert_eq!(
+            events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        );
+    }
+
+    #[test]
     fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {
         let (event_tx, mut events) = broadcast::channel(6);
         for private in [true, false] {
@@ -2791,6 +2863,35 @@ mod tests {
                 } else {
                     assert!(emitted["payload"].get("conversationContext").is_none());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn marks_memory_review_events_without_changing_the_transcript() {
+        let (event_tx, mut events) = broadcast::channel(4);
+        for memory_review in [true, false] {
+            let mut request = ExecutionRequest::default();
+            request.extra.insert(
+                "origin".into(),
+                json!({"type": "stand_in_schedule", "memoryReview": memory_review}),
+            );
+            for event in ["response.block.created", "response.completed"] {
+                let data = json!({"value": "Original transcript"});
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "task",
+                    &request,
+                    data.clone(),
+                );
+                let emitted = events.try_recv().unwrap();
+                assert_eq!(emitted["payload"]["data"], data);
+                assert_eq!(
+                    emitted["payload"]["conversationContext"].as_str(),
+                    memory_review.then_some("stand_in_memory_review")
+                );
             }
         }
     }
@@ -3599,6 +3700,7 @@ mod tests {
             updated["payload"]["data"]["updates"]["content_delta"],
             "inspect."
         );
+        assert_eq!(updated["payload"]["data"]["updates"]["content_offset"], 7);
     }
 
     #[test]

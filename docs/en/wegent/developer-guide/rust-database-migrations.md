@@ -12,7 +12,7 @@ The runner retains `alembic_version.version_num`, historical revision IDs, and b
 
 Fresh databases use the complete current structure in `backend-rs/migrations/schema.json` and are stamped only after successful creation. Existing databases apply pending revisions in dependency order. Create the database itself beforehand, as with Python.
 
-Revision assets live under `backend-rs/migrations/revisions/` and are embedded through `src/migrations/assets.rs`. SQL steps can declare schema predicates; Rust modules implement historical query-dependent data transformations. Runtime migration does not invoke Python or Alembic.
+Revision assets live under `backend-rs/migrations/revisions/`. The `wegent-database-migrations` crate embeds them through `backend-rs/migrations/src/assets.rs`. SQL steps can declare schema predicates, and Rust modules implement historical query-dependent data transformations. Runtime migration does not invoke Python or Alembic.
 
 Original Alembic scripts and legacy Wiki SQL live under `backend-rs/migrations/reference/` for Python-only operation and compatibility comparisons. Rust does not load those Python scripts.
 

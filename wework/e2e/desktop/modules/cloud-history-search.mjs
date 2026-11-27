@@ -344,7 +344,10 @@ export function createCloudHistorySearchVerification() {
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const original = await waitForPane(
           control,
-          pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
+          pane =>
+            pane?.currentRuntimeTask?.taskId === taskId &&
+            !pane.transcript.loading &&
+            !pane.transcript.loadingMoreBefore,
           'The original cloud conversation did not finish loading'
         )
         await assertAsyncHistoryUnloaded(control)
@@ -376,9 +379,13 @@ export function createCloudHistorySearchVerification() {
           await waitForHighlightedHistoryMatch(control, prompt(index))
         }
         // The scrollbar accepts focus without scrolling the transcript; this pane has no composer.
-        await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
-          key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-        })
+        await control.command(
+          'nativePress',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+          {
+            key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+          }
+        )
         const searchFault = arm('search', entry => entry.path === SEARCH_PATH)
         await control.command('fill', FIND, { value: QUERY })
         await control.command('waitFor', FIND_RETRY)
@@ -431,7 +438,10 @@ export function createCloudHistorySearchVerification() {
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const restored = await waitForPane(
           control,
-          pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
+          pane =>
+            pane?.currentRuntimeTask?.taskId === taskId &&
+            !pane.transcript.loading &&
+            !pane.transcript.loadingMoreBefore,
           'The original cloud conversation was not restored'
         )
         for (const field of ['hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {

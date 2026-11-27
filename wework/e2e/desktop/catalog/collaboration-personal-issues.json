@@ -26,8 +26,10 @@
     "wework/src/features/todo/WeworkPersonalHome.tsx",
     "wework/src/features/todo/IndependentIssue*",
     "wework/src/features/todo/independentIssuesContext.ts",
-    "wework/src/features/todo/useIndependentIssuePage*",
+    "packages/collaboration/src/platform/usePersonalIssueSources.ts",
     "wework/src/features/todo/PersonalIssueList.tsx",
+    "packages/collaboration/src/platform/PersonalIssueList.tsx",
+    "packages/collaboration/src/platform/personalHomeIssuesSource.ts",
     "wework/src/features/todo/usePersonalHomeIssues*",
     "executor/crates/task-store/src/task_runtime/store/my_work.rs",
     "wework/src/features/todo/PersonalIssueErrors*",
@@ -38,6 +40,18 @@
     "wework/src/features/todo/issueParticipants.ts",
     "wework/e2e/desktop/modules/local-project-migration.mjs",
     "packages/collaboration/src/issue-card/issueCard.css",
-    "packages/collaboration/src/issue-card/CollaborationIssueCard.tsx"
+    "packages/collaboration/src/issue-card/CollaborationIssueCard.tsx",
+    "packages/collaboration/src/theme/*",
+    "wework/src/features/appearance/*",
+    "wework/src/styles/*",
+    "wework/e2e/desktop/modules/appearance-theme.mjs",
+    "wework/src/features/todo/ProjectSpacePickerMenu.tsx",
+    "wework/src/features/todo/projectSpacePickerModel.ts",
+    "backend/app/services/workspaces/lifecycle.py",
+    "backend/app/services/workspaces/storage.py",
+    "backend/app/schemas/workspace.py",
+    "backend-rs/src/workspaces.rs",
+    "packages/collaboration/src/platform/platform.css",
+    "packages/collaboration/src/project-create/ProjectCreateDialog.tsx"
   ]
 }

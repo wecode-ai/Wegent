@@ -101,6 +101,39 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.connections.catalog', {})
   })
 
+  test('keeps the selected DingTalk profile on readiness and resource requests', async () => {
+    const request = vi.fn()
+    const services = createLocalAppServices({
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+    })
+    const providerId = 'connection/dingtalk'
+    const profile = 'team:alice'
+    const sources = [{ id: 'room', kind: 'group' as const }]
+    await services.standInApi!.connectionReadiness('device', providerId, profile, sources)
+    await services.standInApi!.searchConnectionResources(
+      'device',
+      providerId,
+      'group',
+      'Team',
+      undefined,
+      undefined,
+      profile
+    )
+    expect(request).toHaveBeenNthCalledWith(1, 'runtime.connections.readiness', {
+      providerId,
+      profile,
+      sources,
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'runtime.connections.resources', {
+      providerId,
+      profile,
+      kind: 'group',
+      query: 'Team',
+      cursor: undefined,
+    })
+  })
+
   test('loads project plugins from disk without either online Codex catalog', async () => {
     const listFromDisk = vi
       .spyOn(codexPlugins, 'listLocalInstalledPluginsFromDisk')
@@ -659,6 +692,41 @@ describe('createLocalAppServices', () => {
         transportLabel: 'Cloud',
       })
     ).toThrow('Cloud runtime user identity is required')
+  })
+
+  test('coalesces concurrent archive calls and only sends the task identity and cleanup intent', async () => {
+    const started = Promise.withResolvers<void>()
+    const response = Promise.withResolvers<{ accepted: boolean }>()
+    const request = vi.fn(() => {
+      started.resolve()
+      return response.promise
+    })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device-1')
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/project',
+      runtimeHandle: { messages: [{ content: 'x'.repeat(1024 * 1024) }] },
+      cleanupWorktree: true,
+    }
+    const first = api.archiveConversation(address)
+    await started.promise
+    const duplicate = api.archiveConversation(address)
+    response.resolve({ accepted: true })
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { accepted: true },
+      { accepted: true },
+    ])
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.archive',
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/project',
+        cleanupWorktree: true,
+      },
+      'device-1'
+    )
   })
 
   test.each([undefined, 'completed-turn'])(
@@ -3255,12 +3323,17 @@ describe('createLocalAppServices', () => {
         modelType: 'runtime',
       },
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'device-uuid',
-      command_key: 'git_is_worktree',
-      args: ['/Users/me/project'],
-      timeout_seconds: 15,
-    })
+    expect(request).toHaveBeenCalledWith(
+      'device.execute_command',
+      {
+        deviceId: 'device-uuid',
+        command_key: 'git_is_worktree',
+        args: ['/Users/me/project'],
+        timeout_seconds: 15,
+      },
+      undefined,
+      { priority: 'foreground' }
+    )
     expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -5384,30 +5457,6 @@ describe('createLocalAppServices', () => {
     expect(payload.executionRequest.user_selected_skills).toEqual(['dws'])
   })
 
-  test('activates project-space capabilities for a generic cloud reference', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.createRuntimeTask({
-      deviceId: 'local-device',
-      workspacePath: '/Users/me/project',
-      taskId: 'task-project-space',
-      runtime: 'codex',
-      message: '[$项目空间](cloud://projects) 帮我创建一个新项目',
-    })
-
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
-    const prompt = payload.executionRequest.prompt as string
-    expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('Use wework_space as the only interface')
-    expect(prompt).toContain('Do not use git commands')
-    expect(prompt).toContain('read_item_attachment')
-  })
-
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -5430,55 +5479,94 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalledWith('runtime.tasks.create', expect.anything())
   })
 
-  test('preserves request user input responses in local runtime send requests', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.sendRuntimeMessage({
-      address: { deviceId: 'local-device', taskId: 'task-1' },
-      message: '工作目标',
-      requestUserInputResponse: {
+  test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
+    'sends %s to the live turn while model preparation is stalled',
+    async responseField => {
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const prepareLocalModelCatalog = vi.fn(() => new Promise<void>(() => {}))
+      const api = createRuntimeWorkApiFromIpc(request, async () => 'device-uuid', {
+        prepareLocalModelCatalog,
+      })
+      const requestUserInputResponse = {
         requestId: 42,
         itemId: 'item-1',
-        answers: {
-          goal: { answers: ['工作目标'] },
-        },
-      },
+        interactionScope: 'turn-1',
+        answers: { __codex_approval: { answers: ['allow_once'] } },
+      }
+
+      const result = api.sendRuntimeMessage({
+        address: { deviceId: 'local-device', taskId: 'task-1' },
+        clientUserMessageId: 'queued-answer',
+        message: 'allow_once',
+        [responseField]: requestUserInputResponse,
+      })
+
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledExactlyOnceWith(
+          'runtime.tasks.send',
+          {
+            taskId: 'task-1',
+            address: { deviceId: 'device-uuid', taskId: 'task-1' },
+            clientUserMessageId: 'queued-answer',
+            message: 'allow_once',
+            requestUserInputResponse,
+          },
+          'device-uuid'
+        )
+      )
+      expect(prepareLocalModelCatalog).not.toHaveBeenCalled()
+      await expect(result).resolves.toEqual({ accepted: true })
+    }
+  )
+
+  test('preserves question attachment records while model preparation is stalled', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const prepareLocalModelCatalog = vi.fn(() => new Promise<void>(() => {}))
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device-uuid', {
+      prepareLocalModelCatalog,
+    })
+    const attachment = {
+      id: -45,
+      filename: 'brief.txt',
+      file_size: 12,
+      mime_type: 'text/plain',
+      status: 'ready' as const,
+      file_extension: '.txt',
+      created_at: '2026-11-20T00:00:00.000Z',
+      local_path: '/tmp/brief.txt',
+    }
+    const response = {
+      delivery: 'async' as const,
+      requestId: 42,
+      itemId: 'item-1',
+      interactionScope: 'turn-1',
+      answers: { goal: { answers: ['Review the brief'], attachments: [attachment] } },
+    }
+
+    const result = api.sendRuntimeMessage({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      message: 'Review the brief',
+      requestUserInputResponse: response,
+      attachmentIds: [81],
+      attachments: [attachment],
     })
 
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
-    expect(payload).toEqual(
-      expect.objectContaining({
-        taskId: 'task-1',
-        address: { deviceId: 'device-uuid', taskId: 'task-1' },
-        message: '工作目标',
-        requestUserInputResponse: {
-          requestId: 42,
-          itemId: 'item-1',
-          answers: {
-            goal: { answers: ['工作目标'] },
-          },
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        'runtime.tasks.send',
+        {
+          taskId: 'task-1',
+          address: { deviceId: 'device-uuid', taskId: 'task-1' },
+          message: 'Review the brief',
+          requestUserInputResponse: response,
+          attachmentIds: [81],
+          attachments: [attachment],
         },
-        executionRequest: expect.objectContaining({
-          task_id: 'task-1',
-          subtask_id: expect.any(String),
-          prompt: '工作目标',
-          new_session: false,
-          model_config: expect.objectContaining({
-            model: 'openai',
-            model_id: 'gpt-5.6-sol',
-            api_format: 'responses',
-            protocol: 'openai-responses',
-          }),
-        }),
-      })
+        'device-uuid'
+      )
     )
-    expect(payload).not.toHaveProperty('message_id')
-    expect(payload).not.toHaveProperty('modelId')
+    expect(prepareLocalModelCatalog).not.toHaveBeenCalled()
+    await expect(result).resolves.toEqual({ accepted: true })
   })
 
   test('normalizes local runtime goal requests before IPC', async () => {

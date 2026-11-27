@@ -31,11 +31,11 @@ assert_case "English permission contract runs backend guards" "$permission_contr
 rust_permission_expected="${permission_contract_expected/backend_rs=false/backend_rs=true}"
 rust_permission_expected="${rust_permission_expected/platform_e2e=false/platform_e2e=true}"
 rust_permission_expected="${rust_permission_expected/wework_e2e=false/wework_e2e=true}"
-for path in backend-rs/src/cloud_projects.rs \
-  backend-rs/src/cloud_projects/collaboration_access.sql \
-  backend-rs/src/cloud_projects/environment_authorization.rs \
-  backend-rs/src/cloud_projects/normalization.rs \
-  backend-rs/src/loop_item_executions/device.rs \
+for path in backend-rs/be-server/src/cloud_projects.rs \
+  backend-rs/project-coordination/src/cloud_projects/collaboration_access.sql \
+  backend-rs/project-coordination/src/cloud_projects/environment_authorization.rs \
+  backend-rs/project-coordination/src/cloud_projects/execution_environments.rs \
+  backend-rs/project-coordination/src/loop_item_executions/executions.rs \
   backend-rs/config/routes.toml; do
   assert_case "Rust permission changes run Rust, backend, and E2E guards: $path" \
     "$rust_permission_expected" "$path"
@@ -107,7 +107,7 @@ backend_rs_expected="${all_false/backend_rs=false/backend_rs=true}"
 backend_rs_expected="${backend_rs_expected/platform_e2e=false/platform_e2e=true}"
 backend_rs_expected="${backend_rs_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "Rust backend changes run Rust contracts and both E2E suites" \
-  "$backend_rs_expected" "backend-rs/src/decisions/mod.rs"
+  "$backend_rs_expected" "backend-rs/be-server/src/decisions/mod.rs"
 
 all_true="${all_false//false/true}"
 assert_case "explicit all modules" "$all_true" --all
@@ -205,8 +205,7 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
-for path in .github/actions/setup-wework-native-test-dependencies/action.yml \
-  .github/ci/wework-native-test-ubuntu.sources; do
+for path in .github/actions/setup-wework-native-test-dependencies/action.yml; do
   assert_case "Native desktop preparation selects its CI consumers: $path" \
     "$wework_e2e_expected" "$path"
 done

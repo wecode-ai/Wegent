@@ -458,7 +458,7 @@ describe('experience canonical timeline', () => {
     expect(result.nodes.map(node => node.kind)).toEqual(['handoff', 'status', 'comment'])
     expect(result.nodes[0]).toMatchObject({
       sequenceNumber: null,
-      author: { id: '7', name: null },
+      author: { id: '7', name: 'Member' },
       handoff: { targetId: '8', targetName: 'Recipient' },
     })
     expect(result.nodes[1].transition).toEqual({ from: 'pending', to: 'in_progress' })
@@ -753,6 +753,7 @@ describe('experience canonical timeline', () => {
     const run = message({
       messageId: 'run',
       sequenceNumber: 2,
+      type: 'agent_status',
       sender: { type: 'agent', id: 'assistant', name: 'PRIVATE-ASSISTANT' },
       triggerMessageId: 'message-1',
       rootMessageId: 'message-1',

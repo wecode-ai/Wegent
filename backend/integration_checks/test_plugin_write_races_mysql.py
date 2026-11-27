@@ -50,6 +50,7 @@ from integration_checks.plugin_auth_fixtures import (
 )
 from integration_checks.plugin_install_identity_mysql import (
     test_http_reinstall_uses_existing_identity_with_real_mysql_and_redis,
+    test_private_restore_and_delete_use_one_lock_order,
 )
 
 
@@ -206,12 +207,15 @@ def run_ordered(
     waiting: Callable[[Session], object],
 ) -> tuple[object, object]:
     """Keep a real Redis lease while a second writer waits, then release it."""
-    attempted, acquired = threading.Event(), threading.Event()
+    snapshot_ready = threading.Event()
+    start_acquire = threading.Event()
+    acquired = threading.Event()
 
     def worker():
         with context.sessions() as db:
             establish_snapshot(db, context)
-            attempted.set()
+            snapshot_ready.set()
+            assert start_acquire.wait(coordination.OPERATION_SECONDS)
             acquire_plugin_write_lock(
                 db, context.user_id, installed_id=context.plugin_id
             )
@@ -228,10 +232,18 @@ def run_ordered(
         acquire_plugin_write_lock(
             holder, context.user_id, installed_id=context.plugin_id
         )
-        with coordination._redis_client().monitor() as monitor:
-            pending = pool.submit(worker)
-            try:
-                assert attempted.wait(3)
+        pending = pool.submit(worker)
+        try:
+            assert snapshot_ready.wait(3)
+            result = first(holder)
+            # Preserve the waiter's pre-write view, then witness contention at
+            # the commit boundary. Business work must not consume its lease
+            # acquisition budget. Some lifecycle operations commit internally.
+            acquire_plugin_write_lock(
+                holder, context.user_id, installed_id=context.plugin_id
+            )
+            with coordination._redis_client().monitor() as monitor:
+                start_acquire.set()
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline:
                     command = monitor.next_command()["command"]
@@ -240,10 +252,10 @@ def run_ordered(
                 else:
                     pytest.fail("The waiting writer did not send its Redis acquire")
                 assert not acquired.is_set()
-                result = first(holder)
                 holder.commit()
-            finally:
-                holder.rollback()
+        finally:
+            start_acquire.set()
+            holder.rollback()
         return result, pending.result(timeout=5)
 
 

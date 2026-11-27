@@ -34,12 +34,21 @@ impl RuntimeWorkRpcHandler {
         let (threads, mut complete) = self.read_codex_catalog(archived, limit).await;
         let stage_started_at = Instant::now();
         let closed_threads: HashSet<_> = self
-            .local_task_links(true)
-            .iter()
-            .flat_map(|link| {
-                crate::runtime_work::conversation_sessions::closed_sessions(link)
-                    .unwrap_or_default()
-            })
+            .store
+            .list_filtered_task_values(
+                true,
+                |link| {
+                    link.runtime_handle
+                        .get(crate::runtime_work::conversation_sessions::SESSIONS_KEY)
+                        .is_some()
+                },
+                |link| {
+                    crate::runtime_work::conversation_sessions::closed_sessions(link)
+                        .unwrap_or_default()
+                },
+            )
+            .into_iter()
+            .flatten()
             .map(|session| session.thread_id)
             .collect();
         for thread in threads {
@@ -113,6 +122,7 @@ impl RuntimeWorkRpcHandler {
 
         self.merge_local_task_links(
             archived,
+            |_| true,
             &mut links,
             &discovered_thread_ids,
             &discovered_local_task_ids,
@@ -125,40 +135,41 @@ impl RuntimeWorkRpcHandler {
     pub(in crate::runtime_work::handler) fn collect_cached_links(
         &self,
         archived: bool,
-    ) -> Vec<RuntimeTaskLink> {
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
+    ) -> (Vec<RuntimeTaskLink>, usize) {
         let started_at = Instant::now();
         let mut links = Vec::new();
-        self.merge_local_task_links(
+        let summary_count = self.merge_local_task_links(
             archived,
+            matches_task,
             &mut links,
             &HashSet::new(),
             &HashSet::new(),
             started_at,
         );
-        links
+        (links, summary_count)
     }
 
     fn merge_local_task_links(
         &self,
         archived: bool,
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
         links: &mut Vec<RuntimeTaskLink>,
         discovered_thread_ids: &HashSet<String>,
         discovered_local_task_ids: &HashSet<String>,
         started_at: Instant,
-    ) {
+    ) -> usize {
         let stage_started_at = Instant::now();
-        for mut link in self.local_task_links(true) {
+        let summaries = self.store.list_filtered_task_summaries(true, |link| {
+            (link.status == "archived") == archived
+                && !link.ephemeral
+                && (link.runtime_handle["origin"]["type"] != "stand_in_coordinator"
+                    || link.interaction_status.is_some())
+                && matches_task(link)
+        });
+        let summary_count = summaries.len();
+        for mut link in summaries {
             if self.archived_link_is_deleted(&link) {
-                continue;
-            }
-            if link.ephemeral
-                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
-                    && link.interaction_status.is_none())
-            {
-                continue;
-            }
-            let link_archived = link.status == "archived";
-            if link_archived != archived {
                 continue;
             }
             if is_cached_codex_link_hidden(&link, discovered_thread_ids) {
@@ -187,6 +198,7 @@ impl RuntimeWorkRpcHandler {
             stage_started_at,
             &[("links", links.len().to_string())],
         );
+        summary_count
     }
 
     async fn read_codex_catalog(&self, archived: bool, limit: Option<usize>) -> (Vec<Value>, bool) {
@@ -268,14 +280,9 @@ impl RuntimeWorkRpcHandler {
         let mut links = links
             .into_iter()
             .map(|mut link| {
-                if !is_codex_runtime(&link.runtime) {
-                    return link;
-                }
-
-                if let Some(thread_id) = link.thread_id.as_deref() {
-                    link.pinned = project_index.is_pinned_thread(thread_id);
-                    link.pinned_order = project_index.pinned_thread_order(thread_id);
-                }
+                sidebar::apply_sidebar_task_pin(&mut link, |thread_id| {
+                    project_index.pinned_thread_order(thread_id)
+                });
                 link
             })
             .collect::<Vec<_>>();

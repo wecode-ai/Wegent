@@ -50,6 +50,12 @@ Pending requests with the same task ID are coalesced, and idle tasks start seria
 
 After first paint, the bundled plugin marketplace computes a deterministic content SHA-256. When `.wework-content-sha256` in the destination matches the current content, Wework skips the copy. Changed content is replaced through a staging directory, and the hash participates in the Codex local-marketplace registration key. Bundled plugins therefore refresh after a Wework upgrade without recopied content on every launch of the same version.
 
+## Local RPC Queueing
+
+When `/wework/executor/v1/rpc` and `/wework/electron-host/v1/invoke` slow down together, inspect Timing in DevTools Network. If most time is spent in `Blocked` before sending, group the requests in that interval by the RPC body's `method` and correlate `x-request-id` with the Core DSH `RPC HTTP response` log. The log's `elapsed_ms` starts when DSH handles the request, which helps distinguish browser queueing from runtime processing.
+
+Concurrent task reads in the hybrid workbench share an in-flight local device discovery when their device routes are missing. Once discovery settles, a later route miss can still read live state. The `idle-executor-requests` desktop E2E checks that 30 concurrent reads send one `runtime.worktrees.capabilities` request and retain their individual task results.
+
 ## Diagnosing Runtime Task Creation
 
 The frontend writes key task-creation stages to the persisted log with the `[Wework] Runtime task create diagnostic` prefix. This does not require Performance Diagnostics to be enabled. Records contain only the stage, task/device identifiers, model identifiers, elapsed time, and result; they do not contain message content, credentials, or model connection configuration.
@@ -191,7 +197,7 @@ Acceptance targets, not measured local-script performance claims:
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
 
-The **Enable Stream Logs** / **Disable Stream Logs** command in the Developer Commands menu toggles both frontend local chat stream logs and Codex executor stream logs. Prefer this command during live investigation; it keeps frontend `console.debug` stream subscription/event logs and executor Codex stream details under the same switch.
+The **Enable Stream Logs** / **Disable Stream Logs** command in Developer Commands toggles both frontend local chat stream logs and Codex executor stream logs. Desktop frontend stream diagnostics are off by default. When enabled, correlate `runtime-stream-native-event`, `runtime-terminal-received`, `runtime-terminal-projected`, and `pane-assistant-published` in `runtime-launch.log` by task and turn ID to compare event receipt, terminal reply projection, and pane publication. Frontend diagnostics record event metadata, status, and content lengths without storing message text.
 
 To avoid excessive logs in debug builds during long responses or high-frequency token output, runtime work cache/emit mapping logs are disabled by default. Those logs add extra records for the cache path and UI event dispatch path of the same delta, and are only needed when diagnosing local runtime work routing.
 
@@ -205,9 +211,9 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping de
 
 ## Streaming Message Rendering
 
-Wework separates high-frequency executor text deltas from the visible Markdown cadence. Message state still receives and retains the complete content in real time, while `AssistantMarkdown` uses a lightweight buffer to advance visible text on browser frames. It catches up adaptively when the backlog grows, then retains a small character reserve and drains it slowly near the tail to smooth executor bursts and short delivery gaps. The renderer immediately aligns with complete content when streaming ends, content is replaced, or an update is not append-only, preserving final-message correctness.
+The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown batches appended text before passing it to Streamdown. Terminal and interactive updates publish immediately. The inline visualization callback changes only when its renderer or file-change summary changes, so text deltas do not cause extra Markdown renders.
 
-Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block within a browser animation frame before updating React state, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
+Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block in a 16 ms window at the runtime event boundary, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
 
 Streaming messages skip full Pretext height measurement and use a stable offscreen intrinsic height. Completed messages are measured precisely and cached. Height lookup first uses the message object and width, avoiding repeated full-text hashes for unchanged historical messages during every stream update. Stable props and memo boundaries also keep the composer, workspace actions, right workspace, and bottom terminal from rerendering for every text delta.
 
@@ -216,10 +222,8 @@ While the bottom Terminal panel is being resized, height updates are coalesced t
 Distinguish these cases when investigating streaming stalls:
 
 - The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.
-- Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses the text buffer, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
+- Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses batched conversation updates, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
 - GC time is unexpectedly high: verify whether DevTools has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
-
-Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
 
 ## Persistent Animation Rendering
 
@@ -264,7 +268,7 @@ window.__WEWORK_PERF__.snapshot();
 
 The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents Chromium XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
 
-Performance Diagnostics deliberately keeps its own collector. It still reads macOS `ps` RSS through `wework/electron/src/host/process-diagnostics.ts`, while the Process Explorer reads Electron metrics plus `systeminformation` and uses Electron `workingSetSize` for Electron-owned processes. The numbers are close but not interchangeable: do not reuse one surface's memory thresholds for the other, and treat a consolidation as a separate change that re-baselines the memory E2E suites.
+Performance Diagnostics deliberately keeps its own collector. It still reads macOS `ps` RSS through `wework/electron/src/host/process-diagnostics.ts`, while the Process Explorer reads Electron metrics plus the system process table (`ps` directly on macOS, `systeminformation` on Windows and Linux, with the kernel `comm` correcting Linux names) and uses Electron `workingSetSize` for Electron-owned processes. The numbers are close but not interchangeable: do not reuse one surface's memory thresholds for the other, and treat a consolidation as a separate change that re-baselines the memory E2E suites.
 
 Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS includes shared mappings and reclaimable resident pages and is commonly much larger than actual memory pressure. Prefer `physical_footprint_kib` when investigating leaks or system resource usage, and treat RSS as a secondary residency metric. When comparing multiple snapshots, focus on:
 

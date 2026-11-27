@@ -1,0 +1,71 @@
+import { ChevronDown } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { SearchableSelect } from '../controls/SearchableSelect'
+import type { CollaborationProject } from '../types'
+import { usePersonalIssueTranslation } from './personalIssueMessages'
+
+export function IssueProjectSelect({
+  projects,
+  value,
+  disabled,
+  className,
+  placeholder,
+  triggerPlaceholder,
+  scopeHint,
+  onChange,
+}: {
+  projects: CollaborationProject[]
+  value: string
+  disabled?: boolean
+  className?: string
+  placeholder?: string
+  triggerPlaceholder?: string
+  scopeHint?: ReactNode
+  onChange(value: string): void
+}) {
+  const t = usePersonalIssueTranslation()
+  const empty = placeholder ?? t('issue_creation.independent_option')
+  const selected = projects.find(project => String(project.id) === value)
+  return (
+    <SearchableSelect
+      modal
+      density="compact"
+      appearance="property"
+      testId="independent-issue-project"
+      accessibleLabel={t('issue_creation.project_label')}
+      className={`${className ?? ''} flex items-center gap-2 text-left`}
+      disabled={disabled}
+      value={value}
+      searchPlaceholder={t('todo.search_projects')}
+      emptyLabel={t('todo.no_project_results')}
+      triggerContent={
+        <>
+          <span className="min-w-0 flex-1">
+            {selected ? (
+              <span data-testid="issue-project-selected-name" className="block truncate">
+                {selected.name}
+              </span>
+            ) : (
+              (triggerPlaceholder ?? empty)
+            )}
+            {scopeHint}
+          </span>
+          <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+        </>
+      }
+      options={[
+        { value: '', label: empty },
+        ...projects.map(project => ({
+          value: String(project.id),
+          label: project.name,
+          description: project.project_key,
+          group: project.workspace_context?.name,
+          searchText: [project.workspace_context?.name, project.public_id]
+            .filter(Boolean)
+            .join(' '),
+        })),
+      ]}
+      onChange={onChange}
+    />
+  )
+}

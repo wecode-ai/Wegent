@@ -81,10 +81,12 @@ loop_item_provider_router = LoopItemProviderRouter()
 
 
 class LoopItemAttachmentProviderRouter:
-    def list(self, db: Session, item_id: str, user_id: int) -> list[object]:
+    def list(
+        self, db: Session, item_id: str, user_id: int, *, session: bool = False
+    ) -> list[object]:
         if external_loop_item_provider.is_external_item(db, item_id):
             return external_loop_item_provider.list_attachments(db, item_id, user_id)
-        return loop_item_service.list_attachments(db, item_id, user_id)
+        return loop_item_service.list_attachments(db, item_id, user_id, session=session)
 
     def add(
         self,
@@ -95,6 +97,8 @@ class LoopItemAttachmentProviderRouter:
         content_type: str,
         source: BinaryIO,
         max_size_bytes: int,
+        *,
+        session: bool = False,
     ) -> object:
         if external_loop_item_provider.is_external_item(db, item_id):
             return external_loop_item_provider.add_attachment(
@@ -107,31 +111,39 @@ class LoopItemAttachmentProviderRouter:
                 max_size_bytes,
             )
         return loop_item_service.add_attachment(
-            db, item_id, user_id, filename, content_type, source
+            db, item_id, user_id, filename, content_type, source, session=session
         )
 
     def content(
-        self, db: Session, attachment_id: str, user_id: int
+        self, db: Session, attachment_id: str, user_id: int, *, session: bool = False
     ) -> tuple[bytes, str, str]:
         if attachment_id.startswith("gitlab-"):
             return external_loop_item_provider.attachment_content(
                 db, attachment_id, user_id
             )
-        return loop_item_service.attachment_content(db, attachment_id, user_id)
+        return loop_item_service.attachment_content(
+            db, attachment_id, user_id, session=session
+        )
 
-    def delete(self, db: Session, attachment_id: str, user_id: int) -> None:
+    def delete(
+        self, db: Session, attachment_id: str, user_id: int, *, session: bool = False
+    ) -> None:
         if attachment_id.startswith("gitlab-"):
             external_loop_item_provider.delete_attachment(db, attachment_id, user_id)
             return
-        loop_item_service.delete_attachment(db, attachment_id, user_id)
+        loop_item_service.delete_attachment(db, attachment_id, user_id, session=session)
 
-    def require_access(self, db: Session, attachment_id: str, user_id: int) -> None:
+    def require_access(
+        self, db: Session, attachment_id: str, user_id: int, *, session: bool = False
+    ) -> None:
         if attachment_id.startswith("gitlab-"):
             external_loop_item_provider.attachment_access_url(
                 db, attachment_id, user_id
             )
             return
-        loop_item_service.require_attachment_access(db, attachment_id, user_id)
+        loop_item_service.require_attachment_access(
+            db, attachment_id, user_id, session=session
+        )
 
 
 loop_item_attachment_provider_router = LoopItemAttachmentProviderRouter()

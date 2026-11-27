@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 const PREFIX: &str = "wework.host-policy.";
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 const EXECUTION_KEY: &str = "wework.execution";
+pub(super) const OMITTED_MCP_CONTEXT: &str =
+    "Runtime context: Some MCP capabilities were omitted from this execution.";
 
 pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> String {
     let mut instructions = if request.extra.get("enable_tools").and_then(Value::as_bool)
@@ -28,6 +30,10 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
             })
             .collect();
         contributions.sort_by_key(|(key, _)| *key);
+        if launch_config.mcp_unavailable {
+            instructions.push_str("\n\n");
+            instructions.push_str(OMITTED_MCP_CONTEXT);
+        }
         for (key, entry) in contributions {
             instructions.push_str(&format!(
                 "\n\nWework runtime policy contribution {}:\n{}",
@@ -48,7 +54,11 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
     if crate::task_runtime::mcp::has_bound_issue_context(request).unwrap_or(false)
         && request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
     {
-        instructions.push_str("\n\nWework Issue human handoff:\nUse request_user_input_async for business decisions in the owning Issue. After asking, discover wework_space list_human_requests and set_human_request_blocking to explicitly record whether any steps depend on its answer. The reporting execution may update only this flag without assigning anyone. The Issue's responsible participant or collaboration-group leader owns the choice of a specific authorized person through assign_human_request; no default coordinator is implied. Keep independent work moving, and wait before dependent actions. Stand-in execution is AI work, not human processing. Answers never grant tool approval or connector authentication.");
+        if super::collaboration::is_project_collaboration_agent(request) {
+            instructions.push_str("\n\nWework collaboration decisions:\nAsk business questions in the Issue discussion. Use list_board_item_comments to find the Start work comment for your current turn, then use add_board_item_comment with its reply_to_comment_id. State the choices, consequences, and who should answer. Tell them to use Reply and continue this task on the same discussion. Keep independent work moving and wait for the answer before dependent actions. Do not duplicate the question in the final response or use request_user_input or request_user_input_async for this collaboration flow. Keep native tool and connector approvals in their original channels.");
+        } else {
+            instructions.push_str("\n\nWework Issue human handoff:\nUse request_user_input_async for business decisions in the owning Issue. After asking, discover wework_space list_human_requests and set_human_request_blocking to explicitly record whether any steps depend on its answer. The reporting execution may update only this flag without assigning anyone. The Issue's responsible participant or collaboration-group leader owns the choice of a specific authorized person through assign_human_request; no default coordinator is implied. Keep independent work moving, and wait before dependent actions. Stand-in execution is AI work, not human processing. Answers never grant tool approval or connector authentication.");
+        }
     }
     instructions
 }
@@ -105,6 +115,22 @@ pub(super) fn additional_context(
 
 fn execution_context(request: &ExecutionRequest) -> Option<String> {
     let mut facts = Vec::new();
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    if matches!(
+        origin["type"].as_str(),
+        Some(
+            "stand_in_identity"
+                | "stand_in_task"
+                | "stand_in_coordinator"
+                | "connection_work"
+                | "dingtalk_work"
+        )
+    ) {
+        let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        facts.push(format!(
+            "Wework local time at turn start: {now}\nUse this clock for the user's current date and time. For connected messages, use the source message's `at` as its send time. Interpret relative dates in a message, such as today or tomorrow, from that message's send date and source timezone. Compare the resulting date or deadline with the turn clock to assess freshness or urgency. A message can be collected or replayed long after it was sent. If the source time or timezone cannot be established and matters to the conclusion, state the uncertainty."
+        ));
+    }
     if let Some(info) = request.extra.get("automation_info") {
         if let (Some(automation), Some(run)) = (
             nonempty_string(&info["automationId"]),

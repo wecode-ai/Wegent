@@ -220,6 +220,11 @@ class _WegentRetrievalConfigAdapter:
         )
 
 
+class DocumentPreviewNotReadyError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("Document content is not ready for preview")
+
+
 class KnowledgeOrchestrator:
     """
     Knowledge base operations orchestrator.
@@ -917,7 +922,7 @@ class KnowledgeOrchestrator:
         if document.source_type != DocumentSourceType.EXTERNAL.value:
             return
         if not document.attachment_id:
-            raise ValueError("Document content is not ready for preview")
+            raise DocumentPreviewNotReadyError()
 
     @report_single_read
     def read_document_content(
@@ -975,7 +980,7 @@ class KnowledgeOrchestrator:
         # An attachment ID alone does not prove that stored text is readable.
         # Use total length, not page length: a valid EOF page can be empty.
         if document.source_type == "external" and result["total_length"] == 0:
-            raise ValueError("Document content is not ready for preview")
+            raise DocumentPreviewNotReadyError()
 
         return DocumentContentReadResponse(
             document_id=result["id"],
@@ -1100,6 +1105,7 @@ class KnowledgeOrchestrator:
         exempt_calls_before_check: Optional[int] = None,
         multimodal_update_fields: Optional[Dict[str, Any]] = None,
         dingtalk_auto_sync_enabled: Optional[bool] = None,
+        kb_type: Optional[Literal["notebook", "classic"]] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -1135,6 +1141,8 @@ class KnowledgeOrchestrator:
         # Build update data with only provided fields to preserve unset-vs-clear semantics
         # Only include fields that were explicitly provided (not None)
         update_fields = {}
+        if kb_type is not None:
+            update_fields["kb_type"] = kb_type
         if name is not None:
             update_fields["name"] = name
         if description is not None:
@@ -1237,6 +1245,9 @@ class KnowledgeOrchestrator:
         show_generation_task: bool = False,
         language: str = "",
         generation_strategy: Optional[str] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> int:
         """Resolve defaults, persist a knowledge base, and return its id.
 
@@ -1322,6 +1333,9 @@ class KnowledgeOrchestrator:
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
             execution_model_ref=execution_model_ref,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
             multimodal_analysis_enabled=(
                 multimodal_analysis_enabled
                 if multimodal_analysis_enabled is not None
@@ -1378,6 +1392,9 @@ class KnowledgeOrchestrator:
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
         dingtalk_auto_sync_enabled: bool = False,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """
         Create a knowledge base with auto-configuration support.
@@ -1450,6 +1467,9 @@ class KnowledgeOrchestrator:
             embedding_model_namespace=embedding_model_namespace,
             summary_model_ref=summary_model_ref,
             task_id=task_id,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
             multimodal_analysis_enabled=multimodal_analysis_enabled,
             multimodal_analysis_model_ref=multimodal_analysis_model_ref,
             multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,
@@ -1493,6 +1513,9 @@ class KnowledgeOrchestrator:
         multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """Create a knowledge base bound to a source repository.
 
@@ -1540,6 +1563,9 @@ class KnowledgeOrchestrator:
             show_generation_task=show_generation_task,
             language=language,
             generation_strategy=generation_strategy,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
         )
         claim_repository(db, source, kb_id)
         db.commit()
@@ -2110,6 +2136,10 @@ class KnowledgeOrchestrator:
         from app.services.knowledge.indexing import get_rag_indexing_skip_reason
         from app.services.knowledge.multimodal_pipeline import resolve_dispatch_or_none
 
+        # Conversion refs are assigned by the trusted converter, never by uploaders.
+        source_config = dict(data.source_config or {})
+        source_config.pop("converted_attachment_id", None)
+        data = data.model_copy(update={"source_config": source_config})
         attachment_id = data.attachment_id
         attachment_owner_id = user.id
         try:
@@ -3226,6 +3256,12 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
+                # A legacy reference does not authorize modifying another owner's body.
+                context_service.get_context(
+                    db=db,
+                    context_id=document.attachment_id,
+                    user_id=document.user_id,
+                )
                 attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
@@ -3244,7 +3280,7 @@ class KnowledgeOrchestrator:
                 # Create new attachment if overwrite fails
                 attachment, _ = context_service.upload_attachment(
                     db=db,
-                    user_id=user.id,
+                    user_id=document.user_id,
                     filename=document.name,
                     binary_data=content_bytes,
                     subtask_id=0,
@@ -3257,7 +3293,7 @@ class KnowledgeOrchestrator:
             # Create new attachment if no attachment_id exists
             attachment, _ = context_service.upload_attachment(
                 db=db,
-                user_id=user.id,
+                user_id=document.user_id,
                 filename=document.name,
                 binary_data=content_bytes,
                 subtask_id=0,

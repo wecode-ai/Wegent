@@ -3,6 +3,7 @@ import type { IssueAttachmentContext } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
   AgentExecutionPolicy,
   AgentModelPolicy,
@@ -1044,6 +1045,55 @@ export function createLocalDeliveryApi(
     throw new Error('Local task not found')
   }
 
+  async function updateTask(
+    projectId: CloudProjectId,
+    itemId: string,
+    data: Record<string, unknown> & { version: number },
+    runnerSelection?: RunnerSelection
+  ) {
+    let todo = localTaskUpdate(data)
+    delete todo.notify_assignee
+    if (Array.isArray(data.tags)) {
+      const current = await request<LocalLoopItemRecord>('todos.get', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
+      if (association) {
+        todo = {
+          ...todo,
+          tags: [
+            ...visibleLoopItemTags(stringList(data.tags)),
+            localProjectAssociationTag(association),
+          ],
+        }
+      }
+    }
+    const groupId = typeof data.assignee_group_id === 'string' ? data.assignee_group_id : null
+    const agentId = typeof data.assignee_agent_id === 'string' ? data.assignee_agent_id : null
+    const executionTarget = groupId
+      ? { assigneeType: 'group' as const, assigneeId: groupId }
+      : agentId
+        ? { assigneeType: 'agent' as const, assigneeId: agentId }
+        : null
+    if (executionTarget) {
+      const executionPayload = await options.prepareAssignmentExecutionPayload?.({
+        projectId,
+        itemId,
+        ...executionTarget,
+        ...(runnerSelection ? { runnerSelection } : {}),
+      })
+      if (executionPayload) todo = { ...todo, execution_payload: executionPayload }
+    }
+    const record = await request<LocalLoopItemRecord>('todos.update', {
+      project_id: projectId,
+      task_id: itemId,
+      todo,
+    })
+    taskProjects.set(record.id, projectId)
+    return localTask(record)
+  }
+
   const api = {
     async listCloudProjects() {
       const records = await loadProjectRecords(true)
@@ -1363,44 +1413,7 @@ export function createLocalDeliveryApi(
       return localTask(record)
     },
     async updateLoopItem(itemId: string, data: Record<string, unknown> & { version: number }) {
-      const projectId = await resolveProjectId(itemId)
-      let todo = localTaskUpdate(data)
-      if (Array.isArray(data.tags)) {
-        const current = await request<LocalLoopItemRecord>('todos.get', {
-          project_id: projectId,
-          task_id: itemId,
-        })
-        const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
-        todo = {
-          ...todo,
-          tags: association
-            ? [
-                ...visibleLoopItemTags(stringList(data.tags)),
-                localProjectAssociationTag(association),
-              ]
-            : data.tags,
-        }
-      }
-      const assignedGroupId =
-        typeof data.assignee_group_id === 'string' ? data.assignee_group_id : null
-      const assignedAgentId =
-        typeof data.assignee_agent_id === 'string' ? data.assignee_agent_id : null
-      if (assignedGroupId || assignedAgentId) {
-        const executionPayload = await options.prepareAssignmentExecutionPayload?.({
-          projectId,
-          itemId,
-          assigneeType: assignedGroupId ? 'group' : 'agent',
-          assigneeId: assignedGroupId ?? assignedAgentId!,
-        })
-        if (executionPayload) todo = { ...todo, execution_payload: executionPayload }
-      }
-      const record = await request<LocalLoopItemRecord>('todos.update', {
-        project_id: projectId,
-        task_id: itemId,
-        todo,
-      })
-      taskProjects.set(record.id, projectId)
-      return localTask(record)
+      return updateTask(await resolveProjectId(itemId), itemId, data)
     },
     async assignLoopItem(
       projectId: CloudProjectId,
@@ -1422,28 +1435,16 @@ export function createLocalDeliveryApi(
             : data.assigneeType === 'team'
               ? { assignee_team_id: Number(data.assigneeId) }
               : { assignee_group_id: data.assigneeId }
-      const executionPayload =
-        data.assigneeType === 'agent' || data.assigneeType === 'group'
-          ? await options.prepareAssignmentExecutionPayload?.({
-              projectId,
-              itemId,
-              assigneeType: data.assigneeType,
-              assigneeId: data.assigneeId,
-              runnerSelection: data.runnerSelection,
-            })
-          : null
-      const record = await request<LocalLoopItemRecord>('todos.update', {
-        project_id: projectId,
-        task_id: itemId,
-        todo: {
+      return updateTask(
+        projectId,
+        itemId,
+        {
           version: data.version,
           ...assignment,
-          ...(data.position ? { position: { before_item_id: data.position.beforeItemId } } : {}),
-          ...(executionPayload ? { execution_payload: executionPayload } : {}),
+          ...(data.position ? { position: data.position } : {}),
         },
-      })
-      taskProjects.set(record.id, projectId)
-      return localTask(record)
+        data.runnerSelection
+      )
     },
     async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
       const projectId = await resolveProjectId(itemId)
@@ -1470,7 +1471,17 @@ export function createLocalDeliveryApi(
         ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
         ...(contentRevision == null ? {} : { content_revision: contentRevision }),
       })
-      return localTask(record)
+      const issue = localTask(record)
+      if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('issue-read-confirmed', {
+          itemId,
+          activitySequence: activitySequence ?? null,
+          contentRevision: contentRevision ?? null,
+          returnedVersion: record.version,
+          returnedUnread: issue.is_unread,
+        })
+      }
+      return issue
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {

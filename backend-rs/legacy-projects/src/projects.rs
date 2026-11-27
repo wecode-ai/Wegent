@@ -1,0 +1,917 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `GET /api/projects` — the current user's project list with tasks
+//! (`app.api.endpoints.projects.list_projects` ->
+//! `app.services.project_service.list_projects`), and
+//! `DELETE /api/projects/{project_id}` — the soft-delete endpoint
+//! (`app.api.endpoints.projects.delete_project_endpoint` ->
+//! `app.services.project_service.delete_project`).
+//!
+//! It also owns the project-task association routes: `POST
+//! /api/projects/{project_id}/tasks` adds a task to a project
+//! (`add_task_to_project_endpoint` -> `project_service.add_task_to_project`),
+//! and `DELETE /api/projects/{project_id}/tasks/{task_id}` removes one
+//! (`remove_task_from_project_endpoint` -> `project_service.remove_task_from_project`).
+//!
+//! Source pipeline (recorded case `api-projects/deaea280`, JWT bearer
+//! session for a sample user, `include_tasks=true`):
+//!
+//! 1. `security.get_current_user` — the user row by `user_name`;
+//! 2. the `projects` query: owned or approved-shared
+//!    (`resource_members` EXISTS with `resource_type='Project'`,
+//!    `entity_type='user'`, `entity_id='<uid>'`, `status='approved'`),
+//!    `is_active`, `client_origin` (query value, default `frontend`),
+//!    ordered `sort_order ASC`;
+//! 3. per project, `task_store.list_active_project_tasks` reads the
+//!    configured task repository. The public repository reads the base
+//!    `tasks` table once; the private deployment enables the migration
+//!    repository, which reads the base table (legacy rows), probes the owner's
+//!    shard table for migrated legacy ids, then reads the owner's shard table,
+//!    and finally merges both halves with id deduplication.
+//! 4. `ProjectWithTasksResponse` per project with `task_count=len(tasks)`
+//!    and the `_get_project_tasks` projection (`task_title` from
+//!    `spec.title or task.name or "Task #{id}"`, `task_status` from
+//!    `status.phase` defaulting `PENDING`, workspace fields trimmed from
+//!    `spec.execution.workspace.{source,path}`).
+//!
+//! The response is the `ProjectListResponse` (`total`, `items`).
+//!
+//! `delete_project_endpoint` (recorded case `api-projects-2500`) resolves the
+//! caller's active frontend project, detaches the project's owned tasks via
+//! `task_store.clear_project_for_owned_tasks` unless the origin is `wework`,
+//! then flushes the soft delete (`is_active = False`) and commits; it responds
+//! `204` with an empty body.
+use std::sync::Arc;
+
+use brz_http_server::{Response, StatusCode};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
+use chrono::NaiveDateTime;
+use serde::Deserialize;
+use serde_json::json;
+use wegent_backend_persistence::project_projection::PROJECT_COLUMNS;
+
+use crate::ProjectsState;
+use crate::http_compat::FastApiError;
+use crate::json_compat::python_json_value;
+use wegent_backend_persistence::mysql_query::MysqlQuery;
+
+/// `_extract_project_device_id`'s project read
+/// (`app/services/chat/task_device_resolution.py:195`): the owner's active
+/// project with this client origin, rendered as its stored `config` JSON.
+///
+/// Runs on the caller's session handle because `chat:send` resolves the task
+/// device target inside its pinned transaction.
+pub async fn project_config_on<Q: MysqlQuery>(
+    query: &mut Q,
+    user_id: i64,
+    project_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Option<serde_json::Value>> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    let row: Option<ProjectRow> = query
+        .fetch_optional(sql, (project_id, user_id, client_origin))
+        .await?;
+    Ok(row
+        .and_then(|row| row.projects_config)
+        .and_then(|config| serde_json::to_value(config.0).ok()))
+}
+
+/// The `projects` row (the full labeled projection so the prepared
+/// statement matches the recorded exchange; `is_active` is filtered in
+/// SQL and not consumed).
+#[derive(Debug, FromMysqlRow)]
+struct ProjectRow {
+    projects_id: i64,
+    projects_user_id: i64,
+    projects_name: String,
+    projects_description: Option<String>,
+    projects_color: Option<String>,
+    projects_client_origin: String,
+    projects_config: Option<Json<NullableConfig>>,
+    projects_sort_order: i64,
+    projects_is_expanded: i8,
+    projects_created_at: NaiveDateTime,
+    projects_updated_at: NaiveDateTime,
+}
+
+/// The stored `projects.config` JSON column. The DB stores JSON `null`
+/// (not SQL `NULL`), so `Option<Json<...>>` alone would fail: SQL `NULL`
+/// maps to `None`, but JSON `null` is a non-NULL value that serde cannot
+/// deserialize as a struct. This wrapper treats JSON `null` as `Null`
+/// (which serializes as `null` in the response, matching the source's
+/// `Optional[ProjectConfig]` with `config=None`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum NullableConfig {
+    Null,
+    Config(Box<StoredProjectConfig>),
+}
+
+impl serde::Serialize for NullableConfig {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            NullableConfig::Null => serializer.serialize_none(),
+            NullableConfig::Config(config) => config.serialize(serializer),
+        }
+    }
+}
+
+/// The stored `projects.config` JSON column, validated and re-serialized
+/// as `ProjectConfig` (`app.schemas.project.ProjectConfig`,
+/// `extra="forbid"`). `None` renders `null` in the response; a present
+/// config re-serializes with every optional field materialized.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredProjectConfig {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default, rename = "taskSource")]
+    task_source: Option<ProjectTaskSource>,
+    #[serde(default)]
+    device_id: Option<String>,
+    #[serde(default)]
+    execution: Option<ProjectExecutionConfig>,
+    #[serde(default)]
+    team: Option<ProjectTeamConfig>,
+    #[serde(default)]
+    workspace: Option<ProjectWorkspaceConfig>,
+    #[serde(default)]
+    git: Option<ProjectGitConfig>,
+    #[serde(default, rename = "modelSelection")]
+    model_selection: Option<ProjectModelSelection>,
+}
+
+/// `ProjectConfig.taskSource` (`Literal["api", "dingtalk"]`).
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ProjectTaskSource {
+    Api,
+    Dingtalk,
+}
+
+/// `ProjectExecutionConfig` (`extra="forbid"`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectExecutionConfig {
+    #[serde(rename = "targetType")]
+    target_type: String,
+    #[serde(default, rename = "deviceId")]
+    device_id: Option<String>,
+}
+
+/// `ProjectTeamConfig` (`extra="forbid"`, `namespace` default `"default"`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectTeamConfig {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default = "default_namespace")]
+    namespace: String,
+}
+
+fn default_namespace() -> String {
+    "default".to_string()
+}
+
+/// `ProjectWorkspaceConfig` (`extra="forbid"`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectWorkspaceConfig {
+    source: String,
+    #[serde(default, rename = "localPath")]
+    local_path: Option<String>,
+    #[serde(default, rename = "checkoutPath")]
+    checkout_path: Option<String>,
+    #[serde(default, rename = "devicePath")]
+    device_path: Option<String>,
+    #[serde(default, rename = "workspaceRef")]
+    workspace_ref: Option<ProjectWorkspaceRef>,
+}
+
+/// `ProjectWorkspaceRef` (`extra="forbid"`, `namespace` default `"default"`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectWorkspaceRef {
+    name: String,
+    #[serde(default = "default_namespace")]
+    namespace: String,
+}
+
+/// `ProjectGitConfig` (`extra="forbid"`, `branch` default `"main"`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectGitConfig {
+    url: String,
+    #[serde(default)]
+    repo: Option<String>,
+    #[serde(default, rename = "repoId")]
+    repo_id: Option<i64>,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default = "default_branch")]
+    branch: String,
+}
+
+fn default_branch() -> String {
+    "main".to_string()
+}
+
+/// `ProjectModelSelection` (`extra="forbid"`, `options` default `{}`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectModelSelection {
+    #[serde(rename = "modelName")]
+    model_name: String,
+    #[serde(default, rename = "modelType")]
+    model_type: Option<String>,
+    #[serde(default = "default_options_map")]
+    options: Option<brz_json::RawJson>,
+}
+
+fn default_options_map() -> Option<brz_json::RawJson> {
+    Some(brz_json::RawJson::from_string("{}".to_string()).expect("valid JSON"))
+}
+
+/// One `tasks`/`tasks_{:04}` row of the per-project task query, decoded by
+/// its `{table}_*` aliases (the shard table name is dynamic).
+#[derive(Debug)]
+struct ProjectTaskRow {
+    id: i64,
+    name: String,
+    crd: TaskCrd,
+    updated_at: NaiveDateTime,
+}
+
+/// The task CRD (`task.json`) with only the fields the projection reads.
+/// Unknown keys are ignored (the source guards with `isinstance(..., dict)`).
+/// A non-object `json` column (null, string, number, array) deserializes
+/// to `TaskCrd::default()`, mirroring the source's
+/// `if not isinstance(task_json, dict): return {}` guard.
+#[derive(Debug, Clone, Default)]
+struct TaskCrd {
+    spec: Option<TaskSpec>,
+    status: Option<TaskStatus>,
+}
+
+impl<'de> Deserialize<'de> for TaskCrd {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TaskCrdVisitor;
+        impl<'de> serde::de::Visitor<'de> for TaskCrdVisitor {
+            type Value = TaskCrd;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a task CRD object or any JSON value")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut spec = None;
+                let mut status = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "spec" => spec = map.next_value()?,
+                        "status" => status = map.next_value()?,
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                Ok(TaskCrd { spec, status })
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_string<E: serde::de::Error>(self, _: String) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(TaskCrd::default())
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(TaskCrd::default())
+            }
+        }
+        deserializer.deserialize_any(TaskCrdVisitor)
+    }
+}
+
+impl TaskCrd {
+    fn spec(&self) -> Option<&TaskSpec> {
+        self.spec.as_ref()
+    }
+
+    fn status_phase(&self) -> Option<&str> {
+        self.status.as_ref().and_then(|s| s.phase.as_deref())
+    }
+}
+
+/// `spec` fields consumed by `_task_spec` and `_get_project_tasks`.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TaskSpec {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    device_id: Option<String>,
+    #[serde(default)]
+    is_group_chat: Option<bool>,
+    #[serde(default)]
+    execution: Option<TaskExecution>,
+}
+
+/// `spec.execution.workspace.{source,path}` (trimmed non-empty strings).
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TaskExecution {
+    #[serde(default)]
+    workspace: Option<TaskWorkspace>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TaskWorkspace {
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+/// `status.phase` (defaults `"PENDING"` when absent or non-dict).
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TaskStatus {
+    #[serde(default)]
+    phase: Option<String>,
+}
+
+/// Decode one task row by its unqualified column names.
+///
+/// The `json` column is decoded as `Json<TaskCrd>`; the `#[serde(untagged)]`
+/// enum falls back to `TaskCrd::NonObject` for non-object JSON, mirroring the
+/// source's `_task_json` guard
+/// (`task.json or {}; if not isinstance(task_json, dict): return {}`).
+fn decode_task_row(row: &MysqlRow) -> MysqlResult<ProjectTaskRow> {
+    Ok(ProjectTaskRow {
+        id: row.get_required("id")?,
+        name: row.get_required("name")?,
+        crd: row.get_required::<Json<TaskCrd>>("json")?.0,
+        updated_at: row.get_required("updated_at")?,
+    })
+}
+
+/// The task projection (`ProjectTaskResponse`), in the pydantic model's
+/// field order.
+#[derive(Debug, serde::Serialize)]
+struct ProjectTaskItem {
+    task_id: i64,
+    task_title: String,
+    task_status: String,
+    device_id: Option<String>,
+    execution_workspace_source: Option<String>,
+    execution_workspace_path: Option<String>,
+    is_group_chat: bool,
+    project_id: i64,
+    updated_at: String,
+}
+
+/// One `ProjectWithTasksResponse` item, in the pydantic model's field
+/// order (`ProjectBase` fields first, then `ProjectResponse`, then
+/// `tasks`).
+#[derive(Debug, serde::Serialize)]
+struct ProjectItem {
+    name: String,
+    description: String,
+    color: Option<String>,
+    client_origin: String,
+    config: Option<NullableConfig>,
+    id: i64,
+    user_id: i64,
+    sort_order: i64,
+    is_expanded: bool,
+    task_count: Option<i64>,
+    created_at: String,
+    updated_at: String,
+    tasks: Vec<ProjectTaskItem>,
+}
+
+/// `ProjectListResponse`. The source declares it as the endpoint's
+/// `response_model`, so FastAPI renders the response body as
+/// `application/json`; returning the typed model keeps that media type
+/// (a raw binary body renders `application/octet-stream`).
+#[derive(Debug, serde::Serialize)]
+struct ProjectListResponse {
+    total: i64,
+    items: Vec<ProjectItem>,
+}
+
+/// Validated project-list options. The boolean flags default to true.
+struct ListProjectsParams {
+    include_tasks: bool,
+    include_task_count: bool,
+    client_origin: String,
+}
+
+/// Parse a project-list option with pydantic's boolean rules: `true`, `false`,
+/// `1`, `0`, `yes`, `no`, `on`, `off` (case-insensitive) — anything else
+/// is a 422 `bool_parsing` error.
+fn parse_include_flag(raw: Option<&str>, field: &str) -> Result<bool, FastApiError> {
+    let Some(raw) = raw else {
+        return Ok(true);
+    };
+    match raw.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(validation_error(
+            field,
+            "bool_parsing",
+            "Input should be a valid boolean, unable to interpret input",
+            raw,
+        )),
+    }
+}
+
+/// Parse `client_origin` against the source `Query` pattern
+/// `^(frontend|wework)$`.
+fn parse_client_origin(raw: Option<&str>) -> Result<String, FastApiError> {
+    let Some(raw) = raw else {
+        return Ok("frontend".to_string());
+    };
+    if matches!(raw, "frontend" | "wework") {
+        Ok(raw.to_string())
+    } else {
+        Err(validation_error(
+            "client_origin",
+            "string_pattern_mismatch",
+            "String should match pattern '^(frontend|wework)$'",
+            raw,
+        ))
+    }
+}
+
+/// FastAPI's 422 validation-error array body for one query parameter.
+fn validation_error(field: &str, kind: &str, message: &str, input: &str) -> FastApiError {
+    FastApiError::validation(json!([
+        {
+            "type": kind,
+            "loc": ["query", field],
+            "msg": message,
+            "input": input,
+        }
+    ]))
+}
+
+/// `list_projects`: the owned-or-shared active project rows ordered
+/// `sort_order ASC`. The EXISTS subquery and the `is_active`/origin
+/// predicates mirror the recorded SQLAlchemy rendering (the parameters
+/// bind in the recorded literal's token kinds: the owner id as an
+/// integer, the EXISTS entity id as a string, the origin as a string).
+async fn query_projects<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Vec<ProjectRow>> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE (projects.user_id = ? OR (EXISTS (SELECT * \nFROM resource_members \n\
+         WHERE resource_members.resource_type = 'Project' \
+         AND resource_members.resource_id = projects.id \
+         AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id = ? \
+         AND resource_members.status = 'approved'))) \
+         AND projects.is_active = true \
+         AND projects.client_origin = ? \
+         ORDER BY projects.sort_order ASC"
+    );
+    mysql
+        .fetch_all(sql.as_str(), (user_id, user_id.to_string(), client_origin))
+        .await
+}
+
+/// `task_store.list_active_project_tasks`: the project's active tasks owned by
+/// `owner_user_id`, newest `updated_at` first. The store owns the table choice
+/// and, in a deployment that also reads migrated legacy rows, their merge.
+async fn query_project_tasks(
+    state: &ProjectsState,
+    project_id: i64,
+    owner_user_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Vec<ProjectTaskRow>> {
+    let rows = state
+        .task_store
+        .list_active_project_tasks(project_id, owner_user_id, Some(client_origin))
+        .await?;
+    rows.iter().map(decode_task_row).collect()
+}
+
+/// The `_get_project_tasks` projection for one task row.
+fn task_item(task: &ProjectTaskRow, project_id: i64) -> ProjectTaskItem {
+    let spec = task.crd.spec();
+    // `str(spec.get("title") or task.name or f"Task #{task.id}")`.
+    let task_title = spec
+        .and_then(|spec| spec.title.as_deref())
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if task.name.is_empty() {
+                format!("Task #{}", task.id)
+            } else {
+                task.name.clone()
+            }
+        });
+    // `str(status.get("phase") or "PENDING")` over a non-dict guard.
+    let task_status = task
+        .crd
+        .status_phase()
+        .filter(|phase| !phase.is_empty())
+        .unwrap_or("PENDING")
+        .to_string();
+    // `task_execution_workspace_{source,path}`: trimmed non-empty strings.
+    let workspace = |key: &str| {
+        spec.and_then(|spec| spec.execution.as_ref())
+            .and_then(|execution| execution.workspace.as_ref())
+            .and_then(|workspace| match key {
+                "source" => workspace.source.as_deref(),
+                "path" => workspace.path.as_deref(),
+                _ => None,
+            })
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    ProjectTaskItem {
+        task_id: task.id,
+        task_title,
+        task_status,
+        device_id: spec.and_then(|spec| spec.device_id.clone()),
+        execution_workspace_source: workspace("source"),
+        execution_workspace_path: workspace("path"),
+        is_group_chat: spec.and_then(|spec| spec.is_group_chat).unwrap_or(false),
+        project_id,
+        updated_at: pydantic_datetime(task.updated_at),
+    }
+}
+
+/// pydantic datetime serialization for a DB row timestamp:
+/// `YYYY-MM-DDTHH:MM:SS`.
+fn pydantic_datetime(value: NaiveDateTime) -> String {
+    value.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+/// GET /api/projects: the projects free function, injecting the process-lifetime
+/// application state.
+#[brz_http_server::get("/api/projects")]
+async fn list_projects(
+    #[inject(state)] state: &Arc<ProjectsState>,
+    #[auth] current_user: crate::auth::SessionUser,
+    include_tasks: Option<String>,
+    client_origin: Option<String>,
+    include_task_count: Option<String>,
+) -> Result<ProjectListResponse, FastApiError> {
+    // FastAPI validates the query parameters before the endpoint body
+    // runs; invalid values surface as 422 without any dependency
+    // traffic.
+    let params = ListProjectsParams {
+        include_tasks: parse_include_flag(include_tasks.as_deref(), "include_tasks")?,
+        include_task_count: parse_include_flag(
+            include_task_count.as_deref(),
+            "include_task_count",
+        )?,
+        client_origin: parse_client_origin(client_origin.as_deref())?,
+    };
+    projects_list(state, &current_user, &params).await
+}
+
+/// Handler body for `GET /api/projects`.
+async fn projects_list(
+    state: &Arc<ProjectsState>,
+    user: &crate::auth::SessionUser,
+    params: &ListProjectsParams,
+) -> Result<ProjectListResponse, FastApiError> {
+    let user_id = i64::from(user.id);
+
+    let projects = query_projects(&state.mysql, user_id, &params.client_origin)
+        .await
+        .map_err(dependency_error)?;
+
+    // Only query counts when requested and task details cannot provide them.
+    let task_counts = if params.include_task_count && !params.include_tasks {
+        let owners: Vec<(i64, i64)> = projects
+            .iter()
+            .map(|project| (project.projects_id, project.projects_user_id))
+            .collect();
+        Some(
+            state
+                .task_store
+                .count_active_tasks_by_project(&owners, Some(&params.client_origin))
+                .await
+                .map_err(dependency_error)?,
+        )
+    } else {
+        None
+    };
+
+    let mut items = Vec::with_capacity(projects.len());
+    for project in &projects {
+        // `include_tasks=true` lists the project's tasks; otherwise only the
+        // grouped count feeds `task_count`.
+        let (tasks, task_count) = if params.include_tasks {
+            let merged = query_project_tasks(
+                state,
+                project.projects_id,
+                project.projects_user_id,
+                &params.client_origin,
+            )
+            .await
+            .map_err(dependency_error)?;
+            let count = params.include_task_count.then_some(merged.len() as i64);
+            let items = merged
+                .iter()
+                .map(|task| task_item(task, project.projects_id))
+                .collect();
+            (items, count)
+        } else {
+            let count = task_counts.as_ref().map(|counts| {
+                counts
+                    .get(&project.projects_id)
+                    .copied()
+                    .unwrap_or_default()
+            });
+            (Vec::new(), count)
+        };
+
+        items.push(ProjectItem {
+            name: project.projects_name.clone(),
+            description: project.projects_description.clone().unwrap_or_default(),
+            color: project.projects_color.clone(),
+            client_origin: project.projects_client_origin.clone(),
+            config: project
+                .projects_config
+                .as_ref()
+                .map(|config| config.0.clone()),
+            id: project.projects_id,
+            user_id: project.projects_user_id,
+            sort_order: project.projects_sort_order,
+            is_expanded: project.projects_is_expanded != 0,
+            task_count,
+            created_at: pydantic_datetime(project.projects_created_at),
+            updated_at: pydantic_datetime(project.projects_updated_at),
+            tasks,
+        });
+    }
+
+    Ok(ProjectListResponse {
+        total: items.len() as i64,
+        items,
+    })
+}
+
+/// Dependency failure mapped to the source 500 response.
+fn dependency_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "projects database dependency failure");
+    FastApiError::internal()
+}
+
+/// `RemoveTaskFromProjectResponse` (`app.schemas.project`): the fixed message
+/// the source returns after a successful removal.
+#[derive(Debug, serde::Serialize)]
+struct RemoveTaskFromProjectResponse {
+    message: String,
+}
+
+/// `_get_active_project`: the active project of `user_id` and `client_origin`.
+///
+/// The source renders the full `projects` projection and raises
+/// `404 {"detail": "Project not found"}` when no row matches.
+async fn find_active_project(
+    state: &Arc<ProjectsState>,
+    project_id: i64,
+    user_id: i64,
+    client_origin: &str,
+) -> Result<ProjectRow, FastApiError> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    let project: Option<ProjectRow> = state
+        .mysql
+        .fetch_optional(sql, (project_id, user_id, client_origin))
+        .await
+        .map_err(dependency_error)?;
+    project.ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))
+}
+
+/// `db.query(Project).filter(...).first()`: the one active project owned by
+/// `user_id` and scoped to `client_origin`. The recorded SQLAlchemy rendering
+/// qualifies every column, filters `is_active = true`, binds the id and owner
+/// as integers, and appends `LIMIT 1`.
+async fn query_active_project<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    user_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Option<ProjectRow>> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    mysql
+        .fetch_optional(sql.as_str(), (project_id, user_id, client_origin))
+        .await
+}
+
+/// `_with_task_project_label(task, None)`: drop `metadata.labels.projectId`
+/// from the task CRD while keeping every other key.
+///
+/// The source normalizes each level with `dict(... or {})`, so a missing
+/// `metadata` or `labels` is materialized as an empty object and the surviving
+/// key order is preserved.
+fn clear_project_label(task_json: &serde_json::Value) -> serde_json::Value {
+    let mut root = match task_json {
+        serde_json::Value::Object(map) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let mut metadata = match root.get("metadata") {
+        Some(serde_json::Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let mut labels = match metadata.get("labels") {
+        Some(serde_json::Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    labels.remove("projectId");
+    metadata.insert("labels".to_string(), serde_json::Value::Object(labels));
+    root.insert("metadata".to_string(), serde_json::Value::Object(metadata));
+    serde_json::Value::Object(root)
+}
+
+/// `remove_task_from_project`: verify the active project, load the task from
+/// the store, then clear its project link and rewrite its CRD JSON.
+async fn remove_project_task(
+    state: &Arc<ProjectsState>,
+    user: &crate::auth::SessionUser,
+    project_id: i64,
+    task_id: i64,
+    client_origin: &str,
+) -> Result<RemoveTaskFromProjectResponse, FastApiError> {
+    let user_id = i64::from(user.id);
+    find_active_project(state, project_id, user_id, client_origin).await?;
+
+    let task = state
+        .task_store
+        .get_active_project_task(task_id, project_id, user_id, Some(client_origin))
+        .await
+        .map_err(dependency_error)?;
+    let Some(task) = task else {
+        return Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Task not found in project",
+        ));
+    };
+
+    // `update_fields(project_id=0)` then `update_json(...)`: one UPDATE that
+    // clears the project link and rewrites the JSON with the label removed.
+    let task_json = task
+        .get_required::<Json<serde_json::Value>>("json")
+        .map_err(dependency_error)?;
+    let payload = clear_project_label(&task_json.0);
+    let updated_at = chrono::Local::now().naive_local();
+    state
+        .task_store
+        .set_task_project_and_json(
+            task_id,
+            0,
+            user_id,
+            &python_json_value(&payload),
+            updated_at,
+        )
+        .await
+        .map_err(dependency_error)?;
+
+    Ok(RemoveTaskFromProjectResponse {
+        message: "Task removed from project successfully".to_string(),
+    })
+}
+
+/// `DELETE /api/projects/{project_id}/tasks/{task_id}`
+/// (`app.api.endpoints.projects.remove_task_from_project_endpoint`).
+///
+/// Removes a task from a project without deleting the task: it verifies the
+/// project belongs to the current user, then clears the task's project link.
+#[brz_http_server::delete("/api/projects/:project_id/tasks/:task_id")]
+async fn remove_task_from_project(
+    #[inject(state)] state: &Arc<ProjectsState>,
+    #[auth] current_user: crate::auth::SessionUser,
+    project_id: i64,
+    task_id: i64,
+    client_origin: Option<String>,
+) -> Result<RemoveTaskFromProjectResponse, FastApiError> {
+    let client_origin = parse_client_origin(client_origin.as_deref())?;
+    remove_project_task(state, &current_user, project_id, task_id, &client_origin).await
+}
+
+/// DELETE /api/projects/{project_id}: the source `delete_project_endpoint`,
+/// injecting the process-lifetime application state.
+#[brz_http_server::delete("/api/projects/:project_id")]
+async fn delete_project(
+    #[inject(state)] state: &Arc<ProjectsState>,
+    #[auth] current_user: crate::auth::SessionUser,
+    project_id: i64,
+    client_origin: Option<String>,
+) -> Result<Response, FastApiError> {
+    // FastAPI validates the query parameter before the endpoint body runs;
+    // an invalid origin surfaces as 422 without any dependency traffic.
+    let client_origin = parse_client_origin(client_origin.as_deref())?;
+    delete_project_inner(state, &current_user, project_id, &client_origin).await
+}
+
+/// Handler body for `DELETE /api/projects/{project_id}`.
+async fn delete_project_inner(
+    state: &Arc<ProjectsState>,
+    user: &crate::auth::SessionUser,
+    project_id: i64,
+    client_origin: &str,
+) -> Result<Response, FastApiError> {
+    let user_id = i64::from(user.id);
+
+    let project = query_active_project(&state.mysql, project_id, user_id, client_origin)
+        .await
+        .map_err(delete_project_error)?;
+    if project.is_none() {
+        return Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Project not found",
+        ));
+    }
+
+    // Frontend deletion moves the project's tasks to history; Wework deletion
+    // preserves the project-task links for later restore.
+    if client_origin != "wework" {
+        state
+            .task_store
+            .clear_project_for_owned_tasks(project_id, user_id, Some(client_origin))
+            .await
+            .map_err(delete_project_error)?;
+    }
+
+    // The `project.is_active = False` flush, then `db.commit()`.
+    state
+        .mysql
+        .execute(
+            "UPDATE projects SET is_active=0, updated_at=now() WHERE projects.id = ?",
+            (project_id,),
+        )
+        .await
+        .map_err(delete_project_error)?;
+    state
+        .mysql
+        .execute("COMMIT", ())
+        .await
+        .map_err(delete_project_error)?;
+
+    Ok(Response::empty(StatusCode::NO_CONTENT).content_type("application/json"))
+}
+
+/// `delete_project_endpoint`'s dependency failure: the source wraps any
+/// exception as `500 {"detail": "Failed to delete project: <error>"}`.
+fn delete_project_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "delete project dependency failure");
+    FastApiError::detail(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Failed to delete project: {error}"),
+    )
+}
+
+#[path = "projects_add_task.rs"]
+pub(super) mod add_task;
+
+#[path = "projects_update/mod.rs"]
+mod update;
+
+#[cfg(test)]
+#[path = "projects_tests.rs"]
+mod tests;

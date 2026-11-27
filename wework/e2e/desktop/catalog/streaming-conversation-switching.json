@@ -8,5 +8,27 @@
       "shard": 1,
       "position": 5000
     }
-  }
+  },
+  "paths": [
+    "packages/collaboration/src/conversation/conversationScrollGeometry.*",
+    "packages/collaboration/src/conversation/conversationScrollState.*",
+    "packages/collaboration/src/conversation/readerViewportAnchor.*",
+    "packages/collaboration/src/conversation/useConversationVirtualizer.*",
+    "packages/collaboration/src/conversation/useConversationScrollController.*",
+    "packages/collaboration/src/conversation/messageListViewportPort.*",
+    "packages/collaboration/src/conversation/useMessageRowMeasurements.*",
+    "packages/collaboration/src/conversation/MessageList.tsx",
+    "packages/collaboration/src/dom-events.ts",
+    "packages/collaboration/src/markdown/WindowedMarkdownChunk.tsx",
+    "wework/src/components/layout/DesktopWorkbenchConversationView.tsx",
+    "wework/e2e/desktop/modules/streaming-conversation-switching.mjs",
+    "wework/e2e/desktop/modules/background-window-refresh.mjs",
+    "wework/src/desktop/workbenchWindowActivity.ts",
+    "wework/e2e/desktop/modules/streaming-text-composer-layout.mjs",
+    "wework/e2e/desktop/modules/streaming-text-scrollbar.mjs",
+    "wework/e2e/desktop/modules/streaming-text-panel-resize.mjs",
+    "wework/e2e/desktop/modules/streaming-text-rich-task-switch.mjs",
+    "wework/e2e/desktop/modules/streaming-text-plan-switch.mjs",
+    "wework/e2e/desktop/modules/streaming-text-switch-stability.mjs"
+  ]
 }

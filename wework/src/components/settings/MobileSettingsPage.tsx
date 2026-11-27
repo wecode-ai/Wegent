@@ -1,3 +1,17 @@
+import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import type { WeworkDshSettingsPage } from '@/features/dsh-runtime/dshSettings'
+import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Archive,
   ArrowLeft,
@@ -8,35 +22,22 @@ import {
   Package,
   Palette,
   Plug,
-  SlidersHorizontal,
   Server,
+  SlidersHorizontal,
   Terminal,
   UserRound,
 } from 'lucide-react'
 import { useState } from 'react'
-import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
-import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
-import type { WeworkDshSettingsPage } from '@/features/dsh-runtime/dshSettings'
-import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
-import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
-import { useTranslation } from '@/hooks/useTranslation'
-import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { AboutSettingsPage } from './AboutSettingsPage'
+import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
+import { ConnectionsDeviceSettingsPage } from './ConnectionsSettingsPage'
 import { ContextSettingsPage } from './ContextSettingsPage'
+import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { HarnessSettingsPage } from './HarnessSettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
 import { PluginSettingsPage } from './PluginSettingsPage'
-import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
-import { AboutSettingsPage } from './AboutSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import { RuntimeSettingsPage } from './RuntimeSettingsPage'
-import { HarnessSettingsPage } from './HarnessSettingsPage'
-import { ConnectionsDeviceSettingsPage } from './ConnectionsSettingsPage'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
 interface MobileSettingsPageProps {
   onBack: () => void
@@ -89,7 +90,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`mobile-${activeExtensionPage.id}-settings-back-button`}
             onClick={() => setActivePage('menu')}
@@ -97,7 +99,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">
             {t(
               `workbench.${activeExtensionPage.labelKey ?? activeExtensionPage.id}`,
@@ -128,7 +130,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-connections-settings-back-button"
             onClick={() => setActivePage('menu')}
@@ -136,7 +139,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">
             {t('workbench.settings_nav_connections', '云端连接')}
           </h1>
@@ -156,7 +159,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-quick-phrases-back-button"
             onClick={() => setActivePage('personal')}
@@ -164,7 +168,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.quick_phrases', '快捷短语')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -182,7 +186,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-runtime-settings-back-button"
             onClick={() => setActivePage('personal')}
@@ -190,7 +195,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">
             {t('workbench.settings_nav_runtimes', 'Runtime')}
           </h1>
@@ -215,7 +220,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-general-back-button"
             onClick={() => setActivePage('personal')}
@@ -223,7 +229,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.settings_nav_general')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -241,7 +247,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-appearance-back-button"
             onClick={() => setActivePage('personal')}
@@ -249,7 +256,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.appearance_title', '外观')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -267,7 +274,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-context-back-button"
             onClick={() => setActivePage('personal')}
@@ -275,7 +283,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.settings_nav_context', '上下文')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -293,7 +301,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-about-back-button"
             onClick={() => setActivePage('personal')}
@@ -301,7 +310,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.settings_nav_about', '关于')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -319,7 +328,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-archived-conversations-back-button"
             onClick={() => setActivePage('menu')}
@@ -327,7 +337,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">
             {t('workbench.settings_nav_archived_conversations', '已归档对话')}
           </h1>
@@ -352,7 +362,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-harness-settings-back-button"
             onClick={() => setActivePage('menu')}
@@ -360,7 +371,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <span>{t('workbench.settings_nav_harnesses', '编码工具')}</span>
             <ExperimentalBadge testId="mobile-harness-settings-experimental-badge" />
@@ -381,7 +392,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-plugins-back-button"
             onClick={() => setActivePage('menu')}
@@ -389,7 +401,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.settings_nav_plugins', '插件')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -407,7 +419,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-personal-back-button"
             onClick={() => setActivePage('menu')}
@@ -415,12 +428,13 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">{t('workbench.settings_nav_personal', '个人')}</h1>
           <div className="h-11 min-w-[44px]" />
         </header>
         <section className="mt-8 space-y-3">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-general-button"
             onClick={() => setActivePage('general')}
@@ -429,8 +443,9 @@ export function MobileSettingsPage({
             <SlidersHorizontal className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_general')}</span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-appearance-button"
             onClick={() => setActivePage('appearance')}
@@ -441,8 +456,9 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_appearance', '外观')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-context-button"
             onClick={() => setActivePage('context')}
@@ -453,8 +469,9 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_context', '上下文')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-model-settings-button"
             onClick={() => setActivePage('model-settings')}
@@ -465,8 +482,9 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_model_settings', '模型')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-runtimes-button"
             onClick={() => setActivePage('runtimes')}
@@ -477,8 +495,9 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_runtimes', 'Runtime')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-about-button"
             onClick={() => setActivePage('about')}
@@ -489,8 +508,9 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_about', '关于')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-quick-phrases-button"
             onClick={() => setActivePage('quick-phrases')}
@@ -501,7 +521,7 @@ export function MobileSettingsPage({
               {t('workbench.quick_phrases', '快捷短语')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
+          </ControlButton>
         </section>
       </main>
     )
@@ -514,7 +534,8 @@ export function MobileSettingsPage({
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-model-settings-back-button"
             onClick={() => setActivePage('personal')}
@@ -522,7 +543,7 @@ export function MobileSettingsPage({
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
             <ArrowLeft className="h-6 w-6" />
-          </button>
+          </ControlButton>
           <h1 className="text-lg font-semibold">
             {t('workbench.settings_nav_model_settings', '模型')}
           </h1>
@@ -541,7 +562,8 @@ export function MobileSettingsPage({
       className="flex h-dvh flex-col overflow-hidden bg-[rgb(var(--color-sidebar))] px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
     >
       <header className="flex shrink-0 items-center justify-between">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="mobile-settings-back-button"
           onClick={onBack}
@@ -549,14 +571,15 @@ export function MobileSettingsPage({
           aria-label={t('workbench.settings_back_to_app', '返回')}
         >
           <ArrowLeft className="h-6 w-6" />
-        </button>
+        </ControlButton>
         <h1 className="text-lg font-semibold">{t('workbench.settings', '设置')}</h1>
         <div className="h-11 min-w-[44px]" />
       </header>
 
       <section className="mt-8 space-y-3">
         {SHOW_PLUGINS_NAVIGATION && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-plugins-button"
             onClick={onOpenPlugins}
@@ -567,9 +590,10 @@ export function MobileSettingsPage({
               {t('workbench.settings_nav_plugins', '插件')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
+          </ControlButton>
         )}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="mobile-settings-connections-button"
           onClick={() => setActivePage('connections')}
@@ -580,8 +604,9 @@ export function MobileSettingsPage({
             {t('workbench.settings_nav_connections', '云端连接')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="mobile-settings-personal-button"
           onClick={() => setActivePage('personal')}
@@ -592,9 +617,10 @@ export function MobileSettingsPage({
             {t('workbench.settings_nav_personal', '个人')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        </ControlButton>
         {experimentalFeaturesEnabled ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="mobile-settings-harnesses-button"
             onClick={() => setActivePage('harnesses')}
@@ -606,12 +632,13 @@ export function MobileSettingsPage({
             </span>
             <ExperimentalBadge testId="mobile-settings-harnesses-experimental-badge" />
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-          </button>
+          </ControlButton>
         ) : null}
         {extensionSettingsPages.map(page => {
           const Icon = resolveDshSettingsIcon(page.icon)
           return (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={page.id}
               type="button"
               data-testid={`mobile-settings-${page.id}-button`}
@@ -623,10 +650,11 @@ export function MobileSettingsPage({
                 {t(`workbench.${page.labelKey ?? page.id}`, page.label)}
               </span>
               <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-            </button>
+            </ControlButton>
           )
         })}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="mobile-settings-archived-conversations-button"
           onClick={() => setActivePage('archived-conversations')}
@@ -637,8 +665,9 @@ export function MobileSettingsPage({
             {t('workbench.settings_nav_archived_conversations', '已归档对话')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="mobile-settings-plugins-config-button"
           onClick={() => setActivePage('plugins')}
@@ -649,7 +678,7 @@ export function MobileSettingsPage({
             {t('workbench.settings_nav_plugins', '插件')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        </ControlButton>
       </section>
     </main>
   )

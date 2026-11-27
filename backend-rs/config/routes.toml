@@ -78,6 +78,9 @@ path = "/api/v1/wework-notifications"
 methods = ["GET"]
 path = "/api/v1/stand-in-issue-events"
 [[routes]]
+methods = ["GET", "POST", "PATCH"]
+path = "/api/v1/personal-assistant"
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-notifications/preferences"
 #[[routes]]
@@ -190,6 +193,9 @@ path = "/api/internal/chat/attachments/:attachment_id/text"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+[[routes]]
+methods = ["GET"]
+path = "/api/devices/runtime-owner"
 
 #[[routes]]
 #methods = ["DELETE"]
@@ -358,6 +364,18 @@ path = "/api/attachments/task/:task_id/all"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/tasks"
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/loop-items/:item_id/collaborators/:collaborator_user_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/:participation_id"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/loop-items/:item_id/attachments"
@@ -376,6 +394,9 @@ path = "/api/plugins/marketplace/:plugin_id/owner"
 [[routes]]
 methods = ["GET"]
 path = "/api/models/unified"
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/models/primary-group-icons"
 [[routes]]
 methods = ["GET", "POST"]
 path = "/api/models/decisions"
@@ -637,6 +658,15 @@ path = "/api/auth/wework/refresh"
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-runtime/token"
+
+# Connector authorization precheck and user-bound OAuth links for external services.
+[[routes]]
+methods = ["GET"]
+path = "/api/external/connector-apps/:slug/authorization"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/external/connector-apps/:slug/oauth/start"
 
 # `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
 # and probe the upstream (`apps_installed::refresh_endpoint`). The handler and
@@ -1037,6 +1067,27 @@ path = "/api/v1/me/project-coordinator-bindings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/collaboration-groups" # app/api/endpoints/project_automations.py:39
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-roster"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics/evidence"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-metrics/me"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-dispatches"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-work-items/my-work" # app/api/endpoints/deliveries.py:194
@@ -1201,10 +1252,51 @@ path = "/api/plugins/local-sync/complete"
 methods = ["POST"]
 path = "/api/plugins/native-auth/exchange"
 
+# Creating an Issue can optionally associate a project in the same transaction.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items"
+
+# Assistant sharing uses explicit recipient grants.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/assistant-shares"
+[[routes]]
+methods = ["GET", "PATCH"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source"
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/assistant-shares/:kind/:source/recipients/:recipient"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/snapshot/:mode"
+
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/assistant-shares/owner-sync"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/copied"
+
 # First-class independent Issues have no project or space.
 [[routes]]
 methods = ["GET", "POST"]
 path = "/api/v1/personal-issues"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/share"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/me/issue-assignment-count"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/shared-from"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/source"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/attachments/:attachment_id"
 [[routes]]
 methods = ["GET", "PATCH", "DELETE"]
 path = "/api/v1/personal-issues/:issue_id"
@@ -1214,6 +1306,12 @@ path = "/api/v1/personal-issues/:issue_id/comments"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/personal-issues/:issue_id/project"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-binding"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-replies"
 
 [[routes]]
 methods = ["GET", "POST"]

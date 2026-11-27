@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
-        claude_config_dir, claude_task_dir, extract_claude_options,
+        claude_config_dir, claude_task_dir,
         skill_download::skill_download_concurrency,
     },
     attachments::{
@@ -43,16 +43,17 @@ mod codex_mcp;
 #[path = "runtime_capabilities/execution_snapshot.rs"]
 mod execution_snapshot;
 mod skill_archive;
+mod user_input_attachments;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
+pub(super) use codex_mcp::prepare_templates as configure_codex_mcp_servers;
 use skill_archive::{expected_hash, publish_archive};
+pub(crate) use user_input_attachments::{prepare_user_input_response, PreparedUserInputResponse};
 pub(super) use wegent_filesystem::json_file::write_json_file;
 pub(crate) use wegent_mcp_runtime::mcp_environment;
-use wegent_mcp_runtime::toml_encoding::{
-    toml_json_value, toml_key_path, toml_key_segment, toml_value,
-};
+use wegent_mcp_runtime::toml_encoding::toml_key_path;
 use wegent_plugin_packages::skill_selection::{
     copy_skill_directory, read_skill_manifest, record_installed_skill, HomeSkillsStage,
 };
@@ -414,7 +415,10 @@ pub async fn prepare_claude_runtime(
     let global_mcps = if super::instance_home::request_home(request).is_some() {
         BTreeMap::new()
     } else {
-        load_global_mcp_records()?
+        load_global_mcp_records().unwrap_or_else(|_| {
+            mcp_environment::log_server_unavailable(request, "global_mcps", "registry");
+            BTreeMap::new()
+        })
     };
     log_runtime_event(
         request,
@@ -431,7 +435,12 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint()
+        .await
+        .is_err()
+    {
+        mcp_environment::log_server_unavailable(request, "wework_space", "endpoint");
+    }
     spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
     log_runtime_event(
         request,
@@ -445,74 +454,88 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
+pub(super) fn managed_mcp_configs(
+    request: &ExecutionRequest,
+) -> Result<BTreeMap<&'static str, crate::task_runtime::mcp::SpaceMcpClientConfig>, String> {
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let independent_issue = request
+        .extra
+        .get("origin")
+        .is_some_and(crate::task_runtime::mcp::is_independent_issue_origin);
+    let mut configs = BTreeMap::new();
+    for (name, result) in [
+        (
+            crate::workbench_control::SERVER_NAME,
+            crate::task_runtime::mcp::control_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::notifications_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::stand_in_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+            if independent_issue {
+                Ok(None)
+            } else {
+                crate::task_runtime::mcp::space_mcp_client_config(request).map(Some)
+            },
+        ),
+    ] {
+        match result {
+            Ok(Some(config)) => {
+                configs.insert(name, config);
+            }
+            Ok(None) => {}
+            Err(_) => mcp_environment::log_server_unavailable(request, name, "registration"),
+        }
+    }
+    Ok(configs)
+}
+
 fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
-    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
-    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        mcp_servers.remove(name);
+    }
+    for (name, config) in managed_mcp_configs(request)? {
+        let timeout = if name == crate::workbench_control::SERVER_NAME {
+            crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS
+        } else {
+            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+        };
         mcp_servers.insert(
-            crate::workbench_control::SERVER_NAME.to_owned(),
+            name.to_owned(),
             json!({
                 "type": "http", "url": config.url, "headers": config.headers,
-                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
+                "timeout": timeout * 1000,
             }),
         );
     }
-    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
-        mcp_servers.insert(
-            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
-            json!({
-                "type":"http","url":config.url,"headers":config.headers,
-                "timeout":crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000
-            }),
-        );
-    }
-    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
-        let headers = config
-            .headers
-            .into_iter()
-            .map(|(name, value)| (name, Value::String(value)))
-            .collect::<Map<String, Value>>();
-        mcp_servers.insert(
-            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME.to_owned(),
-            json!({
-                "type": "http",
-                "url": config.url,
-                "headers": headers,
-                "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
-            }),
-        );
-    }
-    let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
-    let headers = config
-        .headers
-        .into_iter()
-        .map(|(name, value)| (name, Value::String(value)))
-        .collect::<Map<String, Value>>();
-    mcp_servers.insert(
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME.to_owned(),
-        json!({
-            "type": "http",
-            "url": config.url,
-            "headers": headers,
-            "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
-        }),
-    );
     Ok(())
 }
 
-pub fn request_mcp_config_overrides(
+/// Returns whether any optional MCP was skipped, for the execution's user hint.
+pub fn configure_request_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+) -> Result<bool, String> {
     if let Some(home) = super::instance_home::request_home(request) {
-        codex_mcp::prepare(&home, request, thread_config)?;
-        return Ok((Vec::new(), BTreeMap::new()));
+        return codex_mcp::prepare(&home, request, thread_config);
     }
-    let mut overrides = Vec::new();
-    let mut environment = BTreeMap::new();
-    let mcp_servers = collect_request_mcp_servers(request);
+    let mut mcp_servers = collect_request_mcp_servers(request);
+    let configured_count = mcp_servers.len();
+    configure_codex_mcp_servers(&mut mcp_servers, request, thread_config)?;
     let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
     let stdio_count = mcp_servers
         .values()
@@ -521,40 +544,11 @@ pub fn request_mcp_config_overrides(
                 || server.get("command").is_some()
         })
         .count();
-    for (name, server) in &mcp_servers {
-        let mut server = server.clone();
-        mcp_environment::append_stdio_environment(name, &server, thread_config)?;
-        if let Some(object) = server.as_object_mut() {
-            let native_headers = object.remove("http_headers");
-            if let Some(headers) = object.remove("headers").or(native_headers) {
-                if let Some(headers) = headers.as_object() {
-                    for (header, value) in headers {
-                        let Some(value) = value.as_str() else {
-                            continue;
-                        };
-                        use sha2::{Digest, Sha256};
-                        let variable = format!(
-                            "WEGENT_MCP_HEADER_{:x}",
-                            Sha256::digest(format!("{name}:{header}").as_bytes())
-                        );
-                        environment.insert(variable.clone(), value.to_owned());
-                        overrides.push(format!(
-                            "{}={}",
-                            toml_key_path(&["mcp_servers", name, "env_http_headers", header]),
-                            toml_value(&variable)
-                        ));
-                    }
-                }
-            }
-        }
-        overrides.extend(codex_mcp_server_overrides(name, &server));
-    }
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.extend([
         ("server_count", mcp_servers.len().to_string()),
         ("server_names", server_names),
         ("stdio_count", stdio_count.to_string()),
-        ("override_count", overrides.len().to_string()),
         (
             "backend_url_present",
             request
@@ -573,7 +567,7 @@ pub fn request_mcp_config_overrides(
         ),
     ]);
     log_executor_event("codex MCP request config compiled", &fields);
-    Ok((overrides, environment))
+    Ok(configured_count != mcp_servers.len())
 }
 
 async fn deploy_request_skills(
@@ -2171,10 +2165,10 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
     value.as_object_mut().expect("value was just made object")
 }
 
-fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
-    let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
-    preserve_explicit_mcp_approval_modes(request, &mut servers);
+pub(super) fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
+    let mut servers = super::claude_options::extract_codex_mcp_templates(request, &BTreeMap::new());
     servers.remove(crate::workbench_control::SERVER_NAME);
+    preserve_explicit_mcp_approval_modes(request, &mut servers);
     servers
 }
 
@@ -2186,16 +2180,22 @@ fn preserve_explicit_mcp_approval_modes(
         if let Some(bots) = request.bot.as_array() {
             for bot in bots {
                 preserve_explicit_mcp_approval_modes_from_value(
+                    request,
                     bot_mcp_servers_value(bot),
                     servers,
                 );
             }
         }
     } else if let Some(bot) = primary_bot(request) {
-        preserve_explicit_mcp_approval_modes_from_value(bot_mcp_servers_value(bot), servers);
+        preserve_explicit_mcp_approval_modes_from_value(
+            request,
+            bot_mcp_servers_value(bot),
+            servers,
+        );
     }
 
     preserve_explicit_mcp_approval_modes_from_value(
+        request,
         Some(&Value::Array(request.mcp_servers.clone())),
         servers,
     );
@@ -2206,19 +2206,20 @@ fn bot_mcp_servers_value(bot: &Value) -> Option<&Value> {
 }
 
 fn preserve_explicit_mcp_approval_modes_from_value(
+    request: &ExecutionRequest,
     value: Option<&Value>,
     servers: &mut BTreeMap<String, Value>,
 ) {
     match value {
         Some(Value::Object(object)) => {
             for (name, server) in object {
-                preserve_explicit_mcp_approval_mode(name, server, servers);
+                preserve_explicit_mcp_approval_mode(request, name, server, servers);
             }
         }
         Some(Value::Array(values)) => {
             for server in values {
                 if let Some(name) = server.get("name").and_then(Value::as_str) {
-                    preserve_explicit_mcp_approval_mode(name, server, servers);
+                    preserve_explicit_mcp_approval_mode(request, name, server, servers);
                 }
             }
         }
@@ -2227,6 +2228,7 @@ fn preserve_explicit_mcp_approval_modes_from_value(
 }
 
 fn preserve_explicit_mcp_approval_mode(
+    request: &ExecutionRequest,
     name: &str,
     source: &Value,
     servers: &mut BTreeMap<String, Value>,
@@ -2238,7 +2240,12 @@ fn preserve_explicit_mcp_approval_mode(
     else {
         return;
     };
-    let Some(server) = servers.get_mut(name).and_then(Value::as_object_mut) else {
+    let name = crate::mcp_utils::replace_mcp_server_variables(&json!(name), Some(request));
+    let Some(server) = name
+        .as_str()
+        .and_then(|name| servers.get_mut(name))
+        .and_then(Value::as_object_mut)
+    else {
         return;
     };
     server.insert("default_tools_approval_mode".to_owned(), mode);
@@ -2306,94 +2313,6 @@ fn has_mcp_headers(server: &Value) -> bool {
         .is_some_and(|headers| !headers.is_empty())
 }
 
-fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
-    let Some(object) = server.as_object() else {
-        return Vec::new();
-    };
-    let key = toml_key_path(&["mcp_servers", name]);
-    let server_type = object.get("type").and_then(Value::as_str).unwrap_or("");
-    if server_type == "stdio" || object.get("command").is_some() {
-        let Some(command) = object
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Vec::new();
-        };
-        let mut overrides = vec![format!("{key}.command={}", toml_value(command))];
-        if let Some(args) = object.get("args").and_then(Value::as_array) {
-            let args = args
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|value| Value::String(value.to_owned()))
-                .collect::<Vec<_>>();
-            overrides.push(format!(
-                "{key}.args={}",
-                toml_json_value(&Value::Array(args))
-            ));
-        }
-        if let Some(names) = object.get("env_vars") {
-            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
-        }
-        append_codex_mcp_server_approval_override(&key, object, &mut overrides);
-        return overrides;
-    }
-    let Some(url) = object
-        .get("url")
-        .or_else(|| object.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
-    if let Some(headers) = object.get("headers").and_then(Value::as_object) {
-        for (header_name, header_value) in headers {
-            if let Some(header_value) = header_value.as_str() {
-                overrides.push(format!(
-                    "{key}.http_headers.{}={}",
-                    toml_key_segment(header_name),
-                    toml_value(header_value)
-                ));
-            }
-        }
-    }
-    for (source_key, target_key) in [
-        ("bearer_token_env_var", "bearer_token_env_var"),
-        ("bearerTokenEnvVar", "bearer_token_env_var"),
-        ("oauth_client_id", "oauth_client_id"),
-        ("oauthClientId", "oauth_client_id"),
-        ("oauth_resource", "oauth_resource"),
-        ("oauthResource", "oauth_resource"),
-    ] {
-        if let Some(value) = object.get(source_key).and_then(Value::as_str) {
-            overrides.push(format!("{key}.{target_key}={}", toml_value(value)));
-        }
-    }
-    append_codex_mcp_server_approval_override(&key, object, &mut overrides);
-    overrides
-}
-
-fn append_codex_mcp_server_approval_override(
-    key: &str,
-    object: &Map<String, Value>,
-    overrides: &mut Vec<String>,
-) {
-    let approval_mode = object
-        .get("default_tools_approval_mode")
-        .or_else(|| object.get("defaultToolsApprovalMode"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("approve");
-    overrides.push(format!(
-        "{key}.default_tools_approval_mode={}",
-        toml_value(approval_mode)
-    ));
-}
-
 pub(super) fn load_global_mcp_records() -> Result<BTreeMap<String, Value>, String> {
     let path = crate::local::capabilities::default_manifest_path();
     let value = crate::local::capabilities::ManagedCapabilityManifest::new(path)
@@ -2420,7 +2339,10 @@ pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
     // Normalize the backend root; API routes provide their own /api prefix.
-    let root = base_path.strip_suffix("/api").unwrap_or(base_path);
+    let root = base_path
+        .strip_suffix("/api/v1")
+        .or_else(|| base_path.strip_suffix("/api"))
+        .unwrap_or(base_path);
     backend.set_path(&format!("{root}/"));
     backend
         .join(path.trim_start_matches('/'))
@@ -2530,6 +2452,11 @@ mod tests {
                 "https://backend.example/wework/api/?old=value#fragment",
                 "/api/v1/kinds/skills?namespace=default",
                 "https://backend.example/wework/api/v1/kinds/skills?namespace=default",
+            ),
+            (
+                "https://backend.example/wework/api/v1/",
+                "/api/mcp/wework-space/sse",
+                "https://backend.example/wework/api/mcp/wework-space/sse",
             ),
         ] {
             assert_eq!(api_url(base, path).unwrap(), expected);

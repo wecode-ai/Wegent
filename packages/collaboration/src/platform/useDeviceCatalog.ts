@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
 import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
@@ -19,13 +19,15 @@ export function useDeviceCatalog(
     api,
     'device-local',
     '',
-    enabled && Boolean(sources?.local)
+    enabled && Boolean(sources?.local),
+    refreshKey
   )
   const cloud = useExecutionEnvironmentList(
     api,
     'device-cloud',
     '',
-    enabled && Boolean(sources?.cloud)
+    enabled && Boolean(sources?.cloud),
+    refreshKey
   )
   const active = [
     ...(sources?.local ? [{ source: 'local' as const, ...local }] : []),
@@ -39,13 +41,6 @@ export function useDeviceCatalog(
       ...(sources?.cloud ? [refreshCloud()] : []),
     ])
   }, [sources, refreshLocal, refreshCloud])
-  const previousRefreshKey = useRef(refreshKey)
-  useEffect(() => {
-    const changed = previousRefreshKey.current !== refreshKey
-    previousRefreshKey.current = refreshKey
-    if (enabled && changed) void refresh()
-  }, [enabled, refreshKey, refresh])
-
   // Cloud records carry the registered identity; local-only runners remain usable locally.
   const identity = (device: CollaborationExecutionEnvironment) =>
     device.app_device_id?.trim() ||

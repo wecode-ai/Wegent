@@ -1,4 +1,5 @@
 use super::*;
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 fn assert_binding_denied(error: AppIpcError, reason: &str) {
     assert_eq!(error.code, "permission_denied");
@@ -45,6 +46,29 @@ fn onboarding_never_resumes_unrelated_persisted_turns() {
     assert!(!should_resume_persisted_turns_before_rpc(
         "runtime.stand_in.onboarding.complete"
     ));
+}
+
+#[tokio::test]
+async fn implicit_primary_learning_report_is_empty_on_its_own_executor() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let request = json!({"userId":7,"learningReport":true});
+    let report = handler
+        .stand_in_proposal(request.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        report,
+        json!({"iterations":0,"latest":null,"revision":null})
+    );
+    assert!(store.configured_personal_stand_in(7, "mac").unwrap()["primary"].is_null());
+
+    let settings = store.personal_stand_in(7, "remote").unwrap();
+    store.save_personal_stand_in(7, "remote", settings).unwrap();
+    let error = handler.stand_in_proposal(request, false).await.unwrap_err();
+    assert_eq!(error.code, "permission_denied");
 }
 
 #[tokio::test]
@@ -189,6 +213,9 @@ fn fixture(root: &std::path::Path) -> (RuntimeWorkRpcHandler, StandInMcpIdentity
         },
     )
 }
+
+#[path = "stand_in_identity_rework_tests.rs"]
+mod identity_rework;
 
 #[tokio::test]
 async fn memory_review_traverses_long_history_saves_evidence_and_commits_only_complete_sources() {
@@ -586,4 +613,384 @@ async fn onboarding_preserves_a_paused_primary_and_does_not_initialize_on_opt_ou
         .await
         .unwrap();
     assert!(opted_out["settings"]["primary"].is_null());
+}
+
+#[test]
+fn dingtalk_review_links_owner_rework_to_the_sent_versions_only_after_verified_coverage() {
+    verify_provider_rework(
+        crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+        "direct",
+        false,
+    );
+}
+
+#[test]
+fn declared_provider_reviews_its_own_native_replies_and_preserves_role_scope() {
+    verify_provider_rework("example/support", "ticket", true);
+}
+
+fn verify_provider_rework(provider_id: &'static str, kind: &'static str, declared: bool) {
+    // The provider callback is process-global, as in the other protocol integration tests.
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(review_actual_replies(provider_id, kind, declared));
+}
+
+async fn review_actual_replies(provider_id: &'static str, kind: &'static str, declared: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut handler, mut identity) = fixture(root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({"enabled":true,"selfLearningEnabled":true,"prompt":"Support","preferences":"",
+        "connections":[{"providerId":provider_id,"kind":kind,"profile":"work","id":"peer",
+        "name":"Peer","policy":{"automatic":true,"askBeforeAct":false}}]});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+    // Simulate a grant already active when yesterday's provider messages were sent.
+    let now = chrono::Utc::now();
+    let since = now - chrono::Duration::hours(26);
+    let sent = now - chrono::Duration::hours(25);
+    let db = rusqlite::Connection::open(store.path()).unwrap();
+    assert_eq!(db.execute("UPDATE loop_items SET metadata=json_set(metadata,'$.primary.connections[0].enabledAfter',?1) WHERE resource_type='personal_stand_in'", [since.to_rfc3339()]).unwrap(), 1);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut host =
+        json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)});
+    handler.configure_connection_host(host.clone()).unwrap();
+    if declared {
+        host["observationOnlyProviders"] =
+            json!([{"providerId":provider_id,"resourceKinds":[kind]}]);
+        handler.configure_connection_host(host.clone()).unwrap();
+        assert!(handler
+            .training_connection_sources(&store, 7)
+            .unwrap()
+            .is_empty());
+        let grant =
+            &store.configured_personal_stand_in(7, "mac").unwrap()["primary"]["connections"][0];
+        let message =
+            json!({"id":"received","text":"A sender reported an outage","at":sent.to_rfc3339()});
+        store
+            .ingest_stand_in_message(7, "@primary", grant, &message, None)
+            .unwrap();
+        let collected = handler
+            .training_connection_sources(&store, 7)
+            .unwrap()
+            .pop()
+            .unwrap()["source"]
+            .clone();
+        assert_eq!(collected["collectedObservations"], true);
+        let read = || {
+            handler.training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &collected,
+                since.timestamp_millis()..now.timestamp_millis(),
+                None,
+            )
+        };
+        let page = read().await.unwrap();
+        assert_eq!(page["reviewCoverage"], "partial");
+        assert_eq!(page["messages"][0]["id"], "message:received");
+        assert_eq!(page["messages"][0]["author"], "unknown");
+        for n in 0..20 {
+            let mut event = message.clone();
+            event["id"] = json!(format!("status-{n}"));
+            store
+                .ingest_stand_in_message(7, "@primary", grant, &event, None)
+                .unwrap();
+        }
+        host["observationOnlyProviders"] = json!([]);
+        host["reviewHistoryProviders"] = json!([{"providerId":provider_id,"resourceKinds":[kind]}]);
+        handler.configure_connection_host(host).unwrap();
+        assert_eq!(read().await.unwrap_err().code, "permission_denied");
+    }
+    let source = handler
+        .training_connection_sources(&store, 7)
+        .unwrap()
+        .pop()
+        .unwrap()["source"]
+        .clone();
+    let source_key = LocalTaskStore::training_source_id("@primary", &source);
+    let delivered = |request, text, id, versions| {
+        store
+            .record_training_reply(
+                DeliveryRole {
+                    user: 7,
+                    device: "mac",
+                    role_device: "mac",
+                    role: "@primary",
+                },
+                &source,
+                AcceptedReply {
+                    request,
+                    text,
+                    native_id: Some(id),
+                    versions: Some(versions),
+                },
+            )
+            .unwrap();
+    };
+    delivered(
+        "question",
+        "Public download",
+        "answer",
+        ("ghost-1", "memory-1"),
+    );
+    delivered(
+        "new-question",
+        "Later answer",
+        "new-answer",
+        ("ghost-2", "memory-2"),
+    );
+    let state = store
+        .record_memory_review_page(
+            7,
+            &source_key,
+            "previous",
+            since.timestamp_millis(),
+            0,
+            json!([]),
+            None,
+        )
+        .unwrap();
+    store
+        .complete_memory_review_source(
+            7,
+            &source_key,
+            "previous",
+            state["version"].as_i64().unwrap(),
+            false,
+        )
+        .unwrap();
+
+    let provider = axum::Router::new().route(
+        "/wework/connections/v1/rpc",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| async move {
+            assert_eq!(body["method"], "readSource");
+            assert_eq!(body["providerId"], provider_id);
+            assert_eq!(body["input"]["source"]["id"], "peer");
+            assert_eq!(body["input"]["source"]["name"], "Peer");
+            let since_ms = body["input"]["query"]["since"].as_str()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).unwrap().timestamp_millis();
+            if declared && since_ms == sent.timestamp_millis() - 1000 {
+                return axum::Json(json!({"ok":true,"result":{"items":[],"hasMore":false,
+                    "reviewUseCollectedEvents":true,"reviewCoverage":"partial"}}));
+            }
+            if declared && since_ms == sent.timestamp_millis() - 2000 {
+                return axum::Json(json!({"ok":false,"error":{"code":"forbidden","message":"role access revoked"}}));
+            }
+            let row = |id, author, text, offset, quote: Option<&str>| {
+                json!({"id":id,"author":author,"text":text,"conversationId":"chat",
+            "at":(sent+chrono::Duration::seconds(offset)).to_rfc3339(),"quotedMessageId":quote})
+            };
+            let rows = [
+                row("question", "participant", "Download?", -1, None),
+                row(
+                    "answer",
+                    "accountAutomation",
+                    "Public download",
+                    0,
+                    Some("question"),
+                ),
+                row(
+                    "followup",
+                    "owner",
+                    "Use the internal download",
+                    1,
+                    Some("answer"),
+                ),
+            ];
+            let recent_at = (now - chrono::Duration::seconds(1)).to_rfc3339();
+            let recent = json!({"id":"new-answer","author":"accountAutomation","text":"Later answer",
+                "conversationId":"chat","at":recent_at,"quotedMessageId":"new-question"});
+            let query = &body["input"]["query"];
+            let items: Vec<_> = rows
+                .into_iter().chain([recent])
+                .filter(|row| {
+                    row["at"].as_str() >= query["since"].as_str()
+                        && row["at"].as_str() < query["trainingUntil"].as_str()
+                })
+                .collect();
+            let mut result = json!({"items":items,"hasMore":false});
+            if declared {
+                result["reviewCoverage"] = json!("complete");
+            }
+            axum::Json(json!({"ok":true,"result":result}))
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    if declared {
+        let conditional_since = sent.timestamp_millis() - 1000;
+        let page = handler
+            .training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &source,
+                conditional_since..now.timestamp_millis(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(page["reviewCoverage"], "partial");
+        assert_eq!(page["messages"].as_array().unwrap().len(), 20);
+        assert!(page["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["author"] == "unknown"));
+        let cursor = &page["nextCursor"];
+        assert!(cursor["collectedEvents"].is_string());
+        let last = handler
+            .training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &source,
+                conditional_since..now.timestamp_millis(),
+                Some(cursor),
+            )
+            .await
+            .unwrap();
+        assert_eq!(last["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(last["hasMore"], false);
+        let native = &cursor["collectedEvents"];
+        assert!(handler
+            .training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &source,
+                conditional_since..now.timestamp_millis(),
+                Some(native)
+            )
+            .await
+            .is_err());
+        assert!(handler
+            .training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &source,
+                conditional_since - 1000..now.timestamp_millis(),
+                Some(cursor)
+            )
+            .await
+            .is_err());
+        assert!(handler
+            .training_connection_page(
+                &store,
+                7,
+                "@primary",
+                &source,
+                since.timestamp_millis()..now.timestamp_millis(),
+                Some(cursor)
+            )
+            .await
+            .is_err());
+    }
+    let review = handler
+        .automation_store
+        .create(crate::runtime_work::automations::memory_review(7, "mac").unwrap())
+        .unwrap();
+    let (_, run) = handler
+        .automation_store
+        .start_manual_run(&review.id)
+        .unwrap();
+    identity.task_id = run.coordination.as_ref().unwrap().task_id.clone();
+    identity.memory_review = true;
+    handler.upsert_local_task(RuntimeTaskLink {local_task_id:identity.task_id.clone(),runtime_handle:json!({
+        "origin":{"type":"stand_in_schedule","memoryReview":true,"userId":7,"deviceId":"mac","standInId":"@primary","automationId":review.id},
+        "executionRequest":{"user_id":7,"standInSchedule":{"id":review.id,"version":review.version,"runId":run.id}}
+    }), ..Default::default()});
+    let (events, mut emitted) = tokio::sync::broadcast::channel(8);
+    handler.event_tx = Some(events);
+    let report = || {
+        handler.dispatch(
+            "runtime.stand_in.memory.rework_report",
+            json!({"userId":7,"roleId":"@primary"}),
+        )
+    };
+    let page = handler
+        .memory_progress_operation(&identity, "next_memory_page", &json!({"taskId":source_key}))
+        .await
+        .unwrap();
+    assert_eq!(page["page"]["messages"][1]["author"], "assistant");
+    let reference =
+        |id, excerpt| json!({"id":id,"excerpt":excerpt,"readArguments":page["readArguments"]});
+    if declared {
+        handler.save_training_case(&identity, &json!({"taskId":source_key,"kind":"observation",
+            "content":"This support request concerns a download.","scene":reference("question","Download?")})).await.unwrap();
+    }
+    handler.save_training_case(&identity, &json!({"taskId":source_key,"kind":"correction","content":"Offer the required internal entry.",
+        "scene":reference("question","Download?"),"actual":reference("answer","Public download"),
+        "expected":reference("followup","Use the internal download")})).await.unwrap();
+    let before = report().await.unwrap();
+    assert_eq!(
+        (
+            before["completeRequests"].as_u64(),
+            before["pendingRequests"].as_u64()
+        ),
+        (Some(0), Some(1))
+    );
+    handler
+        .memory_progress_operation(
+            &identity,
+            "complete_memory_source",
+            &json!({"taskId":source_key, "reworkReviewComplete":true}),
+        )
+        .await
+        .unwrap();
+    handler
+        .settle_arrangement(&run, AutomationRunStatus::Succeeded, None, None)
+        .unwrap();
+    let verified = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        loop {
+            let result = report().await.unwrap();
+            if result["lastBackgroundVerifiedAt"].is_string() {
+                break result;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("successful scheduled review must stamp the current role report");
+    assert_eq!(verified["completeRequests"], 1);
+    assert_eq!(verified["ownerReworkRequests"], 1);
+    assert_eq!(verified["pendingRequests"], 1);
+    let measured = verified["cohorts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["ghostVersion"] == "ghost-1")
+        .unwrap();
+    assert_eq!(measured["memoryVersion"], "memory-1");
+    assert_eq!(measured["ownerReworkRequests"], 1);
+    assert!(handler
+        .dispatch(
+            "runtime.stand_in.memory.rework_report",
+            json!({"userId":7,"roleId":"unknown-role"})
+        )
+        .await
+        .is_err());
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"]["connections"] = json!([]);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let revoked = report().await.unwrap();
+    assert_eq!(revoked["completeRequests"], 0);
+    assert_eq!(revoked["cohorts"], json!([]));
+    assert!(revoked["lastBackgroundVerifiedAt"].is_null());
+    assert_eq!(
+        emitted.try_recv().unwrap()["event"],
+        "runtime.automation_runs.changed"
+    );
+    assert!(matches!(
+        emitted.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    server.abort();
 }

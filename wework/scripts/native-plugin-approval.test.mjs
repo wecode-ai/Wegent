@@ -191,6 +191,7 @@ test('ignores a vanished X11 window while still selecting the owned native modal
     ['windowfocus', '--sync', '1'],
     expect.anything()
   )
+  expect(native.execute.mock.calls.filter(([, args]) => args[0] === 'search')).toHaveLength(1)
 })
 
 test('re-enumerates vanished X11 windows within the original decision deadline', async () => {
@@ -222,7 +223,7 @@ test('re-enumerates vanished X11 windows within the original decision deadline',
   expect(native.execute).toHaveBeenCalledWith(
     'xdotool',
     ['windowfocus', '--sync', '99'],
-    expect.anything()
+    expect.objectContaining({ timeout: 11_900 })
   )
 })
 
@@ -245,6 +246,117 @@ test('preserves unexpected X11 property failures without sending native input', 
     expect(
       native.execute.mock.calls.some(([, args]) => ['windowfocus', 'key'].includes(args[0]))
     ).toBe(false)
+  } finally {
+    log.mockRestore()
+  }
+})
+
+test('discards an interrupted X11 tree scan and discovers only the owned modal', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  let searches = 0
+  const searchTimeouts = []
+  native.execute.mockImplementation(async (_command, args, options) => {
+    if (args[0] === 'search') {
+      expect(args).toEqual(['search', '--all', '--sync', '--onlyvisible', '--pid', '123'])
+      searchTimeouts.push(options.timeout)
+      if (++searches === 1) {
+        throw Object.assign(new Error('Window vanished during X_QueryTree'), {
+          code: 1,
+          stdout: '666\n',
+          stderr:
+            'X Error of failed request: BadWindow (invalid Window parameter)\n' +
+            '  Major opcode of failed request: 15 (X_QueryTree)',
+        })
+      }
+      return { stdout: '1\n99\n' }
+    }
+    if (args[0] === 'getwindowname') {
+      expect(args[1]).not.toBe('666')
+      return { stdout: args[1] === '99' ? 'Confirm Core plugin update\n' : 'WeWork\n' }
+    }
+    return { stdout: '' }
+  })
+  const decision = withNativePluginDecision(
+    { applicationProcessId: 123, command: vi.fn() },
+    async () => 'installed'
+  )
+  const completed = decision.then(
+    value => ({ value }),
+    error => ({ error })
+  )
+  await vi.advanceTimersByTimeAsync(0)
+  expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+  await vi.advanceTimersByTimeAsync(100)
+  expect(await completed).toEqual({ value: 'installed' })
+  expect(searchTimeouts).toEqual([12_000, 11_900])
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['windowfocus', '--sync', '99'],
+    expect.anything()
+  )
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['key', '--clearmodifiers', 'Tab', 'Return'],
+    expect.anything()
+  )
+})
+
+test('vanishing X11 trees cannot extend the native decision deadline or admit input', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const timeouts = []
+  native.execute.mockImplementation(async (command, args, options) => {
+    if (command === 'xprop') return { stdout: '' }
+    expect(args[0]).toBe('search')
+    timeouts.push(options.timeout)
+    throw Object.assign(new Error('Tree window disappeared'), {
+      code: 1,
+      stderr: 'BadWindow (invalid Window parameter)',
+    })
+  })
+  try {
+    const decision = withNativePluginDecision(
+      { applicationProcessId: 123, command: vi.fn() },
+      async () => null
+    )
+    const rejected = expect(decision).rejects.toThrow(
+      'did not display its native Core plugin decision'
+    )
+    await vi.advanceTimersByTimeAsync(12_000)
+    await rejected
+    expect(timeouts[0]).toBe(12_000)
+    expect(timeouts.at(-1)).toBe(100)
+    expect(timeouts.every((timeout, index) => timeout === 12_000 - index * 100)).toBe(true)
+    expect(
+      native.execute.mock.calls.some(([, args]) => ['windowfocus', 'key'].includes(args[0]))
+    ).toBe(false)
+  } finally {
+    log.mockRestore()
+  }
+})
+
+test('rejects non-BadWindow enumeration failures without native input', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const original = Object.assign(new Error('X11 access denied'), {
+    code: 1,
+    stderr: 'Access denied',
+  })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  native.execute.mockImplementation(async (command, args) => {
+    if (command === 'xprop') return { stdout: '' }
+    expect(args[0]).toBe('search')
+    throw original
+  })
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    expect(
+      native.execute.mock.calls.some(([, args]) => ['windowfocus', 'key'].includes(args[0]))
+    ).toBe(false)
+    expect(native.execute.mock.calls.filter(([, args]) => args[0] === 'search')).toHaveLength(1)
   } finally {
     log.mockRestore()
   }

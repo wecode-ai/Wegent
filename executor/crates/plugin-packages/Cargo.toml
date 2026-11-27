@@ -25,6 +25,7 @@ libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 ring = "0.17.14"
 serde = { version = "1", features = ["derive"] }
+semver = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 tar = "0.4"

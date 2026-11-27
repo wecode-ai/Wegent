@@ -4,6 +4,9 @@
 
 use super::{client::reconcile_account_plugins, *};
 
+pub(super) mod retry;
+use retry::{RetryBackoff, AUTHENTICATION_RETRY_PREFIX};
+
 impl<T, R> LocalBackendRunner<T, R>
 where
     T: LocalBackendTransport,
@@ -44,7 +47,10 @@ where
                 .map(|gateway| gateway.local_addr.port()),
         );
         let _session_gateway = session_gateway;
-        let mut retry_delay = self.client.config.reconnect_delay;
+        let mut retry = RetryBackoff::new(
+            self.client.config.reconnect_delay,
+            self.client.config.reconnect_delay_max,
+        );
         write_executor_log_line(&local_backend_starting_log_line(
             &self.client.config.backend_url,
             &self.client.config.device_id,
@@ -66,12 +72,9 @@ where
                         ));
                     }
                     if stable_connection {
-                        retry_delay = self.client.config.reconnect_delay;
+                        retry.reset();
                     } else {
-                        sleep(retry_delay).await;
-                        retry_delay = retry_delay
-                            .saturating_mul(2)
-                            .min(self.client.config.reconnect_delay_max);
+                        sleep(retry.after_failure(false)).await;
                     }
                 }
                 Err(error) => {
@@ -81,10 +84,24 @@ where
                         &self.client.config.backend_url,
                         &error,
                     ));
-                    sleep(retry_delay).await;
-                    retry_delay = retry_delay
-                        .saturating_mul(2)
-                        .min(self.client.config.reconnect_delay_max);
+                    let authentication = error.starts_with(AUTHENTICATION_RETRY_PREFIX);
+                    let delay = retry.after_failure(authentication);
+                    write_executor_log_line(&format_executor_log(
+                        "local backend reconnect scheduled",
+                        &[
+                            ("retry_delay_seconds", delay.as_secs().to_string()),
+                            (
+                                "reason",
+                                if authentication {
+                                    "authentication"
+                                } else {
+                                    "connection"
+                                }
+                                .to_owned(),
+                            ),
+                        ],
+                    ));
+                    sleep(delay).await;
                 }
             }
         }

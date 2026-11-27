@@ -15,7 +15,7 @@ import {
 } from './conversation-navigation.mjs'
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
-import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
+import { logDesktopE2eSignal, processExitDiagnostics } from '../process-lifecycle.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { collectRuntimeQueueEvidence } from './runtime-queue-evidence.mjs'
 
@@ -91,7 +91,8 @@ async function waitForProcessExitWithin(processId, timeoutMs, message) {
     if (!processIsAlive(processId)) return Date.now() - startedAt
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(message)
+  const diagnostics = processExitDiagnostics({ pid: processId, exitCode: null, signalCode: null })
+  throw new Error(`${message}: ${JSON.stringify(diagnostics)}`)
 }
 
 function desktopWindowLogPath() {

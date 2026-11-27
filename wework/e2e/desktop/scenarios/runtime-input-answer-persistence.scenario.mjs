@@ -597,6 +597,10 @@ export function createDesktopScenario(options) {
   const consecutive = createConsecutiveQuestions(options)
   return {
     ...persistence,
+    cleanup() {
+      consecutive.cleanup()
+      persistence.cleanup()
+    },
     async handleHttp(request, response, url) {
       if (await consecutive.handleHttp(request, response, url)) return true
       return persistence.handleHttp(request, response, url)

@@ -64,6 +64,8 @@ Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 nam
 
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
+Core DSH 以固定路径提供内置界面插件的 JavaScript 入口。渲染器在入口 URL 中带上当前构建的源码 SHA，避开同源下旧版本遗留的缓存。入口响应使用 `no-store`，带内容哈希的资源仍可长期缓存，以保证工作台与插件从同一构建加载 React 上下文。
+
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
 
 ```mermaid
@@ -162,6 +164,8 @@ Logo 轮廓由 `wework/electron/scripts/generate-startup-brand.py` 从原始透�
 
 ### 运行时任务与目标状态
 
+待回复通知通过 `runtime.tasks.list` 的 `pendingOnly` 和 `preferCached` 读取本地任务索引。Executor 在构建列表摘要前筛出未归档且等待回复的任务。排查空闲 CPU 时，可对比 `runtime work list finished` 日志中的 `candidate_tasks` 和 `tasks`，分别查看生成摘要的候选任务数和返回的任务数。
+
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
@@ -229,6 +233,16 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 Wework 发起压缩前先解析目标会话保存的模型选择，并用当前凭据、模型请求头和执行设备的代理设置重新生成模型配置，再通过 App-IPC 交给 executor。持久化的执行配置已移除密钥和请求头，只能用于恢复身份，不能直接用于模型请求；没有 Wework 模型覆盖的会话继续使用原生 Codex 配置。
 
 手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+
+恢复已停止的 Goal 属于会消耗模型的操作：executor 必须在 `thread/goal/set` 激活目标前，使用任务当前模型配置注册并绑定线程路由。历史刷新只恢复原生线程，不能代替模型路由准备；executor 重启或空闲路由回收后尤其如此。路由引用由现有线程事件路由持有，持续到 Goal 暂停、阻塞、完成或清除，不能在激活 RPC 返回时释放；已有运行中的对话继续使用其当前路由和模型选择。桌面 `goal-state-sync` 检查点覆盖失败目标在隔离应用重启、历史刷新后的 UI 恢复，核对真实模型调用、`update_goal` 工具完成、会话身份与目标计数保留。
+
+可用 `pnpm --filter wework e2e:desktop -- --parallel-segments goal-resume-route` 单独运行此回归，复用 CI 的共享 runtime 准备流程；CI 仍在既有 `goal-state-sync` 检查点内执行它，不新增独立检查点进程或 job；用例自身执行一次受控应用重启。
+
+配额恢复在完成本地执行归属登记后释放发送锁，再进行可能阻塞的账号与额度读取；校验完成后重新获取锁，并复核该执行仍可继续。取消请求因此可以在外部读取未返回时发出取消信号，而不会等待恢复流程持有的同一把锁。既有配额协议测试通过挂起账号读取验证取消仍能完成。
+
+Goal 状态快照只在读取期间没有更新的目标操作或原生通知时投影到本地缓存。激活、暂停、清除及原生通知会使较早的读取失效，防止迟到的 blocked 或空目标快照释放新激活的路由；读取不持有目标修改锁，避免阻塞恢复或与条件更新形成嵌套锁。目标修改尚未返回时，原生通知仍可更新展示状态，但不能提前清理 Goal 执行记录或释放准备中的模型路由；由修改响应或后续权威快照确认非活动状态后再清理。
+
+“打断并发送”在请求停止后释放发送锁，使配额取消流程能够完成；等待停止绑定原 execution ID；超时但尚未收到停止确认时保留执行归属，不能强制清理后发送替换消息。重新拿锁后通过普通发送准入检查新的执行归属，不能取消或覆盖等待期间进入的新执行。
 
 压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 
@@ -489,6 +503,8 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`WEWORK_PARENT_TITLE` 提供当前任务标题，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
+
+Wework 桌面应用启动本地 executor 时，会传入 Electron 报告的应用版本。executor 向模型发送请求时会附上 `x-wework-version`、`x-wework-platform` 和 `x-wework-arch`，分别表示应用版本、操作系统和执行架构。经 Wegent 模型网关的请求使用网关的上游请求头转发机制，模型服务收到相同的字段名。
 
 ### 聊天任务设备解析与 Claude Code 启动上下文
 

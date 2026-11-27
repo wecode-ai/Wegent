@@ -143,7 +143,8 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_ids(&mut responses_body);
+    normalize_responses_request_input(&mut responses_body, api_format == "openai-responses");
+    group_responses_tool_history(&mut responses_body);
     image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {
@@ -159,6 +160,13 @@ pub(super) fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        if let Some(items) = responses_body
+            .get_mut("input")
+            .and_then(Value::as_array_mut)
+        {
+            merge_tool_outputs(items);
+        }
+        request_policy::strip_incompatible_responses_history_ids(&mut responses_body);
         if tool_capabilities.function_tools_only {
             request_policy::retain_function_tools(&mut responses_body)?;
         }
@@ -191,6 +199,113 @@ pub(super) fn prepare_request_with_model_hint(
     Ok((body, Some(context), HashSet::new()))
 }
 
+// Code Mode can emit both the cell result and notify() updates for one call.
+fn merge_tool_outputs(items: &mut Vec<Value>) {
+    let mut first_by_call = std::collections::HashMap::new();
+    let mut removed = false;
+    for index in 0..items.len() {
+        let item = &items[index];
+        if matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call")
+        ) {
+            // Forked history can contain an earlier invocation with the same provider ID.
+            if let Some(id) = item["call_id"].as_str() {
+                first_by_call.remove(id);
+            }
+            continue;
+        }
+        if !matches!(
+            item["type"].as_str(),
+            Some("function_call_output" | "custom_tool_call_output")
+        ) {
+            continue;
+        }
+        let Some(id) = item["call_id"].as_str().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let first = *first_by_call.entry(id.to_owned()).or_insert(index);
+        if first == index {
+            continue;
+        }
+        let extra = items[index]["output"].take();
+        let output = &mut items[first]["output"];
+        match (&mut *output, extra) {
+            (Value::String(original), Value::String(text)) => {
+                original.push('\n');
+                original.push_str(&text);
+            }
+            (output, extra) => {
+                if !output.is_array() {
+                    *output = json!([{"type":"input_text","text":output.take()}]);
+                }
+                let parts = output.as_array_mut().unwrap();
+                match extra {
+                    Value::Array(more) => parts.extend(more),
+                    text => parts.push(json!({"type":"input_text","text":text})),
+                }
+            }
+        }
+        items[index] = Value::Null;
+        removed = true;
+    }
+    if removed {
+        items.retain(|item| !item.is_null());
+    }
+}
+
+fn group_responses_tool_history(body: &mut Value) {
+    let Some(items) = body["input"].as_array_mut() else {
+        return;
+    };
+    let mut pending = HashSet::new();
+    let mut group_start = 0;
+    let mut commentary = Vec::new();
+
+    for index in 0..items.len() {
+        let item = &items[index];
+        if chat::is_unlinked_server_tool_search(item) {
+            continue;
+        }
+        let call_id = item["call_id"].as_str().filter(|id| !id.is_empty());
+        match (item["type"].as_str(), call_id) {
+            (Some("function_call" | "custom_tool_call" | "tool_search_call"), Some(id)) => {
+                if pending.is_empty() {
+                    group_start = index;
+                }
+                pending.insert(id.to_owned());
+            }
+            (
+                Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
+                Some(id),
+            ) if pending.remove(id) => {
+                if pending.is_empty() && !commentary.is_empty() {
+                    // Message-based adapters require calls and results to be adjacent.
+                    let group = &mut items[group_start..=index];
+                    let mut ordered = Vec::with_capacity(group.len());
+                    for position in commentary.drain(..) {
+                        ordered.push(std::mem::take(&mut group[position - group_start]));
+                    }
+                    ordered.extend(
+                        group
+                            .iter_mut()
+                            .filter(|item| !item.is_null())
+                            .map(std::mem::take),
+                    );
+                    group.swap_with_slice(&mut ordered);
+                }
+            }
+            (Some("message"), _) if !pending.is_empty() && item["role"] == "assistant" => {
+                commentary.push(index);
+            }
+            _ => {
+                pending.clear();
+                commentary.clear();
+            }
+        }
+    }
+}
+
 pub(super) fn apply_configured_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
     let Some(max_output_tokens) = max_output_tokens else {
         return;
@@ -218,21 +333,34 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
     );
 }
 
-pub(super) fn normalize_responses_request_ids(body: &mut Value) -> usize {
+fn normalize_responses_request_input(body: &mut Value, native_responses: bool) {
     let Some(input) = body.get_mut("input") else {
-        return 0;
+        return;
     };
     let items = match input {
-        Value::Array(items) => items.as_mut_slice(),
+        Value::Array(items) => {
+            discard_nameless_function_calls(items);
+            items.retain_mut(retain_responses_input_item);
+            items.as_mut_slice()
+        }
         Value::Object(_) => std::slice::from_mut(input),
-        _ => return 0,
+        _ => return,
     };
-    let mut changed = 0;
 
     for item in items {
+        if let Some(message) = chat::detached_context_message(item, native_responses) {
+            *item = message;
+            continue;
+        }
         let Some(object) = item.as_object_mut() else {
             continue;
         };
+        if object.get("type").and_then(Value::as_str) == Some("agent_message") {
+            // The message content carries the sender and recipient in its Codex envelope.
+            object.retain(|field, _| field == "content");
+            object.insert("type".to_owned(), json!("message"));
+            object.insert("role".to_owned(), json!("developer"));
+        }
         for field in ["id", "call_id"] {
             let Some(value) = object.get_mut(field) else {
                 continue;
@@ -243,12 +371,62 @@ pub(super) fn normalize_responses_request_ids(body: &mut Value) -> usize {
             let normalized = normalized_responses_api_id(raw);
             if normalized != raw {
                 *value = Value::String(normalized);
-                changed += 1;
             }
         }
     }
+}
 
-    changed
+fn discard_nameless_function_calls(items: &mut Vec<Value>) {
+    let mut invalid_ids: HashSet<_> = items
+        .iter()
+        .filter(|item| nameless_function_call(item))
+        .map(|item| item["call_id"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    if invalid_ids.is_empty() {
+        return;
+    }
+
+    // A callable item can still own an ID also used by a malformed item.
+    for item in items.iter().filter(|item| {
+        matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call" | "tool_search_call")
+        ) && !nameless_function_call(item)
+    }) {
+        invalid_ids.remove(item["call_id"].as_str().unwrap_or_default());
+    }
+    items.retain(|item| {
+        if nameless_function_call(item) {
+            return false;
+        }
+        let call_id = item["call_id"].as_str().unwrap_or_default();
+        // Codex can carry detached context as a function result with an empty ID.
+        item["type"] != "function_call_output"
+            || !invalid_ids.contains(call_id)
+            || (call_id.is_empty() && item["output"] != "unsupported call: ")
+    });
+}
+
+pub(super) fn nameless_function_call(item: &Value) -> bool {
+    item["type"] == "function_call"
+        && !item["name"]
+            .as_str()
+            .is_some_and(|name| !name.trim().is_empty())
+}
+
+fn retain_responses_input_item(item: &mut Value) -> bool {
+    if item["type"] != "message" || item["role"] != "assistant" {
+        return true;
+    }
+    let Some(content) = item.get_mut("content").and_then(Value::as_array_mut) else {
+        return true;
+    };
+    let original_len = content.len();
+    content.retain(|part| {
+        part["type"] != "output_text" || !part["text"].as_str().is_some_and(str::is_empty)
+    });
+    // Providers may emit an empty assistant message alongside a tool call.
+    !content.is_empty() || original_len == 0
 }
 
 pub(super) fn normalized_responses_api_id(value: &str) -> String {

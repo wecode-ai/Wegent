@@ -73,7 +73,7 @@ jobs:
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -101,7 +101,7 @@ jobs:
   prepare-platform-e2e-image:
     name: Prepare Platform E2E Image
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -172,7 +172,7 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
+    if: (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -191,7 +191,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/scripts/resolve-backend-rs-e2e-dependencies.sh', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
@@ -225,18 +225,23 @@ jobs:
             exit 1
           fi
 
+      - name: Set up Backend E2E Buildx
+        if: steps.image-check.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
       - name: Build Backend Rust E2E runtime
         if: steps.image-check.outputs.exists != 'true'
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          metadata="$(node .github/scripts/ci-prebuilt-images.mjs backend-rs-deps "$GITHUB_REPOSITORY_OWNER")"
-          dependencies="$(jq -r .restoreImage <<< "$metadata")"
-          arguments=()
-          if docker manifest inspect "$dependencies" >/dev/null 2>&1; then
+          dependencies="$(.github/scripts/resolve-backend-rs-e2e-dependencies.sh)"
+          cache="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:buildcache"
+          arguments=(--cache-from "type=registry,ref=$cache")
+          if [[ -n "$dependencies" ]]; then
             arguments+=(--build-arg "DEPS_IMAGE=$dependencies")
           fi
-          docker build --platform linux/amd64 \
+          docker buildx build --load --platform linux/amd64 \
             --file .github/runtime-images/backend-rs-builder.Dockerfile \
             --target runtime --tag "$IMAGE" "${arguments[@]}" .
           container_id="$(docker create "$IMAGE")"
@@ -314,7 +319,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      packages: read
+      packages: write
+    env:
+      DELIVERY_PR_CACHE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('ghcr.io/{0}/wegent-backend-delivery-ci:buildcache-amd64-pr-{1}', github.repository_owner, github.event.pull_request.number) || '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -327,6 +334,14 @@ jobs:
       - name: Set up Backend delivery Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
+      - name: Log in for PR-scoped Backend delivery cache
+        if: env.DELIVERY_PR_CACHE != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - name: Build Backend delivery image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
@@ -337,7 +352,10 @@ jobs:
           push: false
           tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
           labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
+            ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0}', env.DELIVERY_PR_CACHE) || '' }}
+          cache-to: ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}
 
       - name: Verify Backend delivery image
         env:
@@ -362,7 +380,7 @@ jobs:
     # Every fork still publishes a same-head binary artifact for desktop consumers.
     # Published immutable seeds can be pulled anonymously; unpublished fork images
     # retain the existing image-archive transport.
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
+    if: (needs.changes.outputs.platform_e2e == 'true' || ((github.event_name == 'merge_group' && needs.changes.outputs.wework_desktop_e2e == 'true' || github.event_name == 'pull_request' && needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository))) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -410,9 +428,19 @@ jobs:
         id: image-check
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          CACHE_PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.number || '' }}
         run: |
-          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+          manifest="$RUNNER_TEMP/executor-e2e-image-manifest.json"
+          if docker buildx imagetools inspect --raw "$IMAGE" > "$manifest" 2>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            if [[ -n "$CACHE_PR_NUMBER" ]]; then
+              digest=$(sha256sum < "$manifest")
+              digest=${digest%% *}
+              repository=${IMAGE%@*}
+              repository=${repository%:*}
+              echo "cache-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-e2e-claudecode-executor:binary-amd64-v1-$digest-pr-$CACHE_PR_NUMBER" >> "$GITHUB_OUTPUT"
+              echo "pinned-image=$repository@sha256:$digest" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -472,18 +500,46 @@ jobs:
           tags: wegent/e2e-claudecode-executor:latest
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
+      - name: Set up ORAS for the same-PR Executor binary
+        if: steps.image-check.outputs.cache-ref != ''
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Restore same-PR Executor binary
+        if: steps.image-check.outputs.cache-ref != ''
+        id: executor-pr-cache
+        env:
+          CACHE_REF: ${{ steps.image-check.outputs.cache-ref }}
+        run: |
+          if ! oras manifest fetch "$CACHE_REF" >/dev/null 2>&1; then
+            echo "No Executor binary cached at $CACHE_REF"
+            exit 0
+          fi
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          oras pull --output "$temporary" "$CACHE_REF"
+          install -D -m 0755 "$temporary/wegent-executor" executor/target/release/wegent-executor
+          echo "Restored Executor binary from $CACHE_REF"
+          echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+
       - name: Restore published Executor runtime
-        if: steps.image-check.outputs.exists == 'true'
+        if: steps.image-check.outputs.exists == 'true' && steps.executor-pr-cache.outputs.cache-hit != 'true'
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          PINNED_IMAGE: ${{ steps.image-check.outputs.pinned-image }}
           FORK_ARTIFACT: ${{ steps.access.outputs.artifact }}
         run: |
-          docker pull "$IMAGE"
+          docker pull "${PINNED_IMAGE:-$IMAGE}"
+          if [[ -n "$PINNED_IMAGE" && "$PINNED_IMAGE" != "$IMAGE" ]]; then
+            docker tag "$PINNED_IMAGE" "$IMAGE"
+          fi
           if [[ "$FORK_ARTIFACT" == "true" ]]; then
             docker tag "$IMAGE" wegent/e2e-claudecode-executor:latest
           fi
 
       - name: Extract Executor binary
+        if: steps.executor-pr-cache.outputs.cache-hit != 'true'
         env:
           EXECUTOR_E2E_IMAGE: ${{ steps.access.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || steps.runtime.outputs.image }}
         run: |
@@ -514,6 +570,15 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      - name: Publish same-PR Executor binary
+        if: steps.image-check.outputs.cache-ref != '' && steps.executor-pr-cache.outputs.cache-hit != 'true'
+        env:
+          CACHE_REF: ${{ steps.image-check.outputs.cache-ref }}
+        working-directory: executor/target/release
+        run: |
+          oras push --artifact-type application/vnd.wegent.executor-e2e-binary.v1 \
+            "$CACHE_REF" wegent-executor:application/octet-stream
+
       - name: Upload fork Executor E2E runtime
         if: steps.transport.outputs.artifact == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -532,7 +597,6 @@ jobs:
     needs:
       [
         build-frontend-e2e,
-        build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
@@ -586,6 +650,7 @@ jobs:
             shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 6
+            subscriptionExecutionNotifications: true
           - shardIndex: 7
             shardTotal: 8
             dingtalkOAuth: false
@@ -697,7 +762,7 @@ jobs:
           uv pip install -e ../shared
 
       - name: Restore Claude Code CLI
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 1 || matrix.subscriptionExecutionNotifications
         id: claude-code-cli-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -705,11 +770,11 @@ jobs:
           key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
       - name: Install Claude Code CLI
-        if: matrix.shardIndex == 1 && steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        if: (matrix.shardIndex == 1 || matrix.subscriptionExecutionNotifications) && steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
       - name: Verify Claude Code CLI
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 1 || matrix.subscriptionExecutionNotifications
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Prepare Chat Shell tokenizers
@@ -726,15 +791,6 @@ jobs:
           .github/scripts/download-actions-artifact.sh \
             frontend-next-build \
             .ci-artifacts
-
-      - name: Download Backend Rust E2E runtime
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            backend-rs-e2e-runtime \
-            .ci-artifacts
-          chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Download Executor E2E binary
         env:
@@ -773,6 +829,18 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
           uv run --no-sync alembic upgrade head
+
+      - name: Download Backend Rust E2E runtime
+        env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "1500"
+          ACTIONS_ARTIFACT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACTIONS_ARTIFACT_JOB: Build Backend Rust E2E Runtime
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
 
       # Runs 40548056927 and 40547828678: shard 1 was slowest; shard 3
       # had the shortest browser phase and shard 4 had room for remote indexing.
@@ -911,6 +979,7 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           DELIVERY_S3_BUCKET: wegent-deliveries
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          WEGENT_RS_ROUTES_FILE: ${{ github.workspace }}/.github/ci/backend-e2e-routes.toml
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           RUST_LOG: info,brz_http_gateway::proxy=debug,brz_http_server::hyper::runtime=debug
         run: |
@@ -1055,9 +1124,11 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PYTHONPATH: ..:.
+          E2E_API_URL: http://localhost:8000
         run: |
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
+          uv run --no-sync python tests/e2e/issue_participation_im.py
 
       - name: Run subscription callback and system MCP gateway E2E
         if: matrix.shardIndex == 1
@@ -1088,7 +1159,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
       - name: Run terminal handoff gateway E2E
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 8
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1098,13 +1169,21 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
-          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/terminal-handoff-gateway
           PYTHONPATH: ..:.
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
           uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
+
+      - name: Upload terminal handoff gateway E2E report
+        if: always() && matrix.shardIndex == 8
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terminal-handoff-gateway-e2e
+          path: .ci-artifacts/terminal-handoff-gateway/
+          retention-days: 14
 
       # Redis ACL fault injection must finish before shared Celery consumers start.
       - name: Start parallel Backend index worker
@@ -1300,7 +1379,7 @@ jobs:
           name: attachment-upload-replica-e2e
           path: .ci-artifacts/attachment-upload-replica/
       - name: Run subscription execution notification directives E2E
-        if: matrix.shardIndex == 1
+        if: matrix.subscriptionExecutionNotifications
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1310,7 +1389,7 @@ jobs:
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-execution-notification-directives
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
-          E2E_DEVICE_ID: e2e-platform-device-1
+          E2E_DEVICE_ID: e2e-platform-device-${{ matrix.shardIndex }}
           E2E_EXECUTOR_IMAGE: wegent/e2e-claudecode-executor:latest
           PYTHONPATH: ..:.
         run: |
@@ -1322,7 +1401,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload subscription execution notification directives E2E report
-        if: always() && matrix.shardIndex == 1
+        if: always() && matrix.subscriptionExecutionNotifications
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: subscription-execution-notification-directives-e2e
@@ -1572,19 +1651,22 @@ jobs:
           retention-days: 7
 
   executor-e2e-tests:
-    name: Executor E2E Tests
+    name: Executor E2E Tests (${{ matrix.suite }})
     permissions:
       actions: read
       contents: read
       packages: read
-    needs:
-      [
-        build-backend-rs-e2e-runtime,
-        build-executor-e2e-runtime,
-        prepare-platform-e2e-image,
-      ]
+    needs: [build-executor-e2e-runtime, prepare-platform-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: device
+            project: executor-device-chromium
+          - suite: sandbox
+            project: executor-chromium
 
     services:
       mysql:
@@ -1777,15 +1859,6 @@ jobs:
             frontend-next-build \
             .ci-artifacts
 
-      - name: Download Backend Rust E2E runtime
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            backend-rs-e2e-runtime \
-            .ci-artifacts
-          chmod 0755 .ci-artifacts/wegent-backend-rs
-
       - name: Download Executor E2E binary
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1850,6 +1923,18 @@ jobs:
           echo "E2E_CODEX_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
           echo "Docker bridge host: $DOCKER_BRIDGE_HOST"
 
+      - name: Download Backend Rust E2E runtime
+        env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "1500"
+          ACTIONS_ARTIFACT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACTIONS_ARTIFACT_JOB: Build Backend Rust E2E Runtime
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
       - name: Start backend server
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
@@ -1869,6 +1954,9 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          # Use the server's bounded drain before the intentional Backend restart.
+          WEGENT_PYTHON_RELOAD: "false"
+          GRACEFUL_SHUTDOWN_TIMEOUT: "20"
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
@@ -1929,6 +2017,7 @@ jobs:
             executor/local-executor.pid
 
       - name: Start Claude Code Compaction Executor
+        if: matrix.suite == 'device'
         env:
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
@@ -2011,15 +2100,8 @@ jobs:
             && wait_for_url http://localhost:8191/health \
             || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && cat backend/executor-recovery.log && exit 1)
 
-      - name: Verify backend is running
-        run: |
-          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
-
-      - name: Verify Chat Shell is running
-        run: |
-          curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
-
       - name: Run Executor Manager resilience E2E tests
+        if: matrix.suite == 'device'
         working-directory: ./executor_manager
         env:
           E2E_REDIS_URL: redis://localhost:6379/15
@@ -2028,6 +2110,7 @@ jobs:
         run: uv run pytest e2e_tests/ --no-cov -v
 
       - name: Verify retired artifact revision against real MySQL
+        if: matrix.suite == 'device'
         working-directory: ./backend
         env:
           WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
@@ -2036,6 +2119,7 @@ jobs:
 
       - name: Run Executor E2E tests
         env:
+          E2E_EXECUTOR_PROJECT: ${{ matrix.project }}
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
@@ -2048,9 +2132,17 @@ jobs:
           E2E_EXECUTOR_RECOVERY_URL: http://localhost:8191
           CI: true
         run: |
+          # Exercise the SDK against the same Manager and envd image while browser tests run.
+          sandbox_probe_pid=
+          if [[ "${{ matrix.suite }}" == sandbox ]]; then
+            (cd backend && uv run --no-sync python -m tests.e2e.sandbox_command_deadline) &
+            sandbox_probe_pid=$!
+          fi
+
           # Sandbox veth changes must not invalidate the browser's network stack.
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
+          playwright_status=0
           docker run --rm \
             --network bridge \
             --add-host wegent-e2e-runner:host-gateway \
@@ -2070,6 +2162,7 @@ jobs:
             --env E2E_BASE_URL \
             --env E2E_API_URL \
             --env E2E_USE_ISOLATED_USERS \
+            --env E2E_EXECUTOR_PROJECT \
             --env MOCK_MODEL_SERVER_URL \
             --env E2E_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CODEX_MODEL_SERVER_URL \
@@ -2083,11 +2176,40 @@ jobs:
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
+            node ./node_modules/@playwright/test/cli.js test --project="$E2E_EXECUTOR_PROJECT" || playwright_status=$?
+
+          sandbox_probe_status=0
+          if [[ -n "$sandbox_probe_pid" ]]; then
+            wait "$sandbox_probe_pid" || sandbox_probe_status=$?
+          fi
+          [[ "$playwright_status" == 0 && "$sandbox_probe_status" == 0 ]]
+
+      - name: Run Responses device cancellation E2E
+        if: matrix.suite == 'device'
+        working-directory: ./backend
+        env:
+          E2E_API_URL: http://127.0.0.1:8000
+          E2E_MODEL_URL: http://127.0.0.1:9999
+          DATABASE_URL: mysql+pymysql://root:test123@127.0.0.1:3306/wegent_test
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: uv run --no-sync python -m tests.e2e.responses_device_cancel
+
+      - name: Run cloud model gateway Goal recovery E2E
+        if: ${{ !matrix.suite || matrix.suite == 'device' }}
+        working-directory: ./backend
+        env:
+          E2E_API_URL: http://127.0.0.1:8000
+          E2E_MODEL_URL: http://127.0.0.1:9999
+          E2E_EXECUTOR_BINARY: ${{ github.workspace }}/executor/target/release/wegent-executor
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+        run: uv run --no-sync python -m tests.e2e.cloud_gateway_goal_recovery
 
       # Keep normal executor coverage on production thresholds. Replace only the
       # Backend after that suite, retaining its binaries, ports and dependencies.
       - name: Restart Backend for stalled Chat SSE regression
+        if: matrix.suite == 'sandbox'
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
@@ -2105,6 +2227,8 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          WEGENT_PYTHON_RELOAD: "false"
+          GRACEFUL_SHUTDOWN_TIMEOUT: "20"
           TASK_STALLED_SWEEP_INTERVAL_SECONDS: "1"
           TASK_STALLED_TIMEOUT_SECONDS: "4"
           TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: "4"
@@ -2114,9 +2238,13 @@ jobs:
           kill -TERM "$backend_pid"
           # The supervisor removes its state after waiting for both children.
           # Do not start a second Backend while the previous one is draining.
-          timeout 60 bash -c '
+          if ! timeout 60 bash -c '
             while kill -0 "$1" 2>/dev/null || [ -f "$2" ]; do sleep 1; done
-          ' _ "$backend_pid" "$WEGENT_HYBRID_STATE_FILE"
+          ' _ "$backend_pid" "$WEGENT_HYBRID_STATE_FILE"; then
+            echo "::error::The previous Backend did not finish shutting down"
+            ps -o pid,ppid,stat,comm -p "$backend_pid" || true
+            exit 1
+          fi
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend-stalled.log 2>&1 &
           echo $! > backend/backend.pid
@@ -2130,6 +2258,7 @@ jobs:
           exit 1
 
       - name: Run stalled Chat SSE regression
+        if: matrix.suite == 'sandbox'
         env:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
@@ -2245,12 +2374,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: blob-report-executor
+          name: blob-report-executor-${{ matrix.suite }}
           path: frontend/blob-report/
           retention-days: 14
 
       - name: Upload stalled Chat SSE test results
-        if: always()
+        if: always() && matrix.suite == 'sandbox'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: blob-report-executor-stalled
@@ -2261,7 +2390,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: playwright-traces-executor
+          name: playwright-traces-executor-${{ matrix.suite }}
           path: |
             frontend/test-results/
             frontend/test-results-stalled/
@@ -2271,7 +2400,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: backend-logs-executor
+          name: backend-logs-executor-${{ matrix.suite }}
           path: |
             backend/backend.log
             backend/executor-recovery.log
@@ -2303,12 +2432,13 @@ jobs:
     steps:
       - name: Check Platform E2E results
         env:
-          RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true') }}
+          RUN_E2E: ${{ needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
+          RUN_EXECUTOR_BUILD: ${{ (needs.changes.outputs.platform_e2e == 'true' || ((github.event_name == 'merge_group' && needs.changes.outputs.wework_desktop_e2e == 'true' || github.event_name == 'pull_request' && needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository))) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           RUN_DELIVERY: ${{ needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-          RUN_BACKEND_RUNTIME: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true')) }}
+          RUN_BACKEND_RUNTIME: ${{ (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           BACKEND_BUILD_RESULT: ${{ needs.build-backend-rs-e2e-runtime.result }}
           DELIVERY_BUILD_RESULT: ${{ needs.verify-backend-delivery-image.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
@@ -2336,12 +2466,15 @@ jobs:
             assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E runtime"
           fi
 
+          if [[ "$RUN_EXECUTOR_BUILD" == "true" ]]; then
+            assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
+          fi
+
           if [[ "$RUN_E2E" != "true" ]]; then
-            echo "Platform E2E is not required for this pull request"
+            echo "Platform E2E is not required for this event"
             exit 0
           fi
 
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
-          assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"

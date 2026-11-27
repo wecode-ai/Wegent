@@ -1,4 +1,5 @@
 use super::*;
+use crate::local_model_proxy::responses_stream::accept_responses_event;
 
 pub(super) fn extract_custom_tool_input(arguments: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(arguments) {
@@ -12,6 +13,15 @@ pub(super) fn extract_custom_tool_input(arguments: &str) -> Option<String> {
     Some(arguments.to_owned())
 }
 
+fn restored_tool_item_id(item_id: &str, kind: &ToolKind) -> String {
+    let prefix = match kind {
+        ToolKind::Custom => "ctc_",
+        ToolKind::ToolSearch => "tsc_",
+        ToolKind::Function => return item_id.to_owned(),
+    };
+    format!("{prefix}{}", item_id.strip_prefix("fc_").unwrap_or(item_id))
+}
+
 pub(super) fn restore_responses_tool_item(
     item: &mut Value,
     identity: &ToolIdentity,
@@ -21,6 +31,11 @@ pub(super) fn restore_responses_tool_item(
         item["name"] = Value::String(identity.name.clone());
         if let Some(namespace) = &identity.namespace {
             item["namespace"] = Value::String(namespace.clone());
+        }
+    }
+    if identity.kind != ToolKind::Function {
+        if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+            item["id"] = Value::String(restored_tool_item_id(item_id, &identity.kind));
         }
     }
     match identity.kind {
@@ -127,8 +142,12 @@ where
                     while let Some(block) =
                         crate::local_model_proxy::take_sse_block(&mut state.pending)
                     {
-                        if crate::local_model_proxy::is_responses_terminal_event(&block) {
-                            state.terminal_seen = true;
+                        if !accept_responses_event(
+                            &block,
+                            &mut state.terminal_seen,
+                            &mut state.output,
+                        ) {
+                            break;
                         }
                         let rewritten =
                             rewrite_responses_sse_block(&block, &mut state.context_state);
@@ -171,8 +190,12 @@ where
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
-                        if crate::local_model_proxy::is_responses_terminal_event(trailing) {
-                            state.terminal_seen = true;
+                        if !accept_responses_event(
+                            trailing,
+                            &mut state.terminal_seen,
+                            &mut state.output,
+                        ) {
+                            continue;
                         }
                         let rewritten =
                             rewrite_responses_sse_block(trailing, &mut state.context_state);
@@ -249,6 +272,7 @@ pub(super) fn rewrite_responses_sse_block(
                 .is_some_and(|identity| identity.kind == ToolKind::Custom)
             {
                 let input = state.custom_input(&item_id).unwrap_or_default();
+                let item_id = restored_tool_item_id(&item_id, &ToolKind::Custom);
                 let output_index = value.get("output_index").cloned().unwrap_or(Value::Null);
                 let mut events = String::new();
                 events.push_str(&format_sse_event(

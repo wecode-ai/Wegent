@@ -30,9 +30,10 @@ pub(super) fn inject_current_session(
         .filter(|id| !id.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    request
-        .extra
-        .insert("client_user_message_id".to_owned(), json!(message_id));
+    request.extra.insert(
+        "client_user_message_id".to_owned(),
+        Value::String(message_id),
+    );
     let selection = request
         .extra
         .get("modelSelection")
@@ -41,7 +42,6 @@ pub(super) fn inject_current_session(
         "api_conversation_supported": true,
         "base_url": request_backend_url(request).and_then(|url| api_base_url(&url)),
         "conversation_id": handle("conv_", &[device_id, local_task_id]),
-        "response_id": handle("resp_", &[device_id, local_task_id, &message_id]),
         "execution": {"type": "wework", "device_id": device_id},
         "model": selection.and_then(api_model_id),
         "model_name": selection.and_then(|s| s.get("modelName").or_else(|| s.get("model_name")))
@@ -193,21 +193,16 @@ mod tests {
         assert_eq!(value["api_conversation_supported"], true);
         let message_id = request.extra["client_user_message_id"].as_str().unwrap();
         assert!(uuid::Uuid::parse_str(message_id).is_ok());
-        let parts: Value = serde_json::from_slice(
-            &URL_SAFE_NO_PAD
-                .decode(
-                    value["response_id"]
-                        .as_str()
-                        .unwrap()
-                        .strip_prefix("resp_")
-                        .unwrap(),
-                )
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(parts, json!(["设备", "task-1", message_id]));
+        assert!(value.get("response_id").is_none());
         assert!(value["model"].is_null());
         assert_eq!(value["model_name"], "gpt-local");
+
+        request
+            .extra
+            .insert("client_user_message_id".into(), json!("next-message"));
+        inject_current_session(&mut request, "设备", "task-1");
+        assert_eq!(request.extra["client_user_message_id"], "next-message");
+        assert_eq!(context(&request), value);
     }
 
     #[test]

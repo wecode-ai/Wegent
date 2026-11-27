@@ -107,6 +107,7 @@ export interface WorkbenchMessage<
   status: WorkbenchMessageStatus
   error?: string
   errorType?: string
+  errorInfo?: import('./api-types').ChatErrorInfo
   attachments?: TAttachment[]
   blocks?: WorkbenchProcessingBlock<TFileChanges>[]
   fileChanges?: TFileChanges
@@ -133,6 +134,7 @@ export interface WorkbenchContentLoadRef {
 type ProcessingBlockUpdate = {
   content?: string
   contentDelta?: string
+  contentOffset?: number
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputDelta?: string
@@ -192,6 +194,7 @@ export type WorkbenchMessageAction<
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
       startedAt?: number
+      completedAt?: number
       durationMs?: number
     }
   | {
@@ -214,6 +217,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       error: string
       errorType?: string
+      errorInfo?: import('./api-types').ChatErrorInfo
       startedAt?: number
       durationMs?: number
     }
@@ -460,6 +464,7 @@ export function reduceWorkbenchMessages<
               status: 'failed',
               error: action.error,
               errorType: action.errorType,
+              errorInfo: action.errorInfo,
               blocks: finalizeProcessingBlocks(undefined, 'error')
             })
           )
@@ -479,6 +484,10 @@ export function reduceWorkbenchMessages<
                 message.error && isGenericTaskStatusError(action.error)
                   ? message.errorType
                   : action.errorType,
+              errorInfo:
+                message.error && isGenericTaskStatusError(action.error)
+                  ? message.errorInfo
+                  : action.errorInfo,
               blocks: finalizeProcessingBlocks(message.blocks, 'error')
             })
           : message
@@ -536,7 +545,7 @@ export function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
-  const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
+  const { contentDelta, contentOffset, toolOutputDelta, durationMs, ...directUpdates } =
     updates
   let nextBlock = withBlockCompletionTime(block, {
     ...block,
@@ -566,11 +575,17 @@ export function mergeProcessingBlockUpdate<TFileChanges>(
   ) {
     const previousContentChars =
       nextBlock.contentOriginalChars ?? textCodePointLength(nextBlock.content)
+    const merged = mergeWorkbenchChunkContent(
+      nextBlock.content,
+      previousContentChars,
+      previousContentChars,
+      contentDelta,
+      contentOffset
+    )
     nextBlock = {
       ...nextBlock,
-      content: `${nextBlock.content}${contentDelta}`,
-      contentOriginalChars:
-        previousContentChars + textCodePointLength(contentDelta)
+      content: merged.content,
+      contentOriginalChars: merged.contentOriginalChars
     } as WorkbenchProcessingBlock<TFileChanges>
   }
 
@@ -1162,6 +1177,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges,
   error,
   errorType,
+  errorInfo,
   runtimeStatus,
   completedAt,
   stoppedNotice
@@ -1177,6 +1193,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges?: TFileChanges
   error?: string
   errorType?: string
+  errorInfo?: import('./api-types').ChatErrorInfo
   runtimeStatus?: WorkbenchRuntimeMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -1194,6 +1211,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     fileChanges,
     error,
     errorType,
+    errorInfo,
     runtimeStatus,
     completedAt,
     stoppedNotice,
@@ -1204,11 +1222,12 @@ function createAssistantMessage<TAttachment, TFileChanges>({
 function clearMessageError<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): WorkbenchMessage<TAttachment, TFileChanges> {
-  if (!message.error && !message.errorType) return message
+  if (!message.error && !message.errorType && !message.errorInfo) return message
 
   const {
     error: _error,
     errorType: _errorType,
+    errorInfo: _errorInfo,
     ...messageWithoutError
   } = message
   return messageWithoutError

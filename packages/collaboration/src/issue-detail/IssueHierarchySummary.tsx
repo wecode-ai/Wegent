@@ -1,7 +1,8 @@
-import { useState } from 'react'
 import { ChevronDown, ChevronRight, GitBranch, Plus } from 'lucide-react'
-import type { CollaborationIssue } from '../types'
+import { useState } from 'react'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { CollaborationIssue } from '../types'
 
 export function IssueHierarchySummary({
   item,
@@ -18,54 +19,47 @@ export function IssueHierarchySummary({
 }) {
   const [expanded, setExpanded] = useState(true)
   const related = allItems.filter(
-    (candidate) =>
-      candidate.can_view_detail !== false &&
-      candidate.cloud_project_id === item.cloud_project_id,
+    candidate =>
+      candidate.can_view_detail !== false && candidate.cloud_project_id === item.cloud_project_id
   )
-  const parent = related.find((candidate) => candidate.id === item.parent_id)
-  const children = related.filter(
-    (candidate) => candidate.parent_id === item.id,
-  )
-  const completed = children.filter(
-    (child) => child.status === 'completed',
-  ).length
+  const parent = related.find(candidate => candidate.id === item.parent_id)
+  const children = related.filter(candidate => candidate.parent_id === item.id)
+  const completed = children.filter(child => child.status === 'completed').length
   if (!parent && children.length === 0 && !onAddChild) return null
   return (
-    <section
-      data-testid="issue-hierarchy-summary"
-      className="mb-4 mt-6 space-y-2"
-    >
+    <section data-testid="issue-hierarchy-summary" className="mb-4 mt-6 space-y-2">
       {parent ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="issue-parent-link"
           onClick={() => onOpen(parent)}
-          title={`${parent.id} · ${parent.title}`}
-          className="flex max-w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left text-xs text-text-secondary hover:bg-muted max-md:min-h-11"
+          title={parent.title}
+          className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left text-xs text-text-secondary hover:bg-muted max-md:min-h-11"
         >
           <GitBranch className="h-3.5 w-3.5 shrink-0" />
           <span className="shrink-0">{t('todo.parent_board_parent')}</span>
-          <span className="truncate">{parent.title}</span>
-          <span className="shrink-0 text-text-muted">{parent.id}</span>
-        </button>
+          <span className="min-w-0 truncate">{parent.title}</span>
+          {parent.sequence_number > 0 ? (
+            <span className="shrink-0 text-text-muted">#{parent.sequence_number}</span>
+          ) : null}
+        </ControlButton>
       ) : null}
       {children.length || onAddChild ? (
         <div>
           <div className="task-detail-workspace-section-head">
             {children.length > 0 ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="issue-children-toggle"
                 aria-expanded={expanded}
-                onClick={() => setExpanded((value) => !value)}
+                onClick={() => setExpanded(value => !value)}
                 className="task-detail-workspace-section-title flex min-h-8 min-w-0 items-center gap-2 rounded-lg text-left hover:bg-muted max-md:min-h-11"
               >
                 {t('todo.parent_board_children')}
                 {children.length > 0 ? (
-                  <span
-                    data-testid="issue-children-progress"
-                    className="ml-1 text-text-muted"
-                  >
+                  <span data-testid="issue-children-progress" className="ml-1 text-text-muted">
                     {t('todo.parent_board_progress', undefined, {
                       completed,
                       total: children.length,
@@ -77,7 +71,7 @@ export function IssueHierarchySummary({
                 ) : (
                   <ChevronRight className="h-4 w-4" />
                 )}
-              </button>
+              </ControlButton>
             ) : (
               <>
                 <h3 className="task-detail-workspace-section-title">
@@ -88,7 +82,8 @@ export function IssueHierarchySummary({
             )}
             {onAddChild ? (
               <div className="task-detail-workspace-section-actions">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="issue-hierarchy-add-child"
                   onClick={onAddChild}
@@ -96,7 +91,7 @@ export function IssueHierarchySummary({
                 >
                   <Plus className="h-4 w-4" />
                   {t('todo.parent_board_add_child')}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
           </div>
@@ -105,8 +100,10 @@ export function IssueHierarchySummary({
               data-testid="issue-hierarchy-children-list"
               className="max-h-56 overflow-y-auto overscroll-y-contain"
             >
-              {children.map((child) => (
-                <button
+              {children.map(child => (
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   key={child.id}
                   type="button"
                   data-testid={`issue-hierarchy-child-${child.id}`}
@@ -119,15 +116,13 @@ export function IssueHierarchySummary({
                   />
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
                   <span className="max-w-24 truncate text-xs text-text-muted">
-                    {child.assignee_agent_name ??
-                      child.assignee_team_name ??
-                      child.assignee_name}
+                    {child.assignee_agent_name ?? child.assignee_team_name ?? child.assignee_name}
                   </span>
                   <span className="shrink-0 text-xs text-text-muted">
                     {t(`todo.status_${child.status}`, child.status)}
                   </span>
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                </button>
+                </ControlButton>
               ))}
             </div>
           ) : null}

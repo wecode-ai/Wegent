@@ -1,0 +1,17 @@
+[package]
+name = "wegent-device-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Owned device aliases, runtime routes, and identity snapshots"
+
+[dependencies]
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+wegent-backend-persistence.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+wegent-backend-test-support.workspace = true

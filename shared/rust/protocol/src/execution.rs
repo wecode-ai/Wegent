@@ -7,6 +7,47 @@ use serde_json::{Map, Value};
 
 pub const FULL_KB_TOOL_ACCESS_MODE: &str = "full";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StandInPermissionMode {
+    #[default]
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StandInCommandApproval {
+    Manual,
+    Ai,
+    Automatic,
+}
+
+impl StandInCommandApproval {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Ai => "ai",
+            Self::Automatic => "automatic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StandInTaskPermissions {
+    pub permission_mode: StandInPermissionMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_approval: Option<StandInCommandApproval>,
+}
+
+impl StandInTaskPermissions {
+    pub fn from_role(role: &Value) -> Self {
+        Self::deserialize(&role["taskPermissions"]).unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentKind {
     ClaudeCode,
@@ -42,6 +83,8 @@ pub struct ExecutionRequest {
     pub kb_tool_access_mode: String,
     pub skip_git_clone: bool,
     pub new_session: bool,
+    /// Backend-selected fresh-session fallback, preserved through wire metadata.
+    pub legacy_session_fallback: bool,
     pub ephemeral: bool,
     pub fork_runtime: Option<Value>,
     pub inherited_sessions: Vec<Value>,
@@ -72,6 +115,9 @@ pub struct ExecutionRequest {
     /// Set by the device from its RuntimeWork task, never from a dispatch payload.
     #[serde(skip)]
     pub agent_home_runtime_task_id: Option<String>,
+    /// Derived by the owning Runtime from its trusted task record before launch.
+    #[serde(skip)]
+    pub stand_in_task_permissions: Option<StandInTaskPermissions>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -106,6 +152,7 @@ impl Default for ExecutionRequest {
             kb_tool_access_mode: FULL_KB_TOOL_ACCESS_MODE.to_owned(),
             skip_git_clone: false,
             new_session: false,
+            legacy_session_fallback: false,
             ephemeral: false,
             fork_runtime: None,
             inherited_sessions: Vec::new(),
@@ -126,6 +173,7 @@ impl Default for ExecutionRequest {
             runtime_auth_token: None,
             skill_identity_token: None,
             agent_home_runtime_task_id: None,
+            stand_in_task_permissions: None,
             extra: Map::new(),
         }
     }
@@ -205,6 +253,8 @@ impl ExecutionRequest {
         let Value::Object(object) = &mut value else {
             return Value::Object(Map::new());
         };
+        // Derived context must never reuse a value supplied by an earlier turn.
+        object.remove("backend_api_url");
         if let Some(task_type) = &self.task_type {
             object.insert("type".to_owned(), Value::String(task_type.clone()));
         }
@@ -268,7 +318,7 @@ fn value_string(value: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::ExecutionRequest;
+    use super::{ExecutionRequest, StandInTaskPermissions};
     use serde_json::json;
 
     #[test]
@@ -294,10 +344,14 @@ mod tests {
                 "https://other.example/deployment/api"
             );
         }
-        assert!(ExecutionRequest::default()
-            .variable_context()
-            .get("backend_api_url")
-            .is_none());
+        for backend_url in [None, Some(""), Some(" \t\n")] {
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "backend_url": backend_url,
+                "backend_api_url": "https://stale.example/api"
+            }))
+            .unwrap();
+            assert!(request.variable_context().get("backend_api_url").is_none());
+        }
     }
 
     #[test]
@@ -322,5 +376,19 @@ mod tests {
 
         assert_eq!(request.task_id, "task-123");
         assert_eq!(request.subtask_id, "subtask-456");
+    }
+
+    #[test]
+    fn submitted_request_cannot_set_trusted_stand_in_task_permissions() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "stand_in_task_permissions": {"permissionMode": "full-access"}
+        }))
+        .unwrap();
+        assert_eq!(request.stand_in_task_permissions, None);
+        let trusted = ExecutionRequest {
+            stand_in_task_permissions: Some(StandInTaskPermissions::default()),
+            ..Default::default()
+        };
+        assert!(serde_json::to_value(trusted).unwrap()["stand_in_task_permissions"].is_null());
     }
 }

@@ -9,6 +9,9 @@ import {
 import type { StandInExecutorApi } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { ModelSelector } from '@/components/chat/composer/ModelSelector'
+import { isDingTalkSource } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import {
@@ -20,6 +23,8 @@ import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { findStandInProject } from './standInProjects'
 import type { DeviceInfo } from '@/types/api'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { StandInSettingsError } from './StandInSettingsLayout'
+import { useStandInModels } from './useStandInModels'
 
 export interface StandInOnboardingConfiguration {
   settings: PersonalStandInSettings | null
@@ -28,6 +33,8 @@ export interface StandInOnboardingConfiguration {
   projects: CollaborationProject[]
   localDeviceId: string
   devices?: DeviceInfo[]
+  services?: WorkbenchServices
+  dingtalkSourceProblem?: string
   onSelectDevice?(deviceId: string): void
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void
@@ -43,7 +50,7 @@ export function StandInOnboardingSetup({
 }: {
   configuration: StandInOnboardingConfiguration
   api: StandInExecutorApi
-  onComplete(): Promise<boolean>
+  onComplete(openConversation: boolean): Promise<boolean>
   onBusyChange(busy: boolean): void
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
 }) {
@@ -68,14 +75,41 @@ export function StandInOnboardingSetup({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [discard, setDiscard] = useState(false)
-  const connections = useRef<StandInConnectionNavigationHandle>(null)
-  const navigation = useStandInPanelNavigation(!dequal(initialRole, role), busy, () =>
-    setDiscard(true)
+  const models = useStandInModels(
+    configuration.services,
+    {
+      enabled: true,
+      prompt: '',
+      version: baseline?.version ?? 0,
+      executionDeviceId: baseline?.executionDeviceId ?? '',
+      model: role?.model,
+    },
+    'codex',
+    Boolean(baseline)
   )
+  const model = models.resolve(models.selectedModel)
+  const connections = useRef<StandInConnectionNavigationHandle>(null)
+  const navigation = useStandInPanelNavigation(
+    !dequal(initialRole?.connections, role?.connections) ||
+      !dequal(initialRole?.collaboration, role?.collaboration),
+    busy,
+    () => setDiscard(true)
+  )
+  const discardConnections = () => {
+    if (!initialRole) return
+    setRole(
+      current =>
+        current && {
+          ...current,
+          connections: initialRole.connections,
+          collaboration: initialRole.collaboration,
+        }
+    )
+  }
   const requestLeave = (action: () => void) => {
     const leave = (discarded?: boolean) => {
       if (discarded) {
-        setRole(initialRole)
+        discardConnections()
         action()
       } else navigation.requestLeave(action)
     }
@@ -83,20 +117,9 @@ export function StandInOnboardingSetup({
     else leave()
   }
   useImperativeHandle(ref, () => ({ requestLeave }))
-  const skipConnections = async () => {
-    if (busy) return
-    setBusy(true)
-    onBusyChange(true)
-    try {
-      await onComplete()
-    } finally {
-      setBusy(false)
-      onBusyChange(false)
-    }
-  }
   /** Persist settings before completion, retaining the saved version for completion-only retries. */
-  const finish = async () => {
-    if (!baseline || !role || busy) return
+  const finish = async (saveConnections: boolean) => {
+    if (!baseline || !role || !model || busy) return
     setBusy(true)
     onBusyChange(true)
     setError(null)
@@ -107,9 +130,13 @@ export function StandInOnboardingSetup({
           prompt: '',
           preferences: '',
           ...baseline.primary,
-          enabled: true,
-          connections: role.connections,
-          collaboration: role.collaboration,
+          enabled: saveConnections || (baseline.primary?.enabled ?? false),
+          model,
+          modelOptions: role.modelOptions,
+          ...(saveConnections && {
+            connections: role.connections,
+            collaboration: role.collaboration,
+          }),
         },
       }
       if (!dequal(next, baseline)) {
@@ -120,7 +147,7 @@ export function StandInOnboardingSetup({
         setRole(savedRole)
         setInitialRole(savedRole)
       }
-      await onComplete()
+      await onComplete(!saveConnections)
     } catch (cause) {
       setError(getStandInErrorMessage(cause))
     } finally {
@@ -160,6 +187,61 @@ export function StandInOnboardingSetup({
           </li>
         ))}
       </ol>
+      {role && baseline && (
+        <div className="space-y-2" data-testid="stand-in-onboarding-model">
+          <h3 className="text-sm font-medium">{t('standIn.model_label')}</h3>
+          <ModelSelector
+            models={models.models}
+            getModelOptionId={models.getModelOptionId}
+            selectedModel={models.selectedModel}
+            selectedModelOptions={role.modelOptions ?? {}}
+            disabled={busy || loading}
+            buttonClassName="min-h-11 rounded-md border border-border md:min-h-8"
+            menuPlacement="below"
+            menuAlign="start"
+            menuClassName="z-critical"
+            onOpenChange={open => {
+              if (open) models.refresh()
+            }}
+            onSelectModel={next =>
+              setRole(
+                current => current && { ...current, model: models.resolve(next), modelOptions: {} }
+              )
+            }
+            onSelectModelAndOptions={(next, options) =>
+              setRole(
+                current =>
+                  current && { ...current, model: models.resolve(next), modelOptions: options }
+              )
+            }
+            onSelectModelOption={(key, value) =>
+              setRole(
+                current =>
+                  current && { ...current, modelOptions: { ...current.modelOptions, [key]: value } }
+              )
+            }
+          />
+          <p className="text-sm text-text-secondary" data-testid="stand-in-onboarding-model-help">
+            {t('standIn.onboarding.model_help')}
+          </p>
+          {models.loading && (
+            <p role="status" className="text-sm text-text-secondary">
+              {t('workbench.local_model_loading_models_action')}
+            </p>
+          )}
+          <StandInSettingsError
+            error={
+              models.error ??
+              (!models.loading && !model ? t('standIn.errors.model_unavailable') : null)
+            }
+            retry={{
+              testId: 'stand-in-onboarding-model-retry',
+              disabled: busy,
+              onClick: models.refresh,
+            }}
+          />
+        </div>
+      )}
       <p className="text-sm text-text-secondary">
         {t(`standIn.onboarding.${confirming ? 'confirm_help' : 'connect_help'}`)}
       </p>
@@ -198,11 +280,30 @@ export function StandInOnboardingSetup({
               >
                 <p>{source.name}</p>
                 <p className="text-text-secondary">
-                  {source.configurationSummary ??
-                    t('standIn.workspace.connection_default_configuration')}
+                  {isDingTalkSource(source)
+                    ? t(
+                        source.kind === 'group'
+                          ? 'standIn.dingtalk_delegation.group_mentions'
+                          : 'standIn.dingtalk_delegation.direct'
+                      )
+                    : (source.configurationSummary ??
+                      t('standIn.workspace.connection_default_configuration'))}
                 </p>
               </div>
             ))}
+            {role.connections?.some(isDingTalkSource) && (
+              <p className="text-sm text-text-secondary">
+                {t(
+                  baseline.primary?.delegation?.authorized &&
+                    !baseline.primary.delegation.paused &&
+                    !baseline.primary.delegation.accountInvalidated &&
+                    !baseline.lifecycle &&
+                    !configuration.dingtalkSourceProblem
+                    ? 'standIn.dingtalk_delegation.enabled'
+                    : 'standIn.dingtalk_delegation.paused'
+                )}
+              </p>
+            )}
             {!role.collaboration.enabled && !role.connections?.length && (
               <p className="text-sm text-text-secondary">{t('standIn.onboarding.no_apps')}</p>
             )}
@@ -234,6 +335,46 @@ export function StandInOnboardingSetup({
               hideHeading
               onChange={setRole}
               onDetailViewChange={setDetail}
+              dingTalk={{
+                saved: baseline.primary ?? { enabled: false, prompt: '', preferences: '' },
+                services: configuration.services,
+                devices: configuration.devices,
+                primaryStopped: Boolean(baseline.lifecycle),
+                sourceProblem: configuration.dingtalkSourceProblem,
+                modelSelection: {
+                  identity:
+                    model && !models.errors[model.source === 'cloud' ? 'cloud' : 'native']
+                      ? model
+                      : null,
+                  label: models.selectedModel?.displayName,
+                  options: role.modelOptions,
+                },
+                onBusyChange(saving) {
+                  setBusy(saving)
+                  onBusyChange(saving)
+                },
+                async onSave(primary) {
+                  const saved = await configuration.onSave({ ...baseline, primary })
+                  if (!saved?.primary) return false
+                  const savedPrimary = saved.primary
+                  const dingTalkRows = (savedPrimary.connections ?? []).filter(isDingTalkSource)
+                  const updateRole = (current: StandInRole | null) =>
+                    current && {
+                      ...current,
+                      enabled: savedPrimary.enabled,
+                      model: savedPrimary.model,
+                      modelOptions: savedPrimary.modelOptions,
+                      connections: [
+                        ...(current.connections ?? []).filter(row => !isDingTalkSource(row)),
+                        ...dingTalkRows,
+                      ],
+                    }
+                  setBaseline(saved)
+                  setRole(updateRole)
+                  setInitialRole(updateRole)
+                  return true
+                },
+              }}
             />
           </>
         )
@@ -269,8 +410,8 @@ export function StandInOnboardingSetup({
           data-testid="stand-in-onboarding-skip"
           className="min-h-11 md:min-h-10"
           aria-busy={busy}
-          disabled={busy}
-          onClick={() => requestLeave(() => void skipConnections())}
+          disabled={busy || loading || !model}
+          onClick={() => requestLeave(() => void finish(false))}
         >
           {t('standIn.onboarding.skip_connections')}
         </Button>
@@ -290,9 +431,9 @@ export function StandInOnboardingSetup({
           data-testid={confirming ? 'stand-in-onboarding-complete' : 'stand-in-onboarding-continue'}
           className="min-h-11 md:min-h-10"
           aria-busy={busy}
-          disabled={busy || !role || loading}
+          disabled={busy || !role || loading || (confirming && !model)}
           onClick={() => {
-            if (confirming) void finish()
+            if (confirming) void finish(true)
             else if (connections.current)
               connections.current.requestLeave(() => setConfirming(true))
             else setConfirming(true)
@@ -322,7 +463,7 @@ export function StandInOnboardingSetup({
         }}
         onConfirm={() => {
           setDiscard(false)
-          setRole(initialRole)
+          discardConnections()
           navigation.confirmLeave(() => {})
         }}
       />

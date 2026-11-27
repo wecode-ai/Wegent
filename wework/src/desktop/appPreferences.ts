@@ -72,6 +72,7 @@ export interface AppPreferences {
   browserFullControl: boolean
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  appshotsShortcut: string | null
   computerUseEnabled?: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
@@ -158,6 +159,7 @@ export interface AppPreferencesPatch {
   browserFullControl?: boolean
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  appshotsShortcut?: string | null
   computerUseEnabled?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
@@ -210,6 +212,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  appshotsShortcut: 'CommandOrControl+Shift+2',
   computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
@@ -427,6 +430,12 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    appshotsShortcut:
+      typeof record.appshotsShortcut === 'string' && record.appshotsShortcut.trim()
+        ? record.appshotsShortcut.trim()
+        : Object.prototype.hasOwnProperty.call(record, 'appshotsShortcut')
+          ? null
+          : defaultAppPreferences.appshotsShortcut,
     computerUseEnabled:
       typeof record.computerUseEnabled === 'boolean'
         ? record.computerUseEnabled

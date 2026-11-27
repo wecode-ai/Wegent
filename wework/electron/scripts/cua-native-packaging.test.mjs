@@ -3,7 +3,11 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, test } from 'vitest'
+import { afterAll, expect, test } from 'vitest'
+import {
+  disableAmbientAsarInterception,
+  restoreAmbientAsarInterception,
+} from '../src/runtime/ambient-asar-fixtures.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -15,6 +19,8 @@ const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib'
 const asar = appBuilderRequire('@electron/asar')
 const builderConfig = require('../electron-builder.config.cjs')
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+disableAmbientAsarInterception()
+afterAll(restoreAmbientAsarInterception)
 
 test('declares every supported CUA native package at the driver version', async () => {
   const driver = JSON.parse(

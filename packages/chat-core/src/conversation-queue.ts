@@ -30,6 +30,7 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   attachments?: Attachment[]
   mentions?: ProjectChatMention[]
   displayContent?: string
+  imageMarkupDraftText?: string
   codeComments?: CodeCommentContext[]
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
@@ -42,6 +43,8 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   cloudProjectId?: RuntimeSendRequest['cloudProjectId']
   origin?: RuntimeSendRequest['origin']
   conversationContext?: RuntimeSendRequest['conversationContext']
+  assistantPrompt?: RuntimeSendRequest['assistantPrompt']
+  requestUserInputResponse?: RuntimeSendRequest['requestUserInputResponse']
 }
 
 export interface GuidanceWorkbenchMessage {
@@ -50,4 +53,25 @@ export interface GuidanceWorkbenchMessage {
   status: GuidanceMessageStatus
   createdAt: string
   error?: string
+}
+
+export function canReorderQueuedMessage(message: QueuedWorkbenchMessage): boolean {
+  return (
+    message.status === 'queued' && !message.runtimeQueued && !message.awaitingGuidanceAcceptance
+  )
+}
+
+export function reorderLocalQueuedMessages<Message extends QueuedWorkbenchMessage>(
+  messages: Message[],
+  sourceId: string,
+  targetId: string
+): Message[] {
+  const local = messages.filter(canReorderQueuedMessage)
+  const source = local.findIndex(message => message.id === sourceId)
+  const target = local.findIndex(message => message.id === targetId)
+  if (source < 0 || target < 0 || source === target) return messages
+  const [moved] = local.splice(source, 1)
+  local.splice(target, 0, moved)
+  let next = 0
+  return messages.map(message => (canReorderQueuedMessage(message) ? local[next++] : message))
 }

@@ -1,36 +1,31 @@
-import { Button } from '@/components/ui/button'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useRef, useState } from 'react'
-import { MessageSquare, Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
-import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
+import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
+import { Button } from '@/components/ui/button'
+import {
+  isDingTalkDelegationSource,
+  matchesDingTalkAccount,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MessageSquare, Plus, Search, X } from 'lucide-react'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createSourceConnectionsModel } from './sourceConnectionsModel'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
+import { StandInSourceNavigationContext } from './standInOverviewSource'
 
-type Connection = Pick<
-  StandInSourceConnection,
-  | 'id'
-  | 'name'
-  | 'kind'
-  | 'profile'
-  | 'providerId'
-  | 'scope'
-  | 'collectionKey'
-  | 'configurationSummary'
->
-
-export function StandInSourceConnections({
-  role,
-  provider,
-  api,
-  deviceId,
-  localDeviceId,
-  disabled,
-  onChange,
-  onReady,
-}: {
+type SourceConnectionsProps = {
   role: StandInRole
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
@@ -39,35 +34,132 @@ export function StandInSourceConnections({
   disabled: boolean
   onChange(role: StandInRole): void
   onReady?(): void
-}) {
+  delegatedDingTalk?: boolean
+}
+
+export function StandInSourceConnections(props: SourceConnectionsProps) {
+  const scope = JSON.stringify([
+    props.deviceId,
+    props.localDeviceId,
+    props.role.id,
+    props.role.executionDeviceId,
+    props.provider.id,
+    props.provider.authTarget?.pluginKey,
+    props.provider.authTarget?.connectorSlug,
+    props.delegatedDingTalk,
+    props.delegatedDingTalk ? props.provider.availability.profile : undefined,
+    props.delegatedDingTalk ? props.provider.availability.accountId : undefined,
+  ])
+  const [owner, setOwner] = useState({ api: props.api, scope, revision: 0 })
+  if (owner.api !== props.api || owner.scope !== scope)
+    setOwner({ api: props.api, scope, revision: owner.revision + 1 })
+  return <StandInSourceConnectionsContent key={owner.revision} {...props} />
+}
+
+function StandInSourceConnectionsContent({
+  role,
+  provider,
+  api,
+  deviceId,
+  localDeviceId,
+  disabled,
+  onChange,
+  onReady,
+  delegatedDingTalk = false,
+}: SourceConnectionsProps) {
   const { t, i18n } = useTranslation('common')
-  const [adding, setAdding] = useState(false)
-  const [excluding, setExcluding] = useState<Connection | null>(null)
-  const [newPolicy, setNewPolicy] = useState({
-    automatic: true,
-    askBeforeAct: true,
-    immediate: role.id !== '@primary',
-  })
-  const [kind, setKind] = useState(provider.resourceKinds[0] ?? '')
-  const [scope, setScope] = useState<'selected' | 'all'>(
-    provider.allResourceKinds?.length ? 'all' : 'selected'
+  const requestedSourceId = useContext(StandInSourceNavigationContext)
+  const focusedRequestedSource = useRef(false)
+  const focusTarget = (target: HTMLElement) => {
+    if (focusedRequestedSource.current) return
+    focusedRequestedSource.current = true
+    target.scrollIntoView?.({ block: 'center' })
+    target.focus({ preventScroll: true })
+  }
+  const focusRequestedSource = (node: HTMLDivElement | null) => {
+    if (!node || !requestedSourceId || focusedRequestedSource.current) return
+    const target = node.querySelector<HTMLElement>('[role="checkbox"], button')
+    if (target) focusTarget(target)
+  }
+  const focusRequestedSourceFallback = (node: HTMLElement | null) => {
+    if (
+      !node ||
+      !requestedSourceId ||
+      focusedRequestedSource.current ||
+      !rows.some(row => row.id === requestedSourceId)
+    )
+      return
+    focusTarget(node)
+  }
+  const input = useMemo(
+    () => ({
+      role,
+      provider,
+      api,
+      deviceId,
+      disabled,
+      onChange,
+      onReady,
+      delegatedDingTalk,
+      allResourcesLabel: t('standIn.workspace.all_resources'),
+      cliUnavailableLabel: t('standIn.workspace.connection_cli_request_unavailable', {
+        provider: provider.displayName,
+      }),
+    }),
+    [role, provider, api, deviceId, disabled, onChange, onReady, delegatedDingTalk, t]
   )
-  const [selection, setSelection] = useState<Connection[]>([])
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Connection[]>([])
-  const [nextCursor, setNextCursor] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
-  const [searched, setSearched] = useState(false)
-  const [authOpen, setAuthOpen] = useState(false)
+  const [model] = useState(() => createSourceConnectionsModel(input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const {
+    adding,
+    excluding,
+    newPolicy,
+    kind,
+    scope,
+    selection,
+    query,
+    results,
+    nextCursor,
+    busy,
+    error,
+    searched,
+    authOpen,
+  } = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const setAdding = (value: Parameters<typeof model.set<'adding'>>[1]) => model.set('adding', value)
+  const setExcluding = (value: Parameters<typeof model.set<'excluding'>>[1]) =>
+    model.set('excluding', value)
+  const setNewPolicy = (value: Parameters<typeof model.set<'newPolicy'>>[1]) =>
+    model.set('newPolicy', value)
+  const setKind = (value: Parameters<typeof model.set<'kind'>>[1]) => model.set('kind', value)
+  const setScope = (value: Parameters<typeof model.set<'scope'>>[1]) => model.set('scope', value)
+  const setSelection = (value: Parameters<typeof model.set<'selection'>>[1]) =>
+    model.set('selection', value)
+  const setQuery = (value: Parameters<typeof model.set<'query'>>[1]) => model.set('query', value)
+  const setResults = (value: Parameters<typeof model.set<'results'>>[1]) =>
+    model.set('results', value)
+  const setNextCursor = (value: Parameters<typeof model.set<'nextCursor'>>[1]) =>
+    model.set('nextCursor', value)
+  const setError = (value: Parameters<typeof model.set<'error'>>[1]) => model.set('error', value)
+  const setSearched = (value: Parameters<typeof model.set<'searched'>>[1]) =>
+    model.set('searched', value)
+  const setAuthOpen = (value: Parameters<typeof model.set<'authOpen'>>[1]) =>
+    model.set('authOpen', value)
+  const { search, add, addAll, closeExclusionEditor, isConnected, identity } = model
   const authorizationRequired =
     provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
-  const latest = useRef({ role, onChange })
-  useEffect(() => {
-    latest.current = { role, onChange }
-  }, [role, onChange])
   const allRows = role.connections ?? []
-  const rows = allRows.filter(row => row.providerId === provider.id)
+  const providerRows = allRows.filter(row => row.providerId === provider.id)
+  const rows = providerRows.filter(
+    row =>
+      !delegatedDingTalk ||
+      !provider.availability.accountId ||
+      !row.accountId ||
+      matchesDingTalkAccount(provider.availability, row)
+  )
+  const hiddenRows = providerRows.filter(row => !rows.includes(row))
   const prefix =
     provider.id === '@wegent/dsh-connection-dingtalk/dingtalk'
       ? 'stand-in-dingtalk'
@@ -75,196 +167,19 @@ export function StandInSourceConnections({
   const updateRows = (next: StandInSourceConnection[]) =>
     onChange({
       ...role,
-      connections: [...allRows.filter(row => row.providerId !== provider.id), ...next],
+      connections: [
+        ...allRows.filter(row => row.providerId !== provider.id),
+        ...hiddenRows,
+        ...next,
+      ],
     })
-  const searchSequence = useRef(0)
-  const failSearch = (sequence: number, cause: unknown) => {
-    if (sequence === searchSequence.current) {
-      const code =
-        cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined
-      setError({
-        message:
-          code === 'connection_cli_request_unavailable'
-            ? t('standIn.workspace.connection_cli_request_unavailable', {
-                provider: provider.displayName,
-              })
-            : getStandInErrorMessage(cause),
-        code,
-      })
-    }
-  }
-  const search = async (cursor?: string) => {
-    if (busy || !query.trim()) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    setSearched(false)
-    try {
-      const result = await api.searchConnectionResources(
-        deviceId,
-        provider.id,
-        kind,
-        query.trim(),
-        cursor
-      )
-      if (sequence !== searchSequence.current) return
-      const items = result.items.filter(
-        row => !excluding || (row.profile === excluding.profile && row.kind === excluding.kind)
-      )
-      setResults(previous =>
-        cursor
-          ? [
-              ...previous,
-              ...items.filter(
-                row =>
-                  !previous.some(
-                    value =>
-                      value.id === row.id &&
-                      value.kind === row.kind &&
-                      value.profile === row.profile
-                  )
-              ),
-            ]
-          : items
-      )
-      setNextCursor(result.hasMore ? result.nextCursor : undefined)
-      setSearched(true)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
-  const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
-  const closeExclusionEditor = () => {
-    searchSequence.current += 1
-    setExcluding(null)
-    setSelection([])
-    setResults([])
-    setNextCursor(undefined)
-    setSearched(false)
-    setError(null)
-  }
-  const isConnected = (row: Connection) =>
-    excluding
-      ? rows
-          .find(value => identity(value) === identity(excluding))
-          ?.excludedResources?.some(value => value.id === row.id) === true
-      : rows.some(
-          value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
-        )
-  const add = (items: Connection[]) => {
-    const current = latest.current
-    if (excluding) {
-      if (
-        !current.role.connections?.some(
-          row =>
-            row.providerId === provider.id &&
-            row.scope === 'all' &&
-            identity(row) === identity(excluding)
-        )
-      ) {
-        closeExclusionEditor()
-        return
-      }
-      current.onChange({
-        ...current.role,
-        connections: current.role.connections?.map(row => {
-          if (row.providerId !== provider.id || identity(row) !== identity(excluding)) return row
-          const excludedResources = [...(row.excludedResources ?? [])]
-          for (const item of items) {
-            if (
-              item.profile === row.profile &&
-              item.kind === row.kind &&
-              !excludedResources.some(value => value.id === item.id)
-            )
-              excludedResources.push({ id: item.id, name: item.name })
-          }
-          return { ...row, excludedResources }
-        }),
-      })
-      closeExclusionEditor()
-      return
-    }
-    let connections = [...(current.role.connections ?? [])]
-    if (items.length && items.every(item => item.scope !== 'all')) {
-      const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
-      connections = connections.filter(
-        row =>
-          row.providerId !== provider.id ||
-          row.scope !== 'all' ||
-          !covered.has(JSON.stringify([row.profile, row.kind]))
-      )
-    }
-    for (const item of items) {
-      const same = (row: StandInSourceConnection) =>
-        row.providerId === provider.id && row.profile === item.profile && row.kind === item.kind
-      if (item.scope === 'all') connections = connections.filter(row => !same(row))
-      if (connections.some(row => same(row) && (row.id === item.id || row.scope === 'all')))
-        continue
-      connections.push({
-        ...item,
-        providerId: provider.id,
-        policy: { ...newPolicy },
-      })
-    }
-    current.onChange({ ...current.role, connections })
-    setSelection([])
-    setAdding(false)
-  }
-  const addAll = async () => {
-    if (busy || disabled) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    try {
-      const kinds = provider.allResourceKinds ?? []
-      const pages = await Promise.all(
-        kinds.map(resourceKind =>
-          api.searchConnectionResources(deviceId, provider.id, resourceKind, '', undefined, 'all')
-        )
-      )
-      if (sequence !== searchSequence.current) return
-      const items = pages.map((page, index) => {
-        const item = page.items[0]
-        if (
-          page.items.length !== 1 ||
-          item?.scope !== 'all' ||
-          item.id !== '*' ||
-          item.kind !== kinds[index] ||
-          !item.profile ||
-          item.providerId !== provider.id
-        )
-          throw Object.assign(new Error('Invalid all-resource selection'), {
-            code: 'connection_response_invalid',
-          })
-        return {
-          ...item,
-          name: provider.allResourceLabels?.[item.kind] ?? t('standIn.workspace.all_resources'),
-        }
-      })
-      if (!items.length || new Set(items.map(item => item.profile)).size !== 1)
-        throw Object.assign(new Error('Connection account changed'), {
-          code: 'connection_response_invalid',
-        })
-      add(items)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
   const authorization = authOpen && provider.authTarget && (
     <LocalConnectorAuthDialog
       open
       target={provider.authTarget}
       title={t('standIn.workspace.connect_source', { name: provider.displayName })}
       onCancel={() => setAuthOpen(false)}
-      onSuccess={() => {
-        setAuthOpen(false)
-        setError(null)
-        onReady?.()
-      }}
+      onSuccess={model.authorized}
     />
   )
   const connectedScope = (
@@ -272,28 +187,53 @@ export function StandInSourceConnections({
       {rows.map(row => (
         <div
           key={`${row.profile}:${row.kind}:${row.id}`}
+          ref={row.id === requestedSourceId ? focusRequestedSource : undefined}
           className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
         >
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm">{row.name}</p>
             <p className="text-xs text-text-secondary">
-              {provider.resourceLabels?.[row.kind] ?? row.kind}
-              {' · '}
-              {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
+              {delegatedDingTalk
+                ? t(
+                    !isDingTalkDelegationSource(row)
+                      ? 'standIn.dingtalk_delegation.source_reconfirm'
+                      : row.kind === 'group'
+                        ? 'standIn.dingtalk_delegation.group_mentions'
+                        : 'standIn.dingtalk_delegation.direct'
+                  )
+                : `${provider.resourceLabels?.[row.kind] ?? row.kind} · ${row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}`}
             </p>
           </div>
-          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+          {delegatedDingTalk && isDingTalkDelegationSource(row) && (
+            <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+              <Checkbox
+                data-testid={`${prefix}-pause-${row.id}`}
+                aria-label={t('standIn.dingtalk_delegation.pause_source', { name: row.name })}
+                checked={row.paused === true}
+                disabled={disabled}
+                onCheckedChange={checked =>
+                  updateRows(
+                    rows.map(value =>
+                      value === row ? { ...value, paused: checked === true } : value
+                    )
+                  )
+                }
+              />
+              {t('standIn.dingtalk_delegation.paused')}
+            </label>
+          )}
+          {!delegatedDingTalk &&
+            provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
             row.kind === 'group' &&
             row.scope !== 'all' && (
               <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
                 {t('standIn.workspace.group_message_scope')}
-                <select
-                  data-testid={`${prefix}-message-scope-${row.id}`}
-                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
-                  value={row.collectionKey ?? 'mentions'}
+                <SelectRoot
+                  value={normalizeSelectValue(row.collectionKey ?? 'mentions')}
                   disabled={disabled}
-                  onChange={event => {
-                    const allMessages = event.target.value === 'all-messages'
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    const allMessages = selectedValue === 'all-messages'
                     updateRows(
                       rows.map(value => {
                         if (value !== row) return value
@@ -309,14 +249,26 @@ export function StandInSourceConnections({
                       })
                     )
                   }}
-                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm text-text-primary md:min-h-8 [&>option]:bg-background [&>option]:text-text-primary"
                 >
-                  <option value="mentions">{t('standIn.workspace.group_mentions')}</option>
-                  <option value="all-messages">{t('standIn.workspace.group_all_messages')}</option>
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    data-testid={`${prefix}-message-scope-${row.id}`}
+                    aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                    className="[&>option]:bg-background [&>option]:text-text-primary"
+                  />
+                  <SelectContent>
+                    <SelectItem value="mentions">
+                      {t('standIn.workspace.group_mentions')}
+                    </SelectItem>
+                    <SelectItem value="all-messages">
+                      {t('standIn.workspace.group_all_messages')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
@@ -328,61 +280,65 @@ export function StandInSourceConnections({
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
-          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
-            <div className="w-full space-y-2">
-              <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
-              {row.excludedResources?.map(resource => (
-                <div key={resource.id} className="flex items-center gap-2 text-sm">
-                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-                  <button
-                    type="button"
-                    data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
-                    aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
-                    disabled={disabled}
-                    onClick={() =>
-                      updateRows(
-                        rows.map(value =>
-                          value === row
-                            ? {
-                                ...value,
-                                excludedResources: value.excludedResources?.filter(
-                                  item => item.id !== resource.id
-                                ),
-                              }
-                            : value
+          </ControlButton>
+          {!delegatedDingTalk &&
+            provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+            row.scope === 'all' && (
+              <div className="w-full space-y-2">
+                <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
+                {row.excludedResources?.map(resource => (
+                  <div key={resource.id} className="flex items-center gap-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
+                      aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
+                      disabled={disabled}
+                      onClick={() =>
+                        updateRows(
+                          rows.map(value =>
+                            value === row
+                              ? {
+                                  ...value,
+                                  excludedResources: value.excludedResources?.filter(
+                                    item => item.id !== resource.id
+                                  ),
+                                }
+                              : value
+                          )
                         )
-                      )
-                    }
-                    className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
-                disabled={disabled || busy || authorizationRequired}
-                onClick={() => {
-                  searchSequence.current += 1
-                  setAdding(false)
-                  setExcluding(row)
-                  setKind(row.kind)
-                  setScope('selected')
-                  setSelection([])
-                  setQuery('')
-                  setResults([])
-                  setNextCursor(undefined)
-                  setSearched(false)
-                  setError(null)
-                }}
-                className="min-h-11 text-sm underline md:min-h-8"
-              >
-                {t('standIn.workspace.blacklist_add')}
-              </button>
-            </div>
-          )}
+                      }
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                    >
+                      <X className="h-4 w-4" />
+                    </ControlButton>
+                  </div>
+                ))}
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
+                  disabled={disabled || busy || authorizationRequired}
+                  onClick={() => {
+                    model.invalidateSearch()
+                    setAdding(false)
+                    setExcluding(row)
+                    setKind(row.kind)
+                    setScope('selected')
+                    setSelection([])
+                    setQuery('')
+                    setResults([])
+                    setNextCursor(undefined)
+                    setSearched(false)
+                    setError(null)
+                  }}
+                  className="min-h-11 text-sm underline md:min-h-8"
+                >
+                  {t('standIn.workspace.blacklist_add')}
+                </ControlButton>
+              </div>
+            )}
         </div>
       ))}
     </div>
@@ -390,6 +346,8 @@ export function StandInSourceConnections({
   if (authorizationRequired)
     return (
       <section
+        ref={focusRequestedSourceFallback}
+        tabIndex={requestedSourceId ? -1 : undefined}
         className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
         data-testid={`${prefix}-authorization`}
       >
@@ -402,7 +360,8 @@ export function StandInSourceConnections({
           {t('standIn.errors.connector_auth_required')}
         </p>
         {provider.authTarget && deviceId === localDeviceId ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${prefix}-connect`}
             disabled={disabled}
@@ -410,7 +369,7 @@ export function StandInSourceConnections({
             className="min-h-9 text-sm underline"
           >
             {t('standIn.workspace.connect_source', { name: provider.displayName })}
-          </button>
+          </ControlButton>
         ) : (
           <p className="text-sm text-text-secondary">
             {t('standIn.workspace.authorize_on_device')}
@@ -423,17 +382,22 @@ export function StandInSourceConnections({
   const showAdding = excluding || adding || rows.length === 0
   return (
     <section
+      ref={focusRequestedSourceFallback}
+      tabIndex={requestedSourceId ? -1 : undefined}
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
       data-testid={`${prefix}-connections`}
     >
-      <StandInConnectionHeader
-        icon={MessageSquare}
-        title={provider.displayName}
-        description={t('standIn.workspace.message_connection_help')}
-      />
+      {!delegatedDingTalk && (
+        <StandInConnectionHeader
+          icon={MessageSquare}
+          title={provider.displayName}
+          description={t('standIn.workspace.message_connection_help')}
+        />
+      )}
       {connectedScope}
       {!showAdding && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`${prefix}-add`}
           disabled={disabled}
@@ -446,7 +410,7 @@ export function StandInSourceConnections({
         >
           <Plus className="h-4 w-4" />
           {t('standIn.workspace.add_connection')}
-        </button>
+        </ControlButton>
       )}
       {showAdding && (
         <form
@@ -461,57 +425,65 @@ export function StandInSourceConnections({
               <p className="text-sm">
                 {t('standIn.workspace.blacklist_help', { name: excluding.name })}
               </p>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${prefix}-blacklist-cancel`}
                 onClick={closeExclusionEditor}
                 className="min-h-11 text-sm underline md:min-h-8"
               >
                 {t('standIn.workspace.blacklist_cancel')}
-              </button>
+              </ControlButton>
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             {scope === 'selected' && !excluding && (
-              <select
-                aria-label={t('standIn.workspace.message_kind')}
-                data-testid={`${prefix}-kind`}
-                value={kind}
+              <SelectRoot
+                value={normalizeSelectValue(kind)}
                 disabled={busy}
-                onChange={event => {
-                  searchSequence.current += 1
-                  setKind(event.target.value)
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
+
+                  setKind(selectedValue)
                   setScope('selected')
                   setResults([])
                   setNextCursor(undefined)
                   setSearched(false)
                 }}
-                className="min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-9"
               >
-                {provider.resourceKinds.map(resourceKind => (
-                  <option key={resourceKind} value={resourceKind}>
-                    {provider.resourceLabels?.[resourceKind] ?? resourceKind}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label={t('standIn.workspace.message_kind')}
+                  data-testid={`${prefix}-kind`}
+                  className="min-h-11 md:min-h-9"
+                />
+                <SelectContent>
+                  {provider.resourceKinds.map(resourceKind => (
+                    <SelectItem key={resourceKind} value={String(resourceKind)}>
+                      {provider.resourceLabels?.[resourceKind] ?? resourceKind}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             )}
             {scope === 'selected' && (
               <>
-                <input
+                <ControlInput
                   aria-label={t('standIn.workspace.search_connections')}
                   data-testid={`${prefix}-query`}
                   value={query}
                   onChange={event => {
-                    searchSequence.current += 1
+                    model.invalidateSearch()
                     setQuery(event.target.value)
                     setResults([])
                     setNextCursor(undefined)
                     setSearched(false)
                   }}
-                  className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm md:min-h-9"
+                  className="min-h-11 min-w-0 flex-1 bg-transparent md:min-h-9"
                   placeholder={t('standIn.workspace.search_connections')}
                 />
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="submit"
                   data-testid={`${prefix}-search`}
                   disabled={disabled || busy || !query.trim()}
@@ -519,34 +491,37 @@ export function StandInSourceConnections({
                 >
                   <Search className="h-4 w-4" />
                   {t('standIn.workspace.search')}
-                </button>
+                </ControlButton>
               </>
             )}
           </div>
-          {!excluding && Boolean(provider.allResourceKinds?.length) && (
-            <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
+          {!delegatedDingTalk && !excluding && Boolean(provider.allResourceKinds?.length) && (
+            <RadioGroup
+              value={scope}
+              name="connection-scope"
+              aria-label={t('standIn.workspace.connection_scope')}
+              onValueChange={next => {
+                if (next === 'all' || next === 'selected') {
+                  setScope(next)
+                  setError(null)
+                }
+              }}
+              render={<fieldset />}
+              className="flex flex-wrap gap-4"
+              disabled={disabled || busy}
+            >
               <legend className="mb-2 w-full text-sm font-medium">
                 {t('standIn.workspace.connection_scope')}
               </legend>
               {(['all', 'selected'] as const).map(value => (
                 <label key={value} className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-                  <input
-                    type="radio"
-                    name={`${prefix}-scope`}
-                    data-testid={`${prefix}-scope-${value}`}
-                    checked={scope === value}
-                    onChange={() => {
-                      searchSequence.current += 1
-                      setScope(value)
-                      setError(null)
-                    }}
-                  />
+                  <Radio value={value} data-testid={`${prefix}-scope-${value}`} />
                   {value === 'all'
                     ? (provider.allResourceLabel ?? t('standIn.workspace.all_resources'))
                     : t('standIn.workspace.selected_resources')}
                 </label>
               ))}
-            </fieldset>
+            </RadioGroup>
           )}
           {scope === 'all' && (
             <div className="space-y-3">
@@ -591,7 +566,8 @@ export function StandInSourceConnections({
           {scope === 'selected' && (
             <>
               {results.some(row => !isConnected(row)) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${prefix}-select-results`}
                   disabled={disabled || busy}
@@ -608,29 +584,31 @@ export function StandInSourceConnections({
                   }
                 >
                   {t('standIn.workspace.select_results')}
-                </button>
+                </ControlButton>
               )}
               <div className="max-h-52 overflow-y-auto">
                 {results.map(row => {
                   const connected = isConnected(row)
                   const selected = selection.some(value => identity(value) === identity(row))
                   return (
-                    <button
+                    <label
                       key={identity(row)}
-                      type="button"
-                      role="checkbox"
-                      aria-checked={connected || selected}
-                      data-testid={`${prefix}-result-${row.id}`}
-                      disabled={disabled || connected}
-                      onClick={() =>
-                        setSelection(previous =>
-                          selected
-                            ? previous.filter(value => identity(value) !== identity(row))
-                            : [...previous, row]
-                        )
-                      }
-                      className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-sm hover:bg-muted disabled:text-text-muted"
+                      className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-sm hover:bg-muted"
                     >
+                      <Checkbox
+                        data-testid={`${prefix}-result-${row.id}`}
+                        disabled={disabled || connected}
+                        checked={connected || selected}
+                        onCheckedChange={checked =>
+                          setSelection(previous =>
+                            checked === true
+                              ? previous.some(value => identity(value) === identity(row))
+                                ? previous
+                                : [...previous, row]
+                              : previous.filter(value => identity(value) !== identity(row))
+                          )
+                        }
+                      />
                       <span>{row.name}</span>
                       <span>
                         {t(
@@ -643,12 +621,13 @@ export function StandInSourceConnections({
                               : 'standIn.workspace.select_resource'
                         )}
                       </span>
-                    </button>
+                    </label>
                   )
                 })}
               </div>
               {nextCursor && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${prefix}-search-more`}
                   disabled={busy || disabled}
@@ -656,7 +635,7 @@ export function StandInSourceConnections({
                   onClick={() => void search(nextCursor)}
                 >
                   {t('standIn.workspace.load_more')}
-                </button>
+                </ControlButton>
               )}
               {selection.length > 0 && (
                 <div className="flex items-center gap-3">
@@ -670,7 +649,8 @@ export function StandInSourceConnections({
                   >
                     {t('standIn.workspace.add_selected', { count: selection.length })}
                   </Button>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`${prefix}-clear-selection`}
                     disabled={disabled || busy}
@@ -678,7 +658,7 @@ export function StandInSourceConnections({
                     onClick={() => setSelection([])}
                   >
                     {t('standIn.workspace.clear_selection')}
-                  </button>
+                  </ControlButton>
                 </div>
               )}
             </>
@@ -686,32 +666,34 @@ export function StandInSourceConnections({
           <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
         </form>
       )}
-      <StandInProcessingSettings
-        disabled={disabled}
-        rows={
-          rows.length
-            ? rows.map(row => ({
-                key: identity(row),
-                name: row.name,
-                policy: row.policy,
-                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                testId: `${prefix}-policy-${row.id}`,
-                onChange: policy =>
-                  updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
-              }))
-            : [
-                {
-                  key: 'new',
-                  name: provider.displayName,
-                  policy: newPolicy,
+      {!delegatedDingTalk && (
+        <StandInProcessingSettings
+          disabled={disabled}
+          rows={
+            rows.length
+              ? rows.map(row => ({
+                  key: identity(row),
+                  name: row.name,
+                  policy: row.policy,
                   outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                  testId: `${prefix}-new-policy`,
+                  testId: `${prefix}-policy-${row.id}`,
                   onChange: policy =>
-                    setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
-                },
-              ]
-        }
-      />
+                    updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
+                }))
+              : [
+                  {
+                    key: 'new',
+                    name: provider.displayName,
+                    policy: newPolicy,
+                    outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
+                    testId: `${prefix}-new-policy`,
+                    onChange: policy =>
+                      setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
+                  },
+                ]
+          }
+        />
+      )}
       {authorization}
     </section>
   )

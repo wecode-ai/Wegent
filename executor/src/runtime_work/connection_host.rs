@@ -92,6 +92,43 @@ pub(crate) fn provider_guidance() -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ReviewReader {
+    Native,
+    Collected,
+}
+
+/// The live plugin declaration only selects a reader. The role's current source grant
+/// must still authorize the concrete resource on every page.
+pub(crate) fn review_reader(provider: &str, kind: &str) -> Option<ReviewReader> {
+    let guard = HOST.get()?.lock().ok()?;
+    live_review_reader(guard.as_ref()?, provider, kind)
+}
+
+fn live_review_reader(host: &Value, provider: &str, kind: &str) -> Option<ReviewReader> {
+    if !host_is_live(host) {
+        return None;
+    }
+    let supports = |field: &str| {
+        host[field].as_array().is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry["providerId"] == provider
+                    && entry["resourceKinds"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|value| value == kind))
+            })
+        })
+    };
+    match (
+        supports("reviewHistoryProviders"),
+        supports("observationOnlyProviders"),
+    ) {
+        (true, false) => Some(ReviewReader::Native),
+        (false, true) => Some(ReviewReader::Collected),
+        _ => None,
+    }
+}
+
 fn live_provider_guidance(host: &Value) -> Vec<Value> {
     if !host_is_live(host) {
         return Vec::new();
@@ -204,7 +241,7 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
                     .all(|byte| byte.is_ascii_alphanumeric() || b"_-.:".contains(&byte))
         })
         .map(str::to_owned);
-    if method == "collect"
+    if method == "collectObservation"
         && !matches!(
             failure.code.as_str(),
             "connector_auth_required"
@@ -232,6 +269,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn review_readers_are_current_and_exclusive_per_provider_and_kind() {
+        let mut host = json!({
+            "registeredAt":chrono::Utc::now().timestamp(),
+            "reviewHistoryProviders":[{"providerId":"mail","resourceKinds":["thread"]}],
+            "observationOnlyProviders":[{"providerId":"mail","resourceKinds":["inbox"]}]
+        });
+        assert_eq!(
+            live_review_reader(&host, "mail", "thread"),
+            Some(ReviewReader::Native)
+        );
+        assert_eq!(
+            live_review_reader(&host, "mail", "inbox"),
+            Some(ReviewReader::Collected)
+        );
+        assert_eq!(live_review_reader(&host, "other", "thread"), None);
+        assert_eq!(live_review_reader(&host, "mail", "other"), None);
+        host["observationOnlyProviders"][0]["resourceKinds"] = json!(["thread", "inbox"]);
+        assert_eq!(live_review_reader(&host, "mail", "thread"), None);
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert_eq!(live_review_reader(&host, "mail", "inbox"), None);
+    }
+
+    #[test]
     fn connection_guidance_expires_with_the_registered_host() {
         let mut host = json!({"registeredAt":chrono::Utc::now().timestamp(),"providerGuidance":[{"providerId":"mail","assistance":{"observe":["new mail"]}}]});
         assert_eq!(live_provider_guidance(&host).len(), 1);
@@ -247,7 +307,7 @@ mod tests {
         let error =
             json!({"code":"plugin_transport_failed","message":"Offline","retryAfterMs":45000});
         assert_eq!(
-            response_error("collect", &error).retry_after_ms,
+            response_error("collectObservation", &error).retry_after_ms,
             Some(45000)
         );
         for code in [
@@ -261,7 +321,10 @@ mod tests {
         ] {
             let mut permanent = error.clone();
             permanent["code"] = json!(code);
-            assert_eq!(response_error("collect", &permanent).retry_after_ms, None);
+            assert_eq!(
+                response_error("collectObservation", &permanent).retry_after_ms,
+                None
+            );
         }
         for method in ["executeAction", "readSource", "initialize", "validate"] {
             assert_eq!(response_error(method, &error).retry_after_ms, None);
@@ -275,14 +338,17 @@ mod tests {
         ] {
             let mut invalid = error.clone();
             invalid["retryAfterMs"] = delay;
-            assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+            assert_eq!(
+                response_error("collectObservation", &invalid).retry_after_ms,
+                None
+            );
         }
     }
 
     #[test]
     fn cli_request_cause_survives_host_rpc_and_only_collection_can_back_off() {
         let error = json!({"code":"connection_cli_request_unavailable","message":"Plugin tool request failed (request_failed)","providerCode":"request_failed","retryAfterMs":30000});
-        let failure = response_error("collect", &error);
+        let failure = response_error("collectObservation", &error);
         assert_eq!(failure.retry_after_ms, Some(30000));
         assert_eq!(failure.provider_code.as_deref(), Some("request_failed"));
         for method in ["executeAction", "readSource", "initialize", "validate"] {
@@ -291,7 +357,10 @@ mod tests {
         for code in ["", "private token", "invalid\ncode"] {
             let mut invalid = error.clone();
             invalid["providerCode"] = json!(code);
-            assert_eq!(response_error("collect", &invalid).provider_code, None);
+            assert_eq!(
+                response_error("collectObservation", &invalid).provider_code,
+                None
+            );
         }
     }
 
@@ -299,7 +368,7 @@ mod tests {
     fn runtime_timeouts_retry_collection_only_without_provider_retry_metadata() {
         let error = json!({"code":"request_timeout","message":"Executor read timed out"});
         assert_eq!(
-            response_error("collect", &error).retry_after_ms,
+            response_error("collectObservation", &error).retry_after_ms,
             Some(30_000)
         );
         for method in ["executeAction", "readSource", "initialize", "validate"] {
@@ -363,7 +432,15 @@ mod tests {
             "connection_dependency_in_use"
         );
         assert!(assert_host_dependency_unused(&host, "mail@other").is_ok());
-        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        host["dependencyReferences"][0]["pluginId"] = json!("mail@wework-personal");
+        assert_eq!(
+            assert_host_dependency_unused(&host, "mail@wework-personal")
+                .unwrap_err()
+                .code,
+            "connection_dependency_in_use"
+        );
         assert!(assert_host_dependency_unused(&host, "mail@company").is_ok());
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert!(assert_host_dependency_unused(&host, "mail@wework-personal").is_ok());
     }
 }

@@ -6,6 +6,8 @@ sidebar_position: 7
 
 <!-- ui-source: src/components/settings/ConnectionsSettingsPage.tsx -->
 
+If the device list fails to load, it shows the error and a **Retry** action. A failed refresh preserves devices already read for the current connection; switching cloud accounts never carries over the previous account’s list.
+
 ## Individual device-card operations
 
 Open **left sidebar → Cloud work**. **Connection settings** at the top right opens **Settings → Personal → Cloud connection**, not a project's execution-environment page.
@@ -51,7 +53,7 @@ The workbench then includes server models, cloud devices, and remote devices. Di
 
 ## Cloud and remote devices
 
-In the desktop app, **left sidebar → Cloud work** includes local recovery guidance in the device section. The current Wework app manages local execution; local devices are not mixed into cloud and remote device cards. For incompatible local versions, select **View local version** to open **Settings → Personal → About**, use the existing update controls, follow any upgrade and restart instructions, then select **My stand-in** in the Cloud work sidebar to return and reload. This entry remains available without cloud devices or a cloud connection, but is hidden in web browsers. Selecting it only navigates; it does not install or restart anything automatically.
+In the desktop app, **left sidebar → Cloud work** includes local recovery guidance in the device section. The current Wework app manages local execution; local devices are not mixed into cloud and remote device cards. For incompatible local versions, select **View local version** to open **Settings → Personal → About**, use the existing update controls, follow any upgrade and restart instructions, then select **My assistants** in the Cloud work sidebar to return and reload. This entry remains available without cloud devices or a cloud connection, but is hidden in web browsers. Selecting it only navigates; it does not install or restart anything automatically.
 
 When the cloud connection is available, select **Cloud work** in the sidebar to open its dedicated page instead of General settings. The page combines:
 
@@ -83,6 +85,6 @@ Use **Copy to another device** in the task menu to continue work elsewhere. A ru
 
 Open **Collaboration → Collaboration management → Execution devices** and choose an online device under **Personal default environment**. Changes save immediately. If the saved default is unavailable, **Clear default device** removes the old preference; offline devices stay out of the options.
 
-Under **Collaboration → New Issue**, expand the initially collapsed **Runtime (optional)** section below the Issue properties. **Personal default environment** is separate from those properties. Selecting or clearing a device changes the personal preference only after **Save personal default device**; it applies to tasks started later and never starts the Issue automatically. Canceling an Issue does not save an unconfirmed selection or undo an explicitly saved personal preference. Selecting a project instead shows **Project device access (applies immediately)**: **Choose or add a device** reuses the project's grant flow in a popover. Grants apply immediately and survive canceling the Issue; closing the popover preserves the draft. Device setup can also wait until after Issue creation. Project permissions and fixed Agent policies are still checked at execution.
+Open **Collaboration → New Issue → More settings → Runtime (optional)**. **Personal default environment** is separate from those properties. Selecting or clearing a device changes the personal preference only after **Save personal default device**; it applies to tasks started later and never starts the Issue automatically. Canceling an Issue does not save an unconfirmed selection or undo an explicitly saved personal preference. Selecting a project instead shows **Project device access (applies immediately)**: **Choose or add a device** reuses the project's grant flow in a popover. Grants apply immediately and survive canceling the Issue; closing the popover preserves the draft. Device setup can also wait until after Issue creation. Project permissions and fixed Agent policies are still checked at execution.
 
 The directory and available choices show online devices only. If a pending Issue-form selection becomes unavailable, its name remains visible with an Unavailable label, so the displayed choice stays explicit. Concurrent application installations on one computer may have separate entries; local and registered views of the same Runtime are joined. Offline registrations older than seven days are automatically deactivated only when they have no queued or running work. Tasks and execution history are retained. Failed status reads never permit cleanup; legacy records without a known last-online time begin their retention period when first observed offline.

@@ -1,11 +1,11 @@
 import { useState } from 'react'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
 import { CollaborationTheme } from '../theme'
 import '../theme-tokens.css'
 import { ProjectAssistantStatusPanel } from './ProjectAssistantStatusPanel'
-import {
-  projectAssistantStatusChinese,
-  projectAssistantStatusEnglish,
-} from './copy'
+import { projectAssistantStatusChinese, projectAssistantStatusEnglish } from './copy'
 import { projectAssistantStatusFixtures } from './fixtures'
 import { formatReceiptTime } from './projection'
 import type { ProjectAssistantStatus } from './types'
@@ -44,11 +44,9 @@ const previewMessages = {
     both: 'Both entries',
     projectName: 'Example collaboration project',
     close: 'Close preview',
-    feedback:
-      'Choose a state and inspect the hosting authorization and last receipt separately.',
+    feedback: 'Choose a state and inspect the hosting authorization and last receipt separately.',
     note: 'Synthetic design reference. Heartbeats, dispatch deduplication and permissions require production verification.',
-    hidden:
-      'The status feature is off; stored settings and historical receipts are retained.',
+    hidden: 'The status feature is off; stored settings and historical receipts are retained.',
     settings: 'Assistant settings preview',
     rules: 'Project rules preview',
     receipt: 'Acceptance receipt preview',
@@ -81,29 +79,15 @@ function Preview(args: PreviewArgs) {
   const [theme, setTheme] = useState(args.theme ?? 'light')
   const [width, setWidth] = useState<number>(args.width ?? 900)
   const [surface, setSurface] = useState(args.surface ?? 'project')
-  const [retryState, setRetryState] = useState<
-    'idle' | 'loading' | 'succeeded'
-  >('idle')
-  const [destination, setDestination] = useState<
-    'settings' | 'rules' | 'receipt' | null
-  >(null)
-  const [openedSnapshot, setOpenedSnapshot] =
-    useState<ProjectAssistantStatus | null>(null)
+  const [retryState, setRetryState] = useState<'idle' | 'loading' | 'succeeded'>('idle')
+  const [destination, setDestination] = useState<'settings' | 'rules' | 'receipt' | null>(null)
+  const [openedSnapshot, setOpenedSnapshot] = useState<ProjectAssistantStatus | null>(null)
   const locale = args.locale ?? 'en'
-  const copy =
-    locale === 'zh-CN'
-      ? projectAssistantStatusChinese
-      : projectAssistantStatusEnglish
+  const copy = locale === 'zh-CN' ? projectAssistantStatusChinese : projectAssistantStatusEnglish
   const messages = previewMessages[locale]
-  const snapshot =
-    scenarios[scenario as keyof typeof scenarios] ?? scenarios.hosting
+  const snapshot = scenarios[scenario as keyof typeof scenarios] ?? scenarios.hosting
   const manager = scenario.startsWith('manager')
-  const initial = [
-    'loading',
-    'error',
-    'managerLoading',
-    'managerError',
-  ].includes(scenario)
+  const initial = ['loading', 'error', 'managerLoading', 'managerError'].includes(scenario)
   const readSucceeded = retryState === 'succeeded'
   const projectScope = {
     projectStore: snapshot.projectStore,
@@ -118,28 +102,20 @@ function Preview(args: PreviewArgs) {
   const loading =
     retryState === 'loading' ||
     (!readSucceeded &&
-      ['loading', 'refreshing', 'managerLoading', 'managerRefreshing'].includes(
-        scenario,
-      ))
+      ['loading', 'refreshing', 'managerLoading', 'managerRefreshing'].includes(scenario))
   const error =
     !readSucceeded &&
-    ['error', 'refreshError', 'managerError', 'managerRefreshError'].includes(
-      scenario,
-    )
+    ['error', 'refreshError', 'managerError', 'managerRefreshError'].includes(scenario)
   const retry = () => {
     // A synthetic read refresh only; no heartbeat, assignment or execution is changed.
     setRetryState('loading')
     void Promise.resolve().then(() => setRetryState('succeeded'))
   }
-  const open = (
-    target: 'settings' | 'rules' | 'receipt',
-    value: ProjectAssistantStatus,
-  ) => {
+  const open = (target: 'settings' | 'rules' | 'receipt', value: ProjectAssistantStatus) => {
     setOpenedSnapshot(value)
     setDestination(target)
   }
-  const entries =
-    surface === 'both' ? (['project', 'assistant'] as const) : [surface]
+  const entries = surface === 'both' ? (['project', 'assistant'] as const) : [surface]
   return (
     <CollaborationTheme mode={theme}>
       <main
@@ -151,79 +127,90 @@ function Preview(args: PreviewArgs) {
         <div className="project-assistant-review__controls">
           <label>
             {messages.scenario}
-            <select
-              data-testid="hosting-review-scenario"
-              value={scenario}
-              onChange={(event) => {
-                setScenario(event.target.value as HostingPreviewScenario)
+            <SelectRoot
+              value={normalizeSelectValue(scenario)}
+              onValueChange={selectedValue => {
+                if (selectedValue === null) return
+                setScenario(selectedValue as HostingPreviewScenario)
                 setDestination(null)
                 setRetryState('idle')
               }}
             >
-              {[
-                ...Object.keys(scenarios),
-                'loading',
-                'error',
-                'refreshing',
-                'refreshError',
-                'manager',
-                'managerLoading',
-                'managerError',
-                'managerRefreshing',
-                'managerRefreshError',
-                'featureOff',
-              ].map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger data-testid="hosting-review-scenario" />
+              <SelectContent>
+                {[
+                  ...Object.keys(scenarios),
+                  'loading',
+                  'error',
+                  'refreshing',
+                  'refreshError',
+                  'manager',
+                  'managerLoading',
+                  'managerError',
+                  'managerRefreshing',
+                  'managerRefreshError',
+                  'featureOff',
+                ].map(value => (
+                  <SelectItem key={value} value={String(value)}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectRoot>
           </label>
           <label>
             {messages.width}
-            <select
-              data-testid="hosting-review-width"
-              value={width}
-              onChange={(event) => setWidth(Number(event.target.value))}
+            <SelectRoot
+              value={normalizeSelectValue(width)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setWidth(Number(selectedValue))
+              }}
             >
-              {[390, 900, 1440].map((value) => (
-                <option key={value} value={value}>
-                  {value}px
-                </option>
-              ))}
-            </select>
+              <SelectTrigger data-testid="hosting-review-width" />
+              <SelectContent>
+                {[390, 900, 1440].map(value => (
+                  <SelectItem key={value} value={String(value)}>
+                    {value}px
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectRoot>
           </label>
           <label>
             {messages.theme}
-            <select
-              data-testid="hosting-review-theme"
-              value={theme}
-              onChange={(event) =>
-                setTheme(event.target.value as 'light' | 'dark')
-              }
+            <SelectRoot
+              value={normalizeSelectValue(theme)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setTheme(selectedValue as 'light' | 'dark')
+              }}
             >
-              <option value="light">{messages.light}</option>
-              <option value="dark">{messages.dark}</option>
-            </select>
+              <SelectTrigger data-testid="hosting-review-theme" />
+              <SelectContent>
+                <SelectItem value="light">{messages.light}</SelectItem>
+                <SelectItem value="dark">{messages.dark}</SelectItem>
+              </SelectContent>
+            </SelectRoot>
           </label>
           <label>
             {messages.surface}
-            <select
-              data-testid="hosting-review-surface"
-              value={surface}
-              onChange={(event) =>
-                setSurface(event.target.value as typeof surface)
-              }
+            <SelectRoot
+              value={normalizeSelectValue(surface)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setSurface(selectedValue as typeof surface)
+              }}
             >
-              {(['project', 'assistant', 'both'] as const).map((value) => (
-                <option key={value} value={value}>
-                  {messages[value]}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger data-testid="hosting-review-surface" />
+              <SelectContent>
+                {(['project', 'assistant', 'both'] as const).map(value => (
+                  <SelectItem key={value} value={String(value)}>
+                    {messages[value]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectRoot>
           </label>
         </div>
-        {entries.map((entry) => (
+        {entries.map(entry => (
           <section
             key={entry}
             data-testid={`hosting-preview-${entry}`}
@@ -242,9 +229,9 @@ function Preview(args: PreviewArgs) {
               featureEnabled={scenario !== 'featureOff'}
               audience={manager ? 'manager' : 'self'}
               onRetry={retry}
-              onOpenSettings={(value) => open('settings', value)}
-              onOpenRules={(value) => open('rules', value)}
-              onOpenReceipt={(value) => open('receipt', value)}
+              onOpenSettings={value => open('settings', value)}
+              onOpenRules={value => open('rules', value)}
+              onOpenReceipt={value => open('receipt', value)}
             />
           </section>
         ))}
@@ -266,8 +253,7 @@ function Preview(args: PreviewArgs) {
             <h2>{messages[destination]}</h2>
             {destination === 'settings' && (
               <p>
-                {copy.scope}: {openedSnapshot.projectStore} /{' '}
-                {openedSnapshot.projectId} ·{' '}
+                {copy.scope}: {openedSnapshot.projectStore} / {openedSnapshot.projectId} ·{' '}
                 {copy.availabilityValues[openedSnapshot.availability]}
               </p>
             )}
@@ -284,22 +270,19 @@ function Preview(args: PreviewArgs) {
               <p>
                 {openedSnapshot.receipt?.humanAssignmentId} ·{' '}
                 {openedSnapshot.receipt?.runtimeTaskRef.taskId} ·{' '}
-                {openedSnapshot.receipt?.deliveryRef ?? copy.incompleteEvidence}{' '}
-                ·{' '}
-                {formatReceiptTime(
-                  openedSnapshot.lastReceiptAt,
-                  copy.noReceiptTime,
-                  locale,
-                )}
+                {openedSnapshot.receipt?.deliveryRef ?? copy.incompleteEvidence} ·{' '}
+                {formatReceiptTime(openedSnapshot.lastReceiptAt, copy.noReceiptTime, locale)}
               </p>
             )}
-            <button
+            <ControlButton
+              variant="ghost"
+              size="sm"
               type="button"
               data-testid="hosting-demo-close"
               onClick={() => setDestination(null)}
             >
               {messages.close}
-            </button>
+            </ControlButton>
           </aside>
         )}
         <p>{messages.note}</p>
