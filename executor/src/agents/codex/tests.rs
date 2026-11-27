@@ -3043,6 +3043,10 @@ fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origin
             request
                 .extra
                 .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
+            request
+                .extra
+                .insert("collaboration_model".into(), json!("single"));
+            assert!(codex_collaboration_config_overrides(&request).is_empty());
             let config = collaboration::thread_config(&request);
             assert_eq!(config["agents.enabled"], true);
             assert_eq!(config["features.multi_agent_v2"], true);

@@ -371,6 +371,9 @@ impl RuntimeWorkRpcHandler {
                     let outcome = match launch {
                         Ok(()) => {
                             if let Some(local) = local_session.as_deref() {
+                                if let Some(link) = handler.store.get_task_summary(local) {
+                                    handler.publish_native_execution(local, &request, link);
+                                }
                                 let payload = json!({"message":prompt_text(&request.prompt)});
                                 if let Some(message) =
                                     cached_user_message(local, &request, &payload)
@@ -428,7 +431,11 @@ impl RuntimeWorkRpcHandler {
                                     .filter(|_| settlement.content.is_none()),
                             );
                             if let Some(link) = handler.local_task_link(&control) {
-                                handler.project_runtime_link_status_now(&link);
+                                if link.runtime == "codex" {
+                                    handler.publish_native_execution(&control, &request, link);
+                                } else {
+                                    handler.project_runtime_link_status_now(&link);
+                                }
                             }
                         }
                     }

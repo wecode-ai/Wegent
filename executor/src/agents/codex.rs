@@ -5081,7 +5081,7 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
 }
 
 fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
+    if collaboration::single_without_issue_delegation(request) {
         return vec![
             // Feature toggles alone do not override a resumed thread's persisted agent family.
             CODEX_DISABLE_AGENTS_OVERRIDE.to_owned(),
