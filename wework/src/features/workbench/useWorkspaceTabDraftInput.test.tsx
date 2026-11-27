@@ -68,3 +68,32 @@ test('replaces returned goal modes in a mounted owner without changing other tab
   expect(owner.result.current.draftStore.exportInputs()).toEqual({})
   expect(owner.result.current.goalDraftActiveByScope).toEqual({})
 })
+
+test('restores a persisted tab draft after a crash remount', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  act(() => {
+    first.result.current.draftStore.write('blank:0', 'Unsent input')
+  })
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  expect(restored.result.current.draftStore.read('blank:0').value).toBe('Unsent input')
+  expect(
+    renderHook(() =>
+      useWorkspaceTabDraftInput('durable-tab', 'account:two')
+    ).result.current.draftStore.read('blank:0').value
+  ).toBe('')
+})
+
+test('restores the active blank chat scope for persisted drafts', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  act(() => first.result.current.persistStandaloneChatKey(3))
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  expect(restored.result.current.initialStandaloneChatKey).toBe(3)
+  expect(
+    renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:two')).result.current
+      .initialStandaloneChatKey
+  ).toBe(0)
+})
