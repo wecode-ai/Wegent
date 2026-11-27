@@ -623,7 +623,8 @@ function completedGuidanceTurn(guidance: Partial<WorkbenchMessage> = {}): Runtim
     status: 'done',
     items: [
       {
-        id: 'guidance-message',
+        id: 'native-guidance-item',
+        position: 9,
         type: 'user_message',
         message: {
           id: 'guidance-message',
@@ -681,6 +682,7 @@ test('updates a guidance correction in place before transport and never appends 
   expect(usersAtTransport).toHaveLength(1)
   expect(usersAtTransport[0]).toMatchObject({
     id: 'guidance-message',
+    runtimeItemId: 'native-guidance-item',
     content: 'Revised guidance',
   })
 
