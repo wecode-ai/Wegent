@@ -156,7 +156,12 @@ class SandboxManager(metaclass=SingletonMeta):
         task_id = sandbox_metadata.get("task_id")
 
         if task_id is not None:
-            task_key = str(task_id)
+            try:
+                canonical_task_id = int(str(task_id))
+            except ValueError:
+                return None, "Invalid sandbox task ID"
+            task_key = str(canonical_task_id)
+            sandbox_metadata = {**sandbox_metadata, "task_id": canonical_task_id}
             task_lock = self._create_locks.setdefault(task_key, asyncio.Lock())
             async with task_lock:
                 lease, lock_error = await self._acquire_task_lifecycle_lease(task_key)

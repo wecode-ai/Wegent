@@ -613,7 +613,7 @@ class TestSandboxManager:
                 shell_type="ClaudeCode",
                 user_id=100,
                 user_name="testuser",
-                metadata={"task_id": 12345},
+                metadata={"task_id": "0012345"},
             )
         )
         await start_entered.wait()
@@ -634,6 +634,7 @@ class TestSandboxManager:
         assert results[0][1] is None
         assert results[1][1] is None
         assert results[0][0] is results[1][0]
+        assert results[0][0].metadata["task_id"] == 12345
         assert results[0][0].base_url == "http://localhost:10001"
 
     @pytest.mark.asyncio
