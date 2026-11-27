@@ -13,6 +13,12 @@ import {
   type ToolScenarioStep,
 } from './provider-native-test-support'
 
+import {
+  createGroupBotCapability,
+  groupBotProbe,
+  verifyGroupBotProbe,
+} from './group-bot-capabilities'
+
 interface Run {
   errorMessage?: string
   id: number
@@ -23,6 +29,8 @@ interface Run {
 }
 
 interface Context {
+  client: import('./api-client').ApiClient
+  skillCleanup: number[]
   request: APIRequestContext
   page: Page
   info: TestInfo
@@ -41,6 +49,8 @@ interface Context {
 export async function verifyGroupNativeMatrix(ctx: Context) {
   const { api, request, page, info, projectId, projectPath, leader, suffix } = ctx
   const cases = []
+  const lead = await createGroupBotCapability(ctx.client, 'leader', suffix, ctx.skillCleanup)
+  const worker = await createGroupBotCapability(ctx.client, 'worker', suffix, ctx.skillCleanup)
   async function scenario(
     key: string,
     steps: ToolScenarioStep[],
@@ -97,6 +107,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
           system_prompt: role === 'worker' ? workerPrompt : leadPrompt,
           agent_config: { bind_model: model, bind_model_type: 'user' },
           inherit_base_capabilities: false,
+          ...(mode === 'pipeline' && role === 'worker' ? worker : lead).config,
         })
         ctx.cleanup.unshift(`bots/${botName}`)
         bots.push({ bot_id: bot.id, role, requireConfirmation: false, contextPassing: 'none' })
@@ -123,6 +134,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       if (mode === 'coordinate') {
         const type = `${name}-worker-${bots[1].bot_id}`
         await scenario(leadPrompt, [
+          ...groupBotProbe(shell, lead, worker),
           {
             toolCalls: [
               claude
@@ -152,12 +164,19 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
         ])
         await scenario(
           claude ? workerPrompt : assignment,
-          [{ responseContent: workerResult }],
+          [...groupBotProbe(shell, lead, worker), { responseContent: workerResult }],
           claude ? undefined : { 'x-openai-subagent': 'collab_spawn' }
         )
       } else {
-        await scenario(leadPrompt, [{ responseContent: final }])
-        if (mode === 'pipeline') await scenario(workerPrompt, [{ responseContent: workerResult }])
+        await scenario(leadPrompt, [
+          ...groupBotProbe(shell, lead, worker),
+          { responseContent: final },
+        ])
+        if (mode === 'pipeline')
+          await scenario(workerPrompt, [
+            ...groupBotProbe(shell, worker, lead),
+            { responseContent: workerResult },
+          ])
       }
       cases.push({
         shell,
@@ -284,7 +303,25 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       expect(modelRequestText(await getScenarioModelBodies(request, cell.assignment))).toContain(
         cell.workerPrompt
       )
+    const capabilities = []
+    for (const [index, bot] of cell.bots.entries()) {
+      const workerStage = index === 1 && cell.mode === 'pipeline'
+      const key =
+        index === 0
+          ? cell.leadPrompt
+          : cell.mode === 'coordinate' && cell.shell === 'Codex'
+            ? cell.assignment
+            : cell.workerPrompt
+      const captured = await getScenarioModelBodies(request, key)
+      capabilities.push({
+        botId: bot.bot_id,
+        role: bot.role,
+        ...verifyGroupBotProbe(captured, workerStage ? worker : lead, workerStage ? lead : worker),
+      })
+    }
+    expect(new Set(capabilities.map(row => row.receipt)).size).toBe(cell.bots.length)
     evidence.push({
+      capabilities,
       shell: cell.shell,
       mode: cell.mode,
       teamId: cell.teamId,
@@ -334,4 +371,65 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     body: JSON.stringify({ groupId, issueId: issue.id, manager, evidence }),
     contentType: 'application/json',
   })
+
+  const native = cases.filter(cell => cell.mode === 'coordinate')
+  for (const cell of native) {
+    const updated = await ctx.client.put(`/api/bots/${cell.bots[1].bot_id}`, worker.config)
+    expect(updated.status).toBe(200)
+  }
+  const deniedTitle = `Verify distinct native role grants ${suffix}`
+  const denied = await api<{ id: string }>(`/api/v1/cloud-projects/${projectId}/loop-items`, {
+    title: deniedTitle,
+    status: 'pending',
+    priority: 'high',
+  })
+  await scenario(deniedTitle, [
+    {
+      toolCalls: [
+        {
+          toolName: 'wegent-wework-space_submit_workflow_plan',
+          arguments: {
+            plan: {
+              round_id: 'isolation',
+              summary: 'Check distinct role grants',
+              items: native.map(cell => ({
+                assignment_id: cell.name,
+                title: cell.name,
+                instructions: cell.instructions,
+                assignee_type: 'agent',
+                assignee_id: cell.agentId,
+              })),
+            },
+          },
+        },
+      ],
+    },
+    { responseContent: 'Waiting for both capability checks.' },
+  ])
+  await ctx.assign(denied.id, `group:${groupId}`)
+  const failures = async () =>
+    (await ctx.executions(denied.id)).filter(row => row.agentId !== leader.id)
+  await expect
+    .poll(async () => (await failures()).filter(row => row.status === 'failed').length, {
+      timeout: 90000,
+      message: 'Both native member Teams must reject distinct role grants before running a Bot',
+    })
+    .toBe(native.length)
+  const rejected = await failures()
+  for (const cell of native) {
+    const rows = rejected.filter(row => row.agentId === cell.agentId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].teamId).toBe(cell.teamId)
+    expect(rows[0].errorMessage).toContain(
+      'native subagents cannot isolate distinct Bot tool grants'
+    )
+  }
+  await info.attach('native-group-role-grant-rejections', {
+    body: JSON.stringify({ groupId, issueId: denied.id, rejected }),
+    contentType: 'application/json',
+  })
+  for (const row of await ctx.executions(denied.id)) {
+    if (row.agentId === leader.id && !['completed', 'failed', 'cancelled'].includes(row.status))
+      await api(`/api/v1/cloud-projects/${projectId}/executions/${row.id}/stop`, {})
+  }
 }

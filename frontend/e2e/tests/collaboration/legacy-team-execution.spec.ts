@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { createGroupBotCapability, verifyLegacyBotProbe } from '../../utils/group-bot-capabilities'
+import { createApiClient } from '../../utils/api-client'
 import { verifyGroupNativeMatrix } from '../../utils/group-native-matrix'
 import { writeFile } from 'node:fs/promises'
 import {
@@ -61,6 +63,8 @@ async function createScenario(request: APIRequestContext, page: Page) {
   const suffix = Date.now().toString(36).slice(-6)
   const configuredPrompts = new Set<string>()
   const cleanup: string[] = []
+  const skillCleanup: number[] = []
+  const client = createApiClient(request, PROVIDER_NATIVE_API_URL, token)
   const projectCleanup: string[] = []
   async function apiRequest<T>(
     api: APIRequestContext,
@@ -74,7 +78,7 @@ async function createScenario(request: APIRequestContext, page: Page) {
     expect(response.ok(), `${path}: ${await response.text()}`).toBe(true)
     return response.json() as Promise<T>
   }
-  const apiBot = (name: string, prompt: string) =>
+  const apiBot = (name: string, prompt: string, grants?: Record<string, unknown>) =>
     apiRequest<{ id: number }>(request, '/api/bots', {
       method: 'POST',
       data: {
@@ -82,6 +86,7 @@ async function createScenario(request: APIRequestContext, page: Page) {
         namespace: 'default',
         shell_name: 'Chat',
         system_prompt: prompt,
+        ...grants,
         agent_config: { bind_model: modelName, bind_model_type: 'user' },
       },
     })
@@ -180,10 +185,14 @@ async function createScenario(request: APIRequestContext, page: Page) {
       )
       expect(deleted.ok(), await deleted.text()).toBe(true)
     }
+    for (const id of skillCleanup)
+      expect((await client.delete(`/api/v1/kinds/skills/${id}`)).status).toBe(204)
     await deleteIssueDispatchMockModel(request, model)
   }
   return {
     suffix,
+    client,
+    skillCleanup,
     configuredPrompts,
     cleanup,
     apiRequest,
@@ -214,19 +223,57 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
   const memberWork = 'Check the release notes'
   let clearGate: (() => Promise<void>) | undefined
   try {
-    const first = await apiBot(botName, 'Perform the initial review.')
+    const firstGrant = await createGroupBotCapability(
+      scenario.client,
+      'leader',
+      suffix,
+      scenario.skillCleanup
+    )
+    const secondGrant = await createGroupBotCapability(
+      scenario.client,
+      'worker',
+      suffix,
+      scenario.skillCleanup
+    )
+    const firstPrompt = `Perform the initial review for ${suffix}.`
+    const first = await apiBot(botName, firstPrompt, firstGrant.config)
     cleanup.unshift(`bots/${botName}`)
     const secondBotName = `review-${suffix}`
     const teamName = `${TEST_PREFIX}-pipeline`
     const reviewPrompt = `Review the first stage ${TEST_PREFIX}`
     const reviewAnswer = 'Release notes checked and approved.'
-    configuredPrompts.add(reviewPrompt)
-    await configureToolScenario(
-      request,
-      reviewPrompt,
-      Array.from({ length: 3 }, () => ({ responseContent: reviewAnswer }))
-    )
-    const bot = await apiBot(secondBotName, reviewPrompt)
+    const stages = [
+      {
+        prompt: firstPrompt,
+        grant: firstGrant,
+        other: secondGrant,
+        args: { owner: 'group', repo: 'legacy', issue_number: 1 },
+        answer: 'Draft release notes checked.',
+      },
+      {
+        prompt: reviewPrompt,
+        grant: secondGrant,
+        other: firstGrant,
+        args: { code: '7 * 12' },
+        answer: reviewAnswer,
+      },
+    ]
+    for (const stage of stages) {
+      configuredPrompts.add(stage.prompt)
+      await configureToolScenario(
+        request,
+        stage.prompt,
+        Array.from({ length: 3 }, () => [
+          {
+            toolCalls: [
+              { toolName: `${stage.grant.serverId}_${stage.grant.tool}`, arguments: stage.args },
+            ],
+          },
+          { responseContent: stage.answer },
+        ]).flat()
+      )
+    }
+    const bot = await apiBot(secondBotName, reviewPrompt, secondGrant.config)
     cleanup.unshift(`bots/${secondBotName}`)
     const owner = await apiRequest<{ id: number }>(request, '/api/users/me')
     const team: { id: number } = JSON.parse(
@@ -241,6 +288,8 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     )
     cleanup.unshift(`teams/${teamName}`)
     const taskIds = new Set<number>()
+    const modelOffsets = [0, 0]
+    const usedReceipts = new Set<string>()
     async function verifyPipeline(taskId: number) {
       expect(taskId).toBeGreaterThan(0)
       expect(taskIds.has(taskId)).toBe(false)
@@ -276,8 +325,26 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
       const subtaskIds = subtasks.map(row => row.id)
       expect(subtaskIds.every(id => Number.isSafeInteger(id) && id > 0)).toBe(true)
       expect(new Set(subtaskIds).size).toBe(2)
+      const capabilities = []
+      for (const [index, stage] of stages.entries()) {
+        const bodies = await getScenarioModelBodies(request, stage.prompt)
+        const result = verifyLegacyBotProbe(
+          bodies.slice(modelOffsets[index]),
+          stage.grant,
+          stage.other
+        )
+        expect(usedReceipts.has(result.receipt)).toBe(false)
+        usedReceipts.add(result.receipt)
+        modelOffsets[index] = bodies.length
+        capabilities.push({
+          botId: subtasks[index].bot_ids[0],
+          subtaskId: subtaskIds[index],
+          ...result,
+        })
+      }
       return {
         taskId: task.id,
+        capabilities,
         subtasks: subtasks.map(({ id, team_id, bot_ids, status }) => ({
           subtaskId: id,
           teamId: team_id,
@@ -584,6 +651,8 @@ test('dispatches six native Team configurations in one collaboration group', asy
   await initializeProjectExecutionEnvironment(page)
   const { leader } = await createLeader(projectId)
   await verifyGroupNativeMatrix({
+    client: scenario.client,
+    skillCleanup: scenario.skillCleanup,
     leaderName,
     page,
     request,
