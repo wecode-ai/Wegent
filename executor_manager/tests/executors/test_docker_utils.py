@@ -99,11 +99,15 @@ class TestDockerUtils:
     @patch("subprocess.run")
     def test_check_container_ownership_true(self, mock_run):
         """Test checking container ownership when owned"""
-        mock_run.return_value = MagicMock(stdout="test-container\n", returncode=0)
+        mock_run.return_value = MagicMock(
+            stdout=f"test-container|{'a' * 64}\n", returncode=0
+        )
         result = check_container_ownership("test-container")
         assert result is True
 
-    @pytest.mark.parametrize("stdout", ["", "test-container-copy\n"])
+    @pytest.mark.parametrize(
+        "stdout", ["", f"test-container-copy|{'a' * 64}\n", "test-container|partial\n"]
+    )
     @patch("subprocess.run")
     def test_check_container_ownership_false(self, mock_run, stdout):
         """Ownership requires an exact container name."""
@@ -156,7 +160,7 @@ class TestDockerUtils:
         # First call: check_container_ownership
         # Second call: get ports
         mock_run.side_effect = [
-            MagicMock(stdout="test-container\n", returncode=0),  # ownership check
+            MagicMock(stdout=f"test-container|{'a' * 64}\n", returncode=0),
             MagicMock(stdout="0.0.0.0:8080->8080/tcp\n", returncode=0),  # get ports
         ]
         result = get_container_ports("test-container")

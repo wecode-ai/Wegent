@@ -1091,11 +1091,12 @@ class TestDockerExecutor:
     def test_delete_executor_success(self, mock_run, executor):
         """Test deleting executor successfully"""
         # Mock subprocess.run calls:
-        # 1. check_container_ownership
+        # 1. resolve the owned container ID
         # 2. stop the container
         # 3. remove the container
+        container_id = "a" * 64
         mock_run.side_effect = [
-            MagicMock(stdout="test-executor\n", returncode=0),  # ownership check
+            MagicMock(stdout=f"test-executor|{container_id}\n", returncode=0),
             MagicMock(returncode=0),  # stop
             MagicMock(returncode=0),  # remove
         ]
@@ -1103,12 +1104,17 @@ class TestDockerExecutor:
         result = executor.delete_executor("test-executor")
 
         assert result["status"] == "success"
+        assert [call.args[0] for call in mock_run.call_args_list[1:]] == [
+            ["docker", "stop", "--", container_id],
+            ["docker", "rm", "--", container_id],
+        ]
 
     @pytest.mark.parametrize(
         ("runtime_status", "expected"),
         [
             ("running", "unauthorized"),
-            ("error", "unauthorized"),
+            ("error", "failed"),
+            ("unknown", "failed"),
             ("not_found", "not_found"),
         ],
     )
@@ -1116,7 +1122,7 @@ class TestDockerExecutor:
         self, executor, mocker, runtime_status, expected
     ):
         mocker.patch.object(
-            docker_executor_module, "check_container_ownership", return_value=False
+            docker_executor_module, "find_owned_container_id", return_value=None
         )
         mocker.patch.object(
             executor, "get_container_status", return_value={"status": runtime_status}

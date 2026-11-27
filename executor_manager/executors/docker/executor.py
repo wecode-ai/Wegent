@@ -44,8 +44,8 @@ from executor_manager.executors.docker.constants import (
 )
 from executor_manager.executors.docker.utils import (
     build_callback_url,
-    check_container_ownership,
     delete_container,
+    find_owned_container_id,
     get_container_ports,
     get_container_status,
     get_running_task_details,
@@ -1388,17 +1388,23 @@ class DockerExecutor(Executor):
         """
         try:
             # Check if container exists and is owned by executor_manager
-            if not check_container_ownership(executor_name):
+            container_id = find_owned_container_id(executor_name)
+            if container_id is None:
                 status = self.get_container_status(executor_name).get("status")
                 if status == "not_found":
                     return {"status": "not_found"}
+                if status in {"error", "unknown", None}:
+                    return {
+                        "status": "failed",
+                        "error_msg": "Could not confirm the Docker container identity",
+                    }
                 return {
                     "status": "unauthorized",
                     "error_msg": f"Container '{executor_name}' is not owned by {CONTAINER_OWNER}",
                 }
 
             # Delete container
-            return delete_container(executor_name)
+            return delete_container(container_id)
         except Exception as e:
             logger.error(f"Error deleting container {executor_name}: {e}")
             return {

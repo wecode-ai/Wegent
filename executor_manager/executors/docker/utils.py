@@ -73,37 +73,37 @@ def build_callback_url(task: dict) -> str:
 
 
 def check_container_ownership(container_name: str) -> bool:
-    """
-    Check if container exists and is owned by executor_manager.
+    """Check whether the exact container name belongs to this manager."""
+    return find_owned_container_id(container_name) is not None
 
-    Args:
-        container_name (str): Name of the container to check
 
-    Returns:
-        bool: True if container exists and is owned by executor_manager, False otherwise
-    """
+def find_owned_container_id(container_name: str) -> Optional[str]:
+    """Resolve an owned container's immutable ID from its exact name."""
     try:
         check_cmd = [
             "docker",
             "ps",
             "-a",
+            "--no-trunc",
             "--filter",
             f"name={container_name}",
             "--filter",
             "label=owner=executor_manager",
             "--format",
-            "{{.Names}}",
+            "{{.Names}}|{{.ID}}",
         ]
         check_result = subprocess.run(
             check_cmd, check=True, capture_output=True, text=True
         )
-        return container_name in check_result.stdout.splitlines()
+        for line in check_result.stdout.splitlines():
+            name, _, container_id = line.partition("|")
+            if name == container_name and re.fullmatch(r"[0-9a-f]{64}", container_id):
+                return container_id
     except subprocess.CalledProcessError as e:
         logger.error(f"Error checking container ownership: {e.stderr}")
-        return False
     except Exception as e:
         logger.error(f"Unexpected error checking container ownership: {e}")
-        return False
+    return None
 
 
 def delete_container(container_name: str) -> dict:
