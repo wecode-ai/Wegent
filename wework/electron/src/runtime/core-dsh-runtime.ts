@@ -1,10 +1,11 @@
-import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { isJsonObject, readLocalJson } from './local-json.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -146,6 +147,7 @@ export interface PreparedCoreDshRuntime {
   profile: string
   version: string
   sourceFingerprint: string
+  managedPackages: ReadonlySet<string>
 }
 
 export interface PrepareCoreDshRuntimeOptions {
@@ -202,16 +204,22 @@ export async function prepareCoreDshRuntime(
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+    managedPackages: new Set(Object.keys(runtime.pluginRoots)),
   }
 }
 
-export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+export function createCoreDshLaunch(
+  runtime: PreparedCoreDshRuntime,
+  port: number,
+  startupPatch?: string
+): CoreDshLaunch {
   return {
     ...runtime,
     args: runtimeNodeArgs(runtime.environment, [
       runtime.entry,
       '--profile',
       PROFILE_NAME,
+      ...(startupPatch ? ['--patch', startupPatch] : []),
       '--no-open',
       '--port',
       String(port),
@@ -240,7 +248,19 @@ export async function selectCoreDshRuntime(
     pluginRoots[plugin.name] = join(pluginsRoot, plugin.directory)
   }
   await Promise.all(
-    Object.values(pluginRoots).map(pluginRoot => readFile(join(pluginRoot, 'package.json')))
+    Object.entries(pluginRoots).map(async ([name, pluginRoot]) => {
+      const path = join(pluginRoot, 'package.json')
+      try {
+        const manifest = await readLocalJson(path, isJsonObject)
+        if (!manifest || manifest.name !== name) throw new Error(`Invalid manifest at ${path}`)
+        if (typeof manifest.main === 'string') await access(join(pluginRoot, manifest.main))
+        const patch = objectRecord(objectRecord(manifest.dsh).bundle).patch
+        const files = typeof patch === 'string' ? [patch] : stringArray(patch)
+        await Promise.all(files.map(file => access(join(pluginRoot, file))))
+      } catch (error) {
+        throw new Error(`Required plugin ${name}: ${(error as Error).message}`, { cause: error })
+      }
+    })
   )
   return {
     ...runtime,
@@ -253,9 +273,11 @@ export async function selectCoreDshRuntime(
 async function readInternalCorePlugins(
   root: string
 ): Promise<Array<{ name: string; directory: string; bundle: string }>> {
-  const manifest = await readJsonFile(join(root, 'internal-plugins.json'))
+  const manifest = await readLocalJson(
+    join(root, 'internal-plugins.json'),
+    (value): value is unknown[] => Array.isArray(value)
+  )
   if (manifest === null) return []
-  if (!Array.isArray(manifest)) throw new Error('Invalid internal core plugin manifest')
   return manifest.map(value => {
     const plugin = objectRecord(value)
     const name = plugin.name
@@ -315,7 +337,7 @@ async function prepareProfile(options: {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const pluginState = objectRecord(
-    await readJsonFile(join(profileRoot, '.wework-core-plugins.json'))
+    await readLocalJson(join(profileRoot, '.wework-core-plugins.json'), isJsonObject)
   )
   const disabled = new Set(stringArray(pluginState.disabled))
   const managedBundles: string[] = (
@@ -340,7 +362,7 @@ async function prepareProfile(options: {
     ...stringArray(previousStamp.managedDependencyNames),
     ...stringArray(previousStamp.managedBundles),
   ].filter(name => !managedDependencyNames.includes(name) && !managedBundles.includes(name))
-  const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
+  const currentManifest = await readLocalJson(join(profileRoot, 'package.json'), isJsonObject)
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)

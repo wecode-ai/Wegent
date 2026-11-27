@@ -29,9 +29,12 @@ export function createAppUpdateError(
 ): AppUpdateError {
   const messages = collectErrorMessages(error)
   const combinedMessage = messages.join('\n')
-  const kind = classifyAppUpdateError(combinedMessage)
   const metadata = collectErrorMetadata(error)
   const failureStage = metadata?.stage ?? stage
+  const kind =
+    failureStage === 'prepare' && /^Release preparation (failed|stalled)/.test(combinedMessage)
+      ? 'generic'
+      : classifyAppUpdateError(combinedMessage)
 
   return {
     stage: failureStage,

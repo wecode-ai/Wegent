@@ -23,6 +23,7 @@ export interface DshRuntimeOptions {
   logFileName?: string
   hostPipe?: HostPipeServer
   startTimeoutMs?: number
+  onStderrLine?: (line: string) => void
 }
 
 export class DshRuntime {
@@ -97,6 +98,13 @@ export class DshRuntime {
         })
       }
     })
+    const onStderrLine = options.onStderrLine
+    if (onStderrLine) {
+      this.process?.on('spawn', child => {
+        const lines = createInterface({ input: child.stderr })
+        lines.on('line', onStderrLine)
+      })
+    }
     if (this.process && options.hostPipe) {
       this.process.on('spawn', child => {
         this.child = child

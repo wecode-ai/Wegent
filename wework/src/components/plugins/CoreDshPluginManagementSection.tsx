@@ -548,6 +548,11 @@ function PluginRow({
           {plugin.version ? ` · ${plugin.version}` : ''}
           {source ? ` · ${source}` : ''}
         </p>
+        {plugin.loadFailed ? (
+          <p className="mt-1 text-xs text-text-secondary" role="status">
+            {t('workbench.core_dsh_plugins_load_failed')}
+          </p>
+        ) : null}
         {modeManaged ? (
           <p className="mt-1 text-xs text-text-secondary">
             {t('workbench.core_dsh_plugins_managed_by_mode', '由“设置 → 通用 → 模式”管理')}

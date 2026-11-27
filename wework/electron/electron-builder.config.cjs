@@ -110,6 +110,7 @@ module.exports = {
     target: ['nsis'],
   },
   nsis: {
+    ...(!onlineUpdateBuild ? { include: path.resolve(__dirname, 'installer.nsh') } : {}),
     oneClick: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,

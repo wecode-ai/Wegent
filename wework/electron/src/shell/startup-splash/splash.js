@@ -74,6 +74,8 @@ let slowActive = false
 let timeoutActive = false
 let startupFailed = false
 let failedPluginName = null
+let failedDataFile = null
+let canRepairData = false
 let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
@@ -488,6 +490,18 @@ function renderLocalizedStaticCopy() {
     : isChinese
       ? '重新启动通常可以恢复。'
       : 'Restarting usually recovers.'
+  if (failedDataFile) {
+    failureTitleElement.textContent = isChinese ? '无法读取本地数据' : 'Could not read local data'
+    const file = isChinese ? `文件：${failedDataFile}。` : `File: ${failedDataFile}. `
+    const guidance = canRepairData
+      ? isChinese
+        ? '选择「修复启动」可备份此文件，并使用默认本地状态重新启动。'
+        : 'Choose Repair startup to back up this file and restart with default local state.'
+      : isChinese
+        ? '请保留原文件。检查文件权限或从有效备份恢复后，选择「重新启动」。'
+        : 'Keep the original. Check permissions or restore a known-good backup, then choose Restart.'
+    failureDetailElement.textContent = file + guidance
+  }
 }
 
 function showConfirmation(mode) {
@@ -497,11 +511,21 @@ function showConfirmation(mode) {
   document.documentElement.dataset.confirmationVisible = 'true'
   brandAnimation.setPaused(true)
   if (mode === 'recover') {
-    confirmationTitle.textContent = isChinese ? '修复启动？' : 'Repair startup?'
-    confirmationDescription.textContent = isChinese
-      ? '将清理运行环境和缓存，重启后自动重建。登录、设置、布局、插件、任务和会话都会保留。'
-      : 'This rebuilds the runtime and clears caches. Your sign-in, settings, layout, plugins, tasks, and conversations are preserved.'
-    confirmationSubmit.textContent = isChinese ? '修复并重启' : 'Repair and restart'
+    if (failedDataFile && canRepairData) {
+      confirmationTitle.textContent = isChinese
+        ? '备份损坏文件并重启？'
+        : 'Back up the damaged file and restart?'
+      confirmationDescription.textContent = isChinese
+        ? `将把 ${failedDataFile} 的原始内容备份到同一目录，文件名带 .corrupt- 后缀，然后写入默认本地状态。界面设置和布局可能恢复默认，部分登录状态可能需要重新登录。`
+        : `The original contents of ${failedDataFile} will be saved beside it with a .corrupt- suffix. Wework will restart with default local state. Interface settings and layouts may reset, and you may need to sign in again.`
+      confirmationSubmit.textContent = isChinese ? '备份并重启' : 'Back up and restart'
+    } else {
+      confirmationTitle.textContent = isChinese ? '修复启动？' : 'Repair startup?'
+      confirmationDescription.textContent = isChinese
+        ? '将清理运行环境和缓存，重启后自动重建。登录、设置、布局、插件、任务和会话都会保留。'
+        : 'This rebuilds the runtime and clears caches. Your sign-in, settings, layout, plugins, tasks, and conversations are preserved.'
+      confirmationSubmit.textContent = isChinese ? '修复并重启' : 'Repair and restart'
+    }
     confirmationSubmit.classList.remove('startup-button-danger')
     confirmationSubmit.classList.add('startup-button-primary')
     confirmationSubmit.focus()
@@ -552,9 +576,14 @@ async function runRecoveryAction(action, ...args) {
     await recovery[action](...args)
   } catch {
     setActionPending(false)
-    actionErrorElement.textContent = isChinese
-      ? '操作失败，请重新尝试。'
-      : 'The operation failed. Please try again.'
+    actionErrorElement.textContent =
+      pendingResetMode === 'recover' && canRepairData
+        ? isChinese
+          ? '无法完成文件修复。请检查文件及所在目录的权限和可用空间后再试。'
+          : 'The file could not be repaired. Check permissions and available disk space, then try again.'
+        : isChinese
+          ? '操作失败，请重新尝试。'
+          : 'The operation failed. Please try again.'
     actionErrorElement.hidden = false
   }
 }
@@ -603,6 +632,9 @@ window.addEventListener('keydown', event => {
 window.addEventListener('wework-startup-error', event => {
   const pluginName = event.detail?.pluginName
   failedPluginName = typeof pluginName === 'string' && pluginName ? pluginName : null
+  failedDataFile = typeof event.detail?.dataFile === 'string' ? event.detail.dataFile : null
+  canRepairData = event.detail?.canRepairData === true
+  recoverButton.hidden = Boolean(failedDataFile) && !canRepairData
   disablePluginButton.hidden = failedPluginName === null
   startupFailed = true
   stopProgressUpdates()

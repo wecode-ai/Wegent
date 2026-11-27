@@ -13,6 +13,7 @@ export interface CoreDshPlugin {
   canUpdate: boolean
   canToggle: boolean
   canUninstall: boolean
+  loadFailed?: boolean
 }
 
 export function readCoreDshPlugins(): Promise<CoreDshPlugin[]> {

@@ -60,7 +60,7 @@ export function AppUpdateErrorDetailsDialog({
   if (!open) return null
 
   const retryLabel =
-    error.kind === 'network'
+    error.kind === 'network' && error.stage !== 'prepare'
       ? t('workbench.app_update_error_reconnect', '重新连接')
       : t('common.retry', '重试')
   const copyLabel = {
@@ -115,6 +115,11 @@ export function AppUpdateErrorDetailsDialog({
               {t('workbench.app_update_error_dialog_title', '应用更新失败')}
             </h2>
             <p className="mt-1 text-sm leading-5 text-text-secondary">{summary}</p>
+            {['extract', 'verify', 'prepare'].includes(error.stage) ? (
+              <p className="mt-1 text-sm leading-5 text-text-secondary">
+                {t('workbench.app_update_keep_current_version')}
+              </p>
+            ) : null}
           </div>
         </div>
 

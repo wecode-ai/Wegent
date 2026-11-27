@@ -125,7 +125,20 @@ export async function waitForReleasePreparation(preparation, readProgress, { sto
     await waitForPreparationPhases(
       async () => {
         if (!outcome) return readProgress()
-        if (outcome.error) throw outcome.error
+        if (outcome.error) {
+          if (!preparation.child && typeof outcome.error.stderr !== 'string') throw outcome.error
+          const { phase } = await readProgress()
+          const detail =
+            typeof outcome.error.stderr === 'string'
+              ? outcome.error.stderr.match(/^\[release-preparation\] (.+)$/m)?.[1]
+              : outcome.error.message
+          throw new Error(
+            `Release preparation failed during ${phase}${detail ? `: ${detail}` : ''}`,
+            {
+              cause: outcome.error,
+            }
+          )
+        }
         return { phase: 'ready' }
       },
       { ...timing, phases: RELEASE_PHASES, description: 'Release preparation' }

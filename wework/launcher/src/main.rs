@@ -3,6 +3,8 @@
 #[cfg(target_os = "macos")]
 mod macos_installation;
 mod startup_lock;
+#[cfg(windows)]
+mod windows_trial;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -276,12 +278,24 @@ fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()>
             return Err(error);
         }
     };
-    let spawned = Command::new(&executable)
+    let mut command = Command::new(&executable);
+    command
         .args(forwarded)
         .env("WEWORK_RELEASE_SUPERVISED", &id)
         .env("WEWORK_RELEASE_ROOT", &root)
-        .stdin(Stdio::null())
-        .spawn();
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    let trial_job = trial
+        .as_ref()
+        .map(|_| windows_trial::Trial::new())
+        .transpose()?;
+    #[cfg(windows)]
+    let spawned = match &trial_job {
+        Some(job) => job.spawn(&mut command),
+        None => command.spawn(),
+    };
+    #[cfg(not(windows))]
+    let spawned = command.spawn();
     let mut child = match spawned {
         Ok(child) => child,
         Err(error) => {
@@ -291,17 +305,52 @@ fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()>
             return Err(error);
         }
     };
-    fs::write(root.join("active-pid"), child.id().to_string())?;
+    if let Err(error) = fs::write(root.join("active-pid"), child.id().to_string()) {
+        #[cfg(windows)]
+        if let Some(job) = &trial_job {
+            job.stop()?;
+        } else {
+            terminate_runtime_tree(&mut child)?;
+        }
+        #[cfg(not(windows))]
+        terminate_runtime_tree(&mut child)?;
+        return Err(error);
+    }
     // Only an activation is time bounded. A healthy ordinary launch is not an update trial.
     let Some(token) = trial else { return Ok(()) };
     release_id(&token)?;
     let started = Instant::now();
+    let activation_timeout = Duration::from_secs(if cfg!(windows) { 180 } else { 60 });
     loop {
         if read(root.join("healthy")).ok().as_deref() == Some(&token) {
             return Ok(());
         }
         let exited = child.try_wait()?.is_some();
-        if exited || started.elapsed() >= Duration::from_secs(60) {
+        let recovery_is_open =
+            cfg!(windows) && read(root.join("recovery-required")).ok().as_deref() == Some(&token);
+        if exited || (!recovery_is_open && started.elapsed() >= activation_timeout) {
+            #[cfg(windows)]
+            {
+                trial_job.as_ref().expect("trial owns a job").stop()?;
+                if recovery_is_open
+                    && read(root.join("retry-after-repair")).ok().as_deref() == Some(&token)
+                {
+                    fs::remove_file(root.join("attempted"))?;
+                    fs::remove_file(root.join("recovery-required"))?;
+                    fs::remove_file(root.join("retry-after-repair"))?;
+                    drop(lock);
+                    Command::new(env::current_exe()?)
+                        .args([root.as_os_str(), bridge])
+                        .args(forwarded)
+                        .spawn()?;
+                    return Ok(());
+                }
+            }
+            fs::write(
+                root.join("failure-reason"),
+                format!("{token}\n{}", if exited { "early-exit" } else { "timeout" }),
+            )?;
+            #[cfg(not(windows))]
             if !exited {
                 terminate_runtime_tree(&mut child)?;
             }

@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -9,12 +9,14 @@ import {
   resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore, sameReleasePath } from './runtime/release-store.js'
-import { restoreReleaseData } from './runtime/release-snapshot.js'
+import { confirmStartupDataRestore } from './host/startup-notices.js'
+import { settleReleaseBeforeStartup } from './runtime/release-startup-recovery.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
 import { acquireReleaseStartup } from './runtime/release-startup-owner.js'
+import { pendingWindowsInstallation } from './runtime/windows-release-installation.js'
 import {
   assertReleaseAfterStopReady,
   prepareReleaseAfterStop,
@@ -88,6 +90,18 @@ async function routeSelectedRelease(
   const physicalRollback =
     process.platform === 'darwin' ? await optionalText(join(root, 'macos-rollback')) : null
   const versionedPayload = await store.isSlotExecutable(process.execPath)
+  if (
+    !supervisedId &&
+    !recoveryToken &&
+    !versionedPayload &&
+    metadata.version &&
+    (await pendingWindowsInstallation(store, process.execPath, metadata.version))
+  ) {
+    delete process.env.WEWORK_ACTIVE_RELEASE_ID
+    delete process.env.WEWORK_COMPONENT_DATA_DIRECTORY
+    delete process.env.WEWORK_HARNESS_RUNTIME_ROOT
+    return true
+  }
   if (
     process.platform === 'darwin' &&
     !supervisedId &&
@@ -258,64 +272,12 @@ async function launchSelectedRelease(
   metadata: ReleaseMetadata,
   forwardedArguments: () => string[]
 ): Promise<void> {
-  const activation = await store.activation()
-  if (activation?.rollbackRequested) {
-    // Confirmation was recorded before beginning this manual rollback. Resume
-    // an interrupted restore even if the target's earlier healthy marker exists.
-    if (activation.restoreRequired)
-      await restoreReleaseData(
-        dataDirectory,
-        root,
-        activation.snapshot,
-        process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
-      )
-    await store.rollback()
-  } else if (
-    activation &&
-    (await optionalText(join(root, 'attempted'))) === activation.token &&
-    ((await optionalText(join(root, 'failed'))) === activation.token ||
-      (await optionalText(join(root, 'healthy'))) === activation.token)
-  ) {
-    const healthy = await optionalText(join(root, 'healthy'))
-    if (healthy === activation.token) {
-      await store.confirm(activation.to)
-    } else {
-      // Also handles a machine reboot or interruption between journal and pointer writes.
-      if (
-        activation.restoreRequired &&
-        (await optionalText(join(root, 'data-opened'))) === activation.token
-      ) {
-        const zh = app.getLocale().startsWith('zh')
-        const answer = await dialog.showMessageBox({
-          type: 'warning',
-          title: 'Wework',
-          message: zh
-            ? '新版未能启动，需要恢复更新前的数据才能回退。'
-            : 'The new version could not start. Rollback requires restoring pre-update data.',
-          detail: zh
-            ? '恢复将移除更新后新增的本地数据；这些数据会另外保留。源码仓库和云端数据不受影响。'
-            : 'New local data will be preserved separately. Repositories and cloud records are unaffected.',
-          buttons: zh ? ['稍后处理', '恢复并回退'] : ['Decide later', 'Restore and roll back'],
-          defaultId: 0,
-          cancelId: 0,
-        })
-        if (answer.response !== 1) {
-          throw new Error(
-            zh
-              ? '更新数据等待恢复确认，原始数据已保留。'
-              : 'Update recovery needs confirmation. Original data is preserved.'
-          )
-        }
-        await restoreReleaseData(
-          dataDirectory,
-          root,
-          activation.snapshot,
-          process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
-        )
-      }
-      await store.rollback()
-    }
-  }
+  if (!(await settleReleaseBeforeStartup(store, dataDirectory, confirmStartupDataRestore)))
+    throw new Error(
+      app.getLocale().startsWith('zh')
+        ? '更新数据等待恢复确认，原始数据已保留。'
+        : 'Update recovery needs confirmation. Original data is preserved.'
+    )
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
   try {

@@ -59,6 +59,8 @@ export interface AppUpdateServiceOptions {
   updateBaseUrl: string
   isPackaged: boolean
   shutdown: () => Promise<void>
+  preferencesUnreadable?: () => boolean
+  installerTakeoverPending?: () => boolean
   restart: () => void
   fetch?: typeof fetch
   log?: (event: Record<string, unknown>) => void
@@ -295,6 +297,9 @@ export class AppUpdateService {
   }
 
   private async prepare(pending: UpgradeRelease): Promise<void> {
+    this.failureStage = 'prepare'
+    if (this.options.installerTakeoverPending?.())
+      throw new Error('The installed version is still being registered')
     const started = performance.now()
     this.log({ event: 'release-preparation-started', version: pending.version })
     this.progress = {
@@ -400,7 +405,12 @@ export class AppUpdateService {
   async reconcileInstalledRelease(
     components: ComponentPaths | null
   ): Promise<DesktopRelease | null> {
-    if (!this.options.isPackaged || process.platform !== 'win32') return null
+    if (
+      !this.options.isPackaged ||
+      process.platform !== 'win32' ||
+      this.options.installerTakeoverPending?.()
+    )
+      return null
     const store = this.options.store
     const current = await store.active()
     if (
@@ -410,22 +420,29 @@ export class AppUpdateService {
       (await store.activation())
     )
       return null
-    await this.registerInstalledRelease(components)
+    await this.registerInstalledRelease(undefined, components)
     return store.active()
   }
 
-  private async registerInstalledRelease(runningComponents?: ComponentPaths | null): Promise<void> {
+  async registerInstalledRelease(
+    installationId?: string,
+    runningComponents?: ComponentPaths | null
+  ): Promise<void> {
     const store = this.options.store
     const current = await store.active()
     const runningRelease = current?.version === this.options.currentVersion
-    if (runningRelease && !current.id.startsWith('installed-')) return
+    if (!installationId && runningRelease && !current.id.startsWith('installed-')) return
     const components =
       runningComponents === undefined ? await this.options.runningComponents?.() : runningComponents
     if (!components) throw new Error('The running release component composition is unavailable')
-    const id = runningRelease
-      ? current.id
-      : `installed-${this.options.currentVersion}-${randomUUID()}`
-    const retainedRelease = runningRelease ? current.retainedRelease : current?.id
+    const id =
+      installationId ??
+      (runningRelease ? current.id : `installed-${this.options.currentVersion}-${randomUUID()}`)
+    const retainedRelease = installationId
+      ? undefined
+      : runningRelease
+        ? current.retainedRelease
+        : current?.id
     const release: DesktopRelease = {
       schemaVersion: 1,
       id,
@@ -442,7 +459,7 @@ export class AppUpdateService {
     await store.save(release)
     await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify({ components }))
     await atomicReleaseWrite(join(store.root, 'bridge'), this.options.executable)
-    if (current && !runningRelease) {
+    if (current && id !== current.id) {
       await rm(join(store.root, 'previousHealthy'), { force: true })
     }
     await atomicReleaseWrite(join(store.root, 'active'), id)
@@ -564,7 +581,9 @@ export class AppUpdateService {
     const snapshot = await snapshotReleaseData(
       this.options.dataDirectory,
       store.root,
-      process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
+      process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory,
+      current.readableDataSchemas.includes(release.dataSchema) &&
+        this.options.preferencesUnreadable?.()
     )
     if (current.id.startsWith('installed-')) {
       const profileRoot = join(store.slot(current.id), `retained-profile-${randomUUID()}`)
