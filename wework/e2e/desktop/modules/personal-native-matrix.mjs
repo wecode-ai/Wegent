@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  checkPersonalBotTurn,
+  installPersonalBotCapability,
+  startPersonalBotProbe,
+} from './personal-bot-capabilities.mjs'
 import { isCollaborationSubagentRequest } from './subagent-request.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { standInRoleFixture } from './stand-in-role-fixture.mjs'
@@ -29,19 +34,19 @@ export function personalNativeMatrix({
     const instructions = JSON.stringify(body.instructions ?? '')
     const request = JSON.stringify(body)
     if (!request.includes(cell.id)) return false
+    cell.modelCalls++
+    assert.ok(!cell.denied, 'Unequal native Coordinate grants reached the model')
     const child =
       cell.mode === 'coordinate' &&
       (cell.runtime === 'codex'
         ? isCollaborationSubagentRequest(headers)
         : input.includes(cell.assignment) && !input.includes(cell.prompt))
-    if (
+    const reviewer =
       child ||
       (cell.mode === 'pipeline' && request.includes(cell.second) && input.includes(cell.handoff))
-    ) {
-      assert.ok(
-        request.includes(cell.second),
-        'Second Bot instructions must reach its own native turn'
-      )
+    assert.ok(request.includes(reviewer ? cell.second : cell.first), 'Unexpected Bot instructions')
+    if (checkPersonalBotTurn({ cell, reviewer, body, response, writeToolCall })) return true
+    if (reviewer) {
       cell.reviewed = true
       writeText(response, cell.id + '-second', child ? cell.handoff : cell.result)
     } else if (cell.mode === 'coordinate' && !input.includes(cell.handoff)) {
@@ -87,6 +92,18 @@ export function personalNativeMatrix({
     })
     assert.ok(user.ok)
     const userId = (await user.json()).id
+    const probe = await startPersonalBotProbe(resultDir)
+    try {
+      const capabilities = await Promise.all(
+        [1, 2].map(slot => installPersonalBotCapability(cloud, resultDir, slot, probe))
+      )
+      await verifyMatrix(control, cloud, userId, capabilities, probe)
+    } finally {
+      await probe.close()
+    }
+  }
+
+  async function verifyMatrix(control, cloud, userId, capabilities, probe) {
     const evidence = []
     const cells = []
     const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -109,8 +126,10 @@ export function personalNativeMatrix({
         catalog.models.find(row => row.runtime === runtime && row.is_default) ??
         catalog.models.find(row => row.runtime === runtime)
       assert.ok(model, 'Missing personal assistant model for ' + runtime)
-      for (const mode of ['solo', 'pipeline', 'coordinate']) {
-        const id = 'personal-' + runtime.replace('_', '-') + '-' + mode
+      for (const variant of ['solo', 'pipeline', 'coordinate', 'coordinate-denied']) {
+        const denied = variant === 'coordinate-denied'
+        const mode = denied ? 'coordinate' : variant
+        const id = 'personal-' + runtime.replace('_', '-') + '-' + variant
         const definition = {
           id,
           runtime,
@@ -122,6 +141,11 @@ export function personalNativeMatrix({
           handoff: id + ' verified evidence',
           result: id + ' complete',
           calls: 0,
+          modelCalls: 0,
+          capabilities,
+          denied,
+          probe,
+          observed: {},
         }
         const settings = await rpc('runtime.stand_in.personal.get', { userId })
         const role = {
@@ -149,22 +173,35 @@ export function personalNativeMatrix({
             system_prompt: definition.second,
             description: 'Check the delivery',
           })
+        const team = {
+          name: id,
+          bot: bots,
+          collaboration_model: mode,
+          model_policy: {
+            mode: 'fixed',
+            model: { runtime, provider: model.provider, model_id: model.model_id },
+          },
+        }
         const saved = await rpc('runtime.stand_in.personal.save', {
           userId,
           transferRoleId: id,
           settings: { ...settings, roles: [...settings.roles, role] },
-          portableTeam: {
-            name: id,
-            bot: bots,
-            collaboration_model: mode,
-            model_policy: {
-              mode: 'fixed',
-              model: { runtime, provider: model.provider, model_id: model.model_id },
-            },
-          },
+          portableTeam: team,
         })
         const teamRef = saved.roles.find(row => row.id === id)?.teamRef
         assert.ok(teamRef)
+        const provisioned = await rpc('runtime.stand_in.personal.save', {
+          userId,
+          settings: saved,
+          ownedTeam: {
+            roleId: id,
+            botGrants: bots.map((bot, index) => ({
+              id: bot.id,
+              ...capabilities[mode === 'pipeline' || denied ? index : 0].grants,
+            })),
+          },
+        })
+        assert.equal(provisioned.roles.find(row => row.id === id)?.teamRef, teamRef)
         cells.push({ ...definition, teamRef })
       }
     }
@@ -187,7 +224,30 @@ export function personalNativeMatrix({
         value: cell.prompt,
       })
       await captureScreenshot(control, id + '-entry.png', chat)
+      const initialReceipts = probe.receipts.length
       await control.command('clickWhenEnabled', chat + ' [data-testid="send-message-button"]')
+      if (cell.denied) {
+        const reason = 'native subagents cannot isolate distinct Bot tool grants'
+        await control.command('waitFor', chat, { text: reason, timeoutMs: 30000 })
+        await captureScreenshot(control, id + '-denied.png', chat)
+        assert.equal(cell.modelCalls, 0)
+        assert.equal(probe.receipts.length, initialReceipts)
+        evidence.push({
+          teamRef,
+          runtime,
+          mode,
+          reason,
+          outcome: 'denied',
+          mcpCalls: 0,
+          modelCalls: cell.modelCalls,
+        })
+        await writeFile(
+          join(resultDir, 'personal-native-execution.json'),
+          JSON.stringify(evidence, null, 2)
+        )
+        cell = null
+        continue
+      }
       await control.command('waitFor', chat + ' [data-testid="message-assistant"]', {
         text: cell.result,
         timeoutMs: 60000,
@@ -198,7 +258,17 @@ export function personalNativeMatrix({
       const { task } = await rpc('runtime.tasks.get', { taskId })
       assert.equal(task.taskId, taskId)
       assert.equal(task.runtime, runtime)
+      assert.deepEqual(Object.keys(cell.observed), mode === 'solo' ? ['1'] : ['1', '2'])
+      const observed = Object.values(cell.observed)
+      assert.deepEqual(
+        observed.map(row => row.receipt).sort(),
+        probe.receipts
+          .slice(initialReceipts)
+          .map(row => row.receipt)
+          .sort()
+      )
       evidence.push({
+        botCapabilities: Object.values(cell.observed),
         taskId: task.taskId,
         teamRef,
         mode,
