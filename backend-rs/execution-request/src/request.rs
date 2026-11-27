@@ -827,7 +827,9 @@ async fn build_request_with_runtime(
     )
     .await
     .map_err(dependency)?;
-    let mut available_refs = super::skills::inject_subscription_manager_skill(is_subscription);
+    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
+    let mut available_refs =
+        super::skills::inject_subscription_manager_skill(is_subscription, team_json, &shell_type);
     super::skills::route_binding_refs(binding_refs, &mut requested_skills, &mut available_refs);
     let mut skills = get_bot_skills(
         state.mysql,
@@ -852,10 +854,6 @@ async fn build_request_with_runtime(
         generation.as_ref(),
         Some(input.message),
     );
-
-    // As in the Python builder, resolve the Bot's Shell after resolving its
-    // Skills. The legacy bindShells field is carried as Skill metadata.
-    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
 
     // `_append_web_runtime_guidance` (`request_builder.py:551-566`): the
     // chat entry point injects the Wegent web runtime guidance into the

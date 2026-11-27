@@ -79,10 +79,21 @@ fn matches_any_keyword(keywords: &[&str], text: &str) -> bool {
         .any(|keyword| text.contains(&normalize_provider_keyword_text(keyword)))
 }
 
-/// `_inject_subscription_manager_skill`: the always-injected available
-/// (non-preloaded) public Skill, skipped for subscription tasks.
-pub fn inject_subscription_manager_skill(is_subscription: bool) -> Vec<Value> {
-    if is_subscription {
+/// Native Coordinate roles share a Shell turn. Injecting a task-token-backed
+/// Skill into only its leader changes the Team's configured role grants.
+pub fn inject_subscription_manager_skill(
+    is_subscription: bool,
+    team: &Value,
+    shell: &str,
+) -> Vec<Value> {
+    let spec = &team["spec"];
+    if is_subscription
+        || (is_coding_shell(shell)
+            && spec["collaborationModel"] == "coordinate"
+            && spec["members"]
+                .as_array()
+                .is_some_and(|members| members.len() > 1))
+    {
         return Vec::new();
     }
     vec![serde_json::json!({
