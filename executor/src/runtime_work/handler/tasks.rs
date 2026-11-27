@@ -2372,7 +2372,11 @@ impl RuntimeWorkRpcHandler {
         if self.wait_for_guidance_turn(task).await.is_none() {
             return Ok(None);
         }
-        let input = crate::agents::codex_guidance_input(request.clone()).await;
+        let prepared_request =
+            crate::agents::runtime_capabilities::prepare_runtime_attachments(request.clone()).await;
+        let input = crate::agents::codex_guidance_input(&prepared_request)
+            .await
+            .map_err(|error| AppIpcError::new("guidance_attachment_unavailable", error))?;
         if input.is_empty() {
             return Ok(None);
         }
@@ -2424,7 +2428,7 @@ impl RuntimeWorkRpcHandler {
             });
         }
         let mut result = self
-            .deliver_guidance(guidance, None, owner_input, true, input)
+            .deliver_guidance(guidance, None, owner_input, true, Some(input))
             .await?;
         match result["code"].as_str() {
             Some("no_active_turn" | "user_input_pending" | "conversation_context_mismatch") => {
@@ -2487,70 +2491,27 @@ impl RuntimeWorkRpcHandler {
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
             .unwrap_or_default();
-        let attachments: Vec<Value> = payload["attachments"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|attachment| {
-                id_field(attachment, "id").is_some_and(|id| id.parse::<i64>().is_ok())
-                    && string_field(attachment, "local_path")
-                        .or_else(|| string_field(attachment, "localPath"))
-                        .is_some()
-            })
-            .cloned()
-            .collect();
-        if message.is_empty() && attachments.is_empty() {
+        let attachments = payload
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if message.is_empty() && attachments.is_empty() && payload.get("attachmentIds").is_none() {
             return Err(AppIpcError::new(
                 "bad_request",
-                "message or local attachment is required",
+                "message or attachment is required",
             ));
         }
-        let has_attachments = !attachments.is_empty();
         let mut payload = payload;
-        let steer_input = if has_attachments {
-            payload["message"] = json!(message);
-            payload["attachments"] = Value::Array(attachments);
-            let mut request = ExecutionRequest {
-                task_id: local_task_id.clone(),
-                prompt: Value::String(message),
-                ..Default::default()
-            };
-            request
-                .extra
-                .insert("attachments".into(), payload["attachments"].clone());
-            crate::agents::codex_guidance_input(request).await
-        } else {
-            vec![json!({ "type": "text", "text": message })]
-        };
+        payload["message"] = json!(message);
         log_executor_event(
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
-        let result = self
-            .deliver_guidance(
-                payload.clone(),
-                event_operation,
-                owner_input,
-                false,
-                steer_input,
-            )
-            .await?;
-        if has_attachments && result["accepted"] == true {
-            payload["clientUserMessageId"] = result["guidanceId"].clone();
-            if let Some(mut presentation) = user_message_presentation(&payload) {
-                presentation["turnId"] = result["turnId"].clone();
-                presentation["guidance"] = json!(true);
-                presentation["ensureVisible"] = json!(false);
-                self.store
-                    .update_task_without_snapshot(&local_task_id, |link| {
-                        append_runtime_handle_user_message_presentation(
-                            &mut link.runtime_handle,
-                            presentation,
-                        );
-                    });
-            }
-        }
-        Ok(result)
+        // deliver_guidance materializes remote attachments and records the
+        // user-visible guidance presentation for every direct send.
+        self.deliver_guidance(payload, event_operation, owner_input, false, None)
+            .await
     }
 
     pub(super) async fn deliver_guidance(
@@ -2559,7 +2520,7 @@ impl RuntimeWorkRpcHandler {
         event_operation: Option<&str>,
         owner_input: bool,
         preserve_interaction: bool,
-        steer_input: Vec<Value>,
+        prepared_steer_input: Option<Vec<Value>>,
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -2601,6 +2562,29 @@ impl RuntimeWorkRpcHandler {
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
+        let message = string_field(&payload, "message")
+            .or_else(|| string_field(&payload, "guidance"))
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_default();
+        let attachments = payload
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let direct_guidance = prepared_steer_input.is_none();
+        let steer_input = match prepared_steer_input {
+            Some(input) => input,
+            None => {
+                self.prepare_guidance_input(
+                    &local_task_id,
+                    &guidance_id,
+                    &message,
+                    &payload,
+                    attachments,
+                )
+                .await?
+            }
+        };
         let issue_comment = payload["issueCommentId"]
             .as_str()
             .filter(|comment| *comment == guidance_id.as_str());
@@ -2701,6 +2685,15 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
+                if direct_guidance && event_operation.is_none() && issue_comment.is_none() {
+                    self.record_guidance_presentation(
+                        &local_task_id,
+                        &turn_id,
+                        &guidance_id,
+                        &message,
+                        attachments,
+                    );
+                }
                 if !preserve_interaction
                     && event_operation.is_none()
                     && issue_comment.is_none()
@@ -2743,6 +2736,86 @@ impl RuntimeWorkRpcHandler {
                     error,
                 ))
             }
+        }
+    }
+
+    async fn prepare_guidance_input(
+        &self,
+        task_id: &str,
+        guidance_id: &str,
+        message: &str,
+        payload: &Value,
+        attachments: &[Value],
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let unavailable = |error| AppIpcError::new("guidance_attachment_unavailable", error);
+        let attachment_ids = attachments
+            .iter()
+            .map(|attachment| id_field(attachment, "id")?.parse::<i64>().ok())
+            .collect::<Option<HashSet<_>>>()
+            .ok_or_else(|| unavailable("One or more attachments are unavailable".to_owned()))?;
+        if payload["attachmentIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|id| {
+                let id = id.as_i64().or_else(|| id.as_str()?.parse().ok());
+                !id.is_some_and(|id| attachment_ids.contains(&id))
+            })
+        {
+            return Err(unavailable(
+                "One or more attachments are unavailable".to_owned(),
+            ));
+        }
+        let download = &payload["attachmentDownload"];
+        let mut request = ExecutionRequest {
+            task_id: task_id.to_owned(),
+            subtask_id: guidance_id.to_owned(),
+            project_workspace_path: self
+                .store
+                .read_task(task_id, |link| link.workspace_path.clone()),
+            auth_token: string_field(download, "authToken"),
+            backend_url: string_field(download, "backendUrl"),
+            prompt: json!(message),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("attachments".to_owned(), json!(attachments));
+        let request =
+            crate::agents::runtime_capabilities::prepare_runtime_attachments(request).await;
+        let input = crate::agents::codex_guidance_input(&request)
+            .await
+            .map_err(unavailable)?;
+        if input.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "message or attachment is required",
+            ));
+        }
+        Ok(input)
+    }
+
+    fn record_guidance_presentation(
+        &self,
+        task_id: &str,
+        turn_id: &str,
+        guidance_id: &str,
+        message: &str,
+        attachments: &[Value],
+    ) {
+        let payload = json!({"clientUserMessageId": guidance_id, "message": message, "attachments": attachments});
+        if let Some(mut presentation) = user_message_presentation(&payload) {
+            presentation["turnId"] = json!(turn_id);
+            presentation["ensureVisible"] = json!(false);
+            presentation["restoreContent"] = json!(true);
+            presentation["guidance"] = json!(true);
+            presentation["runtimeGuidance"] = json!(true);
+            self.store.update_task_without_snapshot(task_id, |link| {
+                append_runtime_handle_user_message_presentation(
+                    &mut link.runtime_handle,
+                    presentation,
+                );
+            });
         }
     }
 
@@ -3377,6 +3450,7 @@ impl RuntimeWorkRpcHandler {
                     presentation,
                 );
             }
+            apply_guidance_correction_presentation(&mut link.runtime_handle, payload);
             link.workspace_path = workspace_path.to_owned();
             link.ephemeral = link.ephemeral || request.ephemeral;
             if request.runtime_project_key.is_some() {

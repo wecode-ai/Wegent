@@ -78,6 +78,38 @@ def test_transcript_preserves_canonical_turns_and_execution_state():
         RuntimeTranscriptResponse.model_validate(payload)
 
 
+def test_transcript_preserves_guidance_correction_prompt_visibility():
+    from app.schemas.runtime_work import RuntimeTranscriptResponse
+
+    result = RuntimeTranscriptResponse.model_validate(
+        {
+            "taskId": "task-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "turns": [],
+            "messages": [
+                {
+                    "id": "original-guidance-1",
+                    "role": "user",
+                    "content": "Revised guidance",
+                    "runtimeGuidance": True,
+                },
+                {
+                    "id": "continuation-1",
+                    "role": "user",
+                    "content": "Continue with the revised guidance",
+                    "suppressedUserMessage": True,
+                },
+            ],
+        }
+    ).model_dump(by_alias=True)
+
+    guidance, continuation = result["messages"]
+    assert guidance["runtimeGuidance"] is True
+    assert "suppressedUserMessage" not in guidance
+    assert continuation["suppressedUserMessage"] is True
+
+
 def test_runtime_task_create_v2_matches_cross_runtime_golden_contract() -> None:
     fixtures = json.loads(
         (PROTOCOL_DIR / "runtime_task_create_request_v2.golden.json").read_text()

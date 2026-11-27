@@ -156,6 +156,9 @@ export function MessageHoverActions({
     </span>
   )
 
+  const editLabel = t(
+    message.runtimeGuidance ? 'message_actions.revise_guidance' : 'message_actions.edit'
+  )
   const editAction = onEdit ? (
     <span
       data-testid="edit-message-action"
@@ -170,9 +173,9 @@ export function MessageHoverActions({
           }
           onEdit()
         }}
-        title={t('message_actions.edit')}
+        title={editLabel}
         className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary"
-        aria-label={t('message_actions.edit_message')}
+        aria-label={message.runtimeGuidance ? editLabel : t('message_actions.edit_message')}
       >
         <Pencil data-testid="edit-message-icon" className="h-3.5 w-3.5" />
       </ControlButton>
@@ -180,7 +183,7 @@ export function MessageHoverActions({
         data-testid="edit-message-label"
         className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/edit:opacity-100"
       >
-        {t('message_actions.edit')}
+        {editLabel}
       </span>
     </span>
   ) : null
