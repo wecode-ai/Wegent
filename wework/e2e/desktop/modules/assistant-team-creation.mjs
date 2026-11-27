@@ -45,6 +45,9 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
   assert.equal(updated.teamRef, owned.teamRef)
   assert.equal(updated.prompt, 'Edit this assistant directly.')
 
+  const catalog = await rpc('runtime.runner.catalog', {})
+  const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
+  assert.ok(model, 'The source Team requires the configured device model')
   const source = await rpc('chat_agents.create', {
     project_id: projectId,
     agent: {
@@ -53,6 +56,10 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
       created_by_user_id: userId,
       system_prompt: 'Review the original release plan.',
       execution_policy: { mode: 'fixed', environment_id: settings.executionDeviceId },
+      model_policy: {
+        mode: 'fixed',
+        model: { runtime: model.runtime, provider: model.provider, model_id: model.model_id },
+      },
     },
   })
   const readSource = async () =>
