@@ -734,6 +734,8 @@ def test_server_round_replays_human_receipt_and_rejects_changed_list(
         )
     assert changed.value.status_code == 409
     member = test_db.get(LoopItemExecution, execution_id)
+    assert member.runtime_origin_context["workflow_task_title"] == "Review"
+    assert member.runtime_origin_context["execution_prompt"] == "Review\n\nVerify"
     assert member.runtime_origin_context["dispatch_protocol_version"] == 2
     scenario.parent.metadata_json = {
         **scenario.parent.metadata_json,
