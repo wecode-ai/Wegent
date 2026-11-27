@@ -326,6 +326,26 @@ describe('ProcessExplorerService', () => {
       expect((await service.snapshot()).recentlyExited).toEqual([])
     })
 
+    it('clears an exit when the same process identity reappears in a complete sample', async () => {
+      const child = systemRow(40, 10, 'created-40')
+      const table = mutableTable()
+      table.setRows([child])
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      expect((await service.snapshot()).recentlyExited.map(row => row.id)).toEqual([
+        '40:created-40',
+      ])
+
+      advance(1000)
+      table.setRows([child])
+      const returned = await service.snapshot()
+      expect(returned.processes).toContainEqual(expect.objectContaining({ id: '40:created-40' }))
+      expect(returned.recentlyExited).toEqual([])
+    })
+
     it('does not report exits after a sampling gap longer than the linger window', async () => {
       const table = mutableTable()
       const { service, advance } = createService({ systemTable: { read: table.read } })
