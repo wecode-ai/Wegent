@@ -1,16 +1,10 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { stopProcessGroup } from '../process-lifecycle.mjs'
-import { appendProcessOutput } from '../process-output.mjs'
-import { DesktopE2EServer } from '../modules/desktop-server.mjs'
-import { resolveElectronLaunchArguments } from '../modules/electron-launch-arguments.mjs'
-import { prepareNativeKeychainPreferences } from '../modules/native-keychain-preferences.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
@@ -22,12 +16,13 @@ import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
-  CLOUD_DEVICE_ID,
-  MODEL_API_KEY,
-  REMOTE_DOCKER_DEVICE_ID,
-  fetchJson,
-  weworkDir,
-} from '../modules/shared.mjs'
+  createStandInCloudPeerClient,
+  PEER_CLOUD_PROMPT,
+  PEER_CLOUD_COMPLETE,
+  PEER_FALLBACK_PROMPT,
+  PEER_FALLBACK_COMPLETE,
+} from '../modules/stand-in-cloud-peer-client.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, fetchJson } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -46,10 +41,6 @@ const HOLD = 'CLOUD_STAND_IN_STOP_RUNNING_CONVERSATION'
 const LOCAL_NAME = 'Signed-out local stand-in'
 const LOCAL_PROMPT = 'LOCAL_STAND_IN_DEVICE_HISTORY'
 const LOCAL_COMPLETE = 'LOCAL_STAND_IN_HISTORY_PRESERVED'
-const PEER_CLOUD_PROMPT = 'PEER_CLIENT_CLOUD_PRIMARY_EXECUTION'
-const PEER_CLOUD_COMPLETE = 'PEER_CLIENT_CLOUD_PRIMARY_COMPLETE'
-const PEER_FALLBACK_PROMPT = 'PEER_CLIENT_FOREIGN_DESKTOP_FALLBACK_EXECUTION'
-const PEER_FALLBACK_COMPLETE = 'PEER_CLIENT_FOREIGN_DESKTOP_FALLBACK_COMPLETE'
 const testId = id => `[data-testid=${JSON.stringify(id)}]`
 
 function readProfile(home) {
@@ -96,16 +87,19 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let cloud
-  let preparedApp
-  let peerControl
-  let peerApp
-  let peerStopping = false
-  let peerSqliteHome
   let modelRequests = 0
   let heldResponse
   let heldRequestSeen = false
   let heldConnectionClosed = false
   let remoteSocket
+  const peerClient = createStandInCloudPeerClient({
+    resultDir,
+    workspacePath,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+    modelResponseTimeoutMs,
+    userId: USER,
+  })
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const stop = control => stopBoundStandIn(control, uiTimeoutMs)
   const bind = (control, user, device) =>
@@ -207,275 +201,6 @@ export function createDesktopScenario({
     )
     await control.command('navigate', 'body', { value: '/stand-in' })
   }
-  async function verifySavedLocalBinding(control, localDevice) {
-    await setPrimaryDevice(localDevice)
-    await rpc(control, 'runtime.stand_in.personal.lifecycle', {
-      userId: USER,
-      operation: 'start',
-    })
-    await reloadMainWindow(control)
-    await control.command('waitFor', testId('stand-in-overview'))
-    assert.equal(await readPrimaryDevice(), localDevice)
-    // Both current sha256 and legacy UUID desktop electron-* IDs from another client must fall back
-    // cleanly on this client without overwriting the saved cloud setting.
-    for (const foreignDesktopDevice of [`electron-${'f'.repeat(64)}`, `electron-${randomUUID()}`]) {
-      await setPrimaryDevice(foreignDesktopDevice)
-      await reloadMainWindow(control)
-      await control.command('waitFor', testId('stand-in-overview'))
-      assert.equal(await readPrimaryDevice(), foreignDesktopDevice)
-    }
-    await setPrimaryDevice(localDevice)
-  }
-
-  async function stopPeerClient() {
-    const activePeerApp = peerApp
-    const activePeerControl = peerControl
-    peerStopping = true
-    try {
-      if (Number.isInteger(activePeerApp?.pid)) await stopProcessGroup(activePeerApp)
-      peerApp = null
-    } finally {
-      if (activePeerControl) await activePeerControl.close()
-      peerControl = null
-    }
-  }
-
-  async function verifyPeerCloudTurn(taskId, prompt, completion) {
-    const transcript = await until(
-      () => remoteRpc('runtime.tasks.transcript', { taskId, limit: 20, refresh: true }),
-      value => {
-        const user = value.messages?.find(
-          message => message.role === 'user' && message.content === prompt
-        )
-        return Boolean(
-          user?.turnId &&
-          value.messages.some(
-            message =>
-              message.role === 'assistant' &&
-              message.content?.includes(completion) &&
-              message.turnId === user.turnId
-          )
-        )
-      },
-      `Cloud Executor must persist the new request and response in the same turn: ${prompt}`,
-      modelResponseTimeoutMs
-    )
-    const finished = await until(
-      () => remoteRpc('runtime.tasks.get', { taskId }),
-      result => result.task?.status === 'done' && result.task.running === false,
-      `Cloud Executor must finish the new turn: ${prompt}`,
-      modelResponseTimeoutMs
-    )
-    assert.ok(transcript.threadId, 'The cloud transcript must expose a native thread')
-    assert.equal(finished.task.threadId, transcript.threadId)
-    const peerLocalTasks = await rpc(peerControl, 'runtime.tasks.list', {})
-    assert.equal(
-      findRuntimeWorkTask(peerLocalTasks.workspaces, taskId),
-      undefined,
-      'Cloud @primary chat must not execute on the second client local Executor'
-    )
-    return transcript.messages.find(
-      message => message.role === 'user' && message.content === prompt
-    ).turnId
-  }
-
-  async function verifySimultaneousClients(control, localDevice) {
-    assert.ok(preparedApp, 'Multi-client stand-in E2E requires prepared desktop launch metadata')
-    peerControl = new DesktopE2EServer(workspacePath)
-    const launchedPeerControl = peerControl
-    peerStopping = false
-    try {
-      await peerControl.start({ modelPort: 0, controlPort: 0 })
-      const peerEnv = {
-        ...preparedApp.appEnvironment,
-        WEWORK_E2E_CONTROL_URL: peerControl.controlUrl,
-      }
-      peerApp = spawn(preparedApp.appBinary, resolveElectronLaunchArguments(), {
-        cwd: weworkDir,
-        env: peerEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      })
-      appendProcessOutput(peerApp.stdout, preparedApp.appLogPath, peerApp)
-      appendProcessOutput(peerApp.stderr, preparedApp.appLogPath, peerApp)
-      peerApp.once('error', error => {
-        if (!peerStopping) launchedPeerControl.fail(error)
-      })
-      peerApp.once('exit', (code, signal) => {
-        if (!peerStopping) {
-          launchedPeerControl.fail(
-            new Error(`Second desktop exited (code=${code}, signal=${signal})`)
-          )
-        }
-      })
-      peerControl.applicationProcessId = peerApp.pid
-      await peerControl.awaitReadyAfter(0, workbenchReadyTimeoutMs)
-      await peerControl.command('setCloudSessionToken', 'body', { value: cloud.authToken })
-      await rpc(peerControl, 'runtime.stand_in.onboarding.complete', {
-        userId: USER,
-        weeklyReview: false,
-        language: 'zh-CN',
-      })
-      await ensureExperimentalFeaturesEnabled(peerControl)
-      await peerControl.command('setAppPreferences', 'body', {
-        value: JSON.stringify({ collaborationExperienceEnabled: false }),
-      })
-      const peerIdentity = JSON.parse(await peerControl.command('getLocalExecutorStatus', 'body'))
-      const peerDevice = peerIdentity.deviceId
-      assert.notEqual(
-        peerDevice,
-        localDevice,
-        'The second desktop client must have an independent local Executor identity'
-      )
-
-      // Exercise the existing offline recovery on both signed-in desktop installations.
-      await stopProcessGroup(cloud.remoteExecutor)
-      await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
-      await observeDevice(control, CLOUD_DEVICE_ID, '离线')
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
-      await control.command('waitFor', testId('stand-in-instance-stop') + ':not(:disabled)')
-      await reloadMainWindow(control)
-      await control.command('waitFor', testId('stand-in-instance-stopping'))
-      const pending = (await readCloudAssistant()).assistant?.stopIntents?.find(
-        intent => intent.deviceId === CLOUD_DEVICE_ID
-      )
-      assert.ok(pending?.requestId, 'The account must retain the offline stop request')
-      assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
-      assert.equal(
-        await control.command('getElementCount', testId(`stand-in-instance-bind-0-${localDevice}`)),
-        '0',
-        'Offline cancellation must not expose a legacy owner-zero binding'
-      )
-      await observeDevice(peerControl, CLOUD_DEVICE_ID, '离线')
-      await reloadMainWindow(peerControl)
-      await peerControl.command('waitFor', testId('stand-in-instance-stopping'))
-      await cloud.restartCloudExecutor()
-      await observeDevice(control, CLOUD_DEVICE_ID, '在线')
-      await control.command('waitFor', testId('stand-in-instance-stopping'))
-      await observeDevice(peerControl, CLOUD_DEVICE_ID, '在线')
-      await peerControl.command('waitFor', testId('stand-in-instance-stopping'))
-      await stop(peerControl)
-      await reloadMainWindow(control)
-      await control.command('waitFor', testId('stand-in-instance-stopped'))
-      await until(
-        async () => (await readCloudAssistant()).assistant,
-        account =>
-          Boolean(
-            account && !account.stopIntents?.some(intent => intent.deviceId === CLOUD_DEVICE_ID)
-          ),
-        'Peer stop acknowledgement clears the account marker',
-        uiTimeoutMs
-      )
-      await verifySavedLocalBinding(control, localDevice)
-
-      // 1. Both clients simultaneously signed into USER=1 share the cloud @primary device and execute on remoteHome.
-      await setPrimaryDevice(CLOUD_DEVICE_ID)
-      await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
-      await Promise.all([
-        (async () => {
-          await control.command('navigate', 'body', { value: '/stand-in' })
-          await reloadMainWindow(control)
-          await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
-          await control.command('waitFor', testId('stand-in-conversation'))
-        })(),
-        (async () => {
-          await peerControl.command('navigate', 'body', { value: '/stand-in' })
-          await reloadMainWindow(peerControl)
-          await peerControl.command('clickWhenEnabled', testId('stand-in-primary-open'))
-          await peerControl.command('waitFor', testId('stand-in-conversation'))
-        })(),
-      ])
-      const primaryTaskId = `stand-in-chat-${USER}-primary`
-      await sendChat(peerControl, testId('stand-in-conversation'), PEER_CLOUD_PROMPT)
-      await peerControl.command('waitFor', testId('stand-in-conversation'), {
-        text: PEER_CLOUD_COMPLETE,
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      const cloudTurnId = await verifyPeerCloudTurn(
-        primaryTaskId,
-        PEER_CLOUD_PROMPT,
-        PEER_CLOUD_COMPLETE
-      )
-      await reloadMainWindow(control)
-      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
-      await control.command('waitFor', testId('stand-in-conversation'), {
-        text: PEER_CLOUD_COMPLETE,
-        timeoutMs: uiTimeoutMs,
-      })
-
-      // 2. Stop confirmation race: opening stop confirm on client 1 while client 2 switches @primary to localDevice
-      // must refuse stopping the newly selected device.
-      const cloudProfileBefore = await remoteRpc('runtime.stand_in.personal.get', { userId: USER })
-      const localProfileBefore = await rpc(control, 'runtime.stand_in.personal.get', {
-        userId: USER,
-      })
-      assert.equal(cloudProfileBefore.lifecycle, undefined)
-      assert.equal(localProfileBefore.lifecycle, undefined)
-      await openStandInSettings(control)
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
-      await control.command('waitFor', testId('stand-in-instance-stop-confirm'))
-      await setPrimaryDevice(localDevice)
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
-      await control.command('waitFor', testId('stand-in-instance-stop-confirm'), { visible: false })
-      await control.command('waitFor', testId('stand-in-overview'))
-      if (
-        Number(await control.command('getElementCount', testId('stand-in-profile-panel'))) === 0
-      ) {
-        await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
-        await openStandInSettings(control)
-      }
-      await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
-      await control.command('waitFor', testId('personal-assistant-execution-device'), {
-        text: '当前设备',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', testId('stand-in-instance-stop'), {
-        enabled: true,
-        text: '停止助理',
-      })
-      assert.deepEqual(
-        (await remoteRpc('runtime.stand_in.personal.get', { userId: USER })).lifecycle,
-        cloudProfileBefore.lifecycle,
-        'Stale stop confirmation must not stop the cloud device after another client switched devices'
-      )
-      assert.deepEqual(
-        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).lifecycle,
-        localProfileBefore.lifecycle,
-        'Stale stop confirmation must not stop the newly selected local device'
-      )
-      await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
-      await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
-
-      // 3. While @primary points to client 1's private localDevice, client 2 (simultaneously signed in)
-      // falls back cleanly to CLOUD_DEVICE_ID without overwriting cloud @primary and executes on CLOUD_DEVICE_ID.
-      await reloadMainWindow(peerControl)
-      await peerControl.command('clickWhenEnabled', testId('stand-in-primary-open'))
-      await peerControl.command('waitFor', testId('stand-in-conversation'))
-      assert.equal(
-        await readPrimaryDevice(),
-        localDevice,
-        'Second client fallback must not overwrite client 1 private desktop primary setting'
-      )
-      await sendChat(peerControl, testId('stand-in-conversation'), PEER_FALLBACK_PROMPT)
-      await peerControl.command('waitFor', testId('stand-in-conversation'), {
-        text: PEER_FALLBACK_COMPLETE,
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      const fallbackTurnId = await verifyPeerCloudTurn(
-        primaryTaskId,
-        PEER_FALLBACK_PROMPT,
-        PEER_FALLBACK_COMPLETE
-      )
-      assert.notEqual(fallbackTurnId, cloudTurnId, 'Fallback must execute a distinct cloud turn')
-      assert.equal(await readPrimaryDevice(), localDevice)
-    } finally {
-      await stopPeerClient()
-    }
-  }
-
   async function verifyDefinitionBackupSettingsEntry(control) {
     const backup = testId('stand-in-download-definition-backups')
     assert.equal(await control.command('getElementCount', backup), '0')
@@ -672,66 +397,11 @@ export function createDesktopScenario({
     setCloudEnvironment(value) {
       cloud = value
     },
-    async prepareApp({ appBinary, appEnvironment, codexHome }) {
-      // Prepare a fresh peer before the first client starts. Only copy the runner's static
-      // fixture configuration; live Codex databases, credentials and session files stay private.
-      const peerRoot = join(resultDir, 'peer-desktop-client')
-      const peerHome = join(peerRoot, 'home')
-      const peerUserData = join(peerRoot, 'user-data')
-      const peerExecutorHome = join(peerRoot, 'executor-home')
-      const peerCodexHome = join(peerExecutorHome, 'codex')
-      peerSqliteHome = join(dirname(appEnvironment.CODEX_SQLITE_HOME), 'peer-codex-sqlite')
-      await Promise.all(
-        [peerHome, peerUserData, peerCodexHome, peerSqliteHome].map(path =>
-          mkdir(path, { recursive: true, mode: 0o700 })
-        )
-      )
-      await prepareNativeKeychainPreferences(peerHome)
-      await Promise.all([
-        copyFile(join(codexHome, 'config.toml'), join(peerCodexHome, 'config.toml')),
-        writeFile(
-          join(peerCodexHome, 'auth.json'),
-          `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
-          { mode: 0o600 }
-        ),
-        copyFile(
-          join(appEnvironment.WEWORK_USER_DATA_DIR, 'app-preferences.json'),
-          join(peerUserData, 'app-preferences.json')
-        ),
-        copyFile(
-          join(appEnvironment.WEWORK_USER_DATA_DIR, 'renderer-local-storage.json'),
-          join(peerUserData, 'renderer-local-storage.json')
-        ),
-        writeFile(join(peerHome, '.zshrc'), '# Wework desktop E2E shell\n'),
-      ])
-      preparedApp = {
-        appBinary,
-        appLogPath: join(peerRoot, 'app.log'),
-        appEnvironment: {
-          ...appEnvironment,
-          WEWORK_APP_IDENTIFIER: `${appEnvironment.WEWORK_APP_IDENTIFIER}.peer`,
-          HOME: peerHome,
-          WORKSPACE_ROOT: join(peerHome, '.wegent', 'workspace'),
-          WEGENT_STANDALONE_WORKSPACE_ROOT: join(peerHome, 'Documents', 'Codex'),
-          WEWORK_USER_DATA_DIR: peerUserData,
-          WEGENT_EXECUTOR_HOME: peerExecutorHome,
-          CODEX_HOME: peerCodexHome,
-          WEGENT_CODEX_HOME: peerCodexHome,
-          CODEX_SQLITE_HOME: peerSqliteHome,
-          WEGENT_EXECUTOR_LOG_DIR: peerRoot,
-          WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-          WEWORK_APP_CONFIG_DIR: join(peerHome, 'app-config'),
-          WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(peerRoot, 'desktop-control'),
-          WEWORK_E2E_SAVE_DIALOG_PATH: join(peerRoot, 'conversation-export-e2e.zip'),
-          WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(peerRoot, 'startup-splash.png'),
-        },
-      }
-    },
+    prepareApp: peerClient.prepareApp,
     async cleanup() {
       heldResponse?.end()
       remoteSocket?.disconnect()
-      await stopPeerClient()
-      if (peerSqliteHome) await rm(peerSqliteHome, { recursive: true, force: true })
+      await peerClient.cleanup()
     },
     async handleHttp(req, res, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -1083,7 +753,17 @@ export function createDesktopScenario({
       )
       await stop(control)
       await bind(control, USER, CLOUD_DEVICE_ID)
-      await verifySimultaneousClients(control, localDevice)
+      await peerClient.verify(control, localDevice, {
+        cloud,
+        rpc,
+        remoteRpc,
+        readCloudAssistant,
+        readPrimaryDevice,
+        setPrimaryDevice,
+        stop,
+        observeDevice,
+        sendChat,
+      })
       await verifyUnreachableSourceInitialization(control, readInitialAssistant)
       await verifyRegularBinding(control, localDevice)
       await writeFile(

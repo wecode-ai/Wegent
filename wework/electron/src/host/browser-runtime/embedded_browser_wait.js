@@ -4,8 +4,14 @@
   const warnings = []
   const guarded = input.probeMode === 'guarded'
   const agent = guarded ? window.__WEWORK_BROWSER_AGENT__ : ensureAgentRuntime()
+  if (guarded && (!agent?.waitDocumentId || agent.waitDocumentId !== input.waitState?.documentId)) {
+    return { ok: false, kind: 'browser.wait', reason: 'observation_unavailable' }
+  }
+  // Evaluate the untrusted predicate outside the catch below, under the engine's
+  // read-only guard. The host distinguishes ordinary JS exceptions from a safety rejection.
+  const expressionMatched = guarded ? Boolean(input.evaluateExpression()) : undefined
   const quietMs = clampNumber(input.quietMs || input.options?.quietMs, 0, 5000, 250)
-  const condition = normalizeCondition(input)
+  const condition = normalizeCondition(input, expressionMatched)
   const waitId = String(input.waitId || JSON.stringify(condition))
   if (input.probeMode === 'prepare') {
     return {
@@ -13,9 +19,6 @@
       initial: observe(condition),
       startedAt: performance.now(),
     }
-  }
-  if (guarded && (!agent?.waitDocumentId || agent.waitDocumentId !== input.waitState?.documentId)) {
-    return { ok: false, kind: 'browser.wait', reason: 'observation_unavailable' }
   }
   const waitState = guarded ? input.waitState : initializeWaitState()
 
@@ -128,7 +131,7 @@
     return current
   }
 
-  function normalizeCondition(request) {
+  function normalizeCondition(request, expressionMatched) {
     const optionCondition =
       request.options?.condition &&
       typeof request.options.condition === 'object' &&
@@ -148,8 +151,8 @@
     if (request.expression && !condition.expression) {
       condition.expression = request.expression
     }
-    if (typeof request.expressionMatched === 'boolean') {
-      condition.expressionMatched = request.expressionMatched
+    if (typeof expressionMatched === 'boolean') {
+      condition.expressionMatched = expressionMatched
     }
     if (request.waitUntil && !condition.waitUntil) {
       condition.waitUntil = request.waitUntil

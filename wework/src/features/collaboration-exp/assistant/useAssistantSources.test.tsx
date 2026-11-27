@@ -1,6 +1,6 @@
 import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { publishPersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInInstanceBinding } from '@/api/standIn'
 import type { DeviceInfo } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -150,4 +150,28 @@ test('catalog updates keep the verified inbox visible until a new source is reso
     await slow.promise
   })
   expect(result.current.deviceId).toBe(third.device_id)
+})
+
+test('settings changes on another device for this account re-resolve the primary source', async () => {
+  const first = cloudDevice('cloud-1')
+  const second = cloudDevice('cloud-2')
+  const { result, get, personalGet } = setup(
+    () => Promise.resolve(account(first.device_id)),
+    [first, second]
+  )
+  await waitFor(() => expect(result.current.inboxReady).toBe(true))
+  const changed = { userId, executionDeviceId: second.device_id, version: 1, roles: [] }
+  act(() => publishPersonalStandIn({ ...changed, userId: userId + 1 }))
+  expect(get).toHaveBeenCalledTimes(1)
+
+  get.mockResolvedValueOnce(account(second.device_id))
+  act(() => publishPersonalStandIn(changed))
+  await waitFor(() => {
+    expect(result.current.deviceId).toBe(second.device_id)
+    expect(result.current.inboxReady).toBe(true)
+  })
+  expect(personalGet.mock.calls).toEqual([
+    [userId, first.device_id],
+    [userId, second.device_id],
+  ])
 })

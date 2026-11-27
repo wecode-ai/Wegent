@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createRef } from 'react'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
 import {
@@ -9,12 +10,16 @@ import {
 } from '@/api/personalStandIn'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import { AuthContext, type AuthContextValue } from '@/features/auth/useAuth'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { personalStandInFixture } from './personalStandInSettings.testFixtures'
 import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInSettingsPage } from './StandInSettingsPage'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 function openPrimaryProfile(
   selfLearningEnabled?: boolean,
@@ -186,6 +191,74 @@ test('closing role settings confirms unsaved role changes after discarding an un
   fireEvent.click(screen.getByTestId('stand-in-close'))
   fireEvent.click(await screen.findByTestId('stand-in-discard'))
   expect(onCancel).toHaveBeenCalledOnce()
+})
+
+test('keeps a schedule draft within its device scope and clears its editor after a device change', async () => {
+  const { settings, services } = personalStandInFixture()
+  settings.primary = { enabled: true, prompt: '', preferences: 'Saved preferences' }
+  const ref = createRef<StandInSettingsHandle>()
+  const switchDevice = vi.fn()
+  const onSave = vi.fn()
+  const workbench = {
+    state: { user: null, devices: [], projects: [], currentRuntimeTask: null },
+    projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
+    services: {
+      ...services,
+      automationApi: { listAutomations: vi.fn(async () => ({ items: [] })) },
+    },
+  } as unknown as WorkbenchContextValue
+  const auth = { user: null, logout: vi.fn() } as unknown as AuthContextValue
+  const profile = (value: PersonalStandInSettings) => (
+    <AuthContext.Provider value={auth}>
+      <WorkbenchContext.Provider value={workbench}>
+        <StandInPrimaryProfile
+          ref={ref}
+          settings={value}
+          saving={false}
+          error={null}
+          onSave={onSave}
+          onClose={vi.fn()}
+          initialCalendar
+          localDeviceId={settings.executionDeviceId}
+          services={services}
+          devices={[]}
+          projects={[]}
+          onSelectDevice={switchDevice}
+        />
+      </WorkbenchContext.Provider>
+    </AuthContext.Provider>
+  )
+  const view = render(profile(settings))
+  fireEvent.click(await screen.findByTestId('create-automation-button'))
+  fireEvent.change(await screen.findByTestId('automation-name-input'), {
+    target: { value: 'Unsaved schedule' },
+  })
+  expect(screen.queryByTestId('stand-in-primary-save')).not.toBeInTheDocument()
+
+  view.rerender(profile({ ...settings, version: 2 }))
+  expect(screen.getByTestId('automation-name-input')).toHaveValue('Unsaved schedule')
+  act(() => ref.current?.requestLeave(() => switchDevice('new-device')))
+  fireEvent.click(await screen.findByTestId('automation-keep-editing'))
+  expect(switchDevice).not.toHaveBeenCalled()
+  expect(screen.getByTestId('automation-name-input')).toHaveValue('Unsaved schedule')
+
+  act(() => ref.current?.requestLeave(() => switchDevice('new-device')))
+  fireEvent.click(await screen.findByTestId('automation-discard'))
+  expect(switchDevice).toHaveBeenCalledExactlyOnceWith('new-device')
+  fireEvent.click(await screen.findByTestId('create-automation-button'))
+  expect(await screen.findByTestId('automation-name-input')).toBeVisible()
+
+  view.rerender(profile({ ...settings, version: 3, executionDeviceId: 'new-device' }))
+  expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+  expect(await screen.findByTestId('create-automation-button')).toBeVisible()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('stand-in-connections-back'))
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'New device preferences' },
+  })
+  expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled()
+  expect(onSave).not.toHaveBeenCalled()
 })
 
 test('a model change keeps the unified instructions for a profile without learning', async () => {

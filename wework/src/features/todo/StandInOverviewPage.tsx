@@ -331,6 +331,22 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
+  const bindPrimaryDevice = useStableEvent(async (device: string) => {
+    if (definition && onBindDevice) {
+      setBindingPending(true)
+      setBindingError('')
+      try {
+        await onBindDevice(definition.roleId, device)
+      } catch (error) {
+        setBindingError(getStandInErrorMessage(error))
+      } finally {
+        setBindingPending(false)
+      }
+      return
+    }
+    if (onSelectLocation) onSelectLocation(device, '@primary', true)
+    else state.setDeviceId(device)
+  })
   const openAssistantDialog = (open: () => void) =>
     leavePanel(() => {
       setReview(null)
@@ -1023,22 +1039,7 @@ export function StandInOverviewPage({
                     devices={props.devices}
                     executionDeviceId={conversationDevice}
                     deviceReadOnly={!!primaryDeviceId && !(definition && onBindDevice)}
-                    onSelectDevice={async device => {
-                      if (definition && onBindDevice) {
-                        setBindingPending(true)
-                        setBindingError('')
-                        try {
-                          await onBindDevice(definition.roleId, device)
-                        } catch (error) {
-                          setBindingError(getStandInErrorMessage(error))
-                        } finally {
-                          setBindingPending(false)
-                        }
-                        return
-                      }
-                      if (onSelectLocation) onSelectLocation(device, '@primary', true)
-                      else state.setDeviceId(device)
-                    }}
+                    onSelectDevice={device => leavePanel(() => void bindPrimaryDevice(device))}
                     onClose={() => {
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()

@@ -47,30 +47,7 @@ type NormalizedPrimary = StandInIdentity & {
   connections: NonNullable<StandInIdentity['connections']>
 }
 
-/** Edit the primary identity and its connections on the explicitly selected Executor. */
-export function StandInPrimaryProfile({
-  settings: incomingSettings,
-  executionDeviceId = incomingSettings.executionDeviceId,
-  saving,
-  loading = false,
-  error,
-  onSave,
-  onClose,
-  ref,
-  api,
-  localDeviceId,
-  projects,
-  services,
-  devices,
-  onSelectDevice,
-  deviceReadOnly = false,
-  initialCalendar = false,
-  initialConnections = false,
-  onCalendarViewChange,
-  onReload,
-  shortcuts,
-  footerLeading,
-}: {
+interface StandInPrimaryProfileProps {
   settings: PersonalStandInSettings
   executionDeviceId?: string
   saving: boolean
@@ -95,7 +72,41 @@ export function StandInPrimaryProfile({
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
-}) {
+}
+
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
+export function StandInPrimaryProfile(props: StandInPrimaryProfileProps) {
+  return (
+    <StandInPrimaryProfileEditor
+      key={JSON.stringify([props.settings.userId, props.settings.executionDeviceId])}
+      {...props}
+    />
+  )
+}
+
+function StandInPrimaryProfileEditor({
+  settings: incomingSettings,
+  executionDeviceId = incomingSettings.executionDeviceId,
+  saving,
+  loading = false,
+  error,
+  onSave,
+  onClose,
+  ref,
+  api,
+  localDeviceId,
+  projects,
+  services,
+  devices,
+  onSelectDevice,
+  deviceReadOnly = false,
+  initialCalendar = false,
+  initialConnections = false,
+  onCalendarViewChange,
+  onReload,
+  shortcuts,
+  footerLeading,
+}: StandInPrimaryProfileProps) {
   const { t } = useTranslation('common')
   const initialSource =
     initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
@@ -167,21 +178,13 @@ export function StandInPrimaryProfile({
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false)
   const [tagOwner, setTagOwner] = useState(() => ({
     api,
-    userId: settings.userId,
-    deviceId: settings.executionDeviceId,
     store: createTagDraft(),
   }))
-  if (
-    tagOwner.api !== api ||
-    tagOwner.userId !== settings.userId ||
-    tagOwner.deviceId !== settings.executionDeviceId
-  ) {
+  if (tagOwner.api !== api) {
     setDraft(original)
     setBaseline(original)
     setTagOwner({
       api,
-      userId: settings.userId,
-      deviceId: settings.executionDeviceId,
       store: createTagDraft(),
     })
   }

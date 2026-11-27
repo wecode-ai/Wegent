@@ -965,9 +965,9 @@ export function createDesktopScenario({
             file: join(writingWorkspace, READ_ONLY_FILE),
             reported: () => readOnlyFollowUpReported,
           },
-          reopenDelegatedTask: async (openPrimary = false) => {
+          reopenDelegatedTask: async () => {
             await control.command('navigate', 'body', { value: '/stand-in' })
-            if (openPrimary) await control.command('clickWhenEnabled', PRIMARY)
+            await control.command('clickWhenEnabled', PRIMARY)
             await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
             await control.command(
               'scrollToRatioAsUser',

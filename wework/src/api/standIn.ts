@@ -35,6 +35,7 @@ export interface StandInInstanceBinding {
   status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped' | 'unavailable'
   target: StandInBindingTarget | null
   stoppingTargets?: string[]
+  stoppingTargetGenerations?: Record<string, number>
 }
 
 export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
@@ -435,8 +436,11 @@ export interface StandInExecutorApi {
       | 'prepareBind'
       | 'prepareReplacement'
       | 'completeActivation'
+      | 'cancelActivation'
       | 'markStopping'
-      | 'clearStopping',
+      | 'clearStopping'
+      | 'markStoppingWithGeneration'
+      | 'clearStoppingIfGeneration',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>

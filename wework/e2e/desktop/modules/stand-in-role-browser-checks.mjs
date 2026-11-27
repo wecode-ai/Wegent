@@ -179,12 +179,24 @@ export function createStandInRoleBrowserChecks(reply) {
               url: `${browserFixtureUrl}?set=1&full=1&scope=${prefix}`,
             })
           )
-        } else if (!requestContainsToolOutput(body, `${prefix}-full-browser-clear`)) {
+        } else if (!requestContainsToolOutput(body, `${prefix}-full-browser-cookie-present`)) {
           assert.equal(browserFixtureRequests, expectedFixturesAfterOpen)
           assert.ok(
             readMcpToolOutput(body, `${prefix}-full-browser-open`).includes(
               'Combined: open_and_inspect ok=true'
             )
+          )
+          reply(
+            response,
+            browserTool(body, 'browser_evaluate', `${prefix}-full-browser-cookie-present`, {
+              expression: `document.cookie.includes('${BROWSER_COOKIE}')`,
+            })
+          )
+        } else if (!requestContainsToolOutput(body, `${prefix}-full-browser-clear`)) {
+          assert.equal(
+            JSON.parse(readMcpToolOutput(body, `${prefix}-full-browser-cookie-present`)).value,
+            true,
+            'The fixture cookie must exist before clearing it'
           )
           reply(
             response,
@@ -228,6 +240,9 @@ export function createStandInRoleBrowserChecks(reply) {
     handleDelegatedResult({ child, writingTaskId, resultId, reported, results, latest, response }) {
       if (child === writingTaskId && JSON.stringify(results).includes(READ_ONLY_BROWSER_RESULT)) {
         assert.equal(readOnlyBrowserReported, false, 'The read-only browser check reports once')
+        assert.ok(reported.has(child), 'The original branch must have reported first')
+        assert.notEqual(resultId, reported.get(child), 'The follow-up must have a new result')
+        assert.ok(latest.includes('status=done,'), 'The read-only browser check must complete')
         readOnlyBrowserReported = true
         reply(response, [])
         return true
@@ -270,7 +285,7 @@ export function createStandInRoleBrowserChecks(reply) {
       readOnlyWorkspace,
     }) {
       const taskMode = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="permission-mode-menu-button"]`
-      await reopenDelegatedTask(true)
+      await reopenDelegatedTask()
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
@@ -321,9 +336,18 @@ export function createStandInRoleBrowserChecks(reply) {
         })
       }
       const setBrowserFullControl = async enabled => {
-        await control.command('click', '[data-testid="settings-button"]')
-        await control.command('click', '[data-testid="settings-menu-button"]')
-        await control.command('click', '[data-testid="settings-nav-browser"]')
+        const isMounted = async selector =>
+          Number(await control.command('getElementCount', selector)) > 0
+        const browserSettings = '[data-testid="settings-nav-browser"]'
+        const settingsMenu = '[data-testid="settings-menu-button"]'
+        if (!(await isMounted(fullControlToggle))) {
+          if (!(await isMounted(browserSettings))) {
+            if (!(await isMounted(settingsMenu)))
+              await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
+            await control.command('clickWhenEnabled', settingsMenu)
+          }
+          await control.command('clickWhenEnabled', browserSettings)
+        }
         await control.command('waitFor', `${fullControlToggle}:not(:disabled)`, {
           timeoutMs: uiTimeoutMs,
         })
@@ -406,8 +430,8 @@ export function createStandInRoleBrowserChecks(reply) {
         )
         assert.equal(browserFixtureRequests, expectedFixturesAfterApproval)
 
-        await setBrowserFullControl(true)
         try {
+          await setBrowserFullControl(true)
           await control.command(
             'fill',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,

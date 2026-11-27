@@ -27,6 +27,8 @@ import { isStandInDeviceUnreachable, requiresStandInUpgrade } from '@/lib/stand-
 import { resolveStandInEntry, type StandInEntry } from './standInEntry'
 import {
   activateStandInBinding,
+  cancelStandInActivation,
+  completeStandInActivation,
   hasSavedStandIn,
   sameTarget,
   type InstanceSnapshot,
@@ -34,9 +36,16 @@ import {
 } from './standInLocalInstanceSource'
 import { availableStandInDevices } from './standInDevices'
 
-const hasPendingStop = (saved: StandInInstanceBinding, target: StandInBindingTarget) =>
-  saved.stoppingTargets?.includes(`${target.userId}:${target.deviceId}`) === true ||
-  (saved.status === 'stopping' && sameTarget(saved.target, target))
+const localStopGeneration = (saved: StandInInstanceBinding, target: StandInBindingTarget) => {
+  const key = `${target.userId}:${target.deviceId}`
+  if (
+    saved.stoppingTargets?.includes(key) ||
+    (saved.status === 'stopping' && sameTarget(saved.target, target))
+  ) {
+    return saved.stoppingTargetGenerations?.[key] ?? 0
+  }
+  return undefined
+}
 
 const accountAccessDeniedOrMissing = (cause: unknown) =>
   cause instanceof ApiError && [401, 403, 404].includes(cause.status)
@@ -160,6 +169,7 @@ export function createAccountStandInInstanceSource({
   let activating:
     | { version: number; target: StandInBindingTarget; result: Promise<StandInInstanceBinding> }
     | undefined
+  let abandonedActivation: { deviceId: string; binding: StandInInstanceBinding } | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
     for (const listener of listeners) listener()
@@ -172,6 +182,47 @@ export function createAccountStandInInstanceSource({
         ? { stoppedProfile: undefined }
         : {}),
     })
+  const invalidateAccountBinding = (
+    cause: unknown,
+    fallback: NonNullable<InstanceSnapshot['error']>['fallback']
+  ) => {
+    pinnedSelection = undefined
+    verifiedProfile = undefined
+    setupSelection = undefined
+    publish({
+      binding: undefined,
+      stoppedProfile: undefined,
+      setupTarget: undefined,
+      entryFailure: undefined,
+      error: { cause, fallback },
+    })
+  }
+  const retireAbandonedActivation = async (
+    localDeviceId: string,
+    binding: StandInInstanceBinding
+  ) => {
+    if (abandonedActivation?.deviceId !== localDeviceId) return binding
+    if (
+      binding.status === 'activating' &&
+      binding.version === abandonedActivation.binding.version &&
+      sameTarget(binding.target, abandonedActivation.binding.target)
+    ) {
+      binding = await cancelStandInActivation(api!, localDeviceId, binding)
+    }
+    abandonedActivation = undefined
+    return binding
+  }
+  const selectionScope = (
+    configured: string | undefined,
+    localDeviceId: string,
+    devices: DeviceInfo[]
+  ) =>
+    JSON.stringify([
+      userId,
+      configured ?? '',
+      localDeviceId,
+      resolveReachableStandInDevice(configured, localDeviceId, devices) ?? '',
+    ])
   const profileFor = (target: StandInBindingTarget) =>
     verifiedProfile && sameTarget(verifiedProfile.target, target)
       ? verifiedProfile.profile
@@ -224,13 +275,12 @@ export function createAccountStandInInstanceSource({
       throw cause
     }
   }
-  const persistStoppingTarget = async (
-    localDeviceId: string,
-    target: StandInBindingTarget,
-    stopping: boolean
-  ) => {
+  const markLocalStoppingTarget = async (localDeviceId: string, target: StandInBindingTarget) => {
     if (!api) throw new Error('Executor identity is unavailable')
-    await api.binding(localDeviceId, stopping ? 'markStopping' : 'clearStopping', undefined, target)
+    const saved = await api.binding(localDeviceId, 'markStoppingWithGeneration', undefined, target)
+    const generation = localStopGeneration(saved, target)
+    if (!generation) throw new Error('Executor did not record a stop marker generation')
+    return generation
   }
   const stopDeviceIds = (deviceId: string) => {
     const device = findWorkbenchDevice(observation?.devices ?? [], deviceId)
@@ -249,10 +299,11 @@ export function createAccountStandInInstanceSource({
   const clearStopIntent = async (
     localDeviceId: string,
     target: StandInBindingTarget,
-    localPending: boolean,
+    localPending: number | undefined,
     sharedPending?: PersonalAssistantStopIntent
   ) => {
-    if (localPending) await persistStoppingTarget(localDeviceId, target, false)
+    if (localPending !== undefined)
+      await api!.binding(localDeviceId, 'clearStoppingIfGeneration', localPending, target)
     if (sharedPending) {
       await services.personalAssistantAccountApi!.updateStopIntent(
         sharedPending.deviceId,
@@ -301,12 +352,21 @@ export function createAccountStandInInstanceSource({
       )
       if (!current()) return
       if (accountError && accountAccessDeniedOrMissing(accountError.cause)) {
-        publish({ error: accountError })
+        invalidateAccountBinding(accountError.cause, accountError.fallback)
         return
       }
-      const activeAccount = owner.readAccount?.() ?? owner.account
+      const observedAccount = owner.readAccount?.() ?? owner.account
+      const activeAccount = stopAccount ?? observedAccount
+      if (
+        stopAccount &&
+        (stopAccount.revision !== observedAccount?.revision ||
+          configuredPrimaryStandInDevice(stopAccount) !==
+            configuredPrimaryStandInDevice(observedAccount))
+      ) {
+        owner.publishAccount?.(stopAccount)
+      }
       const configured = configuredPrimaryStandInDevice(activeAccount)
-      const scope = JSON.stringify([userId, configured ?? '', identity.deviceId])
+      const scope = selectionScope(configured, identity.deviceId, owner.devices)
       let targetDeviceId: string
       if (pinnedSelection?.userId === userId && pinnedSelection.scope === scope) {
         targetDeviceId = pinnedSelection.deviceId
@@ -334,11 +394,14 @@ export function createAccountStandInInstanceSource({
         snapshot.error?.fallback === 'save_settings_failed'
           ? snapshot.error
           : null
-      const nativeBinding = await api.binding(identity.deviceId, 'get')
-      const localPending = hasPendingStop(nativeBinding, target)
+      const nativeBinding = await retireAbandonedActivation(
+        identity.deviceId,
+        await api.binding(identity.deviceId, 'get')
+      )
+      const localPending = localStopGeneration(nativeBinding, target)
       const sharedPending = sharedStopIntent(stopAccount, targetDeviceId)
       const pendingStop =
-        localPending ||
+        localPending !== undefined ||
         Boolean(sharedPending) ||
         (accountError !== null &&
           snapshot.binding?.status === 'stopping' &&
@@ -393,14 +456,13 @@ export function createAccountStandInInstanceSource({
             activating?.version !== nativeBinding.version ||
             !sameTarget(activating.target, target)
           ) {
-            const result = activateStandInBinding(
-              api,
-              identity.deviceId,
-              nativeBinding,
-              profile.version
-            ).finally(() => {
-              if (activating?.result === result) activating = undefined
-            })
+            // A recovered preparation never needs a new start when the
+            // target profile has already been verified as active.
+            const result = completeStandInActivation(api, identity.deviceId, nativeBinding).finally(
+              () => {
+                if (activating?.result === result) activating = undefined
+              }
+            )
             activating = { version: nativeBinding.version, target, result }
           }
           await activating.result
@@ -517,7 +579,7 @@ export function createAccountStandInInstanceSource({
         if (!mayActivate()) return
         if (
           nativeBinding.status !== 'unbound' ||
-          hasPendingStop(nativeBinding, target) ||
+          localStopGeneration(nativeBinding, target) !== undefined ||
           sharedStopIntent(latest, target.deviceId)
         ) {
           refreshAfterMutation = true
@@ -529,14 +591,33 @@ export function createAccountStandInInstanceSource({
           nativeBinding.version,
           target
         )
-        assertObserved(revision, localDeviceId)
         if (prepared.status !== 'activating' || !sameTarget(prepared.target, target))
           throw Object.assign(new Error('version conflict'), { code: 'version_conflict' })
-        publishBinding({ ...prepared, version: ++version })
-        const ready = await activateStandInBinding(api, localDeviceId, prepared, profile.version)
-        assertObserved(revision, localDeviceId)
-        setupSelection = undefined
-        publishBinding({ ...ready, version: ++version })
+        abandonedActivation = { deviceId: localDeviceId, binding: prepared }
+        try {
+          if (!mayActivate()) return
+          const confirmedAccount = await loadStopAccount()
+          if (!mayActivate()) return
+          if (
+            configuredPrimaryStandInDevice(confirmedAccount) !== selection.configuredDevice ||
+            sharedStopIntent(confirmedAccount, target.deviceId)
+          ) {
+            if (confirmedAccount) observation?.publishAccount?.(confirmedAccount)
+            return
+          }
+          abandonedActivation = undefined
+          publishBinding({ ...prepared, version: ++version })
+          const ready = await activateStandInBinding(api, localDeviceId, prepared, profile.version)
+          assertObserved(revision, localDeviceId)
+          setupSelection = undefined
+          publishBinding({ ...ready, version: ++version })
+        } finally {
+          if (abandonedActivation) {
+            setupSelection = undefined
+            refreshAfterMutation = true
+            await retireAbandonedActivation(localDeviceId, prepared)
+          }
+        }
         return
       }
       if (operation === 'stop') {
@@ -573,7 +654,7 @@ export function createAccountStandInInstanceSource({
         const target = expectedTarget
         if (target.deviceId !== localDeviceId && !latest)
           throw new Error('Personal assistant account is unavailable')
-        let localPending = hasPendingStop(await api.binding(localDeviceId, 'get'), target)
+        let localPending = localStopGeneration(await api.binding(localDeviceId, 'get'), target)
         assertObserved(revision, localDeviceId)
         let sharedPending = sharedStopIntent(latest, target.deviceId)
         const remoteStop = Boolean(latest && target.deviceId !== localDeviceId)
@@ -609,8 +690,7 @@ export function createAccountStandInInstanceSource({
             throw new Error('Personal assistant stop request is no longer pending')
           }
         } else {
-          await persistStoppingTarget(localDeviceId, target, true)
-          localPending = true
+          localPending = await markLocalStoppingTarget(localDeviceId, target)
         }
         assertObserved(revision, localDeviceId)
         publishBinding({ version: ++version, status: 'stopping', target })
@@ -667,7 +747,7 @@ export function createAccountStandInInstanceSource({
         localDeviceId,
         observation?.devices
       )
-      const localPending = hasPendingStop(await api.binding(localDeviceId, 'get'), target)
+      const localPending = localStopGeneration(await api.binding(localDeviceId, 'get'), target)
       assertObserved(revision, localDeviceId)
       if (target.userId !== userId) throw new StandInMigrationError('not_stopped')
       let role: Awaited<ReturnType<typeof migrateStandIn>> | 'initialized' | undefined
@@ -718,12 +798,11 @@ export function createAccountStandInInstanceSource({
       assertObserved(revision, localDeviceId)
       pinnedSelection = {
         userId: target.userId,
-        scope: JSON.stringify([
-          target.userId,
-          configuredPrimaryStandInDevice(observation?.readAccount?.() ?? observation?.account) ??
-            '',
+        scope: selectionScope(
+          configuredPrimaryStandInDevice(observation?.readAccount?.() ?? observation?.account),
           localDeviceId,
-        ]),
+          observation?.devices ?? []
+        ),
         deviceId: target.deviceId,
       }
       let status = verifiedStatus(target)
@@ -747,7 +826,7 @@ export function createAccountStandInInstanceSource({
           throw Object.assign(new Error('version conflict'), { code: 'version_conflict' })
         }
         const sharedPending = sharedStopIntent(latest, target.deviceId)
-        const pendingStop = localPending || Boolean(sharedPending)
+        const pendingStop = localPending !== undefined || Boolean(sharedPending)
         if (pendingStop) {
           // A recorded stop can still be pending when the remote device is online again.
           // Selecting that device must not restart it or discard the stop request.
@@ -784,7 +863,7 @@ export function createAccountStandInInstanceSource({
         cause &&
         typeof cause === 'object' &&
         'code' in cause &&
-        cause.code === 'version_conflict'
+        (cause.code === 'version_conflict' || cause.code === 'stand_in_stop_incomplete')
       )
         refreshAfterMutation = true
       if (observed(revision, localDeviceId))

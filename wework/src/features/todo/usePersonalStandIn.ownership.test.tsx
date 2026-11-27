@@ -97,6 +97,45 @@ test('does not discard an edit made after a reload was requested', async () => {
   expect(result.current.saved?.version).toBe(2)
 })
 
+test('a refreshed cloud revision clears a definition conflict while preserving edits made during reload', async () => {
+  const { services, settings, personalGet, personalSave } = fixture()
+  const original = { ...settings, cloudDefinitionRevision: 'cloud-old' }
+  personalGet.mockResolvedValue(original)
+  personalSave.mockRejectedValueOnce(
+    Object.assign(new Error('Cloud definition changed'), {
+      code: 'cloud_definition_version_conflict',
+    })
+  )
+  const { result } = renderHook(() => usePersonalStandIn(services, 7, 'device', 'mac'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Unsaved' })))
+  await act(() => result.current.save())
+  expect(result.current.error).toBeTruthy()
+
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(result.current.draft?.roles[0].prompt).toBe('Unsaved')
+  expect(result.current.error).toBeTruthy()
+  await act(() => result.current.save())
+  expect(personalSave).toHaveBeenCalledTimes(1)
+
+  const pending = deferred<PersonalStandInSettings>()
+  personalGet.mockReturnValueOnce(pending.promise)
+  act(() => result.current.reload())
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Newer draft' })))
+  const refreshed = { ...original, version: 2, cloudDefinitionRevision: 'cloud-new' }
+  await act(async () => pending.resolve(refreshed))
+  expect(result.current.error).toBeNull()
+  expect(result.current.saved).toEqual(refreshed)
+  expect(result.current.draft?.roles[0].prompt).toBe('Newer draft')
+  expect(result.current.draft?.cloudDefinitionRevision).toBe('cloud-old')
+
+  // Only an explicit save using the refreshed baseline is eligible for a new definition write.
+  await act(() => result.current.save(refreshed))
+  expect(personalSave).toHaveBeenCalledTimes(2)
+  expect(personalSave).toHaveBeenLastCalledWith(7, refreshed, 'device')
+})
+
 test('retains a newer draft through save completion and keeps the conflict token intact', async () => {
   const { services, personalSave, settings } = fixture()
   const pending = deferred<PersonalStandInSettings>()

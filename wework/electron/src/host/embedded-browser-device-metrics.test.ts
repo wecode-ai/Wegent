@@ -154,6 +154,65 @@ test('keeps device metrics when an overlapping file upload finishes', async () =
   }
 })
 
+test('rejects native click approval while metrics are pending or change at dispatch', async () => {
+  const { manager, contents, command, dispose } = await browser()
+  let metrics = deferred()
+  let update: Promise<void> | undefined
+  try {
+    contents.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === 'DOM.getNodeForLocation') return { backendNodeId: 41, frameId: 'fixture' }
+      if (method === 'Emulation.setDeviceMetricsOverride') await metrics.promise
+      return command(method, params)
+    })
+    update = manager.setDeviceMetrics('browser', { width: 390, height: 844, scale: 1 })
+    await vi.waitFor(() =>
+      expect(contents.debugger.sendCommand).toHaveBeenCalledWith(
+        'Emulation.setDeviceMetricsOverride',
+        expect.anything()
+      )
+    )
+    await expect(manager.inspectNativeClickTarget('browser', 100, 100)).rejects.toMatchObject({
+      code: 'approval_target_changed',
+    })
+    metrics.resolve()
+    await update
+    const approved = await manager.inspectNativeClickTarget('browser', 100, 100)
+    metrics = deferred()
+    let checks = 0
+    await expect(
+      manager.clickAt('browser', 100, 100, approved, () => {
+        checks += 1
+        if (checks === 2)
+          update = manager.setDeviceMetrics('browser', { width: 844, height: 390, scale: 1 })
+      })
+    ).rejects.toMatchObject({ code: 'approval_target_changed' })
+    expect(contents.sendInputEvent.mock.calls.map(([event]) => event.type)).toEqual(['mouseMove'])
+    metrics.resolve()
+    await update
+    contents.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === 'Emulation.setDeviceMetricsOverride')
+        throw new Error('Metrics update unconfirmed')
+      if (method === 'DOM.getNodeForLocation') return { backendNodeId: 41, frameId: 'fixture' }
+      return command(method, params)
+    })
+    await expect(
+      manager.setDeviceMetrics('browser', { width: 390, height: 844, scale: 1 })
+    ).rejects.toThrow('Metrics update unconfirmed')
+    await expect(manager.inspectNativeClickTarget('browser', 100, 100)).rejects.toMatchObject({
+      code: 'approval_target_changed',
+    })
+    await manager.setDeviceMetrics('browser', null)
+    await expect(manager.inspectNativeClickTarget('browser', 100, 100)).resolves.toMatchObject({
+      emulated: false,
+      scale: 1,
+    })
+  } finally {
+    metrics.resolve()
+    await update
+    await dispose()
+  }
+})
+
 test.each(['close', 'destroy'] as const)('releases device metrics on browser %s', async action => {
   const { manager, contents, dispose } = await browser()
   try {

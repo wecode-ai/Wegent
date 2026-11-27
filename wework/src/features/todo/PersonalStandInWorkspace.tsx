@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { CollaborationExpErrorBoundary } from '@/features/collaboration-exp/CollaborationExpRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   navigateTo,
@@ -77,6 +78,7 @@ const loadAssistantWorkspace = () =>
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
+  const workbench = useContext(WorkbenchContext)
   if (!cloud?.isConnected || !cloud.user) return <StandInCloudConnectionPrompt />
   const key = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
   if (
@@ -91,6 +93,7 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
         preferredDevice={(available.find(device => device.is_default) ?? available[0])?.device_id}
         initialEntry={parseStandInEntry(props.contentRoute)}
         devices={props.devices}
+        deviceCatalogStatus={workbench?.cloudWorkStatus?.checks.devices ?? 'unavailable'}
         key={key}
         services={props.services}
         userId={Number(props.user.id)}
@@ -458,6 +461,32 @@ function AccountStandInWorkspace({
       : []),
   ]
   const alternateDevices = deviceChoices.filter(value => value.deviceId !== target?.deviceId)
+  const renderBindChoices = (choices: typeof deviceChoices) => (
+    <div className="flex flex-wrap gap-2">
+      {choices.map(value => (
+        <ControlButton
+          variant="outline"
+          size="sm"
+          key={`${value.userId}:${value.deviceId}`}
+          type="button"
+          data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
+          disabled={busy}
+          className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+          onClick={() =>
+            void instance
+              .bind({
+                userId: value.userId,
+                backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
+                deviceId: value.deviceId,
+              })
+              .catch(() => {})
+          }
+        >
+          {value.name}
+        </ControlButton>
+      ))}
+    </div>
+  )
   const [noDefinitionBackups, setNoDefinitionBackups] = useState(false)
   const [destinationReady, setDestinationReady] = useState(false)
   const [switchingOnboardingDevice, setSwitchingOnboardingDevice] = useState(false)
@@ -538,13 +567,20 @@ function AccountStandInWorkspace({
             variant="unstyled"
             type="button"
             data-testid="stand-in-project-catalog-retry"
-            aria-busy={view.loadingProjects}
+            aria-busy={
+              instance.error ? busy : view.error?.kind === 'projects' && view.loadingProjects
+            }
             className="min-h-11 px-2 underline md:min-h-8"
             onClick={() => {
-              reloadAccount?.()
-              setOnboardingDeviceError(undefined)
-              instance.reload()
-              workspaceSource.reloadProjects()
+              if (instance.error) {
+                reloadAccount?.()
+                instance.reload()
+              } else if (onboardingDeviceError) {
+                setOnboardingDeviceError(undefined)
+                instance.reload()
+              } else if (view.error?.kind === 'projects') {
+                workspaceSource.reloadProjects()
+              } else instance.reload()
             }}
           >
             {t('standIn.reload')}
@@ -654,30 +690,7 @@ function AccountStandInWorkspace({
         <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
           <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
           <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
-          <div className="flex flex-wrap gap-2">
-            {deviceChoices.map(value => (
-              <ControlButton
-                variant="outline"
-                size="sm"
-                key={`${value.userId}:${value.deviceId}`}
-                type="button"
-                data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
-                disabled={busy}
-                className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
-                onClick={() =>
-                  void instance
-                    .bind({
-                      userId: value.userId,
-                      backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
-                      deviceId: value.deviceId,
-                    })
-                    .catch(() => {})
-                }
-              >
-                {value.name}
-              </ControlButton>
-            ))}
-          </div>
+          {renderBindChoices(deviceChoices)}
         </section>
       ) : binding.status === 'activating' ? (
         !failure && (
@@ -693,32 +706,7 @@ function AccountStandInWorkspace({
             </p>
             {actions}
           </div>
-          {account && alternateDevices.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {alternateDevices.map(value => (
-                <ControlButton
-                  variant="outline"
-                  size="sm"
-                  key={`${value.userId}:${value.deviceId}`}
-                  type="button"
-                  data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
-                  disabled={busy}
-                  className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
-                  onClick={() =>
-                    void instance
-                      .bind({
-                        userId: value.userId,
-                        backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
-                        deviceId: value.deviceId,
-                      })
-                      .catch(() => {})
-                  }
-                >
-                  {value.name}
-                </ControlButton>
-              ))}
-            </div>
-          )}
+          {account && alternateDevices.length > 0 && renderBindChoices(alternateDevices)}
         </section>
       ) : target?.userId === LOCAL_USER.id ? (
         <section className="space-y-3 p-5" data-testid="stand-in-legacy-binding">

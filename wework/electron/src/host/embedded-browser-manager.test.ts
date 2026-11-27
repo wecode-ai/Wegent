@@ -414,7 +414,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       })
       expect(contents.loadURL).toHaveBeenCalledOnce()
     } finally {
-      manager.stop()
+      await manager.stop()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -444,7 +444,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://apps/wegent')
         expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/')
       } finally {
-        manager.stop()
+        await manager.stop()
         await rm(directory, { recursive: true, force: true })
       }
     }
@@ -468,7 +468,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(handler({ url: 'wework://smart-apps/42' })).toEqual({ action: 'deny' })
       expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://smart-apps/42')
     } finally {
-      manager.stop()
+      await manager.stop()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -705,7 +705,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(reopenedState.url).toBe('https://reopened.example.test/')
       expect(reopenedState.nativeLabel).not.toBe(initialState.nativeLabel)
     } finally {
-      manager.stop()
+      await manager.stop()
       await closeRequest.catch(() => {})
       await reopen?.catch(() => {})
       await rm(directory, { recursive: true, force: true })
@@ -1657,7 +1657,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         false
       )
       expect(preventedItem.on).not.toHaveBeenCalled()
-      manager.stop()
+      await manager.stop()
 
       const restored = new EmbeddedBrowserManager(directory)
       try {
@@ -1701,7 +1701,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         expect((await restored.downloads.list()).downloads).toEqual([])
         expect(await readFile(moved, 'utf8')).toBe('downloaded file')
       } finally {
-        restored.stop()
+        await restored.stop()
       }
     } finally {
       await rm(directory, { recursive: true, force: true })

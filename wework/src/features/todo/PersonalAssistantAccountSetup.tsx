@@ -1,6 +1,8 @@
 import { ApiError } from '@/api/http'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { Button } from '@/components/ui/button'
@@ -9,6 +11,8 @@ import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
+import type { CloudWorkCheckStatus } from '@/types/workbench'
+import { findWorkbenchDevice, isLocalWorkbenchDeviceAlias } from '@/lib/workbench-device'
 import {
   getStandInErrorMessage,
   isStandInDeviceUnreachable,
@@ -23,21 +27,84 @@ import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type Reac
 import {
   hasSavedStandIn,
   initializeStandInTarget,
+  isLocalDesktopDeviceId,
   normalizeStandInBindingTarget,
 } from './standInInstanceSource'
 import { initializePersonalAssistantOnDevice } from './personalAssistantDeviceSettings'
 import { resolveStandInEntry, type StandInEntry } from './standInEntry'
 import { availableStandInDevices } from './standInDevices'
 
+interface SetupObservation {
+  preferredDevice?: string
+  initialEntry?: StandInEntry
+  devices: DeviceInfo[]
+  deviceCatalogStatus: CloudWorkCheckStatus
+}
+
+interface SetupData {
+  account: PersonalAssistantAccount | null
+  local?: PersonalStandInSettings
+  newAccount: boolean
+  waitingForCatalog?: boolean
+}
+
+const waitForCatalog: SetupData = { account: null, newAccount: false, waitingForCatalog: true }
+const catalogPending = (status: CloudWorkCheckStatus) => status === 'idle' || status === 'syncing'
+const explicitPrimaryEntry = (entry: StandInEntry | undefined) =>
+  entry?.kind === 'identity' && entry.profileId === '@primary' && entry.deviceId
+    ? { ...entry, deviceId: entry.deviceId }
+    : undefined
+
+async function verifyInitialEntryDevice(
+  api: StandInExecutorApi,
+  observation: SetupObservation,
+  localDeviceId: string,
+  userId: number,
+  signal: AbortSignal,
+  localProfile?: PersonalStandInSettings
+): Promise<string | null | undefined> {
+  const explicit = explicitPrimaryEntry(observation.initialEntry)
+  if (!explicit) return undefined
+  if (explicit.userId && explicit.userId !== String(userId))
+    throw Object.assign(new Error(), { code: 'permission_denied' })
+  const requested = explicit.deviceId
+  if (requested === localDeviceId && localProfile) {
+    if (localProfile.userId !== userId || localProfile.executionDeviceId !== requested)
+      throw Object.assign(new Error(), { code: 'permission_denied' })
+    return requested
+  }
+  if (requested !== localDeviceId) {
+    if (observation.deviceCatalogStatus === 'unavailable')
+      throw Object.assign(new Error(), { code: 'cloud_unavailable' })
+    if (
+      !availableStandInDevices(observation.devices).some(device => device.device_id === requested)
+    ) {
+      if (catalogPending(observation.deviceCatalogStatus)) return null
+      throw Object.assign(new Error(), { code: 'executor_unavailable' })
+    }
+  }
+  const result = await resolveStandInEntry(
+    api,
+    explicit,
+    { userId, deviceId: requested },
+    new Set([requested]),
+    { unbound: true }
+  )
+  signal.throwIfAborted()
+  if (result.kind !== 'ready')
+    throw Object.assign(new Error(), {
+      code: result.error === 'forbidden' ? 'permission_denied' : 'executor_unavailable',
+    })
+  return result.deviceId
+}
+
 async function loadSetup(
   services: WorkbenchServices,
   userId: number,
   name: string,
   signal: AbortSignal,
-  preferredDevice?: string,
-  initialEntry?: StandInEntry,
-  devices: DeviceInfo[] = []
-) {
+  readObservation: () => SetupObservation
+): Promise<SetupData> {
   if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
     performance.mark('wework:assistant-account-load')
   const cloud = services.personalAssistantAccountApi!
@@ -50,15 +117,33 @@ async function loadSetup(
   })
   if (account) return { account, local: undefined, newAccount: false }
   signal.throwIfAborted()
+  const requestedEntry = explicitPrimaryEntry(readObservation().initialEntry)
+  if (requestedEntry?.userId && requestedEntry.userId !== String(userId))
+    throw Object.assign(new Error(), { code: 'permission_denied' })
   const api = services.standInApi
   if (!services.getLocalRuntimeSidebarIdentity || !api) {
+    if (requestedEntry) throw Object.assign(new Error(), { code: 'executor_unavailable' })
     return { account: await cloud.initialize(name), local: undefined, newAccount: true }
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
   const binding = await api.binding(device.deviceId)
+  const observed = readObservation()
+  const savedTarget = binding.target
+  if (
+    savedTarget?.userId === userId &&
+    savedTarget.deviceId !== device.deviceId &&
+    isLocalDesktopDeviceId(savedTarget.deviceId) &&
+    !isLocalWorkbenchDeviceAlias(savedTarget.deviceId) &&
+    !findWorkbenchDevice(observed.devices, savedTarget.deviceId)
+  ) {
+    // Distinguishing a registered peer from a legacy desktop alias requires a catalog result.
+    if (catalogPending(observed.deviceCatalogStatus)) return waitForCatalog
+    if (observed.deviceCatalogStatus === 'unavailable')
+      throw Object.assign(new Error(), { code: 'cloud_unavailable' })
+  }
   const target = binding.target
-    ? normalizeStandInBindingTarget(binding.target, device.deviceId, devices)
+    ? normalizeStandInBindingTarget(binding.target, device.deviceId, observed.devices)
     : null
   signal.throwIfAborted()
   if (
@@ -72,8 +157,22 @@ async function loadSetup(
     } catch (cause) {
       signal.throwIfAborted()
       if (!isStandInDeviceUnreachable(cause) || target.deviceId === device.deviceId) throw cause
+      const latest = readObservation()
+      const entryDevice = await verifyInitialEntryDevice(
+        api,
+        latest,
+        device.deviceId,
+        userId,
+        signal
+      )
+      signal.throwIfAborted()
+      if (entryDevice === null) return waitForCatalog
+      if (entryDevice === target.deviceId) throw cause
       const targetDevice =
-        preferredDevice && preferredDevice !== target.deviceId ? preferredDevice : device.deviceId
+        entryDevice ??
+        (latest.preferredDevice && latest.preferredDevice !== target.deviceId
+          ? latest.preferredDevice
+          : device.deviceId)
       const account = await initializeStandInTarget(
         api,
         device.deviceId,
@@ -88,6 +187,14 @@ async function loadSetup(
     }
     signal.throwIfAborted()
     if (hasSavedStandIn(profile)) return { account: null, local: profile, newAccount: false }
+    const explicit = explicitPrimaryEntry(readObservation().initialEntry)
+    if (
+      explicit &&
+      (explicit.deviceId !== target.deviceId ||
+        profile.userId !== target.userId ||
+        profile.executionDeviceId !== target.deviceId)
+    )
+      throw Object.assign(new Error(), { code: 'permission_denied' })
     return {
       account: await cloud.initialize(name, undefined, target.deviceId),
       local: undefined,
@@ -102,32 +209,17 @@ async function loadSetup(
   const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
   if (legacy) return { account: null, local: legacy, newAccount: false }
 
-  let initialDevice = preferredDevice ?? device.deviceId
-  if (
-    initialEntry?.kind === 'identity' &&
-    initialEntry.profileId === '@primary' &&
-    initialEntry.deviceId &&
-    (!initialEntry.userId || initialEntry.userId === String(userId))
-  ) {
-    const requested = initialEntry.deviceId
-    if (
-      requested === device.deviceId &&
-      owned.userId === userId &&
-      owned.executionDeviceId === requested
-    ) {
-      initialDevice = requested
-    } else if (availableStandInDevices(devices).some(device => device.device_id === requested)) {
-      const result = await resolveStandInEntry(
-        api,
-        initialEntry,
-        { userId, deviceId: requested },
-        new Set([requested]),
-        { unbound: true }
-      )
-      signal.throwIfAborted()
-      if (result.kind === 'ready') initialDevice = result.deviceId
-    }
-  }
+  const entryDevice = await verifyInitialEntryDevice(
+    api,
+    readObservation(),
+    device.deviceId,
+    userId,
+    signal,
+    owned
+  )
+  signal.throwIfAborted()
+  if (entryDevice === null) return waitForCatalog
+  const initialDevice = entryDevice ?? readObservation().preferredDevice ?? device.deviceId
   return {
     account: await cloud.initialize(name, undefined, initialDevice),
     local: undefined,
@@ -141,7 +233,8 @@ export function PersonalAssistantAccountSetup({
   active,
   preferredDevice,
   initialEntry,
-  devices,
+  devices = [],
+  deviceCatalogStatus = 'unavailable',
   children,
 }: {
   services: WorkbenchServices
@@ -150,6 +243,7 @@ export function PersonalAssistantAccountSetup({
   preferredDevice?: string
   initialEntry?: StandInEntry
   devices?: DeviceInfo[]
+  deviceCatalogStatus?: CloudWorkCheckStatus
   children(
     account: PersonalAssistantAccount | undefined,
     publish: (account: PersonalAssistantAccount) => void,
@@ -160,8 +254,14 @@ export function PersonalAssistantAccountSetup({
 }) {
   const { t } = useTranslation('common')
   const name = t('standIn.personal.default_role')
+  const readObservation = useStableEvent(() => ({
+    preferredDevice,
+    initialEntry,
+    devices,
+    deviceCatalogStatus,
+  }))
   const load = useStableEvent((signal: AbortSignal) =>
-    loadSetup(services, userId, name, signal, preferredDevice, initialEntry, devices)
+    loadSetup(services, userId, name, signal, readObservation)
   )
   const resource = useMemo(
     () =>
@@ -170,8 +270,33 @@ export function PersonalAssistantAccountSetup({
       }),
     [userId, load]
   )
+  const entry = explicitPrimaryEntry(initialEntry)
+  const pendingCatalog = catalogPending(deviceCatalogStatus)
+  const waiting = resource.getSnapshot().data?.waitingForCatalog
+  const [observedCatalog, setObservedCatalog] = useState<typeof resource>()
+  // Once a legacy binding has waited for the catalog, retain that observation key
+  // after its profile arrives so the successful read does not trigger another load.
+  const observeLegacyCatalog =
+    observedCatalog === resource || (!entry && waiting && !pendingCatalog)
+  if (observeLegacyCatalog && observedCatalog !== resource) setObservedCatalog(resource)
+  const entryAvailable =
+    entry && availableStandInDevices(devices).some(device => device.device_id === entry.deviceId)
+  const catalogState =
+    entryAvailable && deviceCatalogStatus !== 'unavailable'
+      ? 'candidate'
+      : pendingCatalog
+        ? 'pending'
+        : deviceCatalogStatus
+  const catalogVersion =
+    entry || observeLegacyCatalog
+      ? JSON.stringify([entry?.userId, entry?.deviceId, catalogState])
+      : ''
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, catalogVersion),
+    [resource, catalogVersion]
+  )
   const snapshot = useSyncExternalStore(
-    active ? resource.subscribe : subscribeIdleResource,
+    active ? subscribe : subscribeIdleResource,
     resource.getSnapshot,
     getIdleResourceSnapshot
   )
@@ -238,15 +363,13 @@ export function PersonalAssistantAccountSetup({
   }
 
   const initialize = async () => {
-    if (!data || inFlight.current) return
+    if (!data?.local || inFlight.current) return
     inFlight.current = true
     setPending(true)
     setError(undefined)
     try {
       const source = data.local
-      const local = source
-        ? await services.standInApi!.personalGet(source.userId, source.executionDeviceId)
-        : undefined
+      const local = await services.standInApi!.personalGet(source.userId, source.executionDeviceId)
       const account = await services.personalAssistantAccountApi!.initialize(name, local)
       setMigrationNotice(Boolean(local))
       publish(account)
@@ -270,7 +393,7 @@ export function PersonalAssistantAccountSetup({
       >
         {failure ? (
           retry
-        ) : data ? (
+        ) : data?.local ? (
           <>
             <span className="text-sm text-text-secondary">
               {t('standIn.account.local_profile')}

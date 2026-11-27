@@ -6,6 +6,15 @@ export interface BrowserScriptEvaluationOptions {
   readOnly?: boolean
 }
 
+export class BrowserExpressionError extends Error {
+  constructor(
+    readonly kind: 'read_only_rejected' | 'javascript_exception',
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 export class BrowserScriptEvaluator {
   private readonly actions = new Set<Promise<void>>()
 
@@ -33,7 +42,19 @@ export class BrowserScriptEvaluator {
           ...(options.readOnly ? { throwOnSideEffect: true } : {}),
         })
         if (exceptionDetails) {
-          throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
+          const description = exceptionDetails.exception?.description ?? exceptionDetails.text
+          if (options.readOnly) {
+            const rejected = /^EvalError: Possible side-effect in debug-evaluate(?:\n|$)/.test(
+              description
+            )
+            throw new BrowserExpressionError(
+              rejected ? 'read_only_rejected' : 'javascript_exception',
+              rejected
+                ? 'Read-only browser evaluation rejected'
+                : 'Browser expression evaluation failed'
+            )
+          }
+          throw new Error(description)
         }
         return result.value
       })
@@ -43,7 +64,7 @@ export class BrowserScriptEvaluator {
         awaitPromise,
         pendingActions: this.actions.size,
         error: options.readOnly
-          ? 'Read-only browser evaluation rejected'
+          ? 'Read-only browser evaluation failed'
           : error instanceof Error
             ? error.message
             : String(error),

@@ -5,6 +5,7 @@ import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
+import type { CloudWorkCheckStatus } from '@/types/workbench'
 import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
 import {
   collectPersonalAssistantDefinitionBackups,
@@ -27,17 +28,25 @@ const blank: PersonalStandInSettings = {
 }
 
 function setup(
-  initial: PersonalAssistantAccount | Error | null,
+  initial: PersonalAssistantAccount | Error | null | Promise<PersonalAssistantAccount | null>,
   local = blank,
   boundDevice?: string,
-  options?: { preferredDevice?: string; initialEntry?: StandInEntry; devices?: DeviceInfo[] }
+  options?: {
+    preferredDevice?: string
+    initialEntry?: StandInEntry
+    devices?: DeviceInfo[]
+    deviceCatalogStatus?: CloudWorkCheckStatus
+    personalGet?: (userId: number, deviceId: string) => Promise<PersonalStandInSettings>
+  }
 ) {
   const get = vi.fn(async () => {
     if (initial instanceof Error) throw initial
     return initial
   })
-  const personalGet = vi.fn(async (_user: number, device: string) =>
-    boundDevice && device !== boundDevice ? blank : local
+  const personalGet = vi.fn(
+    options?.personalGet ??
+      (async (_user: number, device: string) =>
+        boundDevice && device !== boundDevice ? blank : local)
   )
   const binding = vi.fn(async () => ({
     target: boundDevice ? { userId: 7, deviceId: boundDevice, backendUrl: 'https://cloud' } : null,
@@ -50,14 +59,18 @@ function setup(
   } as unknown as WorkbenchServices
   let publishAccount: ((value: PersonalAssistantAccount) => void) | undefined
   let readAccount: (() => PersonalAssistantAccount | undefined) | undefined
-  const workspace = (preferredDevice = options?.preferredDevice) => (
+  let devices = options?.devices
+  let status = options?.deviceCatalogStatus
+  let preferredDevice = options?.preferredDevice
+  const workspace = () => (
     <PersonalAssistantAccountSetup
       services={services}
       userId={7}
       active
       preferredDevice={preferredDevice}
       initialEntry={options?.initialEntry}
-      devices={options?.devices}
+      devices={devices}
+      deviceCatalogStatus={status}
     >
       {(assistant, publish, read, reloadAccount, newAccount) => {
         publishAccount = publish
@@ -78,11 +91,20 @@ function setup(
   const { rerender } = render(workspace())
   return {
     get,
+    binding,
     personalGet,
     initialize,
     publishAccount: (value: PersonalAssistantAccount) => publishAccount?.(value),
     readAccount: () => readAccount?.(),
-    changePreferredDevice: (device: string) => rerender(workspace(device)),
+    changePreferredDevice: (device: string) => {
+      preferredDevice = device
+      rerender(workspace())
+    },
+    changeDeviceCatalog: (nextDevices: DeviceInfo[], nextStatus: CloudWorkCheckStatus) => {
+      devices = nextDevices
+      status = nextStatus
+      rerender(workspace())
+    },
   }
 }
 
@@ -192,8 +214,25 @@ test('a registered peer binding is preserved even when that device is offline', 
   expect(initialize).toHaveBeenCalledWith(expect.any(String), remote)
 })
 
+test('a legacy binding is not normalized to the local device before the peer catalog resolves', async () => {
+  const remote = { ...blank, version: 1, executionDeviceId: 'electron-peer' }
+  const { binding, personalGet, initialize, changeDeviceCatalog } = setup(
+    null,
+    remote,
+    remote.executionDeviceId,
+    { devices: [], deviceCatalogStatus: 'syncing' }
+  )
+  await waitFor(() => expect(binding).toHaveBeenCalledTimes(1))
+  expect(personalGet).not.toHaveBeenCalled()
+  expect(initialize).not.toHaveBeenCalled()
+  changeDeviceCatalog([peer], 'available')
+  expect(await screen.findByTestId('personal-assistant-account-migrate-confirm')).toBeVisible()
+  expect(personalGet.mock.calls).toEqual([[7, remote.executionDeviceId]])
+  expect(initialize).not.toHaveBeenCalled()
+})
+
 test('a missing cloud and legacy profile takes ordinary initialization', async () => {
-  const { initialize } = setup(null)
+  const { initialize } = setup(null, blank, undefined, { deviceCatalogStatus: 'syncing' })
   const primary = await screen.findByText('primary')
   expect(primary).toBeVisible()
   expect(primary).toHaveAttribute('data-new-account', 'true')
@@ -204,6 +243,7 @@ test('a missing cloud and legacy profile takes ordinary initialization', async (
 test('first-use primary identity link initializes on the verified local device', async () => {
   const { initialize } = setup(null, blank, undefined, {
     preferredDevice: 'cloud',
+    deviceCatalogStatus: 'syncing',
     initialEntry: {
       kind: 'identity',
       deviceId: 'mac',
@@ -215,6 +255,79 @@ test('first-use primary identity link initializes on the verified local device',
   expect(await screen.findByText('primary')).toHaveAttribute('data-new-account', 'true')
   expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
 })
+
+const peer: DeviceInfo = {
+  id: 2,
+  device_id: 'electron-peer',
+  device_type: 'remote',
+  name: 'Peer desktop',
+  bind_shell: 'claudecode',
+  status: 'online',
+  is_default: false,
+}
+const peerEntry = {
+  kind: 'identity' as const,
+  deviceId: peer.device_id,
+  profileId: '@primary',
+  userId: '7',
+  scheduled: false,
+}
+
+test.each([
+  ['before', 'available'],
+  ['after', 'available'],
+  ['after', 'syncing'],
+] as const)(
+  'a first-use remote link keeps its target when the device arrives %s account lookup (%s catalog)',
+  async (timing, nextStatus) => {
+    let resolve!: (value: PersonalAssistantAccount | null) => void
+    const lookup = new Promise<PersonalAssistantAccount | null>(done => {
+      resolve = done
+    })
+    const { get, personalGet, initialize, changeDeviceCatalog } = setup(lookup, blank, undefined, {
+      initialEntry: peerEntry,
+      devices: [],
+      deviceCatalogStatus: 'syncing',
+      personalGet: async (userId, deviceId) => ({ ...blank, userId, executionDeviceId: deviceId }),
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    if (timing === 'after') {
+      await act(async () => {
+        resolve(null)
+        await lookup
+      })
+      await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    }
+    expect(initialize).not.toHaveBeenCalled()
+    changeDeviceCatalog([peer], nextStatus)
+    if (timing === 'before')
+      await act(async () => {
+        resolve(null)
+        await lookup
+      })
+    expect(await screen.findByText('primary')).toHaveAttribute('data-new-account', 'true')
+    expect(initialize.mock.calls).toEqual([[expect.any(String), undefined, peer.device_id]])
+    expect(personalGet).toHaveBeenCalledWith(7, peer.device_id)
+  }
+)
+
+test.each(['missing', 'denied'])(
+  'an explicit remote link with a %s device cannot initialize on a different target',
+  async reason => {
+    const { initialize } = setup(null, blank, undefined, {
+      initialEntry: peerEntry,
+      devices: reason === 'missing' ? [] : [peer],
+      deviceCatalogStatus: reason === 'missing' ? 'empty' : 'available',
+      personalGet: async (userId, deviceId) => {
+        if (deviceId === peer.device_id) throw new ApiError('Forbidden', 403)
+        return { ...blank, userId, executionDeviceId: deviceId }
+      },
+    })
+    expect(await screen.findByTestId('personal-assistant-account-retry')).toBeVisible()
+    expect(initialize).not.toHaveBeenCalled()
+    expect(screen.queryByText('primary')).toBeNull()
+  }
+)
 
 test('a failed cloud read cannot trigger initialization or local import', async () => {
   const { personalGet, initialize } = setup(new ApiError('Not Found', 404))

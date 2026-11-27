@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { expect, it, vi } from 'vitest'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import { ApiError } from '@/api/http'
 import { newStandInPrimaryRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import {
   isStandInBindingOwner,
@@ -62,18 +63,27 @@ const makeAccount = (environmentId?: string, revision = 'rev-1'): PersonalAssist
 
 const makeBindingStore = () => {
   const stoppingTargets = new Set<string>()
+  const generations: Record<string, number> = {}
+  let nextGeneration = 0
   return vi.fn<StandInExecutorApi['binding']>(
-    async (_deviceId, operation = 'get', _version, target) => {
-      if (operation === 'markStopping' && target) {
-        stoppingTargets.add(`${target.userId}:${target.deviceId}`)
-      } else if (operation === 'clearStopping' && target) {
-        stoppingTargets.delete(`${target.userId}:${target.deviceId}`)
+    async (_deviceId, operation = 'get', version, target) => {
+      if (operation === 'markStoppingWithGeneration' && target) {
+        const key = `${target.userId}:${target.deviceId}`
+        stoppingTargets.add(key)
+        generations[key] = ++nextGeneration
+      } else if (operation === 'clearStoppingIfGeneration' && target) {
+        const key = `${target.userId}:${target.deviceId}`
+        if (version !== generations[key])
+          throw Object.assign(new Error('version conflict'), { code: 'version_conflict' })
+        stoppingTargets.delete(key)
+        delete generations[key]
       }
       return {
         version: 0,
         status: 'unbound',
         target: null,
         stoppingTargets: [...stoppingTargets],
+        stoppingTargetGenerations: { ...generations },
       } satisfies StandInInstanceBinding
     }
   )
@@ -485,6 +495,8 @@ it('keeps old inbox items hidden while the same owner and device load on a new c
 it('shares cloud primary execution device across clients and falls back cleanly for foreign local desktop IDs', async () => {
   const foreignDesktopId = `electron-${'a'.repeat(64)}`
   let currentDesktopId = `electron-${'b'.repeat(64)}`
+  let freshAccount = makeAccount('cloud-1')
+  const getAccount = vi.fn(async () => freshAccount)
   const emptyLocal: PersonalStandInSettings = {
     version: 0,
     executionDeviceId: currentDesktopId,
@@ -507,7 +519,7 @@ it('shares cloud primary execution device across clients and falls back cleanly 
     standInApi: { personalGet, binding: makeBindingStore() } as unknown as StandInExecutorApi,
     personalAssistantAccountApi: {
       updateDefinitions,
-      get: async () => makeAccount(),
+      get: getAccount,
     } as unknown as NonNullable<WorkbenchServices['personalAssistantAccountApi']>,
     getLocalRuntimeSidebarIdentity: async () =>
       ({
@@ -519,7 +531,7 @@ it('shares cloud primary execution device across clients and falls back cleanly 
   const devices = [cloudDevice('cloud-1'), cloudDevice('cloud-2')]
 
   const { result, rerender } = renderHook(
-    ({ account, userId }) =>
+    ({ account, userId, devices }) =>
       useStandInInstance(
         services as WorkbenchServices,
         userId,
@@ -529,7 +541,7 @@ it('shares cloud primary execution device across clients and falls back cleanly 
         'https://cloud.example/api',
         { account, requireSetupConfirmation: false }
       ),
-    { initialProps: { account: makeAccount('cloud-1'), userId: 1 } }
+    { initialProps: { account: freshAccount, userId: 1, devices } }
   )
 
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-1'))
@@ -539,27 +551,127 @@ it('shares cloud primary execution device across clients and falls back cleanly 
   // this client resolves an available cloud device without overwriting the other desktop's setting.
   for (const desktopId of [foreignDesktopId, 'electron-11111111-1111-4111-8111-111111111111']) {
     const previousVersion = result.current.binding!.version
-    rerender({ account: makeAccount(desktopId), userId: 1 })
+    freshAccount = makeAccount(desktopId)
+    rerender({ account: freshAccount, userId: 1, devices })
     await waitFor(() => expect(result.current.binding?.version).toBeGreaterThan(previousVersion))
     expect(result.current.binding?.target?.deviceId).toBe('cloud-1')
     expect(updateDefinitions).not.toHaveBeenCalled()
   }
 
   // A configured local alias follows the current IPC identity, even when the account is unchanged.
-  rerender({ account: makeAccount('local-device'), userId: 1 })
+  freshAccount = makeAccount('local-device')
+  rerender({ account: freshAccount, userId: 1, devices })
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe(currentDesktopId))
   currentDesktopId = `electron-${'d'.repeat(64)}`
   act(() => result.current.reload())
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe(currentDesktopId))
 
+  // A fresh account response and a newly registered peer both invalidate the old pin.
+  freshAccount = makeAccount(foreignDesktopId, 'rev-2')
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-1'))
+  rerender({
+    account: freshAccount,
+    userId: 1,
+    devices: [...devices, cloudDevice(foreignDesktopId)],
+  })
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe(foreignDesktopId))
+  freshAccount = makeAccount('cloud-2', 'rev-3')
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-2'))
+
+  const denied = new ApiError('Access denied', 403)
+  getAccount.mockRejectedValueOnce(denied)
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.errorCause).toBe(denied))
+  expect(result.current.binding).toBeUndefined()
+  expect(result.current.setupTarget).toBeUndefined()
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-2'))
+
   // Switching accounts immediately resolves the new account without owner-mismatch lockouts.
-  rerender({ account: makeAccount('cloud-2'), userId: 2 })
+  rerender({ account: freshAccount, userId: 2, devices })
   await waitFor(() =>
     expect(result.current.binding?.target).toEqual({
       userId: 2,
       backendUrl: 'https://cloud.example/api',
       deviceId: 'cloud-2',
     })
+  )
+})
+
+it('retires a prepared account activation when the chosen device disconnects before start', async () => {
+  const configured = makeAccount('cloud-1')
+  let saved: StandInInstanceBinding = { version: 0, status: 'unbound', target: null }
+  let releasePreparation!: () => void
+  const preparing = new Promise<void>(resolve => {
+    releasePreparation = resolve
+  })
+  const binding = vi.fn<StandInExecutorApi['binding']>(
+    async (_device, operation = 'get', version, target) => {
+      if (operation === 'prepareBind') {
+        saved = { version: 1, status: 'activating', target: target! }
+        await preparing
+      } else if (operation === 'cancelActivation') {
+        expect(version).toBe(1)
+        expect(target).toEqual(saved.target)
+        saved = { version: 2, status: 'unbound', target: null }
+      }
+      return saved
+    }
+  )
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>()
+  const services = {
+    standInApi: {
+      binding,
+      lifecycle,
+      personalGet: async () => ({ version: 1, executionDeviceId: 'cloud-1', userId: 1, roles: [] }),
+    },
+    personalAssistantAccountApi: { get: async () => configured },
+    getLocalRuntimeSidebarIdentity: async () => ({
+      deviceId: 'local',
+      runtimeInstanceId: 'instance',
+      provenance: 'local-ipc',
+    }),
+  } as unknown as WorkbenchServices
+  const { result, rerender } = renderHook(
+    ({ connected, devices }) =>
+      useStandInInstance(services, 1, devices, connected, true, 'https://cloud.example/api', {
+        account: configured,
+        newAccount: true,
+      }),
+    {
+      initialProps: { connected: true, devices: [cloudDevice('cloud-1')] },
+    }
+  )
+  await waitFor(() => expect(result.current.setupTarget?.deviceId).toBe('cloud-1'))
+  let setup!: Promise<unknown>
+  act(() => {
+    setup = result.current.setup()
+  })
+  try {
+    await waitFor(() =>
+      expect(binding).toHaveBeenCalledWith(
+        'local',
+        'prepareBind',
+        0,
+        expect.objectContaining({ deviceId: 'cloud-1' })
+      )
+    )
+    rerender({ connected: false, devices: [cloudDevice('cloud-1', 'offline')] })
+  } finally {
+    await act(async () => {
+      releasePreparation()
+      await setup
+    })
+  }
+  await waitFor(() => expect(saved.status).toBe('unbound'))
+  expect(lifecycle).not.toHaveBeenCalled()
+  expect(binding).toHaveBeenCalledWith(
+    'local',
+    'cancelActivation',
+    1,
+    expect.objectContaining({ deviceId: 'cloud-1' })
   )
 })
 
@@ -957,7 +1069,12 @@ it('shares offline stopping state across clients, guards stale stops, and recove
     requestId: expect.any(String),
     expectedVersion: runningProfile.version,
   })
-  expect(binding).not.toHaveBeenCalledWith(localId, 'markStopping', undefined, expect.anything())
+  expect(binding).not.toHaveBeenCalledWith(
+    localId,
+    'markStoppingWithGeneration',
+    undefined,
+    expect.anything()
+  )
   expect(lifecycle).toHaveBeenLastCalledWith(1, 'cloud-2', 'stop', runningProfile.version)
   firstMount.unmount()
   afterReload.rerender({ account: latestAccount, devices: offlineCloud2Devices })
@@ -1015,7 +1132,6 @@ it('shares offline stopping state across clients, guards stale stops, and recove
   // Simulate another client advancing revision to rev-3; first bind fails with 409 and refreshes latestAccount,
   // so retrying bind immediately succeeds with rev-3.
   const staleAccountSnapshot = latestAccount
-  latestAccount = makeAccount('cloud-2', 'rev-3')
   let clientAccount = staleAccountSnapshot
   const publishRefreshedAccount = vi.fn((next: PersonalAssistantAccount) => {
     clientAccount = next
@@ -1041,6 +1157,7 @@ it('shares offline stopping state across clients, guards stale stops, and recove
   await waitFor(() =>
     expect(conflictMount.result.current.binding?.target?.deviceId).toBe('cloud-2')
   )
+  latestAccount = makeAccount('cloud-2', 'rev-3')
   await expect(
     act(() =>
       conflictMount.result.current.bind({

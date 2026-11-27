@@ -87,14 +87,13 @@ export function createPersonalStandInSettingsResource({
     },
     {
       success(data) {
-        if (
-          resetRevision === editRevision &&
-          (!definitionConflict ||
-            data.settings.cloudDefinitionRevision !== definitionConflict.revision)
-        ) {
+        const conflictResolved =
+          definitionConflict &&
+          data.settings.cloudDefinitionRevision !== definitionConflict.revision
+        if (resetRevision === editRevision && (!definitionConflict || conflictResolved)) {
           draft = undefined
-          definitionConflict = undefined
         }
+        if (conflictResolved) definitionConflict = undefined
         resetRevision = undefined
         errorOverride = definitionConflict
           ? { cause: definitionConflict.cause, operation: 'save_settings_failed' }

@@ -68,11 +68,33 @@ export async function activateStandInBinding(
   const target = binding.target!
   if (expectedVersion === undefined) await api.lifecycle(target.userId, target.deviceId, 'start')
   else await api.lifecycle(target.userId, target.deviceId, 'start', expectedVersion)
+  return completeStandInActivation(api, localDeviceId, binding)
+}
+
+export async function completeStandInActivation(
+  api: StandInExecutorApi,
+  localDeviceId: string,
+  binding: StandInInstanceBinding
+) {
   try {
     return await api.binding(localDeviceId, 'completeActivation', binding.version)
   } catch (cause) {
     const saved = await api.binding(localDeviceId)
-    if (saved.status === 'active' && sameTarget(saved.target, target)) return saved
+    if (saved.status === 'active' && sameTarget(saved.target, binding.target)) return saved
+    throw cause
+  }
+}
+
+export async function cancelStandInActivation(
+  api: StandInExecutorApi,
+  localDeviceId: string,
+  binding: StandInInstanceBinding
+) {
+  try {
+    return await api.binding(localDeviceId, 'cancelActivation', binding.version, binding.target!)
+  } catch (cause) {
+    if (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'version_conflict')
+      return api.binding(localDeviceId)
     throw cause
   }
 }
@@ -123,6 +145,7 @@ export function createLocalStandInInstanceSource({
   let activating:
     | { deviceId: string; version: number; result: Promise<StandInInstanceBinding> }
     | undefined
+  let abandonedActivation: { deviceId: string; binding: StandInInstanceBinding } | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
     for (const listener of listeners) listener()
@@ -211,7 +234,12 @@ export function createLocalStandInInstanceSource({
       // A competing initializer owns its target; never start it on this transaction's behalf.
       return { binding: await api!.binding(deviceId) }
     }
-    if (!observed(revision, deviceId)) return { binding: bound }
+    if (!mayBind()) {
+      abandonedActivation = { deviceId, binding: bound }
+      const cancelled = await cancelStandInActivation(api!, deviceId, bound)
+      abandonedActivation = undefined
+      return { binding: cancelled }
+    }
     try {
       return { binding: await activateStandInBinding(api!, deviceId, bound) }
     } catch (error) {
@@ -241,6 +269,17 @@ export function createLocalStandInInstanceSource({
         })
       let binding = await api.binding(identity.deviceId)
       if (!current()) return
+      if (abandonedActivation?.deviceId === identity.deviceId) {
+        if (
+          binding.status === 'activating' &&
+          binding.version === abandonedActivation.binding.version &&
+          sameTarget(binding.target, abandonedActivation.binding.target)
+        ) {
+          binding = await cancelStandInActivation(api, identity.deviceId, binding)
+        }
+        abandonedActivation = undefined
+        if (!current()) return
+      }
       if (binding.status === 'unbound') {
         publishBinding(binding)
         const entry = owner.entry

@@ -103,7 +103,13 @@ impl LocalTaskStore {
             transaction.commit()?;
             return Ok(binding);
         }
-        if matches!(operation, "markStopping" | "clearStopping") {
+        if matches!(
+            operation,
+            "markStopping"
+                | "clearStopping"
+                | "markStoppingWithGeneration"
+                | "clearStoppingIfGeneration"
+        ) {
             let (Some(user_id), Some(device_id)) = (
                 target["userId"].as_i64().filter(|id| *id >= 0),
                 target["deviceId"].as_str().filter(|id| !id.is_empty()),
@@ -115,18 +121,52 @@ impl LocalTaskStore {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            if operation == "markStopping" {
+            let generation = binding["stoppingTargetGenerations"][&stop_key]
+                .as_i64()
+                .unwrap_or(0);
+            let legacy_stopping = binding["status"] == "stopping"
+                && binding["target"]["userId"].as_i64() == Some(user_id)
+                && binding["target"]["deviceId"].as_str() == Some(device_id);
+            let pending =
+                stopping.iter().any(|item| item.as_str() == Some(&stop_key)) || legacy_stopping;
+            if matches!(operation, "markStopping" | "markStoppingWithGeneration") {
+                if operation == "markStoppingWithGeneration" {
+                    let next = binding["stoppingGeneration"]
+                        .as_i64()
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            TaskRuntimeError::Invalid("Stop marker generation exhausted".into())
+                        })?;
+                    binding["stoppingGeneration"] = json!(next);
+                    binding["stoppingTargetGenerations"][&stop_key] = json!(next);
+                }
                 if !stopping.iter().any(|item| item.as_str() == Some(&stop_key)) {
                     stopping.push(json!(stop_key));
                 }
             } else {
+                let expected = if operation == "clearStoppingIfGeneration" {
+                    expected_version
+                } else {
+                    0
+                };
+                if !pending {
+                    transaction.commit()?;
+                    return Ok(binding);
+                }
+                if generation != expected {
+                    return Err(TaskRuntimeError::VersionConflict);
+                }
                 stopping.retain(|item| item.as_str() != Some(&stop_key));
+                if let Some(generations) = binding
+                    .get_mut("stoppingTargetGenerations")
+                    .and_then(Value::as_object_mut)
+                {
+                    generations.remove(&stop_key);
+                }
                 // Clearing a verified stop must retire the pre-upgrade stop state too.
                 // Keep its target and advance the legacy CAS version only if changed.
-                if binding["status"] == "stopping"
-                    && binding["target"]["userId"].as_i64() == Some(user_id)
-                    && binding["target"]["deviceId"].as_str() == Some(device_id)
-                {
+                if legacy_stopping {
                     binding["status"] = json!("stopped");
                     binding["version"] = json!(binding["version"].as_i64().unwrap_or(0) + 1);
                 }
@@ -180,6 +220,14 @@ impl LocalTaskStore {
             "completeActivation" if binding["status"] == "activating" => {
                 binding["status"] = json!("active");
             }
+            "cancelActivation"
+                if binding["status"] == "activating"
+                    && target["userId"] == binding["target"]["userId"]
+                    && target["deviceId"] == binding["target"]["deviceId"] =>
+            {
+                binding["status"] = json!("unbound");
+                binding["target"] = Value::Null;
+            }
             "beginStop" if matches!(binding["status"].as_str(), Some("active" | "stopping")) => {
                 binding["status"] = json!("stopping");
             }
@@ -189,7 +237,7 @@ impl LocalTaskStore {
             _ => {
                 return Err(TaskRuntimeError::Invalid(
                     "Invalid binding transition".into(),
-                ))
+                ));
             }
         }
         binding["version"] = json!(expected_version + 1);
@@ -276,7 +324,7 @@ impl LocalTaskStore {
             _ => {
                 return Err(TaskRuntimeError::Invalid(
                     "Invalid stand-in lifecycle transition".into(),
-                ))
+                ));
             }
         }
         if settings != previous {
@@ -439,6 +487,76 @@ mod tests {
             .stand_in_binding(None, "clearStopping", -1, other)
             .unwrap();
         assert!(all_cleared.get("stoppingTargets").is_none());
+    }
+
+    #[test]
+    fn stale_stop_clear_and_abandoned_activation_cannot_change_newer_state() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let target = json!({"userId":7,"deviceId":"cloud"});
+        let key = "7:cloud";
+        store
+            .stand_in_binding(None, "markStopping", -1, target.clone())
+            .unwrap();
+        let first = store
+            .stand_in_binding(None, "markStoppingWithGeneration", -1, target.clone())
+            .unwrap();
+        let first_generation = first["stoppingTargetGenerations"][key].as_i64().unwrap();
+        let second = store
+            .stand_in_binding(None, "markStoppingWithGeneration", -1, target.clone())
+            .unwrap();
+        let second_generation = second["stoppingTargetGenerations"][key].as_i64().unwrap();
+        assert!(second_generation > first_generation);
+        let reopened = LocalTaskStore::open(&path).unwrap();
+        assert!(reopened
+            .stand_in_binding(None, "clearStopping", -1, target.clone())
+            .is_err());
+        assert!(reopened
+            .stand_in_binding(
+                None,
+                "clearStoppingIfGeneration",
+                first_generation,
+                target.clone()
+            )
+            .is_err());
+        assert_eq!(
+            reopened
+                .stand_in_binding(None, "get", 0, Value::Null)
+                .unwrap(),
+            second
+        );
+        assert!(reopened
+            .stand_in_binding(
+                None,
+                "clearStoppingIfGeneration",
+                second_generation,
+                target.clone()
+            )
+            .unwrap()
+            .get("stoppingTargets")
+            .is_none());
+        let prepared = reopened
+            .stand_in_binding(None, "prepareBind", 0, target.clone())
+            .unwrap();
+        assert_eq!(prepared["status"], "activating");
+        let retired = reopened
+            .stand_in_binding(None, "cancelActivation", 1, target.clone())
+            .unwrap();
+        assert_eq!(retired["status"], "unbound");
+        assert!(retired["target"].is_null());
+        let replacement = reopened
+            .stand_in_binding(None, "prepareBind", 2, target.clone())
+            .unwrap();
+        assert!(reopened
+            .stand_in_binding(None, "cancelActivation", 1, target)
+            .is_err());
+        assert_eq!(
+            reopened
+                .stand_in_binding(None, "get", 0, Value::Null)
+                .unwrap(),
+            replacement
+        );
     }
 
     #[test]

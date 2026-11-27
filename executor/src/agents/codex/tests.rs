@@ -3979,6 +3979,7 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     let runtime_file = runtime_dir.path().join("embedded-browser-bridge.json");
     let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
     env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE", &runtime_file);
+    // The environment-backed bridge must preserve restricted task approval.
     for profile in [":read-only", ":workspace"] {
         let mut restricted = ExecutionRequest::default();
         restricted
@@ -3989,6 +3990,9 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
             &"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".to_owned()
         ));
     }
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    assert!(!crate::browser_mcp::bridge_is_available());
     fs::write(
         &runtime_file,
         format!(
@@ -3997,6 +4001,8 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         ),
     )
     .unwrap();
+    assert!(crate::browser_mcp::bridge_is_available());
+    // Only the authenticated runtime-file identity supplies the bridge here.
     for profile in [":read-only", ":workspace"] {
         let mut restricted = ExecutionRequest::default();
         restricted
