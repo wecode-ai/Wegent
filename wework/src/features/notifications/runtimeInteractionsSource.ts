@@ -70,6 +70,35 @@ interface InteractionSourceOptions {
   retainedReply: ReturnType<typeof useInteractionDrafts>['retainedReply']
 }
 
+function discoveryTimestamp(value: RuntimeTaskReminderItem['task']['updatedAt']) {
+  return typeof value === 'number' && !Number.isFinite(value) ? null : (value ?? null)
+}
+
+function sameDiscoveryItems(
+  previous: TaskSource['items'] | undefined,
+  next: TaskSource['items'] | undefined
+): boolean {
+  if (previous === next) return true
+  if (!previous || !next || previous.length !== next.length) return false
+  return previous.every((item, index) => {
+    const candidate = next[index]
+    if (item === candidate) return true
+    const turn = item.lifecycle?.turn
+    const candidateTurn = candidate.lifecycle?.turn
+    return (
+      item.key === candidate.key &&
+      (item.task.status ?? null) === (candidate.task.status ?? null) &&
+      (item.lifecycle?.interactionStatus ?? null) ===
+        (candidate.lifecycle?.interactionStatus ?? null) &&
+      (item.task.interactionStatus ?? null) === (candidate.task.interactionStatus ?? null) &&
+      discoveryTimestamp(item.task.updatedAt) === discoveryTimestamp(candidate.task.updatedAt) &&
+      (turn?.id ?? null) === (candidateTurn?.id ?? null) &&
+      (turn?.latestId ?? null) === (candidateTurn?.latestId ?? null) &&
+      (turn?.phase ?? null) === (candidateTurn?.phase ?? null)
+    )
+  })
+}
+
 /** One account owns discovery, acceptance locks, cached questions and notification delivery. */
 export function createRuntimeInteractionsSource(
   accountKey: string,
@@ -812,7 +841,7 @@ export function createRuntimeInteractionsSource(
   let notificationTimer: ReturnType<typeof setTimeout> | undefined
   let discoveryTimer: ReturnType<typeof setInterval> | undefined
   let stopFocus: (() => void) | undefined
-  let lastSignature: string | undefined
+  let lastDiscoveryItems: TaskSource['items'] | undefined
   let lastApi: typeof successfulReadApi
   let lastResolved: RuntimeInteraction[] | undefined
   let lastTranslation: InteractionSourceOptions['t'] | undefined
@@ -937,19 +966,6 @@ export function createRuntimeInteractionsSource(
       logFocusState()
     }
   }
-  const discoverySignature = () =>
-    JSON.stringify(
-      context.source?.items.map(item => [
-        item.key,
-        item.task.status,
-        item.lifecycle?.interactionStatus,
-        item.task.interactionStatus,
-        item.task.updatedAt,
-        item.lifecycle?.turn.id,
-        item.lifecycle?.turn.latestId,
-        item.lifecycle?.turn.phase,
-      ])
-    )
   const stop = () => {
     nativeReplies.disconnect()
     settlements.disconnect()
@@ -962,7 +978,7 @@ export function createRuntimeInteractionsSource(
     clearTimeout(notificationTimer)
     notificationTimer = undefined
     notificationInputs = []
-    lastSignature = undefined
+    lastDiscoveryItems = undefined
     lastTranslation = undefined
     lastRetainDraft = undefined
   }
@@ -989,15 +1005,16 @@ export function createRuntimeInteractionsSource(
           if (!stopFocus) stopFocus = subscribeMainWindowFocus(setFocused)
           if (!discoveryTimer) discoveryTimer = setInterval(() => void refresh(false), 5000)
           publish()
-          const signature = discoverySignature()
+          const items = context.source?.items
+          const itemsChanged = !sameDiscoveryItems(lastDiscoveryItems, items)
+          lastDiscoveryItems = items
           const api = context.source?.services?.runtimeWorkApi
           if (
-            lastSignature !== signature ||
+            itemsChanged ||
             lastApi !== api ||
             lastTranslation !== context.t ||
             lastRetainDraft !== context.retainDraft
           ) {
-            lastSignature = signature
             lastApi = api
             lastTranslation = context.t
             lastRetainDraft = context.retainDraft
