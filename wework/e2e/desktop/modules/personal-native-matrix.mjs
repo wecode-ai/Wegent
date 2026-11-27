@@ -88,8 +88,18 @@ export function personalNativeMatrix({
     assert.ok(user.ok)
     const userId = (await user.json()).id
     const evidence = []
+    const cells = []
     const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
     const catalog = await rpc('runtime.runner.catalog', {})
+    const profile = await rpc('runtime.stand_in.personal.get', { userId })
+    const deviceId = profile.executionDeviceId
+    const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
+    await rpc('runtime.stand_in.binding', {
+      operation: 'bind',
+      version: binding.version,
+      target: { userId, deviceId, backendUrl: cloud.backendUrl },
+    })
+    await rpc('runtime.stand_in.personal.lifecycle', { userId, operation: 'start' })
     await ensureExperimentalFeaturesEnabled(control)
     for (const [runtime, shell] of [
       ['codex', 'Codex'],
@@ -101,7 +111,7 @@ export function personalNativeMatrix({
       assert.ok(model, 'Missing personal assistant model for ' + runtime)
       for (const mode of ['solo', 'pipeline', 'coordinate']) {
         const id = 'personal-' + runtime.replace('_', '-') + '-' + mode
-        cell = {
+        const definition = {
           id,
           runtime,
           mode,
@@ -124,7 +134,7 @@ export function personalNativeMatrix({
             id: 1,
             name: 'leader',
             role: 'leader',
-            system_prompt: cell.first,
+            system_prompt: definition.first,
             shell_type: shell,
             requireConfirmation: false,
             contextPassing: 'previous_bot',
@@ -136,7 +146,7 @@ export function personalNativeMatrix({
             name: 'reviewer',
             role: 'worker',
             shell_type: shell,
-            system_prompt: cell.second,
+            system_prompt: definition.second,
             description: 'Check the delivery',
           })
         const saved = await rpc('runtime.stand_in.personal.save', {
@@ -153,46 +163,53 @@ export function personalNativeMatrix({
             },
           },
         })
-        assert.ok(saved.roles.find(row => row.id === id)?.teamRef)
-        await control.command('navigate', 'body', {
-          value: '/stand-in?deviceId=' + encodeURIComponent(settings.executionDeviceId),
-        })
-        await control.command('waitFor', '[data-testid="stand-in-overview"]')
-        await finishStandInOnboarding(control)
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="stand-in-overview-role-' + id + '"]'
-        )
-        const chat =
-          '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
-        await control.command('fill', chat + ' [data-testid="chat-message-input"]', {
-          value: cell.prompt,
-        })
-        await captureScreenshot(control, id + '-entry.png', chat)
-        await control.command('clickWhenEnabled', chat + ' [data-testid="send-message-button"]')
-        await control.command('waitFor', chat + ' [data-testid="message-assistant"]', {
-          text: cell.result,
-          timeoutMs: 60000,
-        })
-        if (mode !== 'solo') assert.ok(cell.reviewed, 'The worker Bot must execute before delivery')
-        await captureScreenshot(control, id + '-delivery.png', chat)
-        const taskId = `stand-in-chat-${userId}-role-${id}`
-        const { task } = await rpc('runtime.tasks.get', { taskId })
-        assert.equal(task.taskId, taskId)
-        assert.equal(task.runtime, runtime)
-        evidence.push({
-          taskId: task.taskId,
-          teamRef: saved.roles.find(row => row.id === id).teamRef,
-          mode,
-          runtime: task.runtime,
-          result: cell.result,
-        })
-        await writeFile(
-          join(resultDir, 'personal-native-execution.json'),
-          JSON.stringify(evidence, null, 2)
-        )
-        cell = null
+        const teamRef = saved.roles.find(row => row.id === id)?.teamRef
+        assert.ok(teamRef)
+        cells.push({ ...definition, teamRef })
       }
+    }
+    await control.command('navigate', 'body', {
+      value: '/stand-in?deviceId=' + encodeURIComponent(deviceId),
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="personal-assistant-account-migrate-confirm"]'
+    )
+    await control.command('waitFor', '[data-testid="stand-in-overview"]')
+    await finishStandInOnboarding(control)
+    for (const configured of cells) {
+      cell = configured
+      const { id, runtime, mode, teamRef } = configured
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-' + id + '"]')
+      const chat =
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
+      await control.command('fill', chat + ' [data-testid="chat-message-input"]', {
+        value: cell.prompt,
+      })
+      await captureScreenshot(control, id + '-entry.png', chat)
+      await control.command('clickWhenEnabled', chat + ' [data-testid="send-message-button"]')
+      await control.command('waitFor', chat + ' [data-testid="message-assistant"]', {
+        text: cell.result,
+        timeoutMs: 60000,
+      })
+      if (mode !== 'solo') assert.ok(cell.reviewed, 'The worker Bot must execute before delivery')
+      await captureScreenshot(control, id + '-delivery.png', chat)
+      const taskId = `stand-in-chat-${userId}-role-${id}`
+      const { task } = await rpc('runtime.tasks.get', { taskId })
+      assert.equal(task.taskId, taskId)
+      assert.equal(task.runtime, runtime)
+      evidence.push({
+        taskId: task.taskId,
+        teamRef,
+        mode,
+        runtime: task.runtime,
+        result: cell.result,
+      })
+      await writeFile(
+        join(resultDir, 'personal-native-execution.json'),
+        JSON.stringify(evidence, null, 2)
+      )
+      cell = null
     }
   }
   return { handleModel, verify }
