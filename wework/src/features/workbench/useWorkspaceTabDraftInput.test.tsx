@@ -84,3 +84,16 @@ test('restores a persisted tab draft after a crash remount', () => {
     ).result.current.draftStore.read('blank:0').value
   ).toBe('')
 })
+
+test('restores the active blank chat scope for persisted drafts', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  act(() => first.result.current.persistStandaloneChatKey(3))
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:one'))
+  expect(restored.result.current.initialStandaloneChatKey).toBe(3)
+  expect(
+    renderHook(() => useWorkspaceTabDraftInput('durable-blank', 'account:two')).result.current
+      .initialStandaloneChatKey
+  ).toBe(0)
+})

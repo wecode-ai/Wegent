@@ -168,8 +168,18 @@ export function OwnedWorkbenchProvider({
 
   const tabsSession = useContext(WorkspaceTabsSessionContext)
   const notificationRegistry = useContext(NotificationTaskRegistryContext)
+  const {
+    draftStore,
+    goalDraftActiveByScope,
+    setGoalDraftActiveForScope,
+    initialStandaloneChatKey,
+    persistStandaloneChatKey,
+  } = useWorkspaceTabDraftInput(workspaceTabId, ownershipKey)
   const [stateSource] = useState(() =>
-    createWorkbenchSessionState(workbenchIdentity, sharedLifecycleStore, syncRuntimeTaskLifecycle)
+    createWorkbenchSessionState(workbenchIdentity, sharedLifecycleStore, syncRuntimeTaskLifecycle, {
+      initialStandaloneChatKey,
+      onStandaloneChatKeyChange: persistStandaloneChatKey,
+    })
   )
   const session = useMemo(
     () => createWorkbenchSession(stateSource, ownershipKey, tabsSession, workspaceTabId),
@@ -304,8 +314,6 @@ export function OwnedWorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope } =
-    useWorkspaceTabDraftInput(workspaceTabId, ownershipKey)
   const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<

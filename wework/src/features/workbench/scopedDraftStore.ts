@@ -117,7 +117,7 @@ export function createScopedDraftStore(options: ScopedDraftStoreOptions = {}) {
       const incoming = new Map(Object.entries(values))
       const scopes = new Set([...drafts.keys(), ...incoming.keys(), ...listenersByScope.keys()])
       // Make the entire handoff visible before notifying any composer.
-      for (const scope of scopes) update(scope, incoming.get(scope) ?? '', true)
+      for (const scope of scopes) recordDraft(scope, incoming.get(scope) ?? '', true)
       persistNow()
       for (const scope of scopes) publish(scope)
     },

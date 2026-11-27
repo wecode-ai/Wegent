@@ -63,3 +63,17 @@ it('ignores malformed persisted drafts without blocking startup', () => {
   expect(() => createScopedDraftStore({ storageScope })).not.toThrow()
   expect(createScopedDraftStore({ storageScope }).exportInputs()).toEqual({})
 })
+
+it('publishes a complete tab handoff after every restored scope is installed', () => {
+  const store = createScopedDraftStore()
+  store.write('blank:0', 'Old first')
+  store.write('blank:1', 'Old second')
+  let observed: Record<string, string> | null = null
+  store.subscribe('blank:0', () => {
+    observed = store.exportInputs()
+  })
+
+  store.restore({ 'blank:0': 'New first', 'blank:1': 'New second' })
+
+  expect(observed).toEqual({ 'blank:0': 'New first', 'blank:1': 'New second' })
+})

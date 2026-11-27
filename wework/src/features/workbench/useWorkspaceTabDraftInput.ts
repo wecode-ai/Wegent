@@ -7,15 +7,52 @@ import {
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { createScopedDraftStore } from './scopedDraftStore'
 
+const STANDALONE_CHAT_KEY_STORAGE_PREFIX = 'wework.composerStandaloneChatKey.v1'
+
+function standaloneChatKeyStorageKey(storageScope?: string): string | undefined {
+  return storageScope
+    ? `${STANDALONE_CHAT_KEY_STORAGE_PREFIX}:${encodeURIComponent(storageScope)}`
+    : undefined
+}
+
+function readStandaloneChatKey(storageScope?: string): number {
+  const key = standaloneChatKeyStorageKey(storageScope)
+  if (!key) return 0
+  try {
+    const value = Number(localStorage.getItem(key))
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function persistStandaloneChatKey(storageScope: string | undefined, value: number): void {
+  const key = standaloneChatKeyStorageKey(storageScope)
+  if (!key) return
+  try {
+    localStorage.setItem(key, String(value))
+  } catch {
+    // Draft persistence still works for the current session when storage is unavailable.
+  }
+}
+
 export function useWorkspaceTabDraftInput(workspaceTabId?: string, accountScope?: string) {
-  const [draftStore] = useState(() =>
-    createScopedDraftStore({
-      storageScope: accountScope
-        ? JSON.stringify([accountScope, workspaceTabId ?? 'main'])
-        : undefined,
-    })
-  )
+  const [draftSession] = useState(() => {
+    const storageScope = accountScope
+      ? JSON.stringify([accountScope, workspaceTabId ?? 'main'])
+      : undefined
+    return {
+      storageScope,
+      draftStore: createScopedDraftStore({ storageScope }),
+      initialStandaloneChatKey: readStandaloneChatKey(storageScope),
+    }
+  })
+  const { draftStore, storageScope, initialStandaloneChatKey } = draftSession
   const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
+  const persistCurrentStandaloneChatKey = useCallback(
+    (value: number) => persistStandaloneChatKey(storageScope, value),
+    [storageScope]
+  )
   useLayoutEffect(() => () => draftStore.flush(), [draftStore])
   useWindowEvent('pagehide', () => draftStore.flush())
   useDocumentEvent('visibilitychange', () => {
@@ -56,5 +93,11 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string, accountScope?
       goalDraftActiveByScope,
     })
   }, [draftStore, goalDraftActiveByScope, workspaceTabId])
-  return { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope }
+  return {
+    draftStore,
+    goalDraftActiveByScope,
+    setGoalDraftActiveForScope,
+    initialStandaloneChatKey,
+    persistStandaloneChatKey: persistCurrentStandaloneChatKey,
+  }
 }
