@@ -211,7 +211,7 @@ class ExecutionRunner(metaclass=SingletonMeta):
             sandbox: Parent sandbox
             execution: Execution to run
             timeout: Timeout in seconds
-            on_running: Callback when execution starts running
+            on_running: Callback when execution starts, returning False to cancel dispatch
             on_error: Callback when execution fails
 
         Returns:
@@ -219,8 +219,9 @@ class ExecutionRunner(metaclass=SingletonMeta):
         """
         # Set running status
         execution.set_running()
-        if on_running:
-            on_running(execution)
+        if on_running and on_running(execution) is False:
+            execution.set_failed("Sandbox is no longer available for this execution")
+            return False
 
         # Send request with timeout
         success, error_message = await self.send_execution_request(

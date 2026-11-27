@@ -37,6 +37,7 @@ from executor_manager.schemas.sandbox import (
     TerminateSandboxResponse,
 )
 from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox.manager import SandboxLifecycleUnavailable
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -250,7 +251,9 @@ async def terminate_sandbox(sandbox_id: str, http_request: Request):
 
     if not success:
         raise HTTPException(
-            status_code=404,
+            status_code=(
+                503 if isinstance(message, SandboxLifecycleUnavailable) else 404
+            ),
             detail=message,
         )
 
@@ -291,7 +294,7 @@ async def keep_alive(
 
     if sandbox is None:
         raise HTTPException(
-            status_code=404,
+            status_code=503 if isinstance(error, SandboxLifecycleUnavailable) else 404,
             detail=error,
         )
 
@@ -345,7 +348,7 @@ async def execute(
 
     if execution is None:
         raise HTTPException(
-            status_code=404,
+            status_code=503 if isinstance(error, SandboxLifecycleUnavailable) else 404,
             detail=error,
         )
 

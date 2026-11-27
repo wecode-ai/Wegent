@@ -341,6 +341,47 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.error(f"[SandboxRepository] Failed to delete sandbox: {e}")
             return False
 
+    def delete_sandbox_if_current(
+        self, sandbox_id: str, expected_runtime: Sandbox | None
+    ) -> bool:
+        """Remove the session and indexes if the expected runtime has not changed."""
+        client = self.redis_client
+        if client is None:
+            return False
+
+        task_id = str(int(sandbox_id))
+        hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
+        try:
+            with client.pipeline() as pipe:
+                pipe.watch(hash_key)
+                raw = pipe.hget(hash_key, SANDBOX_FIELD_NAME)
+                current = json.loads(raw) if raw is not None else {}
+                if expected_runtime is None:
+                    if raw is not None:
+                        return False
+                elif (
+                    current.get("created_at") != expected_runtime.created_at
+                    or current.get("container_name") != expected_runtime.container_name
+                    or current.get("status") != SandboxStatus.TERMINATING.value
+                ):
+                    return False
+                pipe.multi()
+                pipe.delete(hash_key)
+                pipe.zrem(self._active_sandboxes_zset, task_id)
+                pipe.zrem(LEGACY_ACTIVE_SANDBOXES_ZSET, task_id)
+                e2b_id = (current.get("metadata") or {}).get("e2b_sandbox_id")
+                if e2b_id:
+                    pipe.delete(f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_id}")
+                pipe.execute()
+                return True
+        except redis.WatchError:
+            return False
+        except Exception as exc:
+            logger.error(
+                "[SandboxRepository] Conditional sandbox deletion failed: %s", exc
+            )
+            return False
+
     def get_active_sandbox_ids(self) -> List[str]:
         """Get all active sandbox IDs from ZSet.
 
@@ -466,13 +507,18 @@ class SandboxRepository(metaclass=SingletonMeta):
     # =========================================================================
 
     def save_execution(
-        self, execution: Execution, update_activity: bool = False
+        self,
+        execution: Execution,
+        update_activity: bool = False,
+        *,
+        expected_runtime: Sandbox | None = None,
     ) -> bool:
         """Save execution to session Hash with field {subtask_id}.
 
         Args:
             execution: Execution to save
             update_activity: If True, update the ZSet timestamp (only for new executions)
+            expected_runtime: Require this runtime for asynchronous status updates
 
         Returns:
             True if successful, False otherwise
@@ -496,9 +542,32 @@ class SandboxRepository(metaclass=SingletonMeta):
                 f"field={field}, execution_id={execution.execution_id}"
             )
 
-            self.redis_client.hset(hash_key, field, data)
-            # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
-            self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
+            ttl = self._config.timeout.session_hash_ttl
+            if expected_runtime is None:
+                self.redis_client.hset(hash_key, field, data)
+                self.redis_client.expire(hash_key, ttl)
+            else:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(hash_key)
+                    raw = pipe.hget(hash_key, SANDBOX_FIELD_NAME)
+                    if raw is None:
+                        return False
+                    current = json.loads(raw)
+                    if (
+                        current.get("created_at") != expected_runtime.created_at
+                        or current.get("container_name")
+                        != expected_runtime.container_name
+                        or current.get("status")
+                        in (
+                            SandboxStatus.TERMINATING.value,
+                            SandboxStatus.TERMINATED.value,
+                        )
+                    ):
+                        return False
+                    pipe.multi()
+                    pipe.hset(hash_key, field, data)
+                    pipe.expire(hash_key, ttl)
+                    pipe.execute()
 
             # Only update ZSet timestamp for new executions (not status updates)
             # This ensures GC only considers "last new task time" for expiration
@@ -509,6 +578,8 @@ class SandboxRepository(metaclass=SingletonMeta):
                 f"[SandboxRepository] Execution saved successfully: task_id={task_id}, subtask_id={subtask_id}"
             )
             return True
+        except redis.WatchError:
+            return False
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to save execution: {e}")
             return False

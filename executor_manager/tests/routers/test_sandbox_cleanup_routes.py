@@ -5,8 +5,34 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from executor_manager.routers import sandbox as sandbox_routes
+from executor_manager.services.sandbox.manager import SandboxLifecycleUnavailable
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        (SandboxLifecycleUnavailable("coordination unavailable"), 503),
+        ("Sandbox 123 not found", 404),
+    ],
+)
+async def test_keep_alive_reports_retryable_coordination_failure(
+    mocker, error, status_code
+):
+    manager = mocker.Mock(keep_alive=mocker.AsyncMock(return_value=(None, error)))
+    mocker.patch.object(sandbox_routes, "get_sandbox_manager", return_value=manager)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await sandbox_routes.keep_alive(
+            sandbox_id="123",
+            request=sandbox_routes.KeepAliveRequest(timeout=60),
+            http_request=SimpleNamespace(client=None),
+        )
+
+    assert exc_info.value.status_code == status_code
 
 
 @pytest.mark.asyncio
