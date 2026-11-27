@@ -64,7 +64,11 @@ async function loadProcessIdentity() {
   )
 }
 
-async function sqliteProcesses(ignoreTerm = false, ignoreApplicationTerm = false) {
+async function sqliteProcesses(
+  ignoreTerm = false,
+  ignoreApplicationTerm = false,
+  retainGroupMember = false
+) {
   const lifecycle = await loadProcessLifecycle()
   const home = await mkdtemp(join(tmpdir(), 'wework-owned-sqlite-review-'))
   const application = spawn(
@@ -75,14 +79,22 @@ async function sqliteProcesses(ignoreTerm = false, ignoreApplicationTerm = false
       home,
       String(ignoreTerm),
       String(ignoreApplicationTerm),
+      String(retainGroupMember),
     ],
     { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
   )
   ownedProcessGroups.add(application.pid!)
   const [detail] = (await once(application, 'message')) as [
-    { writerPid: number; writerStartedAt: number; applicationStartedAt: number },
+    {
+      writerPid: number
+      writerStartedAt: number
+      applicationStartedAt: number
+      groupMemberPid?: number
+      groupMemberStartedAt?: number
+    },
   ]
   ownedProcesses.add(detail.writerPid)
+  if (detail.groupMemberPid) ownedProcesses.add(detail.groupMemberPid)
   const snapshot = {
     applicationPid: application.pid!,
     platform: process.platform,
@@ -103,13 +115,21 @@ async function sqliteProcesses(ignoreTerm = false, ignoreApplicationTerm = false
       },
     ],
   }
+  if (detail.groupMemberPid)
+    snapshot.processes.push({
+      pid: detail.groupMemberPid,
+      parentPid: application.pid!,
+      startedAt: detail.groupMemberStartedAt!,
+      instanceToken: undefined,
+    })
   return {
     application,
     writerPid: detail.writerPid,
     snapshot,
     home,
     async cleanup() {
-      for (const pid of [detail.writerPid, application.pid!]) {
+      for (const pid of [detail.writerPid, detail.groupMemberPid, application.pid!]) {
+        if (!pid) continue
         if (lifecycle.processIsAlive(pid)) process.kill(pid, 'SIGKILL')
       }
       await lifecycle.waitForOwnedProcessExit(
@@ -118,6 +138,7 @@ async function sqliteProcesses(ignoreTerm = false, ignoreApplicationTerm = false
       )
       await rm(home, { recursive: true, force: true })
       ownedProcesses.delete(detail.writerPid)
+      if (detail.groupMemberPid) ownedProcesses.delete(detail.groupMemberPid)
       ownedProcessGroups.delete(application.pid!)
     },
   }
@@ -281,6 +302,33 @@ describe('desktop process lifecycle', () => {
   )
 
   posixTest(
+    'owner shutdown precedes child service termination without creating replacement processes',
+    async () => {
+      const { captureOwnedProcessSnapshot, readNativeProcessIdentity } = await loadProcessIdentity()
+      const { stopOwnedProcessTree, processIsAlive } = await loadProcessLifecycle()
+      const application = spawn(
+        process.execPath,
+        [resolve(import.meta.dirname, '../../e2e/desktop/fixtures/owned-restarting-service.mjs')],
+        { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+      )
+      ownedProcessGroups.add(application.pid!)
+      const services: Array<{ servicePid: number; replacement: boolean }> = []
+      application.on('message', detail => {
+        const service = detail as { servicePid: number; replacement: boolean }
+        services.push(service)
+        ownedProcesses.add(service.servicePid)
+      })
+      await once(application, 'message')
+      const snapshot = captureOwnedProcessSnapshot(readNativeProcessIdentity(application.pid!))
+      await stopOwnedProcessTree(application, snapshot)
+      expect(services.filter(service => service.replacement)).toEqual([])
+      expect(processIsAlive(application.pid!)).toBe(false)
+      expect(services.every(service => !processIsAlive(service.servicePid))).toBe(true)
+    },
+    20_000
+  )
+
+  posixTest(
     'native shutdown capture drains the complete real tree without a renderer client',
     async () => {
       const fixture = await sqliteProcesses(true)
@@ -305,6 +353,276 @@ describe('desktop process lifecycle', () => {
         Object.assign(fixture.application, { captureShutdownSnapshot: capture })
         await stopDesktopAppProcess(fixture.application)
         expect(readNativeProcessIdentity(fixture.writerPid)).toBeNull()
+      } finally {
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest(
+    'controlled Quit retains the proven native tree and drains its independent writer before deleting home',
+    async () => {
+      const fixture = await sqliteProcesses(true)
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { readNativeProcessIdentity } = await loadProcessIdentity()
+      try {
+        const writer = readNativeProcessIdentity(fixture.writerPid)
+        Object.assign(fixture.application, {
+          captureShutdownSnapshot: shared.createNativeShutdownCapture(
+            fixture.application,
+            fixture.home
+          ),
+        })
+        await shared.prepareDesktopAppQuit(fixture.application)
+        const exit = once(fixture.application, 'exit')
+        fixture.application.kill('SIGTERM')
+        await exit
+        expect(readNativeProcessIdentity(fixture.writerPid).instanceToken).toBe(
+          writer.instanceToken
+        )
+        await shared.stopDesktopAppProcess(fixture.application)
+        expect(readNativeProcessIdentity(fixture.writerPid)).toBeNull()
+        await rm(fixture.home, { recursive: true, force: true })
+        await expect(access(fixture.home)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest(
+    'timestamp-only native identities drain captured descendants after owner exit with macOS precision',
+    async () => {
+      const fixture = await sqliteProcesses(true)
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { readNativeProcessIdentity, captureOwnedProcessSnapshot } = await loadProcessIdentity()
+      const { stopOwnedProcessTree } = await loadProcessLifecycle()
+      try {
+        const capture = shared.createNativeShutdownCapture(fixture.application, fixture.home, {
+          capture: (identity: NativeIdentity) => {
+            const snapshot = captureOwnedProcessSnapshot(identity)
+            // macOS's native collector has lstart seconds, without kernel ticks.
+            for (const record of snapshot.processes) delete record.instanceToken
+            return snapshot
+          },
+        })
+        Object.assign(fixture.application, { captureShutdownSnapshot: capture })
+        await shared.prepareDesktopAppQuit(fixture.application)
+        const exit = once(fixture.application, 'exit')
+        fixture.application.kill('SIGTERM')
+        await exit
+        const snapshot = await capture()
+        await stopOwnedProcessTree(fixture.application, snapshot, {
+          readIdentity: pid => {
+            const identity = readNativeProcessIdentity(pid)
+            if (!identity) return null
+            const secondsIdentity = { ...identity }
+            delete secondsIdentity.instanceToken
+            expect(secondsIdentity.precisionMs).toBe(1000)
+            return secondsIdentity
+          },
+        })
+        expect(readNativeProcessIdentity(fixture.writerPid)).toBeNull()
+      } finally {
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest(
+    'an unexpected exit remains a failure even after a normal diagnostic snapshot',
+    async () => {
+      const fixture = await sqliteProcesses()
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { processIsAlive } = await loadProcessLifecycle()
+      try {
+        const capture = shared.createNativeShutdownCapture(fixture.application, fixture.home)
+        Object.assign(fixture.application, { captureShutdownSnapshot: capture })
+        await capture()
+        const exit = once(fixture.application, 'exit')
+        fixture.application.kill('SIGTERM')
+        await exit
+        await expect(shared.stopDesktopAppProcess(fixture.application)).rejects.toThrow(
+          'exited before its shutdown capture'
+        )
+        expect(processIsAlive(fixture.writerPid)).toBe(true)
+        await expect(access(fixture.home)).resolves.toBeUndefined()
+      } finally {
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest.each(['changed generation', 'query denied'])(
+    'prepared Quit cannot hide an unverifiable live owner: %s',
+    async invalid => {
+      const fixture = await sqliteProcesses()
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { readNativeProcessIdentity } = await loadProcessIdentity()
+      const { processIsAlive } = await loadProcessLifecycle()
+      let rejectIdentity = false
+      try {
+        const capture = shared.createNativeShutdownCapture(fixture.application, fixture.home, {
+          readIdentity: (pid: number) => {
+            const identity = readNativeProcessIdentity(pid)
+            if (!rejectIdentity) return identity
+            if (invalid === 'query denied') throw new Error('Native owner query denied')
+            return { ...identity, startedAt: identity.startedAt - 1000 }
+          },
+        })
+        Object.assign(fixture.application, { captureShutdownSnapshot: capture })
+        await shared.prepareDesktopAppQuit(fixture.application)
+        rejectIdentity = true
+        const failure = await shared
+          .stopDesktopAppProcess(fixture.application)
+          .catch((error: unknown) => error)
+        expect(failure).toBeInstanceOf(AggregateError)
+        expect((failure as AggregateError).errors.map((error: Error) => error.message)).toEqual(
+          Array(2).fill(
+            invalid === 'query denied'
+              ? 'Native owner query denied'
+              : 'The isolated application changed identity before shutdown'
+          )
+        )
+        expect(processIsAlive(fixture.application.pid!)).toBe(true)
+        expect(processIsAlive(fixture.writerPid)).toBe(true)
+        await expect(access(fixture.home)).resolves.toBeUndefined()
+      } finally {
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest(
+    'a controlled Quit snapshot still expires before independent writer cleanup',
+    async () => {
+      const fixture = await sqliteProcesses()
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { processIsAlive } = await loadProcessLifecycle()
+      let clock: ReturnType<typeof vi.spyOn> | undefined
+      try {
+        Object.assign(fixture.application, {
+          captureShutdownSnapshot: shared.createNativeShutdownCapture(
+            fixture.application,
+            fixture.home
+          ),
+        })
+        await shared.prepareDesktopAppQuit(fixture.application)
+        const exit = once(fixture.application, 'exit')
+        fixture.application.kill('SIGTERM')
+        await exit
+        const expired = Date.now() + 10_001
+        clock = vi.spyOn(Date, 'now').mockReturnValue(expired)
+        await expect(shared.stopDesktopAppProcess(fixture.application)).rejects.toThrow(
+          'complete owned process snapshot'
+        )
+        expect(processIsAlive(fixture.writerPid)).toBe(true)
+        await expect(access(fixture.home)).resolves.toBeUndefined()
+      } finally {
+        clock?.mockRestore()
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest(
+    'denied group cleanup and writer identity retain both errors without signaling the writer',
+    async () => {
+      const fixture = await sqliteProcesses(true, false, true)
+      const { stopOwnedProcessTree, processIsAlive } = await loadProcessLifecycle()
+      const { readNativeProcessIdentity } = await loadProcessIdentity()
+      const identityError = new Error('Independent writer identity denied')
+      const groupError = Object.assign(new Error('Owned group signal denied'), { code: 'EPERM' })
+      const nativeKill = process.kill.bind(process)
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === -fixture.application.pid! && signal === 'SIGTERM') throw groupError
+        return nativeKill(pid, signal)
+      })
+      try {
+        const failure = await stopOwnedProcessTree(fixture.application, fixture.snapshot, {
+          readIdentity: pid => {
+            if (pid === fixture.writerPid) throw identityError
+            return readNativeProcessIdentity(pid)
+          },
+        }).catch((error: unknown) => error)
+        expect(failure).toBeInstanceOf(AggregateError)
+        expect((failure as AggregateError).errors).toEqual([identityError, groupError])
+        expect(processIsAlive(fixture.writerPid)).toBe(true)
+        expect(
+          kill.mock.calls.some(([pid, signal]) => pid === fixture.writerPid && signal !== 0)
+        ).toBe(false)
+        await expect(access(fixture.home)).resolves.toBeUndefined()
+      } finally {
+        kill.mockRestore()
+        await fixture.cleanup()
+      }
+    },
+    20_000
+  )
+
+  posixTest.each(['different owner', 'degraded'])(
+    'invalid native preparation cannot authorize a subsequent completed Quit: %s',
+    async invalid => {
+      const fixture = await sqliteProcesses()
+      const shared = await import(
+        /* @vite-ignore */ pathToFileURL(
+          resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+        ).href
+      )
+      const { captureOwnedProcessSnapshot } = await loadProcessIdentity()
+      const { processIsAlive } = await loadProcessLifecycle()
+      let corrupt = false
+      try {
+        const capture = shared.createNativeShutdownCapture(fixture.application, fixture.home, {
+          capture: (identity: NativeIdentity) => {
+            const snapshot = captureOwnedProcessSnapshot(identity)
+            if (corrupt) {
+              if (invalid === 'different owner') snapshot.applicationPid = process.pid
+              else snapshot.degraded.push('native-query-failed')
+            }
+            return snapshot
+          },
+        })
+        Object.assign(fixture.application, { captureShutdownSnapshot: capture })
+        await shared.prepareDesktopAppQuit(fixture.application)
+        corrupt = true
+        await expect(shared.prepareDesktopAppQuit(fixture.application)).rejects.toThrow(
+          'complete owned process snapshot'
+        )
+        const exit = once(fixture.application, 'exit')
+        fixture.application.kill('SIGTERM')
+        await exit
+        await expect(shared.stopDesktopAppProcess(fixture.application)).rejects.toThrow(
+          'exited before its shutdown capture'
+        )
+        expect(processIsAlive(fixture.writerPid)).toBe(true)
+        await expect(access(fixture.home)).resolves.toBeUndefined()
       } finally {
         await fixture.cleanup()
       }
@@ -453,6 +771,7 @@ describe('desktop process lifecycle', () => {
       'parentPid',
       'pid',
       'processGroupId',
+      'source',
       'startedAt',
     ])
   })
@@ -542,7 +861,9 @@ describe('desktop process lifecycle', () => {
     'group rejection still escalates independent writers and retains every error: deny KILL=%s',
     async denyKill => {
       const { stopOwnedProcessTree, processIsAlive } = await loadProcessLifecycle()
-      const fixture = await sqliteProcesses(true, true)
+      // Keep a verified member in the application's group after the owner exits,
+      // so actual denied group signaling still exercises independent escalation.
+      const fixture = await sqliteProcesses(true, true, true)
       const groupError = Object.assign(new Error('Owned group signal denied'), { code: 'EPERM' })
       const writerError = Object.assign(new Error('Owned writer KILL denied'), { code: 'EPERM' })
       const nativeKill = process.kill.bind(process)

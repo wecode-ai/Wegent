@@ -220,10 +220,14 @@ async function waitForProcessIdsExit(pids, { timeoutMs, isAlive = processIsAlive
     const survivors = pids.filter(isAlive)
     if (survivors.length === 0) return
     if (Date.now() >= deadline)
-      throw new Error(`Owned application processes survived shutdown: ${survivors.join(', ')}`)
+      throw new OwnedProcessExitTimeoutError(
+        `Owned application processes survived shutdown: ${survivors.join(', ')}`
+      )
     await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
 }
+
+class OwnedProcessExitTimeoutError extends Error {}
 
 export async function stopOwnedProcessTree(
   child,
@@ -238,9 +242,9 @@ export async function stopOwnedProcessTree(
     return
   }
   const state = createOwnedIdentityState(targets, readIdentity, child)
-  const signalSurvivors = signal => {
+  const signalSurvivors = (signal, selected = targets.toReversed()) => {
     const errors = []
-    for (const { pid } of targets.toReversed()) {
+    for (const { pid } of selected) {
       try {
         if (!state.isAlive(pid)) continue
         process.kill(pid, signal)
@@ -251,9 +255,35 @@ export async function stopOwnedProcessTree(
     }
     throwShutdownErrors(errors)
   }
-  // Independent process groups, including Codex SQLite writers, do not receive
-  // the application's group signal. Give every owned process graceful shutdown.
   const errors = []
+  // Pin descendants before their owner exits and they are reparented. Stopping
+  // Chromium children first can make the live owner spawn unrecorded replacements.
+  for (const { pid } of targets) {
+    try {
+      state.isAlive(pid)
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  try {
+    signalSurvivors('SIGTERM', [targets[0]])
+    try {
+      await waitForProcessIdsExit([child.pid], {
+        timeoutMs: PROCESS_STOP_TIMEOUT_MS,
+        isAlive: state.isAlive,
+      })
+    } catch (error) {
+      if (!(error instanceof OwnedProcessExitTimeoutError)) throw error
+      signalSurvivors('SIGKILL', [targets[0]])
+      await waitForProcessIdsExit([child.pid], {
+        timeoutMs: PROCESS_STOP_TIMEOUT_MS,
+        isAlive: state.isAlive,
+      })
+    }
+  } catch (error) {
+    errors.push(error)
+  }
+  // Independent groups, including SQLite writers, still need their own signals.
   try {
     signalSurvivors('SIGTERM')
   } catch (error) {
@@ -270,7 +300,8 @@ export async function stopOwnedProcessTree(
         targets.map(target => target.pid),
         { timeoutMs: PROCESS_GROUP_GRACE_PERIOD_MS, isAlive: state.isAlive }
       )
-    } catch {
+    } catch (error) {
+      if (!(error instanceof OwnedProcessExitTimeoutError)) errors.push(error)
       signalSurvivors('SIGKILL')
       await waitForProcessIdsExit(
         targets.map(target => target.pid),
@@ -297,7 +328,9 @@ function createOwnedIdentityState(targets, readIdentity, child) {
   const expected = new Map(targets.map(target => [target.pid, target]))
   const applicationPid = targets[0].pid
   const instances = new Map(
-    targets.filter(target => target.instanceToken).map(target => [target.pid, target])
+    targets
+      .filter(target => target.instanceToken || target.source === 'native')
+      .map(target => [target.pid, target])
   )
   const readOwned = (pid, visited = new Set()) => {
     if (expected.get(pid).exited) return null
@@ -320,7 +353,11 @@ function createOwnedIdentityState(targets, readIdentity, child) {
         throw new Error(`Process ${pid} creation time disagrees with its snapshot`)
       return actual
     }
-    if (pinned && actual.startedAt !== pinned.startedAt) return null
+    if (pinned) {
+      // Native snapshots establish ancestry before Quit. macOS pins stable
+      // one-second creation times; subsequent reparenting does not mean reuse.
+      return actual.startedAt === pinned.startedAt ? actual : null
+    }
     if (!ownedProcessIdentityMatches(expected.get(pid), actual)) return null
     if (visited.has(pid)) throw new Error('Current process ownership contains a cycle')
     visited.add(pid)
@@ -624,6 +661,10 @@ function ownedProcessIdentities(child, snapshot) {
       .filter(record => record.pid !== child.pid)
       .map(record => identities.get(record.pid)),
   ]
+}
+
+export function validateOwnedProcessSnapshot(child, snapshot) {
+  ownedProcessIdentities(child, snapshot)
 }
 
 export async function crashOwnedProcessTree(child, snapshot) {

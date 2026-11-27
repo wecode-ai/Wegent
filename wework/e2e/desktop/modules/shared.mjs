@@ -32,6 +32,7 @@ import {
   stopProcess,
   stopProcessGroup,
   stopOwnedProcessTree,
+  validateOwnedProcessSnapshot,
 } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { captureOwnedProcessSnapshot, readNativeProcessIdentity } from '../process-identity.mjs'
@@ -1101,7 +1102,10 @@ async function stopDesktopAppProcess(app, { forceSnapshot, shutdownSnapshot } = 
 
 async function stopKnownGroupAfterFailure(app, error) {
   try {
-    await stopProcessGroup(app)
+    const isOwnedGroup =
+      app.captureShutdownSnapshot?.ownerIsAlive ??
+      (() => app.exitCode === null && app.signalCode === null && processIsAlive(app.pid))
+    await stopProcessGroup(app, { isOwnedGroup })
   } catch (cleanupError) {
     throw new AggregateError([error, cleanupError], 'Desktop snapshot and group shutdown failed')
   }
@@ -1112,16 +1116,40 @@ async function stopKnownGroupAfterFailure(app, error) {
 export function createNativeShutdownCapture(
   app,
   resultDir,
-  { capture = captureOwnedProcessSnapshot, write = writeFile, reportError = console.error } = {}
+  {
+    capture = captureOwnedProcessSnapshot,
+    write = writeFile,
+    reportError = console.error,
+    readIdentity = readNativeProcessIdentity,
+  } = {}
 ) {
-  const applicationIdentity = readNativeProcessIdentity(app.pid)
+  const applicationIdentity = readIdentity(app.pid)
   if (!applicationIdentity)
     throw new Error('The isolated application has no native startup identity')
-  return async () => {
-    if (app.exitCode !== null || app.signalCode !== null) {
+  let controlledQuitSnapshot
+  const ownerIsAlive = () => {
+    if (app.exitCode !== null || app.signalCode !== null) return false
+    const current = readIdentity(app.pid)
+    if (current === null) return false
+    if (
+      current.pid !== applicationIdentity.pid ||
+      current.startedAt !== applicationIdentity.startedAt ||
+      current.parentPid !== applicationIdentity.parentPid ||
+      current.processGroupId !== applicationIdentity.processGroupId ||
+      current.instanceToken !== applicationIdentity.instanceToken
+    ) {
+      throw new Error('The isolated application changed identity before shutdown')
+    }
+    return true
+  }
+  const captureCurrent = async () => {
+    if (!ownerIsAlive()) {
       throw new Error('The isolated application exited before its shutdown capture')
     }
     const snapshot = capture(applicationIdentity)
+    validateOwnedProcessSnapshot(app, snapshot)
+    if (!ownerIsAlive())
+      throw new Error('The isolated application exited during its shutdown capture')
     try {
       await write(join(resultDir, 'shutdown-process-tree.json'), JSON.stringify(snapshot, null, 2))
     } catch (error) {
@@ -1129,6 +1157,20 @@ export function createNativeShutdownCapture(
     }
     return snapshot
   }
+  const captureShutdownSnapshot = async () => {
+    if (controlledQuitSnapshot && !ownerIsAlive()) return controlledQuitSnapshot
+    return captureCurrent()
+  }
+  captureShutdownSnapshot.prepareForQuit = async () => {
+    controlledQuitSnapshot = undefined
+    controlledQuitSnapshot = await captureCurrent()
+  }
+  captureShutdownSnapshot.ownerIsAlive = ownerIsAlive
+  return captureShutdownSnapshot
+}
+
+export async function prepareDesktopAppQuit(app) {
+  await app.captureShutdownSnapshot?.prepareForQuit?.()
 }
 
 async function runChecked(command, args, options = {}) {

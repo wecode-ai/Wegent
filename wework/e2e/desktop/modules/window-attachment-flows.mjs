@@ -51,6 +51,7 @@ import {
   ensureModelOptionVisible,
   join,
   processIsAlive,
+  prepareDesktopAppQuit,
   reactivateMacApplication,
   readFile,
   requestMacosApplicationQuit,
@@ -970,6 +971,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       'Closing the main window to tray terminated Wework before the quit request'
     )
 
+    await prepareDesktopAppQuit(activeApp)
     requestMacosApplicationQuit(appProcessId)
     await waitForProcessExit(
       appProcessId,
@@ -984,6 +986,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
     assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
 
+    await prepareDesktopAppQuit(forcedExitApp)
     logDesktopE2eSignal({ action: 'force-exit-app', pid: forcedExitApp.pid, signal: 'SIGKILL' })
     process.kill(forcedExitApp.pid, 'SIGKILL')
     await Promise.all([
@@ -1030,6 +1033,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       value: JSON.stringify({ closeToTrayEnabled: false }),
     })
 
+    await prepareDesktopAppQuit(activeApp)
     await control.command('requestMainWindowClose', 'body')
     const executorExitMs = await waitForProcessExitWithin(
       quitExecutorPid,
@@ -1080,6 +1084,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'closed',
     'The startup splash had already closed before the quit-during-startup request'
   )
+  await prepareDesktopAppQuit(startupQuitApp)
   if (process.platform === 'darwin') {
     requestMacosApplicationQuit(startupQuitApp.pid)
   } else {
@@ -1131,6 +1136,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'closed',
     'The startup splash had already closed before the close-during-startup request'
   )
+  await prepareDesktopAppQuit(startupCloseApp)
   await control.command('requestStartupSplashClose', 'body')
   const startupCloseExitMs = await waitForProcessExitWithin(
     startupCloseApp.pid,

@@ -1,4 +1,5 @@
 import { fork } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,7 +9,11 @@ import { readNativeProcessIdentity } from '../process-identity.mjs'
 const file = fileURLToPath(import.meta.url)
 const startedAt =
   process.platform === 'win32' ? Date.now() : readNativeProcessIdentity(process.pid).startedAt
-if (process.argv[2] === 'writer') {
+if (process.argv[2] === 'group-member') {
+  process.on('SIGTERM', () => {})
+  process.send({ groupMemberPid: process.pid, groupMemberStartedAt: startedAt })
+  setInterval(() => {}, 1000)
+} else if (process.argv[2] === 'writer') {
   const home = process.argv[3]
   await mkdir(home, { recursive: true })
   const database = new DatabaseSync(join(home, 'state_5.sqlite'))
@@ -28,7 +33,15 @@ if (process.argv[2] === 'writer') {
     detached: true,
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   })
-  child.once('message', detail => process.send({ ...detail, applicationStartedAt: startedAt }))
+  const groupMember =
+    process.argv[6] === 'true'
+      ? fork(file, ['group-member'], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+      : null
+  const [writerDetail, memberDetail] = await Promise.all([
+    once(child, 'message'),
+    groupMember ? once(groupMember, 'message') : Promise.resolve([{}]),
+  ])
+  process.send({ ...writerDetail[0], ...memberDetail[0], applicationStartedAt: startedAt })
   if (process.argv[5] === 'true') process.on('SIGTERM', () => {})
   setInterval(() => {}, 1000)
 }

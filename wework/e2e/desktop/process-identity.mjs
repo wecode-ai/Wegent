@@ -140,6 +140,7 @@ export function captureOwnedProcessSnapshot(
       parentPid: Number(row[2]),
       processGroupId: Number(row[3]),
       startedAt,
+      source: 'native',
     }
     if (['Z', 'X', 'x'].includes(row[4][0])) record.exited = true
     if (records.has(record.pid))
