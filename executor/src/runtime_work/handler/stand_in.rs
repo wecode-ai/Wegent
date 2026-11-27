@@ -164,12 +164,12 @@ impl RuntimeWorkRpcHandler {
             let mut settings = store
                 .stand_in_settings(
                     &project,
+                    project_store,
                     user_id,
                     payload["standInId"].as_str().unwrap_or("default"),
                 )
                 .map_err(settings_error)?;
             settings["executionDeviceId"] = json!(self.device_id);
-            settings["projectStore"] = json!(project_store);
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();
@@ -243,6 +243,7 @@ impl RuntimeWorkRpcHandler {
         let mut config = store
             .stand_in_settings(
                 &project,
+                kind,
                 user,
                 payload["standInId"]
                     .as_str()

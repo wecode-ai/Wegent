@@ -1022,6 +1022,11 @@ impl RuntimeWorkRpcHandler {
             let kind = origin["projectStore"].as_str().unwrap_or_default();
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let independent = kind == super::stand_in_personal_issues::INDEPENDENT;
+            let trigger = match origin["trigger"].as_str() {
+                Some("mention") => Some(IssueIntakeTrigger::Mention),
+                Some("assignment") => Some(IssueIntakeTrigger::Assignment),
+                _ => None,
+            };
             let config = if independent {
                 super::stand_in_personal_issues::personal_issue_role(role, user)
             } else {
@@ -1031,7 +1036,7 @@ impl RuntimeWorkRpcHandler {
                     project,
                     kind,
                     issue_id,
-                    None,
+                    trigger,
                 )
                 .await?
                 .into_iter()
@@ -1064,7 +1069,7 @@ impl RuntimeWorkRpcHandler {
                     "Issue no longer matches this role",
                 ));
             }
-            let mention = origin["trigger"] == "mention";
+            let mention = matches!(trigger, Some(IssueIntakeTrigger::Mention));
             if mention {
                 self.read_stand_in_issue_mention(origin).await?;
             }

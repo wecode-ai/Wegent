@@ -82,18 +82,26 @@ export function createDesktopScenario(options) {
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         const projectName = '本次接收的项目'
-        await createLocalCollaborationProject(
-          control,
-          '[data-workspace-tab-content][aria-hidden="false"]',
-          projectName
-        )
+        const secondProjectName = '另一个接收项目'
+        for (const name of [projectName, secondProjectName]) {
+          await createLocalCollaborationProject(
+            control,
+            '[data-workspace-tab-content][aria-hidden="false"]',
+            name
+          )
+        }
         const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
         const project = projects.find(row => row.name === projectName)
-        assert.ok(project, 'The source editor must select a real collaboration project')
+        const secondProject = projects.find(row => row.name === secondProjectName)
+        assert.ok(project && secondProject, 'The source editor needs two real projects')
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
-        await verifyPrimaryDingTalkConnections(control, USER, fixture, { ...options, project })
+        await verifyPrimaryDingTalkConnections(control, USER, fixture, {
+          ...options,
+          project,
+          secondProject,
+        })
         const afterConnections = await requestExecutor(
           control,
           'runtime.stand_in.personal.get',

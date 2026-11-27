@@ -198,7 +198,7 @@ impl RuntimeWorkRpcHandler {
                 return Ok(());
             }
             let mut config = store
-                .stand_in_settings(project, user, role)
+                .stand_in_settings(project, "cloud", user, role)
                 .map_err(settings_error)?;
             config["projectId"] = intent["projectId"].clone();
             config["projectStore"] = json!("cloud");

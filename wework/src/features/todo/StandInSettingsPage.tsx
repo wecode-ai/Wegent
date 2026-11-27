@@ -44,6 +44,7 @@ import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
+import { projectRefKey, updateProjectSource } from './standInProjects'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
   StandInSettingsActions,
@@ -348,19 +349,17 @@ function StandInSettingsEditor({
                   : {
                       ...row,
                       enabled: view === 'project' ? true : row.enabled,
-                      collaboration: {
-                        ...row.collaboration,
-                        enabled: true,
+                      collaboration: updateProjectSource(row.collaboration, {
                         allProjects: row.collaboration.enabled && row.collaboration.allProjects,
                         projects: row.collaboration.projects.some(
-                          item => item.id === projectRef.id && item.store === projectRef.store
+                          item => projectRefKey(item) === projectRefKey(projectRef)
                         )
                           ? row.collaboration.projects
                           : [...row.collaboration.projects, projectRef],
                         excludedProjects: row.collaboration.excludedProjects.filter(
-                          item => item.id !== projectRef.id || item.store !== projectRef.store
+                          item => projectRefKey(item) !== projectRefKey(projectRef)
                         ),
-                      },
+                      }),
                     }
               ),
             }

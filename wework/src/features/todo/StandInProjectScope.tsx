@@ -27,7 +27,7 @@ export function StandInProjectScope({
   disabled,
   editor,
   setEditor: setScopeEditor,
-  onBack,
+  protectTagDraft,
   onChange,
 }: {
   source: ProjectSource
@@ -37,7 +37,7 @@ export function StandInProjectScope({
   disabled: boolean
   editor: ProjectScopeEditor
   setEditor(editor: ProjectScopeEditor): void
-  onBack(action: () => void): void
+  protectTagDraft(action: () => void): void
   onChange(patch: Partial<ProjectSource>): void
 }) {
   const { t } = useTranslation('common')
@@ -101,17 +101,20 @@ export function StandInProjectScope({
   }
   useConnectionScopeBack(
     editor
-      ? () => onBack(() => resetEditor(editor !== 'choose' && openedFromAdd ? 'choose' : null))
+      ? () =>
+          protectTagDraft(() => resetEditor(editor !== 'choose' && openedFromAdd ? 'choose' : null))
       : null
   )
   const changeRule = (next: ConnectionScopeRule) => {
     if (rule === next) return
-    setRuleDraft(next)
-    setQuery('')
-    onChange({
-      allProjects: next === 'all' || next === 'exclude',
-      projects: next === 'include' ? source.projects : [],
-      excludedProjects: next === 'exclude' ? source.excludedProjects : [],
+    protectTagDraft(() => {
+      setRuleDraft(next)
+      setQuery('')
+      onChange({
+        allProjects: next === 'all' || next === 'exclude',
+        projects: next === 'include' ? source.projects : [],
+        excludedProjects: next === 'exclude' ? source.excludedProjects : [],
+      })
     })
   }
 
@@ -265,7 +268,9 @@ export function StandInProjectScope({
               data-testid="stand-in-independent-issues"
               checked={source.includeIndependentIssues}
               disabled={disabled}
-              onCheckedChange={checked => onChange({ includeIndependentIssues: checked === true })}
+              onCheckedChange={checked =>
+                protectTagDraft(() => onChange({ includeIndependentIssues: checked === true }))
+              }
             />
             <span className="min-w-0 space-y-0.5 text-sm">
               <span className="block">{t('standIn.workspace.project_scope_independent')}</span>
@@ -304,10 +309,12 @@ export function StandInProjectScope({
                         onCheckedChange={checked => {
                           const rows = selected.filter(row => projectRefKey(row) !== key)
                           if (checked) rows.push(ref)
-                          onChange(
-                            rule === 'exclude'
-                              ? { excludedProjects: rows }
-                              : { projects: rows, excludedProjects: [] }
+                          protectTagDraft(() =>
+                            onChange(
+                              rule === 'exclude'
+                                ? { excludedProjects: rows }
+                                : { projects: rows, excludedProjects: [] }
+                            )
                           )
                         }}
                       />
@@ -369,10 +376,12 @@ export function StandInProjectScope({
             size="sm"
             disabled={disabled}
             data-testid="stand-in-project-remove-issue-scope"
-            onClick={() => {
-              onChange({ [editor]: false })
-              resetEditor()
-            }}
+            onClick={() =>
+              protectTagDraft(() => {
+                onChange({ [editor]: false })
+                resetEditor()
+              })
+            }
           >
             {t('standIn.workspace.connection_remove_scope')}
           </Button>

@@ -440,7 +440,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 On first use, choose an execution device and a chat model, then select **Start chatting**. Wework saves the model and any configured app connections together. You can add optional connections later from assistant settings. If saving or completing setup fails, the guide keeps the current settings available for retry. **Set up later** closes the current page and leaves setup open for your next visit.
 
-To select specific projects, choose **Add a receive scope → Projects and independent issues**, then search and select the projects. Set handling and tag filters in the scope details. Projects, issues you participate in, and independent issues each have their own tag filters. Use **Remove** beside a scope to remove it from the draft.
+To select specific projects, choose **Add a receive scope → Projects and independent issues**, then search and select the projects. Expand **Task tags** in the scope details to filter each selected project, issues you participate in, or independent issues. If you receive issues from all projects, you can set one filter for that range. New ranges receive issues with any tag by default. Use **Remove** beside a scope to remove it from the draft.
 
 Email uses the email address as the username by default. Select **Use a different username** if your provider requires one.
 

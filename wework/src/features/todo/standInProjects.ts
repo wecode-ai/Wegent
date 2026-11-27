@@ -1,6 +1,6 @@
 import type { CollaborationProject } from '@wegent/collaboration'
 import { dequal } from 'dequal'
-import type { StandInProjectRef, StandInRole } from '@/api/personalStandIn'
+import type { StandInProjectRef, StandInProjectScopeKind, StandInRole } from '@/api/personalStandIn'
 
 export type ProjectSource = StandInRole['collaboration']
 
@@ -34,6 +34,7 @@ export function effectiveProjectSource(source: ProjectSource): ProjectSource {
 function comparableSource(source: ProjectSource) {
   const byReference = (a: StandInProjectRef, b: StandInProjectRef) =>
     projectRefKey(a).localeCompare(projectRefKey(b))
+  const filters = new Map(source.projectTagFilters?.map(row => [projectRefKey(row), row.tags]))
   return {
     ...effectiveProjectSource(source),
     includeParticipatingIssues: Boolean(source.includeParticipatingIssues),
@@ -49,6 +50,19 @@ function comparableSource(source: ProjectSource) {
       participating: [...(source.tagFilters?.participating ?? source.tags)].sort(),
       independent: [...(source.tagFilters?.independent ?? source.tags)].sort(),
     },
+    projectTagFilters: source.allProjects
+      ? [...(source.projectTagFilters ?? [])]
+          .sort(byReference)
+          .map(row => ({ ...row, tags: [...row.tags].sort() }))
+      : source.projects
+          .slice()
+          .sort(byReference)
+          .map(ref => ({
+            ...ref,
+            tags: [
+              ...(filters.get(projectRefKey(ref)) ?? source.tagFilters?.projects ?? source.tags),
+            ].sort(),
+          })),
   }
 }
 
@@ -57,7 +71,45 @@ export function updateProjectSource(
   patch: Partial<ProjectSource>,
   saved?: ProjectSource
 ) {
-  const next = { ...effectiveProjectSource(source), ...patch }
+  const current = effectiveProjectSource(source)
+  const next = { ...current, ...patch }
+  const clearInheritedTags = (scope: StandInProjectScopeKind) => {
+    if ((next.tagFilters?.[scope] ?? next.tags).length) {
+      next.tagFilters = { ...next.tagFilters, [scope]: [] }
+    }
+  }
+  if (next.allProjects && !current.allProjects) {
+    clearInheritedTags('projects')
+  }
+  if (next.includeParticipatingIssues && !current.includeParticipatingIssues) {
+    clearInheritedTags('participating')
+  }
+  if (next.includeIndependentIssues && !current.includeIndependentIssues) {
+    clearInheritedTags('independent')
+  }
+  if (patch.projects || patch.excludedProjects || next.allProjects !== current.allProjects) {
+    const previousKeys = new Set(current.projects.map(projectRefKey))
+    const filters = new Map(current.projectTagFilters?.map(row => [projectRefKey(row), row]))
+    const excluded = new Set(next.excludedProjects.map(projectRefKey))
+    const inheritsTags = (next.tagFilters?.projects ?? next.tags).length > 0
+    const oldDefault = current.tagFilters?.projects ?? current.tags
+    const projectTagFilters = next.allProjects
+      ? (current.allProjects
+          ? [...filters.values()]
+          : current.projects.flatMap(ref => {
+              const filter = filters.get(projectRefKey(ref))
+              if (filter) return [filter]
+              return oldDefault.length ? [{ ...ref, tags: oldDefault }] : []
+            })
+        ).filter(row => !excluded.has(projectRefKey(row)))
+      : next.projects.flatMap(ref => {
+          const key = projectRefKey(ref)
+          const previous = filters.get(key)
+          if (previous && previousKeys.has(key)) return [previous]
+          return inheritsTags && !previousKeys.has(key) ? [{ ...ref, tags: [] }] : []
+        })
+    next.projectTagFilters = projectTagFilters.length ? projectTagFilters : undefined
+  }
   next.enabled = Boolean(
     next.allProjects ||
     next.projects.length ||

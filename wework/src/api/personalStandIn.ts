@@ -70,6 +70,10 @@ export interface StandInProjectPolicy extends StandInProjectRef {
 export type StandInProjectTrigger = 'both' | 'assignment' | 'mention'
 export type StandInProjectScopeKind = 'projects' | 'participating' | 'independent'
 
+export interface StandInProjectTagFilter extends StandInProjectRef {
+  tags: string[]
+}
+
 export interface StandInTaskPermissions {
   permissionMode: RuntimePermissionMode
   commandApproval?: RuntimeCommandApprovalMode
@@ -121,6 +125,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
     excludedProjects: StandInProjectRef[]
     tags: string[]
     tagFilters?: Partial<Record<StandInProjectScopeKind, string[]>>
+    projectTagFilters?: StandInProjectTagFilter[]
     policy?: StandInHandlingPolicy
     projectPolicies?: StandInProjectPolicy[]
   }
@@ -317,6 +322,16 @@ export function roleSelectsProject(
   )
 }
 
+export function standInProjectTags(
+  source: StandInRole['collaboration'],
+  project: StandInProjectRef
+): string[] {
+  const filter = source.projectTagFilters?.find(
+    row => row.id === project.id && row.store === project.store
+  )
+  return filter?.tags ?? source.tagFilters?.projects ?? source.tags
+}
+
 export function standInRoleName(role: StandInRole, index: number, fallback: string): string {
   return role.name?.trim() || `${fallback}${index ? ` ${index + 1}` : ''}`
 }
@@ -342,6 +357,9 @@ export function disconnectStandInProject(
       ...source,
       projects,
       excludedProjects,
+      ...(source.projectTagFilters && {
+        projectTagFilters: source.projectTagFilters.filter(row => !matches(row)),
+      }),
     },
   }
 }

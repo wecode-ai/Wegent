@@ -4,7 +4,7 @@ import type {
   StandInProjectScopeKind,
   StandInRole,
 } from '@/api/personalStandIn'
-import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
+import { roleSelectsProject, standInPolicy, standInProjectTags } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,7 +23,12 @@ import {
   type Ref,
 } from 'react'
 import { StandInProjectScope, type ProjectScopeEditor } from './StandInProjectScope'
-import { effectiveProjectSource, updateProjectSource, type ProjectSource } from './standInProjects'
+import {
+  effectiveProjectSource,
+  projectRefKey,
+  updateProjectSource,
+  type ProjectSource,
+} from './standInProjects'
 import { ChevronDown } from 'lucide-react'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { ConnectionChoice } from './ConnectionScopeFields'
@@ -33,6 +38,11 @@ import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 export interface StandInProjectNavigationHandle extends AutomationNavigationHandle {
   requestLeave(action: (discarded?: boolean) => void): void
 }
+
+type TagTarget = { value: string; label: string } & (
+  | { scope: StandInProjectScopeKind; project?: never }
+  | { scope?: never; project: StandInProjectRef }
+)
 
 /** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
@@ -69,7 +79,7 @@ export function StandInConnections({
   const [discard, setDiscard] = useState(false)
   const [draftVersion, setDraftVersion] = useState(0)
   const [scopeEditor, setScopeEditor] = useState<ProjectScopeEditor>(null)
-  const [selectedTagScope, setSelectedTagScope] = useState<StandInProjectScopeKind>('projects')
+  const [selectedTagScope, setSelectedTagScope] = useState('')
   const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
   useImperativeHandle(navigationRef, () => ({
     requestLeave(action) {
@@ -97,20 +107,56 @@ export function StandInConnections({
   ) {
     tagScopes.push('independent')
   }
-  const tagScope = tagScopes.includes(selectedTagScope) ? selectedTagScope : tagScopes[0]
-  const tags = tagScope ? (scope.tagFilters?.[tagScope] ?? scope.tags) : []
   const tagScopeLabels: Record<StandInProjectScopeKind, string> = {
-    projects: t('standIn.workspace.connection_source_projects'),
+    projects: t('standIn.workspace.project_only_all'),
     participating: t('standIn.workspace.receive_participating_issues'),
     independent: t('standIn.workspace.project_scope_independent'),
   }
-  const setSource = (patch: Partial<ProjectSource>) => {
-    onChange({ ...role, collaboration: updateProjectSource(source, patch, savedSource) })
-  }
+  const excluded = new Set(scope.excludedProjects.map(projectRefKey))
   const ref = (project: CollaborationProject): StandInProjectRef => ({
     id: project.id,
     store: project.project_store === 'local' ? 'local' : 'cloud',
   })
+  const projectNames = new Map(projects.map(project => [projectRefKey(ref(project)), project.name]))
+  const tagTargets: TagTarget[] = tagScopes.flatMap((kind): TagTarget[] => {
+    const group: TagTarget = { value: kind, label: tagScopeLabels[kind], scope: kind }
+    if (kind !== 'projects') return [group]
+    const projectRefs = scope.allProjects ? (scope.projectTagFilters ?? []) : scope.projects
+    return [
+      ...(scope.allProjects ? [group] : []),
+      ...projectRefs
+        .filter(project => !excluded.has(projectRefKey(project)))
+        .map(project => {
+          const value = projectRefKey(project)
+          return {
+            value,
+            label: projectNames.get(value) ?? t('standIn.workspace.unavailable_project'),
+            project: { id: project.id, store: project.store },
+          }
+        }),
+    ]
+  })
+  const tagTarget = tagTargets.find(target => target.value === selectedTagScope) ?? tagTargets[0]
+  const tags = tagTarget?.project
+    ? standInProjectTags(scope, tagTarget.project)
+    : tagTarget
+      ? (scope.tagFilters?.[tagTarget.scope] ?? scope.tags)
+      : []
+  const setSource = (patch: Partial<ProjectSource>) => {
+    onChange({ ...role, collaboration: updateProjectSource(source, patch, savedSource) })
+  }
+  const updateTags = (target: TagTarget, tags: string[]) => {
+    if (target.project) {
+      setSource({
+        projectTagFilters: [
+          ...(scope.projectTagFilters ?? []).filter(row => projectRefKey(row) !== target.value),
+          { ...target.project, tags },
+        ],
+      })
+      return
+    }
+    setSource({ tagFilters: { ...scope.tagFilters, [target.scope]: tags } })
+  }
   return (
     <div className="space-y-4" data-testid="stand-in-connections">
       <StandInConnectionForm
@@ -126,14 +172,14 @@ export function StandInConnections({
             editor={scopeEditor}
             setEditor={editor => {
               setScopeEditor(editor)
-              setSelectedTagScope('projects')
+              setSelectedTagScope('')
             }}
-            onBack={action => navigation.requestLeave(action)}
+            protectTagDraft={navigation.requestLeave}
             onChange={setSource}
           />
         }
         extra={
-          tagScope && (
+          tagTarget && (
             <>
               <CollapsibleRoot className="group" defaultOpen={tags.length ? true : undefined}>
                 <CollapsibleTrigger
@@ -141,16 +187,16 @@ export function StandInConnections({
                   data-testid="stand-in-source-tags-toggle"
                 >
                   <span className="min-w-0 flex-1 font-medium">
-                    {t('standIn.personal.limit_tags')}
+                    {t('standIn.workspace.project_range_tags', { name: tagTarget.label })}
                   </span>
                   <ChevronDown aria-hidden="true" className="size-4 group-data-[open]:rotate-180" />
                 </CollapsibleTrigger>
                 <CollapsiblePanel>
-                  {tagScopes.length > 1 && (
-                    <ConnectionChoice<StandInProjectScopeKind>
+                  {tagTargets.length > 1 && (
+                    <ConnectionChoice
                       label={t('standIn.workspace.project_tag_scope')}
-                      value={tagScope}
-                      options={tagScopes.map(value => ({ value, label: tagScopeLabels[value] }))}
+                      value={tagTarget.value}
+                      options={tagTargets}
                       disabled={disabled || tagDraftDirty}
                       testId="stand-in-project-tag-scope"
                       onChange={setSelectedTagScope}
@@ -158,11 +204,9 @@ export function StandInConnections({
                   )}
                   <div className="mt-2 rounded-md border border-border p-2">
                     <TagEditor
-                      key={`${tagScope}:${draftVersion}`}
+                      key={`${tagTarget.value}:${draftVersion}`}
                       tags={tags}
-                      onChange={tags =>
-                        setSource({ tagFilters: { ...scope.tagFilters, [tagScope]: tags } })
-                      }
+                      onChange={tags => updateTags(tagTarget, tags)}
                       draftStore={tagDraft}
                       disabled={disabled}
                       suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}

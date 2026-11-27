@@ -112,7 +112,7 @@ function createStandInModelCatalog(
     loadCloud(forceRefresh)
   }
   const loadCloud = (forceRefresh = false) => {
-    if (!services || (snapshot.cloud.pending && !forceRefresh)) return
+    if (!services || !listeners.size) return
     void loadSource('cloud', async () => ({
       entries: runnerModelCatalog(
         [],

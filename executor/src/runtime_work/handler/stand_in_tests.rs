@@ -1326,3 +1326,35 @@ fn issue_tags_and_cutoff_must_match_the_same_receive_scope() {
         super::super::stand_in_personal_issues::personal_issue_role(&role, 7).unwrap();
     assert_eq!(independent["tags"], json!([]));
 }
+
+#[test]
+fn selected_project_intake_only_uses_its_own_tags() {
+    use super::super::personal_stand_in::{issue_role_config, matching_personal_roles};
+    use crate::task_runtime::personal_stand_in::IssueIntakeTrigger::Assignment;
+
+    let role = json!({
+        "enabled": true,
+        "enabledAfter": "2026-01-01T00:00:00Z",
+        "collaboration": {
+            "enabled": true,
+            "allProjects": false,
+            "projects": [{"id": "id", "store": "cloud"}, {"id": "id", "store": "local"}],
+            "tags": ["legacy"],
+            "projectTagFilters": [
+                {"id": "id", "store": "cloud", "tags": ["cloud-tag"]},
+                {"id": "id", "store": "local", "tags": []}
+            ]
+        }
+    });
+    let config =
+        |store| [issue_role_config(&role, 7, "id", store, false, Some(Assignment)).unwrap()];
+    assert!(matching_personal_roles(&config("cloud"), &json!({"tags": ["legacy"]})).is_empty());
+    assert_eq!(
+        matching_personal_roles(&config("cloud"), &json!({"tags": ["cloud-tag"]})).len(),
+        1
+    );
+    assert_eq!(
+        matching_personal_roles(&config("local"), &json!({"tags": []})).len(),
+        1
+    );
+}

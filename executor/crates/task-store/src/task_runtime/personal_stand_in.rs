@@ -356,6 +356,17 @@ pub fn collaboration_scope_tags<'a>(role: &'a Value, scope: &str) -> &'a Value {
     source["tagFilters"].get(scope).unwrap_or(&source["tags"])
 }
 
+pub fn collaboration_project_tags<'a>(role: &'a Value, project: &str, store: &str) -> &'a Value {
+    let source = &role["collaboration"];
+    if let Some(filter) = source["projectTagFilters"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == project && row["store"] == store)
+    }) {
+        return &filter["tags"];
+    }
+    collaboration_scope_tags(role, "projects")
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -373,7 +384,7 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);
-    config["tags"] = collaboration_scope_tags(role, "projects").clone();
+    config["tags"] = collaboration_project_tags(role, project, store).clone();
     config["handlingPolicy"] = project_policy(role, project, store);
     if let Some(boundary) = role["projectBoundaries"].as_array().and_then(|rows| {
         rows.iter()
@@ -384,15 +395,17 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config
 }
 
+fn valid_project_ref(project: &Value) -> bool {
+    project["id"]
+        .as_str()
+        .is_some_and(|id| !id.trim().is_empty())
+        && matches!(project["store"].as_str(), Some("local" | "cloud"))
+}
+
 fn validate_projects(value: &Value) -> bool {
-    value.as_array().is_some_and(|projects| {
-        projects.iter().all(|project| {
-            project["id"]
-                .as_str()
-                .is_some_and(|id| !id.trim().is_empty())
-                && matches!(project["store"].as_str(), Some("local" | "cloud"))
-        })
-    })
+    value
+        .as_array()
+        .is_some_and(|projects| projects.iter().all(valid_project_ref))
 }
 
 /// Validate a normalized independent role and its execution and connection settings.
@@ -534,6 +547,13 @@ fn valid_collaboration(source: &Value) -> bool {
                     matches!(key.as_str(), "projects" | "participating" | "independent")
                         && valid_tags(tags)
                 })
+            })
+        })
+        && source.get("projectTagFilters").map_or(true, |filters| {
+            filters.as_array().is_some_and(|filters| {
+                filters
+                    .iter()
+                    .all(|row| valid_project_ref(row) && valid_tags(&row["tags"]))
             })
         })
 }

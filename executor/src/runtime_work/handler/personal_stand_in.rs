@@ -139,16 +139,20 @@ pub(super) fn issue_role_config(
             )
         })
         .flatten();
-    if role["collaboration"]["tagFilters"].is_object() {
+    if role["collaboration"]["tagFilters"].is_object()
+        || role["collaboration"]["projectTagFilters"].is_array()
+    {
         let scopes = [
-            (project_matches, "projects", &project_since),
-            (participation, "participating", &participation_since),
+            (project_matches, &config["tags"], &project_since),
+            (
+                participation,
+                collaboration_scope_tags(role, "participating"),
+                &participation_since,
+            ),
         ]
         .into_iter()
         .filter(|(matched, _, _)| *matched)
-        .map(|(_, key, enabled_after)| {
-            json!({"tags": collaboration_scope_tags(role, key), "enabledAfter": enabled_after})
-        })
+        .map(|(_, tags, enabled_after)| json!({"tags": tags, "enabledAfter": enabled_after}))
         .collect::<Vec<_>>();
         config["issueScopeTags"] = json!(scopes);
     }

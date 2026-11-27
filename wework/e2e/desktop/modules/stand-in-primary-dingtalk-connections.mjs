@@ -105,7 +105,7 @@ async function verifyScheduleEditor(control, userId, options) {
 }
 
 export async function verifyPrimaryDingTalkConnections(control, userId, fixture, options) {
-  const { uiTimeoutMs, captureScreenshot, project } = options
+  const { uiTimeoutMs, captureScreenshot, project, secondProject } = options
   const load = () =>
     requestExecutor(control, 'runtime.stand_in.personal.get', { userId }, uiTimeoutMs)
   await fixture.setAuthState('scoped-ready')
@@ -144,7 +144,7 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   if ((await control.command('getAttribute', tagToggle, { value: 'aria-expanded' })) === 'false') {
     await control.command('clickWhenEnabled', tagToggle)
   }
-  await control.command('waitFor', id('stand-in-project-tag-scope'), { text: '项目' })
+  await control.command('waitFor', id('stand-in-project-tag-scope'), { text: project.name })
   await control.command('waitFor', id('stand-in-connection-tags-tag-independent-qa'), {
     visible: false,
   })
@@ -152,6 +152,21 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('press', id('stand-in-connection-tags-input'), { key: 'Enter' })
   await control.command('waitFor', id('stand-in-connection-tags-tag-project-qa'))
   await captureScreenshot(control, 'connection-projects-specific-project.png', panel)
+  await control.command('fill', id('stand-in-search-project-scope'), { value: secondProject.name })
+  const secondSelection = id(`stand-in-connect-project-${secondProject.id}`)
+  await control.command('clickWhenEnabled', secondSelection)
+  await control.command('waitFor', `${secondSelection}[aria-checked="true"]`)
+  await choose(control, 'stand-in-project-tag-scope', `local:${secondProject.id}`)
+  await control.command('waitFor', id('stand-in-source-tags-toggle'), { text: secondProject.name })
+  await control.command('waitFor', id('stand-in-connection-tags-tag-project-qa'), {
+    visible: false,
+  })
+  await control.command('fill', id('stand-in-connection-tags-input'), {
+    value: 'second-project-qa',
+  })
+  await control.command('press', id('stand-in-connection-tags-input'), { key: 'Enter' })
+  await control.command('waitFor', id('stand-in-connection-tags-tag-second-project-qa'))
+  await captureScreenshot(control, 'connection-projects-second-project-tags.png', panel)
   await control.command('clickWhenEnabled', id('stand-in-connections-back'))
   await control.command('waitFor', id('stand-in-project-choose-projects'))
   await control.command('clickWhenEnabled', id('stand-in-connections-back'))
@@ -203,11 +218,15 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   assert.equal(privateOnly.collaboration.participatingTrigger, 'assignment')
   assert.equal(privateOnly.collaboration.includeIndependentIssues, true)
   assert.equal(privateOnly.collaboration.allProjects, false)
-  assert.deepEqual(privateOnly.collaboration.tagFilters, {
-    independent: ['independent-qa'],
-    projects: ['project-qa'],
-  })
-  assert.deepEqual(privateOnly.collaboration.projects, [{ id: project.id, store: 'local' }])
+  assert.deepEqual(privateOnly.collaboration.tagFilters, { independent: ['independent-qa'] })
+  assert.deepEqual(privateOnly.collaboration.projectTagFilters, [
+    { id: project.id, store: 'local', tags: ['project-qa'] },
+    { id: secondProject.id, store: 'local', tags: ['second-project-qa'] },
+  ])
+  assert.deepEqual(privateOnly.collaboration.projects, [
+    { id: project.id, store: 'local' },
+    { id: secondProject.id, store: 'local' },
+  ])
   assert.deepEqual(
     selectedSources(privateOnly).map(row => [row.kind, row.id, row.scope]),
     [['direct', '*', 'all']]
