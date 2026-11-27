@@ -57,6 +57,7 @@ class TaskTokenInfo:
     dispatch_id: Optional[str] = None
     dispatch_role: Optional[str] = None
     manager_agent_id: Optional[str] = None
+    device_manager_execution_id: Optional[int] = None
     expire_at: Optional[int] = None
 
 
@@ -129,6 +130,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             dispatch_id=payload.get("dispatch_id"),
             dispatch_role=payload.get("dispatch_role"),
             manager_agent_id=payload.get("manager_agent_id"),
+            device_manager_execution_id=payload.get("device_manager_execution_id"),
             expire_at=payload.get("exp"),
         )
     except jwt.ExpiredSignatureError:

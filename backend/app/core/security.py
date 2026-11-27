@@ -1080,6 +1080,9 @@ def get_current_user_jwt_apikey_tasktoken(
                 # Get user from database using user_id from task token
                 user = db.query(User).filter(User.id == token_info.user_id).first()
                 if user and user.is_active:
+                    request.state.device_manager_execution_id = (
+                        token_info.device_manager_execution_id
+                    )
                     request.state.execution_task_id = token_info.task_id
                     request.state.execution_subtask_id = token_info.subtask_id
                     if is_telemetry_enabled():

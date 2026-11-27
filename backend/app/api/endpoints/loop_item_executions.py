@@ -404,6 +404,11 @@ def enqueue_execution_batch(
         project_id,
         values,
         current_user,
+        device_manager_execution_id=(
+            getattr(request.state, "device_manager_execution_id", None)
+            if request
+            else None
+        ),
         signed_in=request is not None
         and getattr(request.state, "user_session_id", None) == current_user.id,
         task_id=getattr(request.state, "execution_task_id", None) if request else None,
@@ -420,6 +425,7 @@ def admit_collaboration_batch(
     current_user: User,
     *,
     signed_in: bool,
+    device_manager_execution_id: int | None = None,
     task_id: int | None,
     subtask_id: int | None = None,
 ) -> dict[str, object]:
@@ -474,7 +480,9 @@ def admit_collaboration_batch(
         if task_id is not None or manager_execution.execution_environment == "wegent":
             from app.services.issue_coordination import require_machine_task_scope
 
-            require_machine_task_scope(task_id, manager_execution)
+            require_machine_task_scope(
+                task_id, manager_execution, device_manager_execution_id
+            )
         if manager_execution.execution_environment == "wegent":
             from app.services.issue_coordination import managed_turn_scope
 

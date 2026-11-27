@@ -21,7 +21,16 @@ def current_dispatch_id(item: LoopItem) -> str | None:
     return f"collaboration-group:{group_id}:{key}" if group_id and key else None
 
 
-def require_machine_task_scope(task_id: int | None, dispatch) -> None:
+def require_machine_task_scope(
+    task_id: int | None, dispatch, device_manager_execution_id: int | None = None
+) -> None:
+    if (
+        task_id == 0
+        and dispatch.execution_environment != "wegent"
+        and device_manager_execution_id is not None
+        and device_manager_execution_id == dispatch.id
+    ):
+        return
     if task_id is None or task_id != dispatch.optional_backend_task_id:
         raise HTTPException(403, "Task does not own this collaboration manager turn")
 

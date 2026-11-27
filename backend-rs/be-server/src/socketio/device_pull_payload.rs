@@ -98,8 +98,26 @@ pub(super) async fn compile_request(
     let continuing = context["comment_continue_task_id"]
         .as_str()
         .is_some_and(|id| !id.is_empty());
-    let mut payload =
-        compile_wire(app, command, actor, &context, request, prepared, continuing).await?;
+    let manager_execution_id = if group_dispatch {
+        Some(row.id)
+    } else if continuing && context["dispatch_role"] == "manager" {
+        Some(
+            authority::integer(&context["collaboration_dispatch_execution_id"])
+                .context("The collaboration manager dispatch is unavailable")?,
+        )
+    } else {
+        None
+    };
+    let mut payload = compile_wire(
+        app,
+        command,
+        actor,
+        &context,
+        request,
+        prepared,
+        manager_execution_id,
+    )
+    .await?;
     if group_dispatch {
         let members = dispatch_profiles(app, command, row, prepared, &selection, &context).await?;
         return Ok(json!({
@@ -107,9 +125,7 @@ pub(super) async fn compile_request(
             "managerRuntimeRequest": payload, "memberRuntimeProfiles": members
         }));
     }
-    if continuing && context["dispatch_role"] == "manager" {
-        let dispatch_id = authority::integer(&context["collaboration_dispatch_execution_id"])
-            .context("The collaboration manager dispatch is unavailable")?;
+    if let Some(dispatch_id) = manager_execution_id {
         let dispatch: QueueExecutionRow = app
             .mysql
             .fetch_optional(
@@ -145,8 +161,11 @@ async fn compile_wire(
     context: &Value,
     mut request: Value,
     prepared: &ClaimPreparation,
-    continuing: bool,
+    manager_execution_id: Option<i64>,
 ) -> Result<Value> {
+    let continuing = context["comment_continue_task_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty());
     for device in [
         request["deviceId"].as_str(),
         request["workspaceSourceTask"]["deviceId"].as_str(),
@@ -185,6 +204,7 @@ async fn compile_wire(
         command.runtime_device_id,
         &prompt,
         request.get("modelSelection"),
+        manager_execution_id,
     )
     .await?;
     if let Some(trigger) = context["comment_trigger_message_id"]
@@ -370,7 +390,7 @@ async fn dispatch_profiles(
             &member_context,
             request,
             &template,
-            false,
+            None,
         )
         .await?;
         let name = [&agent.title, &agent.name]

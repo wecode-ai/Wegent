@@ -843,6 +843,22 @@ def test_human_leader_submits_and_finishes_round_from_issue(
     assert issue.status == "completed"
 
 
+def test_device_manager_token_is_bound_to_the_claimed_dispatch(collaboration_dispatch):
+    from app.services.issue_coordination import require_machine_task_scope
+
+    dispatch = collaboration_dispatch.execution
+    dispatch.execution_environment = "local"
+    require_machine_task_scope(0, dispatch, dispatch.id)
+    for scope in (None, dispatch.id + 1):
+        with pytest.raises(HTTPException) as denied:
+            require_machine_task_scope(0, dispatch, scope)
+        assert denied.value.status_code == 403
+    dispatch.execution_environment = "wegent"
+    with pytest.raises(HTTPException) as denied:
+        require_machine_task_scope(0, dispatch, dispatch.id)
+    assert denied.value.status_code == 403
+
+
 def test_managed_turn_uses_assistant_task_binding_and_receipt_owner(
     test_db: Session, test_user: User, collaboration_dispatch: SimpleNamespace
 ) -> None:

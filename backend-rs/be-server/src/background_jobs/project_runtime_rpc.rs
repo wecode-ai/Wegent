@@ -41,6 +41,7 @@ pub(crate) async fn continue_task(
         &identity.runtime_device_id,
         message,
         selection,
+        None,
     )
     .await?;
     let mut payload = json!({"deviceId":binding.device_id,"localTaskId":binding.task_id,"message":message,"executionRequest":execution});
@@ -134,9 +135,17 @@ pub(crate) async fn direct_execution(
     device_id: &str,
     message: &str,
     selection: Option<&Value>,
+    device_manager_execution_id: Option<i64>,
 ) -> Result<Value> {
-    let auth = tokens::create_task_token(&state.auth, 0, 0, i64::from(user.id), &user.user_name)
-        .map_err(|error| anyhow::anyhow!("Task identity creation failed: {error:?}"))?;
+    let auth = tokens::create_scoped_task_token(
+        &state.auth,
+        0,
+        0,
+        i64::from(user.id),
+        &user.user_name,
+        device_manager_execution_id,
+    )
+    .map_err(|error| anyhow::anyhow!("Task identity creation failed: {error:?}"))?;
     let now = chrono::Utc::now().timestamp();
     let ttl = crate::config::env_or_dotenv("SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES")
         .and_then(|value| value.parse::<i64>().ok())

@@ -245,6 +245,19 @@ async fn resolve_create_scope(
         ));
     };
 
+    let device_id = super::device::resolve(
+        &mut &mut *transaction,
+        user_id,
+        input
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.device_id()),
+        continuation
+            .as_ref()
+            .map(|continuation| &continuation.task_json),
+    )
+    .await?;
+
     let strategy = if let Some(previous) = &continuation {
         let frozen = wegent_task_store::task_store_pipeline::apply_managed_strategy(
             &mut &mut *transaction,
@@ -333,19 +346,6 @@ async fn resolve_create_scope(
             "No valid bots found in team",
         ));
     };
-
-    let device_id = super::device::resolve(
-        &mut &mut *transaction,
-        user_id,
-        input
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.device_id()),
-        continuation
-            .as_ref()
-            .map(|continuation| &continuation.task_json),
-    )
-    .await?;
 
     // `create_new_task`'s API source group (`params.is_api_call`): the group
     // id is written to the placeholder Task row. A `previous_response_id`

@@ -170,7 +170,11 @@ def apply_collaboration_manager_decision(
             if task_id is not None or dispatch.execution_environment == "wegent":
                 from app.services.issue_coordination import require_machine_task_scope
 
-                require_machine_task_scope(task_id, dispatch)
+                require_machine_task_scope(
+                    task_id,
+                    dispatch,
+                    getattr(request.state, "device_manager_execution_id", None),
+                )
         if dispatch.execution_environment == "wegent":
             from app.services.issue_coordination import managed_turn_scope
 
