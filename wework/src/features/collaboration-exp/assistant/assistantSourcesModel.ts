@@ -113,7 +113,10 @@ export function createAssistantSourcesModel(
         configuredTarget?.deviceId ??
         account?.definitions.find(definition => definition.roleId === '@primary')?.bot.spec
           ?.execution_policy?.environment_id
-      if (!deviceId) throw Object.assign(new Error(), { code: 'executor_unavailable' })
+      if (!deviceId) {
+        clearSource()
+        throw Object.assign(new Error(), { code: 'executor_unavailable' })
+      }
       if (
         snapshot.source &&
         (snapshot.source.ownerId !== ownerId || snapshot.source.deviceId !== deviceId)

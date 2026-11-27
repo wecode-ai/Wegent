@@ -347,6 +347,8 @@ export function createStandInInstanceSource({
           const settings = await api.personalGet(target.userId, target.deviceId)
           if (settings.lifecycle?.status === 'stopping')
             throw new StandInMigrationError('not_stopped')
+          if (settings.lifecycle?.status === 'stopped')
+            await api.lifecycle(target.userId, target.deviceId, 'start')
           assertObserved(revision, localDeviceId)
           await input.initializeTarget()
           return 'initialized' as const

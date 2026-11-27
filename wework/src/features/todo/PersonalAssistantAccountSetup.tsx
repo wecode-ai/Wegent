@@ -51,6 +51,7 @@ async function loadSetup(
   ])
   signal.throwIfAborted()
   const localProfile = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
+
   if (localProfile) return { account: null, local: localProfile }
 
   const { target } = await api.binding(device.deviceId)
@@ -63,8 +64,12 @@ async function loadSetup(
     })
     signal.throwIfAborted()
     if (!profile) {
-      const recoveryDevice = preferredDevice !== target.deviceId ? preferredDevice : undefined
-      return { account: null, local: undefined, recoveryDevice: recoveryDevice ?? device.deviceId }
+      return {
+        account: null,
+        local: undefined,
+        recoveryDevice: device.deviceId,
+        unavailableDevice: target.deviceId,
+      }
     }
     if (hasSavedStandIn(profile)) return { account: null, local: profile }
   }
@@ -150,7 +155,13 @@ export function PersonalAssistantAccountSetup({
         : undefined
       const cloud = services.personalAssistantAccountApi!
       const account = data.recoveryDevice
-        ? await cloud.initialize(name, undefined, data.recoveryDevice)
+        ? await cloud.initialize(
+            name,
+            undefined,
+            preferredDevice && preferredDevice !== data.unavailableDevice
+              ? preferredDevice
+              : data.recoveryDevice
+          )
         : await cloud.initialize(name, local)
       setMigrationNotice(Boolean(local))
       publish(account)

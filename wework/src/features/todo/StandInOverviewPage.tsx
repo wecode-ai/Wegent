@@ -417,6 +417,7 @@ export function StandInOverviewPage({
     !state.draft && definition && (profile === 'primary' || profile === 'role')
   )
   const closeProfile = () => {
+    if (bindingPending) return
     if (panelRef.current) panelRef.current.requestClose()
     else setProfile(null)
   }
@@ -970,7 +971,7 @@ export function StandInOverviewPage({
                         disabled={bindingPending || !onBindDevice}
                         testId="personal-assistant-execution-device"
                         onChange={device => {
-                          if (!onBindDevice) return
+                          if (!onBindDevice || bindingPending) return
                           setBindingPending(true)
                           setBindingError('')
                           void onBindDevice(definition.roleId, device)

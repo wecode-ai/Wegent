@@ -329,11 +329,20 @@ function AccountStandInWorkspace({
   const sameProjectOwner = view.projectsApi === api && view.projectsScope === accountScope
   const projects = sameProjectOwner ? view.projects : []
   const projectError = sameProjectOwner ? view.error : null
+  const readLegacyRoles =
+    legacyTarget &&
+    isStandInBindingOwner(legacyTarget.userId, userId) &&
+    (legacyBinding.status === 'stopping' ||
+      (legacyTarget.userId === LOCAL_USER.id && legacyTarget.deviceId !== deviceId))
   const directory = useStandInRoleDirectory(
     assistantServices.standInApi,
     ownerId,
     deviceId,
-    !embedded && active && !entryError && !entryLoading && !showAssistantExperience,
+    !embedded &&
+      active &&
+      !entryError &&
+      !entryLoading &&
+      (!showAssistantExperience || Boolean(readLegacyRoles)),
     localDeviceId,
     refreshKey,
     availableDeviceIds

@@ -122,7 +122,7 @@ function StandInOnboardingContent({
     setRecoveryError(undefined)
     try {
       await api.lifecycle(userId, deviceId, lifecycle === 'stopped' ? 'start' : 'stop')
-      configuration.onReload()
+      await configuration.onReload()
     } catch (cause) {
       setRecoveryError(getStandInErrorMessage(cause))
     } finally {
@@ -138,6 +138,7 @@ function StandInOnboardingContent({
   const checking = active && !bypass && !dismissed && !result && !error
   const open =
     active &&
+    !lifecycle &&
     (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
