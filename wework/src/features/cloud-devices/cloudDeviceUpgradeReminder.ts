@@ -2,13 +2,8 @@ import type { DeviceInfo } from '@/types/api'
 import { isDeviceRunningTask } from '@/lib/device-capabilities'
 
 export function cloudUpgradeReminder(device: DeviceInfo | null | undefined) {
-  const reminder = device?.cloud_upgrade_reminder
-  return device?.device_type === 'cloud' &&
-    device.status !== 'offline' &&
-    device.executor_version &&
-    reminder &&
-    reminder.versions_behind >= 3
-    ? reminder
+  return device?.device_type === 'cloud' && device.status !== 'offline' && device.executor_version
+    ? (device.cloud_upgrade_reminder ?? null)
     : null
 }
 

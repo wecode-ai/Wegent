@@ -39,9 +39,10 @@ use serde_json::json;
 
 use crate::DevicesState;
 use crate::auth::SessionUser;
-use crate::cloud_release_history::CloudUpgradeReminder;
+use crate::cloud_upgrade_threshold::CloudUpgradeReminder;
 pub use crate::device_online_state::{cache_manager_get, cache_manager_mget, online_key};
 use crate::device_running_tasks::{RunningTask, list_running_tasks};
+use crate::executor_version::EXECUTOR_LATEST_VERSION_DEFAULT;
 use crate::http_compat::FastApiError;
 
 /// A device Kind row (`kinds` table), selected with the full labeled source
@@ -483,13 +484,24 @@ async fn list_cloud_devices(
         let executor_version = online_state
             .as_ref()
             .and_then(|info| info.executor_version.clone());
-        let latest_version = state.executor_version.latest_version(request_id).await;
+        let published_version = state
+            .executor_version
+            .latest_published_version(request_id)
+            .await;
+        let cloud_upgrade_reminder = executor_version
+            .as_deref()
+            .zip(published_version.as_deref())
+            .and_then(|(current, published)| {
+                state
+                    .executor_version
+                    .cloud_upgrade_threshold
+                    .reminder(current, published)
+            });
+        let latest_version =
+            published_version.or_else(|| Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string()));
         let update_available =
             is_update_available(executor_version.as_deref(), latest_version.as_deref());
         let status = online_status(online.as_ref());
-        let cloud_upgrade_reminder = executor_version
-            .as_deref()
-            .and_then(|current| state.executor_version.cloud_releases.reminder(current));
         result.push(DeviceItem {
             id: row.id,
             execution_target_id: None,

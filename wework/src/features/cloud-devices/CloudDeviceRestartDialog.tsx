@@ -34,7 +34,7 @@ export function CloudDeviceRestartDialog({
         : busy
           ? 'workbench.connection_restart_confirm_busy_description'
           : 'workbench.connection_restart_confirm_description',
-    { device: deviceNames, count: first.cloud_upgrade_reminder?.versions_behind ?? 0 }
+    { device: deviceNames }
   )
   const latest = upgrade ? first.cloud_upgrade_reminder?.target_version : first.latest_version
   const versionDetails =

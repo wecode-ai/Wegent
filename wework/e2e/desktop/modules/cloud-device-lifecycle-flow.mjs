@@ -12,7 +12,7 @@ import {
   join,
   mkdir,
 } from './shared.mjs'
-import { MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
+import { CLOUD_DEVICE_LIFECYCLE_THRESHOLD, MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
@@ -23,11 +23,21 @@ const TERMINAL_PANEL = '[data-testid="settings-device-terminal-panel"]'
 
 async function verifyUpgradeReminder(control, cloud) {
   const device = await cloud.device(CLOUD_DEVICE_ID)
+  assert.equal(device.executor_version.replace(/^v/i, ''), CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
   assert.deepEqual(device.cloud_upgrade_reminder, {
     target_version: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
-    versions_behind: 3,
   })
-  assert.equal((await cloud.device(SANDBOX_SIBLING_ID)).cloud_upgrade_reminder, undefined)
+  const sibling = await cloud.device(SANDBOX_SIBLING_ID)
+  assert.equal(
+    sibling.update_available,
+    true,
+    'The newer sibling must still have an available update'
+  )
+  assert.equal(
+    sibling.cloud_upgrade_reminder,
+    undefined,
+    'A version above the threshold must not prompt'
+  )
   const useTerminal = async deviceId => {
     await control.command('click', `[data-testid="connection-terminal-button-${deviceId}"]`)
     await control.command('waitFor', TERMINAL_PANEL, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
@@ -45,6 +55,9 @@ async function verifyUpgradeReminder(control, cloud) {
     text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.ok(
+    (await control.command('getText', UPGRADE_REMINDER)).includes(CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
+  )
   await captureVerificationScreenshot(control, 'cloud-device-upgrade-reminder.png')
   await control.command('click', '[data-testid="cancel-restart-device-button"]')
   assert.equal(cloud.sandboxRestartRequestCount(), 1, 'Postponing must not restart the device')
@@ -380,11 +393,11 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
     assert.equal(recoveredDevice?.executor_version, currentDevice.executor_version)
     assert.equal(recoveredDevice?.runtime_instance_id, currentDevice.runtime_instance_id)
     console.log('[cloud-device-lifecycle] Both sandbox Executors went offline and recovered')
+    await verifyUpgradeReminder(control, cloud)
   } finally {
     control.releaseScenarioResponse(BUSY_MODEL_SCENARIO)
     control.setScenario('initial')
     await restart.finish()
     await cloud.setExecutorLatestVersion(currentDevice.executor_version)
   }
-  await verifyUpgradeReminder(control, cloud)
 }

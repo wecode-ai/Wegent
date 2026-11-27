@@ -31,7 +31,6 @@ export interface ProjectConfig {
 
 export interface CloudDeviceUpgradeReminderInfo {
   target_version: string
-  versions_behind: number
 }
 
 export interface DeviceInfo {

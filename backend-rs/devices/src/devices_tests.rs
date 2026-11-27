@@ -115,12 +115,11 @@ fn item_json_matches_device_info_shape() {
     item.device_type = DeviceType::Cloud;
     item.cloud_upgrade_reminder = Some(CloudUpgradeReminder {
         target_version: "2.0.4".to_string(),
-        versions_behind: 3,
     });
     let cloud = wegent_backend_test_support::serialized(item).unwrap();
     assert_eq!(
         cloud["cloud_upgrade_reminder"],
-        json!({"target_version": "2.0.4", "versions_behind": 3})
+        json!({"target_version": "2.0.4"})
     );
 }
 

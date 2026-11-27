@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os'
 
 import {
   CLOUD_DEVICE_ID,
-  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
@@ -52,7 +51,7 @@ const BACKEND_PORT_CONFLICT_PATTERN = /Address already in use|AddrInUse/
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
-const CLOUD_DEVICE_LIFECYCLE_OLD_VERSION = '998.0.0'
+export const CLOUD_DEVICE_LIFECYCLE_THRESHOLD = '998.0.0'
 const CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION = '998.0.2'
 export const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const MYSQL_READY_TIMEOUT_MS = 60_000
@@ -611,12 +610,7 @@ class RealCloudEnvironment {
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         ...(this.cloudLifecycle
           ? {
-              CLOUD_DEVICE_RELEASE_HISTORY: [
-                CLOUD_DEVICE_LIFECYCLE_OLD_VERSION,
-                CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION,
-                '998.1.0',
-                CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
-              ].join(','),
+              CLOUD_DEVICE_UPGRADE_THRESHOLD: CLOUD_DEVICE_LIFECYCLE_THRESHOLD,
             }
           : {}),
         BREEZE_LOG_DIR: rustLogDirectory,
@@ -983,7 +977,7 @@ class RealCloudEnvironment {
       logFile: 'remote-docker-executor-runtime.log',
     })
     if (this.cloudLifecycle) {
-      this.remoteExecutorEnv.WEGENT_EXECUTOR_VERSION = CLOUD_DEVICE_LIFECYCLE_OLD_VERSION
+      this.remoteExecutorEnv.WEGENT_EXECUTOR_VERSION = CLOUD_DEVICE_LIFECYCLE_THRESHOLD
       this.remoteDockerExecutorEnv.WEGENT_EXECUTOR_VERSION = CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION
       await this.provisionLifecycleSandbox()
     }
