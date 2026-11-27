@@ -852,11 +852,23 @@ class SandboxManager(metaclass=SingletonMeta):
         self, sandbox_id: str, *, observed: Optional[Sandbox] = None
     ) -> Tuple[bool, str]:
         """Terminate a sandbox and revoke its credentials after runtime removal."""
-        sandbox = (
-            observed
-            if observed is not None
-            else self._repository.load_sandbox(sandbox_id)
-        )
+        sandbox = observed
+        if sandbox is None:
+            if self._task_lifecycle_lock_name(sandbox_id) is None:
+                return False, f"Sandbox {sandbox_id} not found"
+            try:
+                sandbox = self._repository.load_sandbox(
+                    sandbox_id, require_definitive_result=True
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not load sandbox %s for termination: %s",
+                    sandbox_id,
+                    type(error).__name__,
+                )
+                raise SandboxTerminationError(
+                    f"Sandbox {sandbox_id} storage is unavailable"
+                ) from error
         if sandbox is None:
             return False, f"Sandbox {sandbox_id} not found"
         if sandbox.status == SandboxStatus.TERMINATED:

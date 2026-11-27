@@ -468,24 +468,23 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
 
     manager = get_sandbox_manager()
 
-    # Find sandbox by e2b_sandbox_id
-    sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
-    if sandbox is None:
-        # Fallback: try direct lookup
-        sandbox = await manager.get_sandbox(sandbox_id, check_health=False)
-
-    if sandbox is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "not_found",
-                "message": f"Sandbox {sandbox_id} not found",
-            },
+    try:
+        sandbox = await _find_sandbox_by_e2b_id(
+            manager, sandbox_id, require_definitive_result=True
         )
+    except Exception as exc:
+        logger.warning("E2B sandbox lookup failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "termination_failed",
+                "message": f"Sandbox {sandbox_id} storage is unavailable",
+            },
+        ) from exc
 
     try:
-        success, message = await manager.terminate_sandbox(
-            sandbox.sandbox_id, observed=sandbox
+        success, _ = await manager.terminate_sandbox(
+            sandbox.sandbox_id if sandbox is not None else sandbox_id, observed=sandbox
         )
     except SandboxTerminationError as exc:
         raise HTTPException(
@@ -494,8 +493,8 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
         ) from exc
     if not success:
         raise HTTPException(
-            status_code=500,
-            detail={"code": "termination_failed", "message": message},
+            status_code=404,
+            detail={"code": "not_found", "message": f"Sandbox {sandbox_id} not found"},
         )
 
     # Return 204 No Content
@@ -707,7 +706,9 @@ async def connect_to_sandbox(sandbox_id: str, http_request: Request):
 # =============================================================================
 
 
-async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
+async def _find_sandbox_by_e2b_id(
+    manager, e2b_sandbox_id: str, *, require_definitive_result: bool = False
+):
     """Find sandbox by E2B sandbox ID in metadata.
 
     Searches through active sandboxes for one with matching e2b_sandbox_id
@@ -716,15 +717,20 @@ async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
     Args:
         manager: SandboxManager instance
         e2b_sandbox_id: E2B format sandbox UUID
+        require_definitive_result: Propagate storage lookup failures.
 
     Returns:
         Sandbox if found, None otherwise
     """
     repository = manager._repository
-    sandbox_ids = repository.get_active_sandbox_ids()
+    sandbox_ids = repository.get_active_sandbox_ids(
+        require_definitive_result=require_definitive_result
+    )
 
     for sandbox_id in sandbox_ids:
-        sandbox = repository.load_sandbox(sandbox_id)
+        sandbox = repository.load_sandbox(
+            sandbox_id, require_definitive_result=require_definitive_result
+        )
         if sandbox and sandbox.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
             return sandbox
 

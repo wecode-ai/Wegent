@@ -363,18 +363,24 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.error(f"[SandboxRepository] Failed to delete sandbox: {e}")
             return False
 
-    def get_active_sandbox_ids(self) -> List[str]:
+    def get_active_sandbox_ids(
+        self, *, require_definitive_result: bool = False
+    ) -> List[str]:
         """Get all active sandbox IDs from ZSet.
 
         Returns:
             List of sandbox IDs (task_id strings)
         """
         if self.redis_client is None:
+            if require_definitive_result:
+                raise RuntimeError("Sandbox storage is unavailable")
             return []
 
         try:
             return self.redis_client.zrange(self._active_sandboxes_zset, 0, -1)
         except Exception as e:
+            if require_definitive_result:
+                raise
             logger.error(f"[SandboxRepository] Failed to get active sandboxes: {e}")
             return []
 

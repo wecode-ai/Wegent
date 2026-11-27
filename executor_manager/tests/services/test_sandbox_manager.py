@@ -1420,6 +1420,41 @@ class TestSandboxManager:
         remove.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry_point", ["task", "e2b", "e2b_numeric"])
+    @pytest.mark.parametrize("storage_failed", [False, True])
+    async def test_delete_distinguishes_lookup_failure_from_missing_sandbox(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        entry_point,
+        storage_failed,
+    ):
+        from fastapi import HTTPException, Request
+
+        from executor_manager.routers import e2b, sandbox
+
+        if storage_failed:
+            if entry_point == "e2b":
+                mock_redis_client.zrange.side_effect = OSError("Redis unavailable")
+            else:
+                mock_redis_client.hget.side_effect = OSError("Redis unavailable")
+        routes = sandbox if entry_point == "task" else e2b
+        mocker.patch.object(
+            routes, "get_sandbox_manager", return_value=sandbox_manager_with_mock_redis
+        )
+        delete = (
+            sandbox.terminate_sandbox if entry_point == "task" else e2b.delete_sandbox
+        )
+        sandbox_id = "test-e2b-id" if entry_point == "e2b" else "12345"
+
+        with pytest.raises(HTTPException) as error:
+            await delete(sandbox_id, Request({"type": "http"}))
+
+        assert error.value.status_code == (503 if storage_failed else 404)
+        mock_redis_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_terminate_sandbox_success(
         self,
         sandbox_manager_with_mock_redis,
