@@ -575,7 +575,7 @@ export function StandInOverviewPage({
       data-testid="stand-in-overview"
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
+        <header className="flex flex-wrap items-start gap-2 border-b border-border px-5 py-2">
           <StandInNavigation
             conversationName={shared ? `${shared.name} · ${shared.owner_name}` : team?.name}
             roles={roles}
