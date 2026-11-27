@@ -112,3 +112,44 @@ it('normalizes the executor’s numeric message timestamp for transcript consume
     message: { createdAt: '2026-11-05T09:00:00.000Z' },
   })
 })
+
+it('drops a suppressed guidance correction prompt while keeping the turn identity', () => {
+  const [turn] = runtimeTranscriptTurnsToConversationTurns([
+    {
+      id: 'correction-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'correction-user',
+          type: 'user_message',
+          message: {
+            id: 'native-correction',
+            clientUserMessageId: 'correction-message',
+            role: 'user',
+            content: 'Please apply this revised guidance',
+            status: 'done',
+            createdAt: '2026-11-25T09:00:00Z',
+            suppressedUserMessage: true,
+          },
+        },
+        {
+          id: 'correction-assistant',
+          type: 'assistant_text',
+          content: 'Correction complete',
+          createdAt: '2026-11-25T09:00:01Z',
+        },
+      ],
+    },
+  ])
+  expect(turn.items.map(item => item.type)).toEqual(['assistant_text'])
+  expect(turn.clientUserMessageId).toBe('correction-message')
+  expect(runtimeMessageToWorkbenchMessage({
+    id: 'native-correction',
+    clientUserMessageId: 'correction-message',
+    role: 'user',
+    content: 'Please apply this revised guidance',
+    status: 'done',
+    createdAt: '2026-11-25T09:00:00Z',
+    suppressedUserMessage: true,
+  }).suppressedUserMessage).toBe(true)
+})
