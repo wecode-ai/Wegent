@@ -1,7 +1,7 @@
 import {
-  handleBoundReviewRequest,
-  verifyStandInTeamBinding,
-} from '../modules/verify-stand-in-team-binding.mjs'
+  handleAssistantReviewRequest,
+  verifyAssistantTeam,
+} from '../modules/verify-assistant-team.mjs'
 import { createDesktopScenario as createReview } from './stand-in-profile-with-review.scenario.mjs'
 import { createDesktopScenario as createSharedSettings } from './stand-in-shared-settings.scenario.mjs'
 import { withScheduleUpdate } from '../modules/stand-in-schedule-update.mjs'
@@ -21,14 +21,14 @@ export function createDesktopScenario(options) {
     ...scheduledContext,
     async handleHttp(req, res, url) {
       return (
-        (await handleBoundReviewRequest(req, res, url)) ||
+        (await handleAssistantReviewRequest(req, res, url)) ||
         scheduledContext.handleHttp(req, res, url)
       )
     },
     async verify(control) {
       await scheduledContext.verify(control)
       await sharedSettings.verify(control)
-      await verifyStandInTeamBinding(control, options)
+      await verifyAssistantTeam(control, options)
     },
   }
 }

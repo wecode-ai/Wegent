@@ -13,10 +13,10 @@ import {
 } from './response-protocol.mjs'
 
 const message = 'Review the release using my saved team.'
-const instruction = 'Check the release as the bound review team.'
-const delivery = 'Bound review team verified the release.'
+const instruction = 'Check the release as the release assistant.'
+const delivery = 'Release assistant verified the release.'
 
-export async function handleBoundReviewRequest(req, res, url) {
+export async function handleAssistantReviewRequest(req, res, url) {
   if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) return false
   const body = await readRequestBody(req)
   if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(message))
@@ -31,7 +31,7 @@ export async function handleBoundReviewRequest(req, res, url) {
   return true
 }
 
-export async function verifyStandInTeamBinding(
+export async function verifyAssistantTeam(
   control,
   { uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }
 ) {
@@ -39,23 +39,9 @@ export async function verifyStandInTeamBinding(
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const settings = await seedStandInRoleFixture(rpc, userId)
   const role = settings.roles.find(row => row.id === 'default')
-  const catalog = await rpc('runtime.runner.catalog', {})
-  const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
-  assert.ok(model, 'The personal assistant requires its configured Codex model')
-  const agent = await rpc('chat_agents.create', {
-    project_id: 'default-work-items',
-    agent: {
-      name: 'binding-review-team',
-      runtime: 'codex',
-      created_by_user_id: userId,
-      system_prompt: instruction,
-      execution_policy: { mode: 'fixed', environment_id: settings.executionDeviceId },
-      model_policy: {
-        mode: 'fixed',
-        model: { runtime: model.runtime, provider: model.provider, model_id: model.model_id },
-      },
-    },
-  })
+  assert.ok(role?.teamRef, 'The saved assistant must already have its own Team')
+  const permission =
+    role.taskPermissions?.permissionMode === 'workspace-write' ? 'read-only' : 'workspace-write'
   const click = id =>
     control.command('clickWhenEnabled', `[data-testid="${id}"]`, { timeoutMs: 5000 })
   const read = async () =>
@@ -63,37 +49,37 @@ export async function verifyStandInTeamBinding(
   const open = async () => {
     await click(`stand-in-overview-role-${role.id}`)
     await openStandInSettings(control)
+  }
+  const openEnvironment = async () => {
     await click('stand-in-advanced-open')
-    await control.command('waitFor', '[data-testid="stand-in-team-binding"]', {
-      visible: true,
-      timeoutMs: 5000,
-    })
+    await control.command('waitFor', '[data-testid="stand-in-task-permissions"]')
+    assert.equal(
+      await control.command('getElementCount', '[data-testid="stand-in-team-binding"]'),
+      '0'
+    )
   }
   await open()
-  await click('stand-in-team-binding')
-  await control.command('waitFor', `[data-testid="stand-in-team-binding-option-${agent.id}"]`, {
-    visible: true,
-    timeoutMs: 5000,
-  })
-  await captureScreenshot(control, 'assistant-team-options.png')
-  await click(`stand-in-team-binding-option-${agent.id}`)
-  assert.equal(
-    (await read()).teamRef,
-    role.teamRef,
-    'Changing the draft should preserve the saved binding'
+  await control.command('fill', '[data-testid="stand-in-prompt"]', { value: instruction })
+  await openEnvironment()
+  await captureScreenshot(control, 'assistant-team-environment.png')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="stand-in-task-permissions"] [data-testid="permission-mode-menu-button"]'
   )
+  await click('permission-mode-' + permission)
   await click('stand-in-back')
   await click('stand-in-save')
   await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
     visible: false,
     timeoutMs: 5000,
   })
-  assert.equal((await read()).teamRef, agent.id)
+  const saved = await read()
+  assert.equal(saved.teamRef, role.teamRef)
+  assert.equal(saved.taskPermissions.permissionMode, permission)
+  assert.equal(saved.prompt, instruction)
   await open()
-  await control.command('waitFor', '[data-testid="stand-in-team-binding"]', {
-    text: agent.display_name || agent.name,
-    timeoutMs: 5000,
-  })
+  assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), instruction)
+  await openEnvironment()
   await captureScreenshot(control, 'assistant-team-saved.png')
   await click('stand-in-back')
   await click('stand-in-close')
