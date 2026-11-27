@@ -1984,6 +1984,10 @@ class LangGraphAgentBuilder:
                     # Get tool input data from event
                     tool_input_data = event.get("data", {})
                     tool_use_id = event.get("tool_use_id")
+                    if not tool_use_id:
+                        tool_use_id = event.get("metadata", {}).get(
+                            "wegent_tool_call_id"
+                        )
                     tool_arguments_streamed = False
                     if tool_argument_tracker:
                         finalize_result = await tool_argument_tracker.finalize(
