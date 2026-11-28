@@ -279,14 +279,14 @@ impl RuntimeWorkRpcHandler {
                 });
             if message.claim_runtime_delivery() {
                 let mut message = message;
-                let stopped = self
+                let stop_requested = self
                     .active_local_executions
                     .lock()
                     .expect("active local execution map lock should not be poisoned")
                     .get(&local_task_id)
-                    .is_some_and(|execution| execution.stop_requested);
+                    .map(|execution| execution.stop_requested);
                 let method = codex_notification(&message).method;
-                if stopped
+                if stop_requested == Some(true)
                     && !command_notification
                     && method.starts_with("item/")
                     && method != super::super::mcp_elicitation::SETTLED_METHOD
@@ -304,6 +304,11 @@ impl RuntimeWorkRpcHandler {
                         &route_request,
                         &mut message,
                     ) {
+                        // Native Goal turns may outlive the local execution listener.
+                        if stop_requested.is_none() {
+                            self.codex_app_server
+                                .answer_detached_command_approval(&route_request, &message);
+                        }
                         return;
                     }
                     let native = codex_notification(&message);

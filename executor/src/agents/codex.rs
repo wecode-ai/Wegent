@@ -1019,6 +1019,46 @@ impl CodexAppServerClient {
             .await
     }
 
+    pub(crate) fn answer_detached_command_approval(
+        &self,
+        request: &ExecutionRequest,
+        message: &CodexNotification,
+    ) {
+        let Some(id) = automatic_command_approval_id(message, codex_auto_approve_commands(request))
+        else {
+            return;
+        };
+        let client = self.clone();
+        let generation = message.process_generation();
+        tokio::spawn(async move {
+            if let Err(error) = client
+                .answer_automatic_command_approval(&id, generation, false)
+                .await
+            {
+                log_executor_event(
+                    "codex automatic command approval failed",
+                    &[("error", error)],
+                );
+            }
+        });
+    }
+
+    async fn answer_automatic_command_approval(
+        &self,
+        id: &Value,
+        generation: u64,
+        cancelled: bool,
+    ) -> Result<(), String> {
+        let transport = self.existing_process().await?;
+        if transport.notifications.process_generation == generation {
+            let decision = if cancelled { "decline" } else { "accept" };
+            transport
+                .answer_server_interaction(id, json!({"decision": decision}))
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn subscribe_notifications(
         &self,
     ) -> Result<broadcast::Receiver<CodexNotification>, String> {
@@ -3541,17 +3581,13 @@ async fn read_shared_turn_notifications(
             }
         }
         if let Some(id) = automatic_command_approval_id(&message, options.auto_approve_commands) {
-            let decision = if cancellation_requested {
-                "decline"
-            } else {
-                "accept"
-            };
-            let transport = client.existing_process().await?;
-            if transport.notifications.process_generation == message.process_generation() {
-                transport
-                    .answer_server_interaction(&id, json!({"decision": decision}))
-                    .await?;
-            }
+            client
+                .answer_automatic_command_approval(
+                    &id,
+                    message.process_generation(),
+                    cancellation_requested,
+                )
+                .await?;
             continue;
         }
         if prepare_runtime_notification(
