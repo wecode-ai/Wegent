@@ -30,6 +30,7 @@ def direct_assignment(
             "version",
             "notify_assignee",
             "runner_selection",
+            "redeliver",
         }
     ):
         return None
@@ -42,6 +43,7 @@ def direct_assignment(
                 assignee_id=str(target),
                 notify_assignee=values.notify_assignee,
                 notify_self=notify_self,
+                redeliver=values.redeliver,
                 runner_selection=values.runner_selection,
             )
     return None
@@ -78,7 +80,7 @@ def assign_project_issue(
         values=values,
     )
     background_tasks.add_task(consume_queues_background)
-    if previous_assignee != item.assignee_user_id:
+    if values.redeliver or previous_assignee != item.assignee_user_id:
         from app.services.wework_notifications import emit_issue_assignments_changed
 
         for assignee in sorted({previous_assignee, item.assignee_user_id} - {None, 0}):

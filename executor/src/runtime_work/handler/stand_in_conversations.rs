@@ -200,7 +200,13 @@ impl RuntimeWorkRpcHandler {
                 self.send_message_from_owner(prepared, true).await?
             }
         } else {
-            self.create_task_with_activity(prepared, activity).await?
+            self.create_task_with_initial_permissions(
+                prepared,
+                super::tasks::TaskStartInput::from_message(activity, true),
+                None,
+                None,
+            )
+            .await?
         };
         super::stand_in_execution::accepted_stand_in_result(result)
     }
@@ -315,12 +321,9 @@ impl RuntimeWorkRpcHandler {
                 let mut settings = store
                     .stand_in_proposal_settings(user, id)
                     .map_err(settings_error)?;
-                let normalized = store
+                store
                     .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                     .map_err(settings_error)?;
-                let _ = self
-                    .preflight_dingtalk_delegation(user, &mut settings, &normalized, &previous)
-                    .await?;
                 self.preflight_git_connections(&settings, &previous).await?;
                 self.prepare_connection_boundaries(&mut settings, &previous)
                     .await?;

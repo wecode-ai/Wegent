@@ -4,7 +4,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { GET } from '@/app/api/[...path]/route'
+import { NextRequest } from 'next/server'
+import { GET, POST } from '@/app/api/[...path]/route'
 
 jest.mock('@/lib/server-config', () => ({
   getInternalApiUrl: jest.fn(() => 'http://localhost:8000'),
@@ -85,4 +86,48 @@ describe('API proxy auth forwarding', () => {
 
     expect(forwardedHeaders.get('Authorization')).toBe('Bearer explicit.header.token')
   })
+
+  test('forwards the cross-site Connector OAuth callback and its result page', async () => {
+    const path = ['connector-apps', 'oauth', 'callback']
+    const query = '?code=provider-code&state=oauth-state'
+    const request = new NextRequest('https://wegent.example.test/api/' + path.join('/') + query, {
+      headers: { 'sec-fetch-site': 'cross-site', 'accept-language': 'zh-CN' },
+    })
+    jest.mocked(fetch).mockResolvedValueOnce(
+      new Response('<h1>连接器已连接</h1>', {
+        headers: { 'content-type': 'text/html', 'cache-control': 'no-store' },
+      })
+    )
+
+    const response = await GET(request, { params: Promise.resolve({ path }) })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('text/html')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toBe('<h1>连接器已连接</h1>')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/' + path.join('/') + query,
+      expect.objectContaining({ method: 'GET' })
+    )
+  })
+
+  test.each([
+    ['GET', GET, ['connector-apps']],
+    ['GET', GET, ['connector-apps', 'oauth', 'callback-extra']],
+    ['POST', POST, ['connector-apps', 'oauth', 'callback']],
+  ] as const)(
+    'blocks cross-site %s to other Connector routes',
+    async (method, handler, segments) => {
+      const path = [...segments]
+      const request = new NextRequest('https://wegent.example.test/api/' + path.join('/'), {
+        method,
+        headers: { 'sec-fetch-site': 'cross-site' },
+      })
+
+      const response = await handler(request, { params: Promise.resolve({ path }) })
+
+      expect(response.status).toBe(404)
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  )
 })

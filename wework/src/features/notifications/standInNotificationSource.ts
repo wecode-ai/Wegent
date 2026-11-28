@@ -6,8 +6,6 @@ import { isMainWindowFocused } from '@/desktop/windowFocus'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { TaskSource } from './NotificationTaskSourceContext'
-import type { MessageCenterRecord } from '@/api/standInMessageCenter'
-import { createDelegatedStandInAlertDelivery } from './delegatedStandInAlertDelivery'
 import {
   matchesStandInVersion,
   standInVersion,
@@ -21,14 +19,12 @@ interface NotificationObservation {
   trackedItems: StandInNotification[]
   source: TaskSource | null
   systemEnabled: boolean
-  delegatedMessage(record: MessageCenterRecord): { title: string; body: string }
   message(status: StandInNotificationState['status']): string
 }
 
 /** Device-local read and delivery receipts own notification reconciliation for one account. */
 export function createStandInNotificationSource(storageKey: string, accountKey: string) {
   const assignmentDelivery = createStandInAssignmentDelivery(accountKey)
-  const delegatedAlerts = createDelegatedStandInAlertDelivery(accountKey)
   let snapshot: StandInRecords = {}
   let store: ReturnType<typeof createStandInRecordStore> | undefined
   let delivered: ReturnType<typeof createStandInRecordStore> | undefined
@@ -146,12 +142,6 @@ export function createStandInNotificationSource(storageKey: string, accountKey: 
       observation = input
       listeners.add(listener)
       assignmentDelivery.observe({ inbox: input.inbox, source: input.source, userId: input.userId })
-      delegatedAlerts.observe({
-        source: input.source,
-        userId: input.userId,
-        systemEnabled: input.systemEnabled,
-        describe: input.delegatedMessage,
-      })
       if (!store) {
         startedAt = Date.now()
         store = createStandInRecordStore(storageKey)
@@ -174,11 +164,9 @@ export function createStandInNotificationSource(storageKey: string, accountKey: 
         listeners.delete(listener)
         if (!listeners.size) {
           assignmentDelivery.suspend()
-          delegatedAlerts.suspend()
           queueMicrotask(() => {
             if (!listeners.size) {
               assignmentDelivery.release()
-              delegatedAlerts.release()
             }
           })
           stop?.()

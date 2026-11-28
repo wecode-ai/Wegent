@@ -1,4 +1,5 @@
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
@@ -90,13 +91,16 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   const panelActive = active && open
   const contentTestIdsEnabled = testIdsEnabled && open
   const testId = (value: string) => (testIdsEnabled ? value : undefined)
+  const remindOnUse = useWorkbenchCloudDeviceRestarts()?.remindOnUse
+  const terminalDeviceId = preferLocalTerminal ? null : workspaceTarget?.deviceId
 
   const openTerminalTab = useCallback(() => {
     const tab = createTerminalTab(terminalSequence)
     setTerminalSequence(current => current + 1)
     setTabs(current => [...current, tab])
     setActiveTabId(tab.id)
-  }, [terminalSequence])
+    remindOnUse?.(terminalDeviceId)
+  }, [terminalSequence, remindOnUse, terminalDeviceId])
 
   const closeTab = useCallback(
     (tabId: string) => {

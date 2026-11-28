@@ -24,10 +24,14 @@ for stand_in_path in \
   "wework/src/features/todo/useStandInModels.ts" \
   "wework/src/features/todo/IssueStandInControl.tsx"
 do
+  welcome_segment=""
+  if [[ "$stand_in_path" == "wework/src/features/todo/StandInOverviewPage.tsx" ]]; then
+    welcome_segment=",stand-in-welcome"
+  fi
   assert_desktop_case "stand-in workspace changes select all stand-in checkpoints: $stand_in_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,stand-in-controls,stand-in-git"},{"id":"core-5","name":"Core / shard 5","segments":"stand-in-personal-task"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"stand-in-cloud,stand-in-assignment-notifications"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities'"$welcome_segment"',stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,stand-in-controls,stand-in-git"},{"id":"core-5","name":"Core / shard 5","segments":"stand-in-personal-task"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"stand-in-cloud,stand-in-assignment-notifications"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$stand_in_path"
@@ -48,7 +52,7 @@ done
 assert_desktop_case "stand-in work list also retains DingTalk delegation coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-dingtalk-delegation,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,stand-in-git"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-workspace"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,stand-in-git"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-workspace"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/StandInWorkList.tsx"

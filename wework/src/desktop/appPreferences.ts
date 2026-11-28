@@ -588,11 +588,24 @@ export function emitAppPreferencesChanged(preferences: AppPreferences) {
   window.dispatchEvent(new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, { detail: preferences }))
 }
 
-export async function getAppPreferences(): Promise<AppPreferences> {
+export function getAppPreferences(): Promise<AppPreferences> {
+  return readAppPreferences(false)
+}
+
+export function getReadableAppPreferences(): Promise<AppPreferences> {
+  return readAppPreferences(true)
+}
+
+async function readAppPreferences(requireReadable: boolean): Promise<AppPreferences> {
   if (typeof window === 'undefined') {
     return defaultAppPreferences
   }
-  return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
+  return mergeAppPreferences(
+    await invokeDesktopHost<Record<string, unknown>>(
+      'preferences.get',
+      requireReadable ? { requireReadable: true } : undefined
+    )
+  )
 }
 
 export async function updateAppPreferences(

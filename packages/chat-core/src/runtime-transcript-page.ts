@@ -44,13 +44,33 @@ export interface RuntimePaneTranscript {
 export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
-  const messages = runtimeMessagesToWorkbenchMessages(
+  const projectedMessages = runtimeMessagesToWorkbenchMessages(
     transcript.messages ?? [],
+  );
+  // A guidance correction keeps a single visible user message. Provider turns
+  // can outlive the message list, so carry the suppression by identity.
+  const suppressedUserMessageIds = new Set(
+    projectedMessages
+      .filter((message) => message.suppressedUserMessage === true)
+      .map((message) => message.id),
+  );
+  const messages = projectedMessages.filter(
+    (message) => !suppressedUserMessageIds.has(message.id),
   );
   let turns = mergeRuntimeConversationTurns(
     runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
     runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
   );
+  if (suppressedUserMessageIds.size > 0) {
+    turns = turns.map((turn) => ({
+      ...turn,
+      items: turn.items.filter(
+        (item) =>
+          item.type !== "user_message" ||
+          !suppressedUserMessageIds.has(item.message.id),
+      ),
+    }));
+  }
   // Legacy previews own a user presentation but have no provider turn identity.
   // Represent them in the same store without inventing a native turn.
   if (

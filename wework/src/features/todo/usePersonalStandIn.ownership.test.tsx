@@ -97,6 +97,92 @@ test('does not discard an edit made after a reload was requested', async () => {
   expect(result.current.saved?.version).toBe(2)
 })
 
+test('rebases retained edits on the refreshed cloud revision without losing peer changes', async () => {
+  const { services, settings, personalGet, personalSave } = fixture()
+  const original = { ...settings, cloudDefinitionRevision: 'cloud-old' }
+  personalGet.mockResolvedValue(original)
+  personalSave.mockRejectedValueOnce(
+    Object.assign(new Error('Cloud definition changed'), {
+      code: 'cloud_definition_version_conflict',
+    })
+  )
+  const { result } = renderHook(() => usePersonalStandIn(services, 7, 'device', 'mac'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Unsaved' })))
+  await act(() => result.current.save())
+  expect(result.current.error).toBeTruthy()
+
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(result.current.draft?.roles[0].prompt).toBe('Unsaved')
+  expect(result.current.error).toBeTruthy()
+  await act(() => result.current.save())
+  expect(personalSave).toHaveBeenCalledTimes(1)
+
+  const pending = deferred<PersonalStandInSettings>()
+  personalGet.mockReturnValueOnce(pending.promise)
+  act(() => result.current.reload())
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Newer draft' })))
+  const refreshed = {
+    ...original,
+    version: 2,
+    cloudDefinitionRevision: 'cloud-new',
+    roles: [
+      { ...original.roles[0], name: 'Peer name' },
+      { ...original.roles[0], id: 'peer-created', name: 'Peer role' },
+    ],
+  }
+  await act(async () => pending.resolve(refreshed))
+  expect(result.current.error).toBeNull()
+  expect(result.current.saved).toEqual(refreshed)
+  const rebased = {
+    ...refreshed,
+    roles: [{ ...refreshed.roles[0], prompt: 'Newer draft' }, refreshed.roles[1]],
+  }
+  expect(result.current.draft).toEqual(rebased)
+
+  // The ordinary save submits the rebased draft through the version-checked API.
+  await act(() => result.current.save())
+  expect(personalSave).toHaveBeenCalledTimes(2)
+  expect(personalSave).toHaveBeenLastCalledWith(7, rebased, 'device')
+})
+
+test('retains overlapping edits without overwriting the peer change and permits explicit reload', async () => {
+  const { services, settings, personalGet, personalSave } = fixture()
+  const original = { ...settings, cloudDefinitionRevision: 'cloud-old' }
+  personalGet.mockResolvedValue(original)
+  personalSave.mockRejectedValueOnce(
+    Object.assign(new Error('Cloud definition changed'), {
+      code: 'cloud_definition_version_conflict',
+    })
+  )
+  const { result } = renderHook(() => usePersonalStandIn(services, 7, 'device', 'mac'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Unsaved' })))
+  await act(() => result.current.save())
+  const pending = deferred<PersonalStandInSettings>()
+  personalGet.mockReturnValueOnce(pending.promise)
+  act(() => result.current.reload())
+  act(() => result.current.updateRole('default', role => ({ ...role, prompt: 'Newer draft' })))
+  const refreshed = {
+    ...original,
+    version: 2,
+    cloudDefinitionRevision: 'cloud-new',
+    roles: [{ ...original.roles[0], prompt: 'Peer prompt' }],
+  }
+  await act(async () => pending.resolve(refreshed))
+  expect(result.current.error).toBeTruthy()
+  expect(result.current.saved).toEqual(refreshed)
+  expect(result.current.draft?.roles[0].prompt).toBe('Newer draft')
+  await act(() => result.current.save())
+  expect(personalSave).toHaveBeenCalledTimes(1)
+
+  personalGet.mockResolvedValue(refreshed)
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.error).toBeNull())
+  expect(result.current.draft).toEqual(refreshed)
+})
+
 test('retains a newer draft through save completion and keeps the conflict token intact', async () => {
   const { services, personalSave, settings } = fixture()
   const pending = deferred<PersonalStandInSettings>()
@@ -135,6 +221,29 @@ test('publishes the canonical receipt when the saved draft has not changed', asy
   })
   expect(result.current.draft).toBe(result.current.saved)
   expect(result.current.draft?.roles[0].prompt).toBe('Canonical')
+})
+
+test('creates a role alongside changes committed to the profile after opening the editor', async () => {
+  const { services, personalGet, personalSave, settings } = fixture()
+  const { result } = renderHook(() => usePersonalStandIn(services, 7, 'old-device', 'mac'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  const added = { ...settings.roles[0], id: 'new-role', name: 'Reviewer' }
+  const latest = {
+    ...settings,
+    version: 2,
+    roles: [{ ...settings.roles[0], prompt: 'Updated on another surface' }],
+  }
+  personalGet.mockResolvedValueOnce(latest)
+  const change = { kind: 'create', roleId: added.id } as const
+  await act(() => result.current.save({ ...settings, roles: [...settings.roles, added] }, change))
+
+  expect(personalSave).toHaveBeenCalledExactlyOnceWith(
+    7,
+    { ...latest, roles: [...latest.roles, added] },
+    'old-device',
+    undefined,
+    change
+  )
 })
 
 test('accepts only one save when called twice before React rerenders', async () => {

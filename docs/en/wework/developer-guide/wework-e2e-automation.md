@@ -78,20 +78,6 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 
 This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
 
-### DingTalk delegated reply development smoke
-
-Run the existing Core checkpoint on the same candidate revision that includes DingTalk onboarding, delegation, and reliable delivery:
-
-```bash
-pnpm --filter wework e2e:desktop -- --segment stand-in-dingtalk-delegation
-```
-
-The checkpoint runs real Electron, executor, and local storage with a DingTalk CLI protocol test double and scripted model decisions. It exercises the three first-week templates in both direct chats and mentions in selected groups. It checks same-conversation evidence, the reply destination, AI attribution, the submission count, and the 120-second window. Boundary cases exercise escalation, out-of-scope sources, changed evidence, disconnection recovery, and executor restart. Protocol and storage integration tests exercise deterministic failures such as mismatched receipts, revoked authority before submission, and recovery-window limits. `dingtalk-delegation-evidence.json` in the result directory records the checkpoint outcomes.
-
-To investigate a display issue, use an isolated `ai:verify` session to inspect delivery status, takeover, receipt verification, and receipt content on the work detail. The desktop checkpoint drives the clicks and assertions on the same record. An `ai:verify` session starts empty. To inspect existing fixture records, pass the isolated test executor directory and preserve its device ID. The desktop checkpoint audits channel submission and receipt evidence separately from display inspection.
-
-On the release candidate, use an approved test account and test conversations to verify the message and AI attribution visible to real DingTalk recipients, actual receipt verification support, and elapsed time. Evaluate the real model's judgment on ambiguous, out-of-date, and sensitive evidence with the agreed model and acceptance samples. Either run can drive the UI with automation. Record the actual channel and model used so the protocol fixture and scripted model results are reported as development evidence.
-
 Run only the cloud-project desktop E2E:
 
 ```bash
@@ -248,6 +234,56 @@ Cloud shards remain isolated, and shared preparation groups stay together.
 Shared runner capacity can still introduce external queues, and expansion adds
 setup costs. Historical timing replay predicts only the test stage, not a measured
 speedup from a new CI run.
+
+### Reusing desktop E2E infrastructure
+
+- Launch the app through the checkpoint runner. Use `prepareApp` for
+  pre-launch configuration and the function provided through
+  `setRestartDesktopApp` for restarts. The restart waits for the controller to
+  reconnect and checks the device identity. Ordinary cold starts of release
+  packages use phased readiness checks.
+- Use `createLocalCollaborationProject` from
+  `e2e/desktop/modules/workspace-flows.mjs` to prepare an existing local
+  project, or `completeLocalCollaborationFolderImport` to drive folder import
+  through the UI. They share isolated Git repository setup. For a cloud
+  collaboration project, `createWorkspaceAndProject` in
+  `workspace-agent-setup.mjs` creates the project and waits for its board.
+- Record a cleanup action as soon as its resource is acquired. Pass the actions
+  in dependency order to `collectCleanupErrors` from
+  `e2e/desktop/modules/cleanup.mjs`. It runs every action and returns the
+  failures. Report each cleanup failure, preserve any existing scenario error,
+  and fail the checkpoint if cleanup alone fails. The scenario's `cleanup`
+  hook runs while the controller, proxies, and Backend are still available.
+
+#### Model fixtures
+
+- Use the runner's loopback model endpoint for ordinary scenarios. The scenario's
+  `handleHttp` hook can supply scenario-specific model responses while the app,
+  runtime, and tool calls continue through their real paths.
+- Import `sse(events)` from `e2e/desktop/modules/model-sse.mjs` to encode a
+  batch or use `writeSseEvents(response, events)` to write frames individually.
+  Use `createSse` from `response-protocol.mjs` when a Responses stream needs the
+  existing terminal-output merge.
+- Import `createModelResponseGates()` from
+  `e2e/desktop/modules/model-response-gates.mjs` and call `gates.pause()` for
+  each stage that needs a pause. Await `gate.promise` after writing a partial
+  response and call `gate.resolve()` once the scenario observes the expected
+  state. Call `gates.cleanup()` during teardown to release all pending responses.
+
+#### Waiting for observable state
+
+- For UI visibility, actionability, or a refreshed view, use the desktop
+  controller's `waitFor` or `clickWhenEnabled`, or the existing `waitForSnapshot`.
+- To repeatedly read API or runtime state, import
+  `waitForValue(load, predicate, message, timeoutMs)` from
+  `e2e/desktop/modules/wait.mjs`. Returning `true` from the predicate yields the
+  current value. The predicate can also return a match directly, as in
+  `items => items.find(item => item.id === taskId)`. A polling failure includes
+  the last read, so read only state that is safe to write to CI logs.
+- For an event you have subscribed to or an asynchronous operation already
+  underway, use `withTimeout(promise, timeoutMs, message)` from the same module.
+  Subscribe before triggering the event. The timeout ends the wait. The scenario
+  owns cancellation and cleanup.
 
 ### Test-only polling and retry timing
 

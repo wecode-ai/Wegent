@@ -5,15 +5,10 @@
   "unavailable": "This task is unavailable. Check your connection and access, then retry.",
   "shell": {
     "back": "Back",
-    "navigation": "Collaboration navigation",
-    "resize": "Resize adjacent panes",
-    "assistant": "Assistant",
-    "tasks": "Tasks",
-    "projects": "Projects",
-    "account": "User menu",
-    "settings": "Settings"
+    "resize": "Resize adjacent panes"
   },
   "tasks": {
+    "projectUnavailable": "This project is unavailable. Check your connection and project access.",
     "rhythm": {
       "title": "Work rhythm",
       "waiting": "Your turn",
@@ -112,6 +107,7 @@
     "handoffActions": {
       "assign": "Assigned",
       "reassign": "Reassigned",
+      "redeliver": "Redelivered",
       "unassign": "Unassigned",
       "unknown": "Handoff"
     },
@@ -180,6 +176,21 @@
     "continueDiscussion": "Continue discussion"
   },
   "assistant": {
+    "entry": {
+      "back": "Return to my assistant",
+      "linkTitle": "This assistant link cannot open",
+      "loadTitle": "The assistant could not load",
+      "loadFailed": "Retry to load your assistant.",
+      "errors": {
+        "missing_identity": "This link does not identify an assistant.",
+        "conflict": "The assistant and device in this link do not identify the same assistant.",
+        "not_found": "The assistant in this link is unavailable.",
+        "forbidden": "This link points to an assistant or device you cannot access.",
+        "ambiguous": "This link matches more than one assistant.",
+        "lookup_failed": "The assistant in this link could not be verified. Retry to check again.",
+        "unsupported": "This discussion or page is unavailable from the current assistant view."
+      }
+    },
     "availability": {
       "online": "Online",
       "offline": "Offline",
@@ -295,5 +306,38 @@
     "sourceUnavailable": "This destination is unavailable. Check the connection and account, then try again.",
     "permissionDenied": "This project is read-only. Check your permissions or choose another project.",
     "assigneeUnavailable": "This assignee is no longer available. Choose an assignee again."
+  },
+  "externalAgent": {
+    "name": "Agent name",
+    "transport": "Connection type",
+    "hook": "HTTP hook and callback",
+    "worker": "WebSocket worker",
+    "hookUrl": "Hook URL",
+    "method": "HTTP method",
+    "format": "Body format",
+    "form": "Form",
+    "text": "Plain text",
+    "authorization": "Authorization header (optional)",
+    "template": "Body template",
+    "templateHint": "Variables are filled in on delivery. Keep the callback URL, token, invocation ID, and delivery ID so the external service can reply to the issue.",
+    "workerHint": "Saving generates a credential. Use the Worker SDK to connect from your external system.",
+    "workerCreated": "Agent added. Waiting for the worker to connect.",
+    "workerTokenHint": "This credential is shown once. Store it in the external service’s credential store. If it is lost, disable this agent and connect a new one.",
+    "workerEndpoint": "Worker connection URL",
+    "workerToken": "Worker credential",
+    "copyToken": "Copy credential",
+    "copied": "Copied",
+    "copyFailed": "Could not copy. Try again.",
+    "workerStartHint": "Set WEWORK_ENDPOINT to the connection URL and WEWORK_WORKER_TOKEN to the credential.",
+    "back": "Back",
+    "saving": "Saving…",
+    "done": "Done",
+    "save": "Add agent",
+    "saveFailed": "Could not add the external agent",
+    "workerConnected": "Worker connected.",
+    "checkConnection": "Check connection",
+    "checking": "Checking…",
+    "connectionCheckFailed": "Could not check the Worker connection. Try again.",
+    "workerGuide": "Install and start a Worker"
   }
 }

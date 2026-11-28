@@ -64,11 +64,27 @@ pub(in crate::runtime_work::handler) fn goal_identity(goal: &Value) -> Value {
 
 fn closed_goal_wait_status(record: &Value, goal_completed: bool) -> &'static str {
     // A fast turn can complete the Goal before the event poller updates the receipt.
-    if goal_completed && record["native_guidance"] == "accepted" {
+    if goal_completed
+        && (record["native_guidance"] == "accepted" || record["reused_operation_id"].is_string())
+    {
         "delivered"
     } else {
         "cancelled"
     }
+}
+
+fn mark_event_delivered(record: &mut Value, reused_operation: Option<&Value>) {
+    if let Some(operation) = reused_operation {
+        // Retain this subscription's operation ID for its own cloud admission and cancellation.
+        record["reused_operation_id"] = operation.clone();
+    }
+    record["handled_events"] = handled_event_summaries(record);
+    record["error_code"] = Value::Null;
+    record["status"] = json!(if record["waiting_goal"].is_null() {
+        "delivered"
+    } else {
+        "resuming_goal"
+    });
 }
 
 fn event_user_message_presentation(record: &Value) -> Value {
@@ -914,19 +930,15 @@ impl RuntimeWorkRpcHandler {
             "user_message_presentation":event_user_message_presentation(&record)}),
             )
             .await?;
-        record["operation_id"] = result["operation"]["operation_id"].clone();
-        if result["operation"]["delivery_status"] == "accepted" {
-            record["handled_events"] = handled_event_summaries(&record);
-        }
-        record["status"] = json!(if result["operation"]["delivery_status"] == "accepted" {
-            if waiting_goal.is_null() {
-                "delivered"
-            } else {
-                "resuming_goal"
-            }
+        let operation = &result["operation"];
+        record["operation_id"] = operation["operation_id"].clone();
+        let command = &operation["result"]["commandId"];
+        if operation["delivery_status"] == "accepted" {
+            let reused = command.is_string() && command != &record["operation_id"];
+            mark_event_delivered(&mut record, reused.then_some(command));
         } else {
-            "needs_attention"
-        });
+            record["status"] = json!("needs_attention");
+        }
         self.save_event_subscription(id, &record)?;
         drop(goal_guard);
         if record["status"] == "resuming_goal" {
@@ -973,7 +985,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn resume_event_goal(&self, id: &str, record: &mut Value) -> Result<(), AppIpcError> {
         // Queued event turns activate their own Goals at native input admission.
-        if record["native_guidance"] != "accepted" {
+        if record["native_guidance"] != "accepted" && !record["reused_operation_id"].is_string() {
             return Ok(());
         }
         *record = event_store::read(

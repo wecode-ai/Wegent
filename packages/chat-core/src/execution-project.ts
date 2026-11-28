@@ -29,6 +29,10 @@ export interface ProjectConfig {
   modelSelection?: ModelSelectionConfig | null
 }
 
+export interface CloudDeviceUpgradeReminderInfo {
+  target_version: string
+}
+
 export interface DeviceInfo {
   id: number
   device_id: string
@@ -47,6 +51,7 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  cloud_upgrade_reminder?: CloudDeviceUpgradeReminderInfo
   error?: string | null
   bind_shell?: 'claudecode' | 'openclaw' | string
   client_ip?: string | null

@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.14-beta.1",
+  "version": "0.6.14",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -117,6 +117,7 @@
     "remark-parse": "^11.0.0",
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
+    "three": "0.184.0",
     "undici": "7.27.2",
     "unified": "^11.0.5",
     "ws": "8.23.0",
@@ -138,6 +139,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/semver": "7.8.0",
+    "@types/three": "0.184.0",
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",

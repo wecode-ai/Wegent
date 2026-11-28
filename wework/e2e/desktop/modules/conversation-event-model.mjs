@@ -43,10 +43,10 @@ export function createConversationEventModel({
   function events(body, phase) {
     const marker = `${MARKER}_${phase}`
     const workflowConflict = phase === 'workflow_conflict'
+    const workflowCompletion = ['workflow', 'workflow_replay'].includes(phase)
     const preexistingChecks = phase === 'preexisting_checks'
-    const usesGoal = !['ordinary', 'workflow', 'workflow_conflict', 'preexisting_checks'].includes(
-      phase
-    )
+    const prChecks = preexistingChecks || phase === 'assigned_issue'
+    const usesGoal = !prChecks && !workflowCompletion && !workflowConflict && phase !== 'ordinary'
     if (phase === 'owner' && modelRequestTexts(body).includes(`${marker}_CONTINUE`)) {
       if (!requestContainsToolOutput(body, `${marker}_complete`)) {
         return selectedToolCall(
@@ -64,6 +64,9 @@ export function createConversationEventModel({
       const input = eventInputs.at(-1)
       assert.ok(input, 'The event must be delivered as a user message')
       const goalCompleted = requestContainsToolOutput(body, `${marker}_complete`)
+      if (phase === 'assigned_issue') {
+        assert.equal(eventInputs.length, 1, 'The Issue thread must receive one event message')
+      }
       if (phase === 'human') {
         assert.equal(eventInputs.length, 1, 'The input must contain exactly one event message')
         // The request after update_goal retains the same message ID in its history.
@@ -84,19 +87,22 @@ export function createConversationEventModel({
       )
       assert.equal(
         data.events[0].topicId,
-        preexistingChecks
+        prChecks
           ? PREEXISTING_CHECKS_TOPIC
           : workflowConflict
             ? WORKFLOW_CONFLICT_TOPIC
             : 'release-document',
         'Only the selected topic may wake the model'
       )
-      if (preexistingChecks) {
+      if (prChecks) {
         const { external } = data.events[0]
         assert.equal(external.eventType, 'tracked.status')
         assert.equal(external.payload.headRefOid, PREEXISTING_CHECKS_HEAD)
         assert.equal(external.payload.statusCheckRollup.state, 'FAILURE')
-        assert.ok(Date.parse(external.payload.failedAt) < Date.parse(data.sources[0].enabledAfter))
+        if (preexistingChecks)
+          assert.ok(
+            Date.parse(external.payload.failedAt) < Date.parse(data.sources[0].enabledAfter)
+          )
       }
       if (phase === 'workflow') {
         assert.equal(data.events[0].external.payload.id, 44231414768)
@@ -118,6 +124,8 @@ export function createConversationEventModel({
         )
       }
       completed.add(phase)
+      if (phase === 'assigned_issue')
+        return [assistantMessage(`${marker}_DONE：已收到 PR 检查结果，在原会话继续处理。`)]
       return [assistantMessage(`${marker}_DONE：已收到文档变化，在原会话继续处理。`)]
     }
     if (
@@ -146,7 +154,7 @@ export function createConversationEventModel({
         {
           subscription_key: marker,
           source: sources[phase],
-          match: preexistingChecks
+          match: prChecks
             ? {
                 '/eventType': 'git.event',
                 '/topicId': PREEXISTING_CHECKS_TOPIC,
@@ -157,7 +165,7 @@ export function createConversationEventModel({
             : {
                 '/eventType': workflowConflict ? 'git.event' : 'message.received',
                 '/topicId': workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
-                ...(phase === 'workflow'
+                ...(workflowCompletion
                   ? {
                       '/external/eventType': 'tracked.workflow_run',
                       '/external/payload/id': 44231414768,
@@ -182,7 +190,10 @@ export function createConversationEventModel({
                       }
                     : {}),
               },
-          continuation: `${marker} 文档有变化，请继续原任务。`,
+          continuation:
+            phase === 'assigned_issue'
+              ? `${marker} PR 检查结果有变化，请继续原任务。`
+              : `${marker} 文档有变化，请继续原任务。`,
           wait_for_event: usesGoal,
         },
       ],
@@ -252,7 +263,7 @@ export function createConversationEventModel({
             item.id ===
             (preexistingChecks
               ? 'preexisting-checks-record'
-              : phase === 'human'
+              : ['human', 'workflow_replay'].includes(phase)
                 ? 'long-archive-record'
                 : 'archive-record')
         )
@@ -273,6 +284,8 @@ export function createConversationEventModel({
         })
       )
     if (phase === 'human') onQuestion(readMcpToolOutput(body, `${marker}_question`))
+    if (phase === 'assigned_issue')
+      return [assistantMessage(`${marker}_WAITING：已订阅 PR 检查，事件到达后会自动继续。`)]
     return [assistantMessage(`${marker}_WAITING：已订阅发布文档变化，事件到达后会自动继续。`)]
   }
 

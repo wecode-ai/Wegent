@@ -105,6 +105,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn stop_preparing_turn_before_send_gate(
         &self,
         task_id: &str,
+        role_attempt: Option<u64>,
     ) -> Result<bool, AppIpcError> {
         let mut preparing = self
             .preparing_turns
@@ -113,6 +114,7 @@ impl RuntimeWorkRpcHandler {
         let Some(preparation) = preparing.get_mut(task_id) else {
             return Ok(false);
         };
+        self.check_role_stop_attempt(task_id, role_attempt)?;
         let owner = preparation.owner_request.clone();
         let mut active = self
             .active_local_executions

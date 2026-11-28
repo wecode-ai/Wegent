@@ -1,10 +1,6 @@
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import {
-  delegationResultLabel,
-  dingTalkInboxScope,
-} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,6 +19,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { useState } from 'react'
+import { resolveAssistantExecutionDevice } from './personalAssistantDeviceSettings'
 import { StandInConversation } from './StandInConversation'
 import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -38,6 +35,7 @@ type Props = {
   active: boolean
   settings: PersonalStandInSettings
   account?: PersonalAssistantAccount
+  isKnownAssistantDevice?: (id: string) => boolean
   projects: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -47,7 +45,10 @@ type Props = {
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
   const definition = props.account?.definitions.find(item => item.roleId === '@primary')
-  const conversationDevice = definition?.bot.spec?.execution_policy?.environment_id ?? deviceId
+  const configured = definition?.bot.spec?.execution_policy?.environment_id
+  const conversationDevice = props.isKnownAssistantDevice
+    ? resolveAssistantExecutionDevice(configured, undefined, deviceId, props.isKnownAssistantDevice)
+    : (configured ?? deviceId)
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')
@@ -55,8 +56,7 @@ export function StandInHomeWorkspace(props: Props) {
     services.standInApi,
     userId,
     deviceId,
-    active && (view === 'list' || view === 'conversation'),
-    dingTalkInboxScope(settings.primary?.delegation)
+    active && (view === 'list' || view === 'conversation')
   )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
@@ -277,34 +277,6 @@ export function StandInHomeWorkspace(props: Props) {
                               ? CircleAlert
                               : Circle
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
-                      const decisionLabel = delegationResultLabel(work?.delegationResult)
-                      if (work?.source.delegated && !work.task) {
-                        const takenOver = work.takenOverAt || work.delegationResult?.takenOver
-                        const ownerLabel = 'standIn.dingtalk_delegation.result_taken_over'
-                        return (
-                          <div
-                            key={item.key}
-                            data-testid={`personal-home-delegated-work-${item.task.taskId}`}
-                            className="px-4 py-3 text-sm"
-                          >
-                            <p className="font-medium">{item.task.title}</p>
-                            <p>
-                              {t(
-                                decisionLabel ??
-                                  (takenOver
-                                    ? ownerLabel
-                                    : `standIn.workspace.inbox_${work.status}`)
-                              )}
-                            </p>
-                            {decisionLabel && takenOver && <p>{t(ownerLabel)}</p>}
-                            {work.delegationResult?.reason && (
-                              <p className="break-words text-xs text-text-secondary">
-                                {work.delegationResult.reason}
-                              </p>
-                            )}
-                          </div>
-                        )
-                      }
                       const status =
                         work && work.status !== 'sent'
                           ? t(`standIn.workspace.inbox_${work.status}`)

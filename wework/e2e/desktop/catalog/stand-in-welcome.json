@@ -1,0 +1,18 @@
+{
+  "order": 42550,
+  "scenario": "./scenarios/stand-in-welcome.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/src/features/todo/StandInWelcome.tsx",
+    "wework/src/features/todo/standInWelcomeMotion.ts",
+    "wework/src/features/todo/StandInOverviewPage.tsx",
+    "wework/src/features/todo/StandInOnboarding.tsx"
+  ],
+  "ci": {
+    "core": {
+      "order": 31550,
+      "shard": 3,
+      "position": 2950
+    }
+  }
+}

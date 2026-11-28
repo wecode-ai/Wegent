@@ -179,6 +179,9 @@ import {
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   GUIDANCE_SCROLL_MESSAGE,
+  GUIDANCE_ATTACHMENT_CONTENT,
+  GUIDANCE_CORRECTION_PROMPT,
+  GUIDANCE_CORRECTION_COMPLETION,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -757,10 +760,13 @@ class DesktopE2EServer {
     desktopScenario?.attachServer?.(this.server)
   }
 
-  async start() {
+  async start({
+    modelPort = DESKTOP_MODEL_SERVER_PORT,
+    controlPort = DESKTOP_CONTROL_SERVER_PORT,
+  } = {}) {
     await Promise.all([
-      this.listen(this.server, DESKTOP_MODEL_SERVER_PORT),
-      this.listen(this.controlServer, DESKTOP_CONTROL_SERVER_PORT),
+      this.listen(this.server, modelPort),
+      this.listen(this.controlServer, controlPort),
     ])
     const address = this.server.address()
     const controlAddress = this.controlServer.address()
@@ -864,10 +870,12 @@ class DesktopE2EServer {
   }
 
   fail(error, response) {
-    if (!response.headersSent) {
-      json(response, 500, { error: error instanceof Error ? error.message : String(error) })
-    } else if (!response.writableEnded) {
-      response.destroy(error instanceof Error ? error : undefined)
+    if (response) {
+      if (!response.headersSent) {
+        json(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      } else if (!response.writableEnded) {
+        response.destroy(error instanceof Error ? error : undefined)
+      }
     }
     if (this.fatalError) return
     this.fatalError = error instanceof Error ? error : new Error(String(error))
@@ -3141,6 +3149,10 @@ class DesktopE2EServer {
             JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
             'The active turn did not apply the queued guidance'
           )
+          assert.ok(
+            JSON.stringify(body).includes(GUIDANCE_ATTACHMENT_CONTENT),
+            'The guidance did not deliver the attached file contents to the model'
+          )
         }
         this.guidanceScrollStage = 'complete'
         this.releaseGuidanceScrollGuidanceArrival()
@@ -3148,6 +3160,19 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.guidanceScrollStage === 'complete') {
+        assert.ok(
+          latestModelInputText(body).includes(GUIDANCE_CORRECTION_PROMPT),
+          'The new turn did not receive the guidance correction'
+        )
+        this.guidanceScrollStage = 'corrected'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_CORRECTION_COMPLETION),
           responseCompleted(responseId),
         ])
         return

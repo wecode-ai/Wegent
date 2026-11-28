@@ -10,7 +10,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: Option<&RuntimeTaskLink>,
         payload: Value,
-        activity: bool,
+        input: TaskStartInput,
         owner_message: Option<OwnerMessage>,
     ) -> Result<Option<Value>, AppIpcError> {
         let Some(link) = link.filter(|link| {
@@ -31,7 +31,7 @@ impl RuntimeWorkRpcHandler {
             });
             return Box::pin(self.send_message_with_activity_checks(
                 payload,
-                activity,
+                matches!(input, TaskStartInput::Activity),
                 owner_message,
                 false,
                 None,
@@ -40,7 +40,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map(Some);
         }
-        Box::pin(self.create_task_after_local_checks(payload, activity, None, None))
+        Box::pin(self.create_task_after_local_checks(payload, input, None, None))
             .await
             .map(Some)
     }

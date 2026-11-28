@@ -106,3 +106,29 @@ fn open_and_inspect_waits_for_page_stability_across_redirects() {
     );
     assert_eq!(explicit["url"], "/dashboard");
 }
+
+#[test]
+fn browser_tools_declare_conservative_read_only_and_destructive_annotations() {
+    let tools = super::tools::tools();
+    assert!(!tools.is_empty());
+    for tool in &tools {
+        let name = tool["name"].as_str().unwrap();
+        let annotations = tool["annotations"].as_object().expect(name);
+        let expected_read_only = matches!(
+            name,
+            "browser_inspect"
+                | "browser_snapshot"
+                | "browser_capabilities"
+                | "browser_native_input_probe"
+                | "browser_ax_probe"
+                | "browser_present_probe"
+        );
+        assert_eq!(annotations["readOnlyHint"], expected_read_only, "{name}");
+        assert_eq!(
+            annotations["destructiveHint"],
+            name == "browser_clear_data",
+            "{name}"
+        );
+        assert!(annotations["openWorldHint"].is_boolean(), "{name}");
+    }
+}

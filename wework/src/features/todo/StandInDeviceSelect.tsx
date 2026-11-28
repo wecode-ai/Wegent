@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo } from '@/types/api'
 import {
   SelectContent,
@@ -28,17 +29,19 @@ export function StandInDeviceSelect({
   readOnly?: boolean
 }) {
   const { t } = useTranslation('common')
+  const selectedDevice = findWorkbenchDevice(devices, value)
   if (readOnly) {
     return (
       <span className="px-2 text-sm text-text-secondary">
-        {devices.find(device => device.device_id === value)?.name ??
-          (value === currentDeviceId ? t('standIn.current_device') : value)}
+        {selectedDevice?.name ?? (value === currentDeviceId ? t('standIn.current_device') : value)}
       </span>
     )
   }
   return (
     <SelectRoot
-      value={normalizeSelectValue(value)}
+      value={normalizeSelectValue(
+        value === currentDeviceId ? value : (selectedDevice?.device_id ?? value)
+      )}
       disabled={disabled}
       onValueChange={selectedValue => {
         if (selectedValue !== null) return onChange(selectedValue)

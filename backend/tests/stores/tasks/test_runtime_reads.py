@@ -297,7 +297,8 @@ async def test_completion_cleanup_marks_every_page_without_loading_payloads(
     executor.delete_executor_task_async.assert_awaited_once_with(
         "executor-one", "default"
     )
-    assert len(statements) == 8
+    # One bounded preparation scan; guarded flag writes need no second hydration scan.
+    assert len(statements) == 4
     assert all("LIMIT" in sql for sql in statements)
     assert all(
         "subtasks.result" not in sql and "subtasks.prompt" not in sql

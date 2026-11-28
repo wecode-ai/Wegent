@@ -123,8 +123,8 @@ async function verifySearchOverlay(
     if (onWindows) return moveWindowsWindowPointer(control, point)
     return command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
   }
-  const pressAndRelease = point => {
-    if (linuxWindow) return clickLinuxPointer()
+  const pressAndRelease = (point, waitForLinuxPress) => {
+    if (linuxWindow) return clickLinuxPointer(1, waitForLinuxPress)
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     return clickPoint(command, point)
   }
@@ -132,7 +132,7 @@ async function verifySearchOverlay(
     if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     await movePointer(point)
-    await pressAndRelease(point)
+    await clickPoint(command, point)
   }
   const pagePath = join(resultDir, 'search-overlay-page.html')
   await writeFile(
@@ -225,7 +225,27 @@ async function verifySearchOverlay(
       5_000
     )
     console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
-    await pressAndRelease(ready.point)
+    // The X11 click helper queues the release before the renderer acknowledges
+    // the press. Wait for the trusted host press before sending the release.
+    await pressAndRelease(ready.point, () =>
+      waitForValue(
+        () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown ?? null'),
+        press =>
+          press?.trusted &&
+          press.target === 'runtime-search-button' &&
+          press.x === ready.point.x &&
+          press.y === ready.point.y,
+        'Native pointer press must reach the search trigger before release',
+        5_000
+      )
+    )
+    if (linuxWindow)
+      await waitForValue(
+        () => read('window.__weworkSearchTriggerMotion.clicks.pointerup ?? null'),
+        release => release?.trusted && release.target === 'runtime-search-button',
+        'Native pointer release must reach the search trigger',
+        5_000
+      )
     await waitForValue(
       () =>
         read(`(() => {

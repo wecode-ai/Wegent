@@ -173,6 +173,28 @@ pub(crate) fn stand_in_turn_versions(
     Some((ghost.to_owned(), memory))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScheduledRead {
+    Connections,
+    History,
+}
+
+impl ScheduledRead {
+    fn from_origin(origin: &Value) -> Option<Self> {
+        if origin["type"] != "stand_in_schedule" {
+            return None;
+        }
+        match (
+            origin["scheduledSourceRead"] == true,
+            origin["scheduledHistoryRead"] == true,
+        ) {
+            (true, false) => Some(Self::Connections),
+            (false, true) => Some(Self::History),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StandInMcpIdentity {
     pub task_id: String,
@@ -190,7 +212,9 @@ pub(crate) struct StandInMcpIdentity {
 
 pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcpIdentity> {
     let origin = request.extra.get("origin")?;
+    let scheduled_read = ScheduledRead::from_origin(origin);
     if origin["type"] == "stand_in_schedule"
+        && scheduled_read.is_none()
         && origin["weeklyReview"] != true
         && origin["memoryReview"] != true
     {
@@ -218,7 +242,7 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
     Some(StandInMcpIdentity {
         review: origin["type"] == "stand_in_schedule" && origin["weeklyReview"] == true,
         memory_review: origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true,
-        readonly_worker: origin["type"] == "stand_in_task",
+        readonly_worker: origin["type"] == "stand_in_task" || scheduled_read.is_some(),
         // Local executions may have no Backend task ID; the host binds their address each turn.
         task_id: request
             .extra
@@ -257,7 +281,13 @@ pub(crate) fn stand_in_mcp_client_config(
     context.stand_in_delivery =
         active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
+    context.stand_in_caller_command = request
+        .extra
+        .get("runtime_command_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let origin = &request.extra["origin"];
+    context.stand_in_scheduled_read = ScheduledRead::from_origin(origin);
     context.stand_in_role_delegation =
         (crate::task_runtime::personal_stand_in::supports_role_delegation(origin)
             && !request
@@ -314,7 +344,9 @@ fn profile_settings_schema() -> Value {
     let connection = json!({"type":"object","properties":{
         "providerId":{"type":"string"},"profile":{"type":"string"},
         "kind":{"type":"string"},"id":{"type":"string"},"name":{"type":"string"},
-        "scope":{"type":"string","enum":["all"]},"policy":policy
+        "scope":{"type":"string","enum":["all"]},
+        "collectionKey":{"type":"string","description":"Preserve any existing collection key. For a specific DingTalk group, use all-messages only when the user explicitly asks to receive every new message. Omit the field for mentions-only intake."},
+        "policy":policy
     },"required":["providerId","profile","kind","id","name","policy"]});
     let identity = json!({"type":"object","properties":{
         "enabled":{"type":"boolean","description":"Desired state AFTER the user confirms the draft. Use true when asked to enable the new role; drafting never enables it before confirmation."},"prompt":{"type":"string"},
@@ -323,7 +355,7 @@ fn profile_settings_schema() -> Value {
         "calendar":{"type":"object","properties":{"policy":policy},"required":["policy"]},
         "model":{"type":"object","description":"Copy the chosen model reference from get_profile when inheriting the primary model; never include credentials."},
         "modelOptions":{"type":"object"},
-        "workspace":{"type":"object","description":"Copy the primary workspace from get_profile when inheriting its directory."}
+        "workspace":{"type":"object","description":"Copy the primary workspace when inheriting it. For another directory, select an existing local project on the execution device. For local file work, use current_workspace.","properties":{"projectKey":{"type":"string","description":"Exact local project key."},"executionMode":{"type":"string","enum":["current_workspace","git_worktree"]},"branch":{"type":"string"}},"required":["projectKey","executionMode"]}
     },"required":["enabled","prompt"]});
     let mut role = identity.clone();
     role["properties"]["id"] = json!({"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"});
@@ -375,7 +407,14 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .as_ref()
         .is_some_and(|identity| identity.readonly_worker)
     {
-        let mut tools = super::stand_in_tasks::read_tools();
+        let mut tools = if context.stand_in_scheduled_read == Some(ScheduledRead::Connections) {
+            Vec::new()
+        } else {
+            super::stand_in_tasks::read_tools()
+        };
+        if context.stand_in_scheduled_read == Some(ScheduledRead::History) {
+            return tools;
+        }
         if context.stand_in_role_delegation {
             tools.extend(super::stand_in_tasks::role_delegation_tools());
             return tools;
@@ -496,7 +535,13 @@ pub(super) async fn call(
             .chain(super::stand_in_tasks::role_delegation_tools())
             .any(|tool| tool["name"] == name)
     {
-        return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        return match super::stand_in_tasks::call_with_command(
+            identity.clone(),
+            name.to_owned(),
+            arguments,
+            context.stand_in_caller_command.clone(),
+        )
+        .await
         {
             Ok(value) => text_result(value.to_string(), false),
             Err(error) => text_result(error, true),
@@ -885,9 +930,7 @@ async fn reply_to_work(
             .ok_or("Source connection was removed; reply was not sent")?;
     if !email && crate::task_runtime::personal_stand_in::is_primary_dingtalk(role, source) {
         if source["delegated"] == true || !identity.ask_before_act {
-            return Err(
-                "Automatic primary DingTalk replies require an eligible delegation decision".into(),
-            );
+            return Err("Primary DingTalk replies require native confirmation".into());
         }
         if !crate::task_runtime::personal_stand_in::matches_delegation_account(
             &settings,

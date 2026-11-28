@@ -1,4 +1,7 @@
 import {
+  ACTIVE_WORKBENCH_SELECTOR,
+  CHECKPOINT_TASK_COMPLETION_TEXT,
+  CHECKPOINT_TASK_PROMPT,
   CLOUD_DEVICE_ID,
   CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -11,13 +14,268 @@ import {
   fetchJson,
   join,
   mkdir,
+  writeFile,
 } from './shared.mjs'
-import { MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
+import { CLOUD_DEVICE_LIFECYCLE_THRESHOLD, MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { sendPrompt } from './conversation-navigation.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const BUSY_MODEL_SCENARIO = 'cloud_device_restart_busy'
 const RESTART_DIALOG = '[data-testid="confirm-restart-device-dialog"]'
+const UPGRADE_REMINDER = '[data-testid="cloud-device-upgrade-reminder"]'
+const TERMINAL_PANEL = '[data-testid="settings-device-terminal-panel"]'
+const CONFIRM_RESTART = '[data-testid="confirm-restart-device-button"]'
+const CANCEL_RESTART = '[data-testid="cancel-restart-device-button"]'
+const WAITING_ONLINE = /处于离线状态|is restarting and offline/i
+const RECOVERED = /重新在线|back online/i
+
+async function useTerminal(control, deviceId = CLOUD_DEVICE_ID) {
+  await control.command('click', `[data-testid="connection-terminal-button-${deviceId}"]`)
+  await control.command('waitFor', TERMINAL_PANEL, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+}
+
+async function closeTerminal(control) {
+  await control.command('click', '[data-testid="settings-device-terminal-close-button"]')
+}
+
+async function readWorkbenchState(control) {
+  const snapshot = await control.command('getWorkbenchDebugSnapshot', 'body', {
+    value: 'state-only',
+  })
+  return JSON.parse(snapshot).workbench
+}
+
+async function simulateNextReminderDay(control) {
+  const { apiBaseUrl, user } = JSON.parse(
+    await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+  )
+  assert.ok(apiBaseUrl && user?.id != null, 'Cloud reminder requires an authenticated device scope')
+  const scope = JSON.stringify([apiBaseUrl, user.id])
+  const key = `wework:cloud-upgrade-reminder:${JSON.stringify([scope, MANAGED_CLOUD_SANDBOX_ID])}`
+  const previous = await control.command('getLocalStorageItem', 'body', { value: key })
+  assert.match(previous, /^\d{4}-\d{1,2}-\d{1,2}$/, 'The previous reminder did not persist its day')
+  await control.command('setLocalStorageItem', 'body', {
+    value: JSON.stringify({ key, value: '2000-1-1' }),
+  })
+}
+
+async function verifyUpgradeReminder(control, cloud) {
+  const device = await cloud.device(CLOUD_DEVICE_ID)
+  assert.equal(device.executor_version.replace(/^v/i, ''), CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
+  assert.deepEqual(device.cloud_upgrade_reminder, {
+    target_version: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+  })
+  const sibling = await cloud.device(SANDBOX_SIBLING_ID)
+  assert.equal(
+    sibling.update_available,
+    true,
+    'The newer sibling must still have an available update'
+  )
+  assert.equal(
+    sibling.cloud_upgrade_reminder,
+    undefined,
+    'A version above the threshold must not prompt'
+  )
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false })
+
+  await useTerminal(control, SANDBOX_SIBLING_ID)
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false, stableMs: 250 })
+  await closeTerminal(control)
+
+  await useTerminal(control)
+  await control.command('waitFor', UPGRADE_REMINDER, {
+    text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.ok(
+    (await control.command('getText', UPGRADE_REMINDER)).includes(CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
+  )
+  await captureVerificationScreenshot(control, 'cloud-device-upgrade-reminder.png')
+  await control.command('click', '[data-testid="cancel-restart-device-button"]')
+  assert.equal(cloud.sandboxRestartRequestCount(), 1, 'Postponing must not restart the device')
+  await closeTerminal(control)
+
+  await control.command('navigate', 'body', { value: '/settings/general' })
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await useTerminal(control)
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false, stableMs: 250 })
+  await closeTerminal(control)
+}
+
+async function verifyWorkspaceReminderActions(control, cloud, createProject) {
+  const { composerSelector } = await createProject()
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false, stableMs: 250 })
+
+  await simulateNextReminderDay(control)
+  control.setScenario('checkpoint_task')
+  try {
+    await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+    await control.command('waitFor', UPGRADE_REMINDER, {
+      text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', CANCEL_RESTART)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: CHECKPOINT_TASK_COMPLETION_TEXT,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const task = (await readWorkbenchState(control))?.currentRuntimeTask
+    assert.equal(
+      task?.deviceId,
+      CLOUD_DEVICE_ID,
+      'The submitted task must use the old cloud Executor'
+    )
+  } finally {
+    control.setScenario('initial')
+  }
+
+  await simulateNextReminderDay(control)
+  const marker = 'cloud-upgrade-reminder-evidence.txt'
+  const markerContent = 'Cloud device reminder file fixture'
+  await writeFile(join(cloud.workspacePath, marker), markerContent + '\n')
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  const panel = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  if (panel.testIds.includes('right-workspace-new-tab-button')) {
+    await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+  }
+  await control.command('clickWhenEnabled', '[data-testid="right-workspace-file-option"]')
+  await control.command('waitFor', UPGRADE_REMINDER, {
+    text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+  })
+  await control.command('click', CANCEL_RESTART)
+  await control.command('fill', '[data-testid="workspace-file-search-input"]', { value: marker })
+  await control.command('clickWhenEnabled', `button[data-type="item"][aria-label="${marker}"]`)
+  await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+    text: markerContent,
+  })
+  assert.equal(
+    cloud.sandboxRestartRequestCount(),
+    1,
+    'Deferring task and file reminders restarted the sandbox'
+  )
+  console.log(
+    '[cloud-device-lifecycle] Submitting a cloud task and opening cloud files prompted on explicit use'
+  )
+}
+
+async function verifyBusyReminder(control, cloud) {
+  // Native work is checked by the restart endpoint even when the list's legacy slots are idle.
+  await useTerminal(control)
+  await control.command('waitFor', UPGRADE_REMINDER, {
+    text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+  })
+  await control.command('clickWhenEnabled', CONFIRM_RESTART)
+  await waitForRestartStatus(
+    control,
+    `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`,
+    /Cloud device has running tasks/i,
+    'Confirming the reminder did not surface the Backend busy-sandbox rejection'
+  )
+  assert.equal(
+    cloud.sandboxRestartRequestCount(),
+    0,
+    'The busy reminder reached the restart provider'
+  )
+  assert.equal((await cloud.device(CLOUD_DEVICE_ID))?.status, 'online')
+  assert.ok((await runtimeSettings(cloud, SANDBOX_SIBLING_ID)).active_tasks > 0)
+  await captureVerificationScreenshot(control, 'cloud-device-reminder-busy.png')
+  await closeTerminal(control)
+  console.log('[cloud-device-lifecycle] Confirming the reminder preserved the active sibling task')
+}
+
+async function verifyReminderRestart(control, cloud) {
+  const restartStatus = `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`
+  const terminalButton = `[data-testid="connection-terminal-button-${CLOUD_DEVICE_ID}"]`
+  const target = CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
+  await waitForCondition(
+    async () => {
+      const [primary, sibling] = await Promise.all([
+        runtimeSettings(cloud, CLOUD_DEVICE_ID),
+        runtimeSettings(cloud, SANDBOX_SIBLING_ID),
+      ])
+      return primary.active_tasks === 0 && sibling.active_tasks === 0
+    },
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The sandbox did not become idle before the reminder upgrade'
+  )
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await simulateNextReminderDay(control)
+  await useTerminal(control)
+  await control.command('waitFor', UPGRADE_REMINDER, { text: target })
+  await control.command('waitFor', CONFIRM_RESTART, { enabled: true })
+
+  const before = cloud.sandboxRestartRequestCount()
+  const restart = cloud.armSandboxRestart()
+  try {
+    await control.command('click', CONFIRM_RESTART)
+    assert.equal(
+      (await cloud.waitForSandboxRestartRequest(before)).sandboxId,
+      MANAGED_CLOUD_SANDBOX_ID
+    )
+    restart.allowShutdown()
+    await waitForRestartStatus(
+      control,
+      restartStatus,
+      WAITING_ONLINE,
+      'The upgrade did not observe the cloud Executor going offline'
+    )
+    restart.allowStartup()
+    await restart.finish()
+
+    const old = await cloud.device(CLOUD_DEVICE_ID)
+    assert.equal(old.status, 'online')
+    assert.equal(old.executor_version.replace(/^v/i, ''), CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
+    await waitForCondition(
+      async () => {
+        const device = (await readWorkbenchState(control))?.devices.find(
+          item => item.device_id === CLOUD_DEVICE_ID
+        )
+        return (
+          device?.status === 'online' &&
+          device.executor_version?.replace(/^v/i, '') === CLOUD_DEVICE_LIFECYCLE_THRESHOLD
+        )
+      },
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The renderer did not consume the old-version online report'
+    )
+    assert.match(
+      await control.command('getText', restartStatus),
+      WAITING_ONLINE,
+      'The old Executor version incorrectly completed the upgrade'
+    )
+    await assert.rejects(control.command('click', terminalButton), /disabled/)
+    await captureVerificationScreenshot(control, 'cloud-device-reminder-old-version.png')
+
+    const [statusResult, restartResult] = await Promise.allSettled([
+      waitForRestartStatus(
+        control,
+        restartStatus,
+        RECOVERED,
+        'The upgrade did not recover on the published version'
+      ),
+      cloud.restartCloudExecutor({ version: target }),
+    ])
+    if (statusResult.status === 'rejected') throw statusResult.reason
+    if (restartResult.status === 'rejected') throw restartResult.reason
+    const upgraded = await cloud.device(CLOUD_DEVICE_ID)
+    assert.equal(upgraded.status, 'online')
+    assert.equal(upgraded.executor_version.replace(/^v/i, ''), target)
+    assert.equal(upgraded.cloud_upgrade_reminder, undefined)
+    await control.command('waitFor', terminalButton, { enabled: true })
+    await captureVerificationScreenshot(control, 'cloud-device-reminder-target-version.png')
+    assert.equal(
+      cloud.sandboxRestartRequestCount(),
+      before + 1,
+      'Upgrade sent multiple restart requests'
+    )
+    console.log(
+      '[cloud-device-lifecycle] Reminder restarted the sandbox and recovered only on the published version'
+    )
+  } finally {
+    await restart.finish()
+  }
+}
 
 async function waitForCondition(predicate, timeoutMs, message) {
   const startedAt = Date.now()
@@ -197,7 +455,7 @@ export async function verifyCloudDeviceRestartFocus(control, cloud) {
   console.log('[cloud-device-lifecycle] Restart initially focused Cancel; Escape dismissed it')
 }
 
-export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
+export async function verifyCloudDeviceLifecycleFlow(control, cloud, createProject) {
   const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
   const versionBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
   const restartStatus = `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`
@@ -264,6 +522,7 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
     )
     console.log('[cloud-device-lifecycle] Forced request rejected for a non-owner')
     assert.equal(cloud.sandboxRestartRequestCount(), 0, 'A rejected request reached the sandbox')
+    await verifyBusyReminder(control, cloud)
 
     await control.command('click', versionBadge)
     await control.command('waitFor', RESTART_DIALOG, {
@@ -342,6 +601,12 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
     assert.equal(recoveredDevice?.executor_version, currentDevice.executor_version)
     assert.equal(recoveredDevice?.runtime_instance_id, currentDevice.runtime_instance_id)
     console.log('[cloud-device-lifecycle] Both sandbox Executors went offline and recovered')
+    control.releaseScenarioResponse(BUSY_MODEL_SCENARIO)
+    control.setScenario('initial')
+    await simulateNextReminderDay(control)
+    await verifyUpgradeReminder(control, cloud)
+    await verifyWorkspaceReminderActions(control, cloud, createProject)
+    await verifyReminderRestart(control, cloud)
   } finally {
     control.releaseScenarioResponse(BUSY_MODEL_SCENARIO)
     control.setScenario('initial')

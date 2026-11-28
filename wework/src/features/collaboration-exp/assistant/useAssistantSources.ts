@@ -1,26 +1,58 @@
-import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
 import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { LOCAL_USER } from '@/api/local/localSession'
+import type { StandInBindingTarget } from '@/api/standIn'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useStandInInbox } from '@/features/todo/useStandInInbox'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createAssistantSourcesModel } from './assistantSourcesModel'
 
 export function useAssistantSources(active: boolean, includeProposals = true) {
-  const { services, state } = useWorkbench()
+  const workspace = useContext(AssistantSourceContext)
+  const independent = useAssistantSourceState(active && !workspace, includeProposals)
+  return workspace ?? independent
+}
+
+export const AssistantSourceContext = createContext<ReturnType<
+  typeof useAssistantSourceState
+> | null>(null)
+
+export function useAssistantSourceState(
+  active: boolean,
+  includeProposals: boolean,
+  target?: StandInBindingTarget,
+  workspaceServices?: WorkbenchServices
+) {
+  const workbench = useWorkbench()
+  const services = workspaceServices ?? workbench.services
+  const { state } = workbench
   const cloud = useContext(CloudConnectionContext)
   const userId = Number(state.user?.id ?? LOCAL_USER.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
-  const scope = JSON.stringify([userId, backendUrl])
+  const expectedUser = target?.userId
+  const expectedDevice = target?.deviceId
+  const scope = JSON.stringify([userId, backendUrl, expectedUser, expectedDevice])
   const api = services.standInApi
+  const connected = Boolean(cloud?.isConnected)
+  const devices = state.devices
   const model = useMemo(
-    () => createAssistantSourcesModel(services, api, userId, scope),
-    [services, api, userId, scope]
+    () =>
+      createAssistantSourcesModel(
+        services,
+        api,
+        userId,
+        scope,
+        expectedUser !== undefined && expectedDevice !== undefined
+          ? { userId: expectedUser, deviceId: expectedDevice }
+          : undefined
+      ),
+    [services, api, userId, scope, expectedUser, expectedDevice]
   )
   const subscribe = useCallback(
-    (listener: () => void) => model.subscribe(listener, includeProposals),
-    [model, includeProposals]
+    (listener: () => void) => model.subscribe(listener, includeProposals, devices, connected),
+    [model, includeProposals, devices, connected]
   )
   const snapshot = useSyncExternalStore(
     active ? subscribe : subscribeIdleResource,

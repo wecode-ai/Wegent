@@ -13,7 +13,7 @@ import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 const api = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
 vi.mock('@/desktop/appPreferences', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
-  getAppPreferences: api.get,
+  getReadableAppPreferences: api.get,
   updateAppPreferences: api.update,
 }))
 vi.mock('@/telemetry/client', () => ({ track: vi.fn() }))

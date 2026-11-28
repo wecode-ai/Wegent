@@ -280,6 +280,9 @@ export function IssueChatMessage({
     "data-flash": flash ? "true" : undefined,
   };
   const text = activityDisplayBody(message.content, "");
+  const externalProgress = typeof message.metadata.externalProgress === "string"
+    ? message.metadata.externalProgress
+    : null;
   const isAgent = message.sender.type === "agent";
   const isManager = agentRole === "manager";
   const isManagerStatusComment =
@@ -478,6 +481,12 @@ export function IssueChatMessage({
     );
   const body = (
     <>
+      {externalProgress && !isSucceeded ? (
+        <p className="mb-2 break-words text-sm text-text-secondary" role="status"
+          data-testid={`external-agent-progress-${message.messageId}`}>
+          {externalProgress}
+        </p>
+      ) : null}
       {text ? (
         <div
           className={cn(

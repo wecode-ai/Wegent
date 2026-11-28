@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict'
 
+export async function openStandInConversationFromHome(control, destination, timeoutMs) {
+  const welcome = '[data-testid="stand-in-welcome-start"]'
+  const timing = timeoutMs === undefined ? {} : { timeoutMs }
+  await control.command('waitFor', `${welcome}, ${destination}`, { visible: true, ...timing })
+  if (Number(await control.command('getElementCount', welcome, { visible: true })) > 0)
+    await control.command('clickWhenEnabled', welcome, timing)
+  await control.command('waitFor', destination, { visible: true, ...timing })
+}
+
 export async function openStandInDetails(control) {
+  const details = '[data-testid="stand-in-details-open"]'
+  await openStandInConversationFromHome(control, details)
   if (
     (await control.command('getElementCount', '[data-testid="stand-in-details-popover"]')) === '0'
   )
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-details-open"]')
+    await control.command('clickWhenEnabled', details)
   await control.command('waitFor', '[data-testid="stand-in-details-popover"]')
 }
 
@@ -49,7 +60,19 @@ export async function verifyReadOnlyWorkActivity(control, taskId, captureScreens
 export async function openStandInSettings(control) {
   await openStandInDetails(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  const advanced = '[data-testid="stand-in-chat-advanced"]'
+  if ((await control.command('getElementCount', advanced)) !== '0')
+    await control.command('clickWhenEnabled', advanced)
   await control.command('waitFor', '[data-testid="stand-in-profile-panel"]')
+}
+
+export async function closeStandInSettingsAfterBinding(control, timeoutMs) {
+  // Binding reconciliation can unmount the settings between UI commands.
+  await control.command('clickIfPresent', '[data-testid="stand-in-primary-profile-close"]')
+  await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
+    visible: false,
+    timeoutMs,
+  })
 }
 
 /** Exercise the real shared header, memory discard guard and source hierarchy. */
@@ -60,7 +83,7 @@ export async function verifyStandInProfileNavigation(control, captureScreenshot)
   await openStandInDetails(control)
   await control.command('waitFor', '[data-testid="stand-in-guide-open"]')
   await absent('[data-testid="stand-in-details-identity"] img')
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await openStandInSettings(control)
   await control.command('waitFor', '[data-testid="stand-in-primary-profile"]')
   for (const id of ['stand-in-primary-enabled', 'stand-in-guide-open', 'stand-in-role-chat'])
     await absent(`${panel} [data-testid="${id}"]`)

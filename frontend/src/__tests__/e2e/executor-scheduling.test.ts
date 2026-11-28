@@ -21,7 +21,7 @@ const independent = new Set([
 ])
 const expectedCounts: Record<string, number> = {
   'tasks/chat-sandbox-connector.spec.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 26,
+  'tasks/agent-conversation-regression.spec.ts': 27,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,

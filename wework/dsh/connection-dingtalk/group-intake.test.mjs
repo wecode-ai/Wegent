@@ -25,7 +25,7 @@ const conversation = (id, messages, singleChat = false) => ({
   singleChat,
   messages,
 })
-function fixture() {
+function fixture(additionalConversations = []) {
   const calls = []
   const state = { hasMore: true, nextCursor: 'next', failure: null }
   const ctx = {
@@ -51,6 +51,7 @@ function fixture() {
               ]),
               conversation('unselected', [message('foreign')]),
               conversation('feedback', [message('direct')], true),
+              ...additionalConversations,
             ],
           },
         }
@@ -121,7 +122,7 @@ test('all-message intake searches only the selected group with the existing wind
   assert.equal(checkpoint.cursor, '0')
 })
 
-test('default and all-group subscriptions continue to request mentions only', async () => {
+test('default and all-group mentions subscriptions request mentions only', async () => {
   for (const patch of [{}, { id: '*', scope: 'all' }]) {
     const { ctx, calls } = fixture()
     const { collectionKey: _key, ...mentions } = source
@@ -130,6 +131,41 @@ test('default and all-group subscriptions continue to request mentions only', as
     assert.equal(calls.at(-1).arguments.conversationIds, undefined)
     assert.equal(calls.at(-1).arguments.group, patch.scope ? undefined : 'feedback')
   }
+})
+
+test('all messages collects unmentioned group messages and incoming chats into distinct sources', async t => {
+  t.mock.method(console, 'info', () => {})
+  const { ctx, calls } = fixture([
+    conversation('photos', [message('image', 'peer', { content: {}, messageType: 'image' })]),
+    conversation('dm', [message('attachment', 'peer', { content: {}, messageType: 'file' })], true),
+  ])
+  const provider = createProvider()
+  const allGroups = { ...source, id: '*', scope: 'all' }
+  const checkpoint = { after: source.enabledAfter, until: '2026-11-13T00:02:00Z', cursor: '0' }
+  const { events } = await provider.collect(ctx, { source: allGroups, checkpoint })
+  assert.equal(calls.at(-1).tool, 'searchMessages')
+  assert.equal(calls.at(-1).arguments.conversationIds, undefined)
+  assert.deepEqual(
+    events.map(({ id, resource }) => [id, resource.id]),
+    [
+      ['question', 'feedback'],
+      ['manual', 'feedback'],
+      ['foreign', 'unselected'],
+      ['image', 'photos'],
+    ]
+  )
+  const { collectionKey: _key, ...direct } = allGroups
+  const privateChats = await provider.collect(ctx, {
+    source: { ...direct, kind: 'direct' },
+    checkpoint,
+  })
+  assert.deepEqual(
+    privateChats.events.map(({ id, resource }) => [id, resource.id]),
+    [
+      ['direct', 'other'],
+      ['attachment', 'peer'],
+    ]
+  )
 })
 
 test('group catch-up advances in bounded windows after draining each cursor', async t => {
@@ -172,9 +208,11 @@ test('group catch-up advances in bounded windows after draining each cursor', as
   assert.deepEqual(live.nextCheckpoint, { after: '2026-11-13T00:35:00.000Z', cursor: '0' })
 })
 
-test('all-message mode rejects wildcard, direct and multiple-group scopes before any CLI read', async () => {
+test('all-message mode rejects invalid, delegated wildcard and direct scopes before any CLI read', async () => {
   for (const patch of [
-    { id: '*', scope: 'all' },
+    { id: '*', scope: 'all', delegated: true },
+    { id: '*' },
+    { scope: 'all' },
     { kind: 'direct' },
     { id: 'first,second' },
     { id: 'first\nsecond' },
@@ -230,10 +268,18 @@ test('protocol integration collects unmentioned messages through the real regist
     assert.equal(result.hasMore, false)
     assert.equal(calls.at(-1).arguments.conversationIds, 'feedback')
     assert.equal(calls.at(-1).arguments.start, source.enabledAfter)
+    const all = await registry.call(source.providerId, 'collect', {
+      source: { ...source, id: '*', scope: 'all' },
+    })
+    assert.deepEqual(
+      all.events.map(row => row.id),
+      ['question', 'manual', 'foreign']
+    )
+    assert.equal(calls.at(-1).arguments.conversationIds, undefined)
     const before = calls.length
     await assert.rejects(
-      registry.call(source.providerId, 'collect', { source: { ...source, id: '*', scope: 'all' } }),
-      { code: 'dingtalk_response_invalid' }
+      registry.call(source.providerId, 'collect', { source: { ...source, id: '*' } }),
+      { code: 'invalid_connection' }
     )
     assert.equal(calls.length, before)
   } finally {

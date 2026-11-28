@@ -175,6 +175,18 @@ fn main() {
             read_scoped_messages("selected-group-mentions")
         }
         ["chat", "message", "search-advanced", ..]
+            if option(&arguments, "--profile") == Some(SCOPED_PROFILE)
+                && option(&arguments, "--conversation-ids") == Some("scoped-group") =>
+        {
+            record("selected-group-messages");
+            if let Some(path) = env::var_os("WEWORK_E2E_DINGTALK_HANDBOOK_MESSAGES") {
+                let payload = fs::read_to_string(path).unwrap();
+                print!("{payload}");
+                return;
+            }
+            (EMPTY_MESSAGES, 0)
+        }
+        ["chat", "message", "search-advanced", ..]
             if option(&arguments, "--profile") == Some(SCOPED_PROFILE) =>
         {
             assert_eq!(
@@ -184,8 +196,58 @@ fn main() {
             assert_eq!(option(&arguments, "--sender-ids"), Some("scoped-contact"));
             read_scoped_messages("selected-direct-messages")
         }
+        ["chat", "+messages-list", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES").is_some() =>
+        {
+            assert_eq!(option(&arguments, "--group"), Some("scoped-group"));
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            assert!(option(&arguments, "--time").is_some());
+            record("daily-group-read");
+            let path = env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES").unwrap();
+            let payload = fs::read_to_string(path).unwrap();
+            print!("{payload}");
+            return;
+        }
+        ["calendar", "event", "list", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_CALENDAR").is_some() =>
+        {
+            assert_eq!(option(&arguments, "--calendar-id"), Some("primary"));
+            assert!(option(&arguments, "--start").is_some());
+            assert!(option(&arguments, "--end").is_some());
+            record("calendar-read");
+            (
+                r#"{"success":true,"result":[{"id":"event-fixture-1","summary":"DAILY_CHECK：评审会后的动作尚未指定负责人"}]}"#,
+                0,
+            )
+        }
         ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => {
             (EMPTY_MESSAGES, 0)
+        }
+        ["chat", "message", "reply", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_HANDBOOK_REPLY").is_some() =>
+        {
+            record("send");
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            assert_eq!(
+                option(&arguments, "--conversation-id"),
+                Some("scoped-group")
+            );
+            assert_eq!(
+                option(&arguments, "--ref-msg-id"),
+                Some("welcome-launch-handbook")
+            );
+            assert_eq!(
+                option(&arguments, "--ref-sender"),
+                Some("fixture-colleague")
+            );
+            assert_eq!(
+                option(&arguments, "--text"),
+                Some("根据《产品客服手册》v3 第 2 节，本次验收窗口是 18:00。")
+            );
+            (
+                r#"{"success":true,"result":{"openMessageId":"welcome-handbook-reply"}}"#,
+                0,
+            )
         }
         ["chat", "message", "reply" | "send" | "send-by-bot", ..] => {
             record("send");

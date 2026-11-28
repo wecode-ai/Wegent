@@ -141,6 +141,38 @@ impl RuntimeWorkRpcHandler {
         Ok((run.to_owned(), through))
     }
 
+    pub(super) fn capture_scheduled_history(
+        &self,
+        identity: &StandInMcpIdentity,
+        tasks: &Value,
+    ) -> Result<Vec<String>, AppIpcError> {
+        if identity.work.is_some()
+            || identity.readonly_worker
+            || !matches!(identity.role.as_deref(), None | Some("@primary"))
+        {
+            return Err(denied());
+        }
+        let tasks = tasks
+            .as_array()
+            .filter(|items| !items.is_empty() && items.len() <= 50)
+            .ok_or_else(denied)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let scope = self.conversation_scope(identity, &store)?;
+        let mut ids = Vec::new();
+        for item in tasks {
+            let id = item.as_str().ok_or_else(denied)?;
+            let task = self.local_task_link(id).ok_or_else(denied)?;
+            if ids.iter().any(|existing| existing == id)
+                || !self.conversation_visible(&task, identity, &scope, &store)
+            {
+                return Err(denied());
+            }
+            ids.push(id.to_owned());
+        }
+        Ok(ids)
+    }
+
     pub(super) fn conversation_scope(
         &self,
         identity: &StandInMcpIdentity,
@@ -151,6 +183,8 @@ impl RuntimeWorkRpcHandler {
         }
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
+        let scheduled_history =
+            origin["type"] == "stand_in_schedule" && origin["scheduledHistoryRead"] == true;
         if actor.ephemeral
             || self.archived_link_is_deleted(&actor)
             || actor.status == "archived"
@@ -159,7 +193,7 @@ impl RuntimeWorkRpcHandler {
             || origin["deviceId"] != self.device_id
             || origin["standInId"].as_str() != identity.role.as_deref()
             || origin["workId"].as_str() != identity.work.as_deref()
-            || (origin["type"] == "stand_in_task") != identity.readonly_worker
+            || (origin["type"] == "stand_in_task" || scheduled_history) != identity.readonly_worker
         {
             return Err(denied());
         }
@@ -176,6 +210,29 @@ impl RuntimeWorkRpcHandler {
                 .ok_or_else(denied)?,
             None => &settings["primary"],
         };
+        if scheduled_history {
+            if role["enabled"] != true {
+                return Err(denied());
+            }
+            let entry = self
+                .scheduled_read_automation(&actor, identity)
+                .ok_or_else(denied)?;
+            let ids = entry.task_request["standInCalendar"]["historyTaskIds"]
+                .as_array()
+                .ok_or_else(denied)?;
+            return Ok(ReadScope {
+                source: None,
+                role: role.clone(),
+                coordinator_tasks: Some(
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                ),
+                can_orchestrate: false,
+                window: None,
+            });
+        }
         let coordinator = identity.coordinator_batch.is_some();
         if identity.memory_review && !settings["lifecycle"]["status"].is_null() {
             return Err(denied());
@@ -714,7 +771,7 @@ impl RuntimeWorkRpcHandler {
         Ok(
             json!({"items":page.iter().map(|link|json!({"taskId":link.local_task_id,"title":self.conversation_title(link,identity,&scope,&store),"status":link.status,
             "interactionStatus":link.interaction_status,"createdAt":link.created_at,"updatedAt":link.updated_at,"kind":if link.runtime_handle["origin"]["type"]=="stand_in_identity" {"identity"} else {"task"},
-            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && link.status!="archived" && link.interaction_status.is_none() && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
+            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && super::stand_in_tasks::allows_ordinary_followup(link) && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
         )
     }
 }
@@ -754,7 +811,14 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
         let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        let mut handler = {
+            let _guard = crate::test_env::lock();
+            let _home = super::super::tests::ScalarEnv::set(
+                "WEGENT_EXECUTOR_HOME",
+                root.path().to_str().unwrap(),
+            );
+            RuntimeWorkRpcHandler::new("mac", "unused")
+        };
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -791,6 +855,33 @@ mod tests {
             created_at: 1000,
             runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":user}}),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scheduled_history_accepts_only_distinct_visible_conversations() {
+        let (_root, handler, mut identity) = fixture();
+        identity.role = None;
+        handler.upsert_local_task(link(
+            "identity",
+            7,
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"}),
+        ));
+        handler.upsert_local_task(link("selected", 7, json!({})));
+        handler.upsert_local_task(link("foreign", 8, json!({})));
+        assert_eq!(
+            handler
+                .capture_scheduled_history(&identity, &json!(["selected"]))
+                .unwrap(),
+            ["selected"]
+        );
+        for items in [
+            json!(["selected", "foreign"]),
+            json!(["selected", "selected"]),
+        ] {
+            assert!(handler
+                .capture_scheduled_history(&identity, &items)
+                .is_err());
         }
     }
 
@@ -904,6 +995,38 @@ mod tests {
                 .code,
             "permission_denied"
         );
+    }
+
+    #[tokio::test]
+    async fn primary_lists_specialist_branches_without_offering_ordinary_continuation() {
+        let (_root, handler, mut identity) = fixture();
+        identity.role = Some("@primary".into());
+        handler.upsert_local_task(link(
+            &identity.task_id,
+            7,
+            json!({
+                "type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"@primary"
+            }),
+        ));
+        handler.upsert_local_task(link("ordinary", 7, json!({})));
+        handler.upsert_local_task(link(
+            "specialist",
+            7,
+            json!({
+                "type":"stand_in_task","userId":7,"deviceId":"mac",
+                "standInId":"default","sourceTaskId":identity.task_id,
+                "roleDelegation":{"root":"request","ancestors":[identity.task_id]}
+            }),
+        ));
+        let page = handler
+            .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
+            .await
+            .unwrap();
+        let rows = page["items"].as_array().unwrap();
+        for (id, expected) in [("ordinary", true), ("specialist", false)] {
+            let row = rows.iter().find(|row| row["taskId"] == id).unwrap();
+            assert_eq!(row["canContinue"], expected);
+        }
     }
 
     #[tokio::test]

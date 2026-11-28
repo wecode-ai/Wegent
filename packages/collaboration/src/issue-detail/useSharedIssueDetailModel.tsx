@@ -1,4 +1,4 @@
-import { useIssueOutsideAssignee } from './useIssueOutsideAssignee'
+import { useIssueAssigneeController } from './useIssueAssigneeController'
 import { useIssueDetailAttachmentActions } from './useIssueDetailAttachmentActions'
 import { useIssueDescriptionOverflow } from './useIssueDescriptionOverflow'
 import { useIssuePendingFiles } from './issuePendingFiles'
@@ -33,9 +33,8 @@ import {
   type SharedIssueDetailCreateInput,
 } from './index'
 import { issueDraftFromText } from '../issueDraft'
-import { canAssignCollaborationIssue, canManageCollaborationIssueSecurity } from '../permissions'
+import { canManageCollaborationIssueSecurity } from '../permissions'
 import { markdownAttachmentRows } from './attachmentMarkdown'
-import { useIssueAssigneeResources } from './useIssueAssigneeResources'
 import { useIssueCreation } from './useIssueCreation'
 import {
   issueEditorStatuses,
@@ -49,6 +48,7 @@ import {
   type AttachmentRow,
   type TodoEditorProps,
 } from './issueEditorSupport'
+
 export function useSharedIssueDetailModel(props: TodoEditorProps) {
   const { allItems, onClose } = props
   const editorPort = props.port
@@ -72,15 +72,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
   const project = createProps?.project ?? editProps?.project
   const [commentChildren, setCommentChildren] = useState<CloudLoopItem[]>([])
 
-  const createCommentChild = useCommentChildIssue({
-    port: editorPort,
-    project,
-    parent: item,
-    resolveTarget: resolveAssigneeTarget,
-    assign: persistAssignee,
-    onCreated: child =>
-      setCommentChildren(current => [...current.filter(value => value.id !== child.id), child]),
-  })
   const statusOptions = issueEditorStatuses(
     project?.board_config?.statuses,
     t,
@@ -159,11 +150,41 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
   }
   const setTitle = (value: SetStateAction<string>) => setDraftField('title', value)
   const setDescription = (value: SetStateAction<string>) => setDraftField('description', value)
-  const [notifyAssignee, setNotifyAssignee] = useState(true)
+  const collections = useIssueDetailCollections(props)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const assigneeController = useIssueAssigneeController({
+    props,
+    item,
+    project,
+    editorPort,
+    collections,
+    fieldSaves,
+    assigneeTarget,
+    setIssueDraftField,
+    setDraftField,
+    getDraft,
+    setSaveError,
+    t,
+  })
+  const createCommentChild = useCommentChildIssue({
+    port: editorPort,
+    project,
+    parent: item,
+    resolveTarget: assigneeController.resolveAssigneeTarget,
+    assign: assigneeController.persistAssignee,
+    onCreated: child =>
+      setCommentChildren(current => [...current.filter(value => value.id !== child.id), child]),
+  })
+
   function changeProperty<K extends keyof IssueDetailDraftValue>(
     field: K,
     value: SetStateAction<IssueDetailDraftValue[K]>
   ) {
+    if (field === 'assigneeTarget') {
+      assigneeController.saveAssigneeProperty(value as SetStateAction<IssueAssigneeTarget>)
+      return
+    }
     const next =
       typeof value === 'function'
         ? (value as (current: IssueDetailDraftValue[K]) => IssueDetailDraftValue[K])(
@@ -171,34 +192,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
           )
         : value
     setDraftField(field, next)
-    if (
-      !item ||
-      (!editable && field !== 'assigneeTarget') ||
-      (field === 'assigneeTarget' && !canAssign)
-    )
-      return
-    if (field === 'assigneeTarget') {
-      void fieldSaves.save(field, async source => {
-        let updated
-        try {
-          updated = await persistAssignee(source, next as IssueAssigneeTarget, notifyAssignee)
-        } catch (error) {
-          const latest = fieldSaves.getSource() ?? item
-          if (runnerEnvironmentError(error, t) && latest?.id === source.id)
-            setIssueDraftField('assigneeTarget', current =>
-              current === next ? issueAssigneeTarget(latest) : current
-            )
-          throw error
-        }
-        if ((fieldSaves.getSource() ?? item)?.id === source.id) {
-          setIssueDraftField('assigneeTarget', current =>
-            current === next ? issueAssigneeTarget(updated) : current
-          )
-        }
-        return updated
-      })
-      return
-    }
+    if (!item || !editable) return
     if (field === 'startDate' || field === 'dueDate') {
       const start = field === 'startDate' ? (next as string) : startDate
       const due = field === 'dueDate' ? (next as string) : dueDate
@@ -279,7 +273,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
       : null
   )
   const { files: pendingFiles, fileId: pendingFileId } = pendingAttachments
-  const collections = useIssueDetailCollections(props)
   const {
     deliveries,
     setDeliveries,
@@ -316,13 +309,10 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
       {t('todo.collaborators_unavailable', '此项目暂不支持编辑参与者')}
     </span>
   ) : null
-  const outside = useIssueOutsideAssignee(props, item, projectMembers)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
   const [collaboratorError, setCollaboratorError] = useState<string | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
   const [expandedRailSections, setExpandedRailSections] = useState<Record<string, boolean>>({})
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
   const descriptionDirty = Boolean(
     item &&
     description !==
@@ -353,12 +343,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     )
   }
 
-  const workspaceAgents = useIssueAssigneeResources(
-    editorPort,
-    item?.invited_only ? undefined : project,
-    setSaveError,
-    item?.assignee_agent_id
-  )
   const [fullScreen, setFullScreen] = useState(false)
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false)
   const [assignmentChainTrigger, setAssignmentChainTrigger] = useState<HTMLButtonElement | null>(
@@ -565,35 +549,8 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
   const statusLabel =
     statusOptions.find(option => option.id === status)?.name ?? t('todo.not_set', '未设置')
   const parentItem = allItems.find(candidate => candidate.id === parentId)
-  const assignee = projectMembers.find(member => assigneeTarget === `user:${member.user_id}`)
-  const assigneeAgent = projectAgents.find(agent => assigneeTarget === `agent:${agent.id}`)
-  const assigneeResource = workspaceAgents.find(agent => assigneeTarget === `resource:${agent.id}`)
-  const assigneeTeam = wegentTeams.find(team => assigneeTarget === `team:${team.id}`)
-  const assigneeGroup = projectGroups.find(group => assigneeTarget === `group:${group.id}`)
-  const assigneeName =
-    assigneeGroup?.name ||
-    assigneeTeam?.displayName ||
-    assigneeTeam?.name ||
-    assigneeAgent?.name ||
-    assigneeResource?.name ||
-    assignee?.user_name ||
-    (item && assigneeTarget && assigneeTarget === issueAssigneeTarget(item)
-      ? assigneeTarget.startsWith('group:')
-        ? item.assignee_group_name
-        : assigneeTarget.startsWith('team:')
-          ? item.assignee_team_name
-          : assigneeTarget.startsWith('agent:')
-            ? item.assignee_agent_name
-            : item.assignee_name
-      : null) ||
-    (assigneeTarget ? assigneeTarget.slice(assigneeTarget.indexOf(':') + 1) : null)
-  const canAssign =
-    props.canAssign ??
-    (item?.invited_only === true ||
-      (project !== undefined &&
-        (item === null || item.can_view_detail !== false) &&
-        canAssignCollaborationIssue(project)))
-  const commentActions =
+  const { canAssign } = assigneeController
+  const boardCommentActions =
     item && editProps && (editable || canAssign)
       ? createIssueCommentActions({
           issue: item,
@@ -604,7 +561,8 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
           editable,
           canAssign,
           currentUserId: props.currentUserId ?? project?.current_user_id,
-          confirmAssignee: target => outside.confirmOutsideTarget(target as IssueAssigneeTarget),
+          confirmAssignee: target =>
+            assigneeController.confirmOutsideTarget(target as IssueAssigneeTarget),
           issues: editorPort.issues,
           onUpdated: updated => {
             if (collections.isActive()) editProps.onUpdated(updated)
@@ -612,9 +570,20 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
           translate: t,
         })
       : undefined
+  const commentActions = boardCommentActions && {
+    ...boardCommentActions,
+    async move(target: string) {
+      if (!boardCommentActions.assigneeMoves?.includes(target))
+        return boardCommentActions.move(target)
+      return assigneeController.runIssueAssignment(async owner => {
+        const result = await boardCommentActions.move(target)
+        if (result !== false) assigneeController.completeIssueAssignment(owner)
+        return result
+      })
+    },
+  }
   const canManageIssueSecurity =
     project !== undefined && canManageCollaborationIssueSecurity(project)
-  const assigneeChanged = item !== null && assigneeTarget !== issueAssigneeTarget(item)
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -680,7 +649,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     const create = async (
       overrides: Partial<SharedIssueDetailCreateInput> = {}
     ): Promise<CloudLoopItem> => {
-      const target = await resolveAssigneeTarget(assigneeTarget)
+      const target = await assigneeController.resolveAssigneeTarget(assigneeTarget)
       if (!collections.isActive()) throw new Error('Issue editor scope changed')
       const progress = await creation.create(
         props.project.id,
@@ -692,7 +661,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
       if (progress.syncAssignee && target !== issueAssigneeTarget(created)) {
-        created = await persistAssignee(created, target, notifyAssignee)
+        created = await assigneeController.persistAssignee(created, target, notifyAssignee)
       }
       if (!collections.isActive()) return created
       await creation.upload(created.id, pendingFiles)
@@ -724,49 +693,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     } finally {
       setSaving(false)
     }
-  }
-
-  async function resolveAssigneeTarget(target: IssueAssigneeTarget): Promise<IssueAssigneeTarget> {
-    if (!target.startsWith('resource:')) return target
-    if (!project || !editorPort.agentResources) throw new Error('Workspace Agent is not available')
-    if (!collections.isActive()) throw new Error('Issue editor scope changed')
-    const id = await editorPort.agentResources.bind(project, target.slice(9))
-    return `agent:${id}`
-  }
-
-  async function persistAssignee(
-    source: CloudLoopItem,
-    selectedTarget: IssueAssigneeTarget,
-    shouldNotify: boolean
-  ): Promise<CloudLoopItem> {
-    const target = await resolveAssigneeTarget(selectedTarget)
-    if (!collections.isActive()) throw new Error('Issue editor scope changed')
-    if (!target)
-      return editorPort.issues.update(source.id, {
-        version: source.version,
-        assignee_user_id: null,
-        assignee_agent_id: null,
-        assignee_team_id: null,
-        ...(source.assignee_group_id ? { assignee_group_id: null } : {}),
-      })
-    if (target.startsWith('group:')) {
-      return editorPort.issues.update(source.id, {
-        version: source.version,
-        assignee_group_id: target.slice(6),
-      })
-    }
-    const { assigneeUserId, assigneeAgentId, assigneeTeamId } = parseIssueAssigneeTarget(target)
-    return editorPort.issues.update(source.id, {
-      version: source.version,
-      ...(assigneeUserId == null
-        ? assigneeAgentId == null
-          ? { assignee_team_id: assigneeTeamId }
-          : { assignee_agent_id: assigneeAgentId }
-        : {
-            assignee_user_id: assigneeUserId,
-            notify_assignee: shouldNotify,
-          }),
-    })
   }
 
   async function saveDetails() {
@@ -859,7 +785,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     else if (editable) void attachmentActions.addAttachments(event.dataTransfer.files)
   }
   return {
-    ...outside,
+    ...assigneeController,
     ...attachmentActions,
     props,
     allItems,
@@ -899,8 +825,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     tags,
     setTitle,
     setDescription,
-    notifyAssignee,
-    setNotifyAssignee,
     changeProperty,
     setStatus,
     setPriority,
@@ -943,7 +867,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     titleInvalid,
     titleErrorId,
     saveTitle,
-    workspaceAgents,
     fullScreen,
     setFullScreen,
     assignmentChainOpen,
@@ -993,15 +916,11 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     toggleRailSection,
     statusLabel,
     parentItem,
-    assigneeName,
-    canAssign,
     commentActions,
     canManageIssueSecurity,
-    assigneeChanged,
     creator,
     createTitle,
     submitCreate,
-    persistAssignee,
     saveDetails,
     cancelContentEditing,
     addCollaborator,

@@ -1271,7 +1271,6 @@ impl AppIpcServer {
             self.connection_read_admission.clone(),
         );
         loop {
-            frame.clear();
             tokio::select! {
                 writer = &mut writer_task => {
                     return match writer {
@@ -1287,10 +1286,12 @@ impl AppIpcServer {
                         writer_task.abort();
                         return Ok(());
                     }
-                    let request_line = match std::str::from_utf8(&frame) {
-                        Ok(line) => line.to_owned(),
+                    // A live event can interrupt the read after consuming a prefix.
+                    // Only take the buffer when the read has finished.
+                    let request_line = match String::from_utf8(std::mem::take(&mut frame)) {
+                        Ok(line) => line,
                         Err(error) => {
-                            log_invalid_app_ipc_frame(&frame, error);
+                            log_invalid_app_ipc_frame(error.as_bytes(), error.utf8_error());
                             continue;
                         }
                     };
@@ -2536,15 +2537,44 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let todo = params.get("todo").unwrap_or(&params);
             let input = serde_json::from_value::<TaskUpdate>(todo.clone())
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let redeliver = match todo.get("redeliver") {
+                None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+                Some(Value::Bool(true)) => true,
+                Some(_) => {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "redeliver must be a boolean",
+                    ));
+                }
+            };
+            let start_at = optional_nullable_task_string(todo, "start_at")?;
+            let due_at = optional_nullable_task_string(todo, "due_at")?;
+            if redeliver {
+                if todo
+                    .get("notify_assignee")
+                    .is_some_and(|notify| notify.as_bool() != Some(true))
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Redelivery requires notification",
+                    ));
+                }
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Redelivery requires only the current human assignee",
+                    ));
+                }
+                return serialize_task_value(
+                    runtime
+                        .redeliver_task(project_id, task_id, input)
+                        .await
+                        .map_err(task_runtime_error)?,
+                );
+            }
             serialize_task_value(
                 runtime
-                    .update_task_with_schedule(
-                        project_id,
-                        task_id,
-                        input,
-                        optional_nullable_task_string(todo, "start_at")?,
-                        optional_nullable_task_string(todo, "due_at")?,
-                    )
+                    .update_task_with_schedule(project_id, task_id, input, start_at, due_at)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -4452,6 +4482,37 @@ mod tests {
                 "{command_key} must run through the native handler, not the shell registry"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn live_events_preserve_a_partially_read_app_ipc_request() {
+        let server = AppIpcServer::new();
+        let event_tx = server.event_tx.clone();
+        let (client, executor) = duplex(128);
+        let (client_reader, mut client_writer) = split(client);
+        let (executor_reader, executor_writer) = split(executor);
+        let serving =
+            tokio::spawn(async move { server.serve_io(executor_reader, executor_writer).await });
+        let mut lines = BufReader::new(client_reader).lines();
+        let read_line =
+            |line: Option<String>| serde_json::from_str::<Value>(&line.unwrap()).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            lines.next_line().await.unwrap().unwrap();
+            let prefix = format!(
+                r#"{{"type":"request","id":"fragmented","method":"executor.health","params":{{"padding":"{}"#,
+                "x".repeat(256)
+            );
+            client_writer.write_all(prefix.as_bytes()).await.unwrap();
+            event_tx.send(json!({"type":"event","event":"test.interleaved"})).unwrap();
+            assert_eq!(read_line(lines.next_line().await.unwrap())["event"], "test.interleaved");
+            client_writer.write_all(b"\"}}\n").await.unwrap();
+            let response = read_line(lines.next_line().await.unwrap());
+            assert_eq!(response["id"], "fragmented");
+            assert_eq!(response["ok"], true);
+            client_writer.shutdown().await.unwrap();
+            serving.await.unwrap().unwrap();
+        }).await;
+        result.expect("live event and fragmented request should both complete");
     }
 
     #[tokio::test]

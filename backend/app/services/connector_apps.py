@@ -390,6 +390,7 @@ class ConnectorAppService:
     def user_response(
         db: Session, app: ConnectorApp, user: User
     ) -> ConnectorAppResponse:
+        stored_connection = None
         if app.auth_type == "none":
             connection = ConnectorConnectionResponse(
                 status="connected",
@@ -398,13 +399,10 @@ class ConnectorAppService:
                 expires_at=None,
             )
         else:
-            connection = connector_connection_service.response(
-                connector_connection_service.get(
-                    db,
-                    slug=app.slug,
-                    user_id=user.id,
-                )
+            stored_connection = connector_connection_service.get(
+                db, slug=app.slug, user_id=user.id
             )
+            connection = connector_connection_service.response(stored_connection)
         return ConnectorAppResponse(
             id=app.id,
             slug=app.slug,
@@ -415,6 +413,9 @@ class ConnectorAppService:
             tool_loading_mode=app.tool_loading_mode,
             keywords=list(app.keywords or []),
             connection=connection,
+            can_refresh=app.auth_type == "oauth2"
+            and stored_connection is not None
+            and bool(stored_connection.refresh_token_encrypted),
         )
 
     @staticmethod

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
-import { cp, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  CONVERSATION_EVENT_PROVIDER as PROVIDER,
+  createConversationEventSource,
+} from '../modules/conversation-event-source.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
@@ -12,7 +15,6 @@ import {
   WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
-import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { setNativeCatalogOverride } from '../modules/model-catalog-recovery.mjs'
 import { createEventHumanWait } from '../modules/conversation-event-human-wait.mjs'
@@ -36,7 +38,6 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = 'WEWORK_CONVERSATION_EVENT'
-const PROVIDER = '@test/connection-source/records'
 const CONTROL_MCP_IDLE_TTL_MS = 1000
 
 function latestWaitingSubscriptions(body) {
@@ -52,10 +53,9 @@ function latestWaitingSubscriptions(body) {
 }
 
 export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
-  const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
+  const source = createConversationEventSource(options)
   const {
     resultDir,
-    electronUserDataDirectory,
     executorHome,
     workspacePath,
     uiTimeoutMs,
@@ -64,7 +64,6 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     captureScreenshot,
     restartDesktopApp,
   } = options
-  let codexHome
   let active = false
   let phase = 'ordinary'
   let modelRequests = 0
@@ -85,9 +84,6 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     )
   }
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-  const codex = (control, method, params) =>
-    rpc(control, 'runtime.codex.app_server.request', { method, params })
-  const recordsPath = join(resultDir, 'records.json')
   const human = createEventHumanWait({ ...options, rpc })
   const { events: modelEvents, completed } = createConversationEventModel({
     markerPrefix: MARKER,
@@ -116,21 +112,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       },
     },
   }
-  const saveEvents = async () => {
-    // Background MCP readers must see a complete snapshot during event publication.
-    const pendingPath = `${recordsPath}.pending`
-    await writeFile(
-      pendingPath,
-      JSON.stringify([
-        ...['archive-record', 'long-archive-record'].map(id => ({
-          id,
-          value: JSON.stringify(events),
-        })),
-        { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
-      ])
-    )
-    await rename(pendingPath, recordsPath)
-  }
+  const saveEvents = () => source.publishEvents(events, [failedChecks])
   const event = (
     id,
     text,
@@ -143,6 +125,8 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     at: new Date().toISOString(),
     ...(phase === 'workflow'
       ? {
+          objectId: WORKFLOW_CONFLICT_TOPIC,
+          version: id,
           external: {
             eventType: 'tracked.workflow_run',
             payload: {
@@ -165,6 +149,59 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
           }
         : {}),
   })
+
+  async function verifyWorkflowReplay(control, getTask, originalEvent) {
+    phase = 'workflow_replay'
+    const marker = `${MARKER}_${phase}`
+    const subscription = (task, key) =>
+      task.runtimeHandle?.connectionEventSubscriptions?.find(item => item.subscription_key === key)
+    const original = subscription((await getTask()).task, `${MARKER}_workflow`)
+    assert.equal(original?.status, 'delivered')
+    assert.ok(original.operation_id)
+
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `${marker} 通过另一条监听核对同一工作流结果。`,
+    })
+    await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+    const before = await waitForValue(
+      async () => (await getTask()).task,
+      task => !task.running && subscription(task, marker)?.status === 'armed',
+      'The second workflow subscription must be armed in the idle original thread',
+      modelResponseTimeoutMs
+    )
+    assert.notEqual(subscription(before, marker).observation_id, original.observation_id)
+    const beforeTurnId = before.executionState.turnId ?? before.executionState.latestTurnId
+    assert.ok(beforeTurnId)
+    const requestsBefore = modelRequests
+    // Independent collectors may report the same object version at different times.
+    events.push({
+      ...originalEvent,
+      text: `${marker}_EVENT_RECEIVED`,
+      at: new Date().toISOString(),
+    })
+    await saveEvents()
+    const replay = await waitForValue(
+      async () => subscription((await getTask()).task, marker),
+      item => ['delivered', 'needs_attention', 'error'].includes(item?.status) && item,
+      'The idle conversation must settle the duplicate workflow event',
+      30000
+    )
+    const journal = JSON.parse(
+      await readFile(join(executorHome, 'runtime-work/control-operations.json'), 'utf8')
+    )
+    const receipt = journal.operations[replay.operation_id]
+    assert.equal(replay.status, 'delivered', JSON.stringify(receipt?.error ?? replay))
+    assert.equal(replay.error_code, null)
+    assert.notEqual(replay.operation_id, original.operation_id)
+    assert.equal(receipt?.delivery_status, 'accepted')
+    assert.equal(receipt.result.commandId, original.operation_id)
+    await control.command('waitFor', '[data-testid="connection-event-status"]', { visible: false })
+    const { task: after } = await getTask()
+    assert.equal(after.threadId, before.threadId)
+    assert.equal(after.executionState.turnId ?? after.executionState.latestTurnId, beforeTurnId)
+    assert.equal(modelRequests, requestsBefore, 'A replay must not trigger a second model turn')
+  }
 
   async function verifyResumedGoalControlContext(control) {
     active = true
@@ -256,28 +293,12 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
 
   return {
     appEnvironment: {
-      ...base.appEnvironment,
+      ...source.appEnvironment,
       ...(controlContextOnly
         ? { WEWORK_E2E_CONTROL_MCP_IDLE_TTL_MS: String(CONTROL_MCP_IDLE_TTL_MS) }
         : {}),
     },
-    async prepareApp(context) {
-      await base.prepareApp(context)
-      codexHome = context.codexHome
-      await saveEvents()
-      for (const adapter of [
-        join(resultDir, 'connection-adapter'),
-        join(
-          electronUserDataDirectory,
-          'dsh-core/profiles/wework-core/node_modules/@test/connection-source'
-        ),
-      ]) {
-        await cp(
-          new URL('../fixtures/conversation-events-provider.mjs', import.meta.url),
-          join(adapter, 'index.js')
-        )
-      }
-    },
+    prepareApp: context => source.prepareApp(context, [failedChecks]),
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -371,12 +392,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
         },
         workbenchReadyTimeoutMs
       )
-      await waitForBundledMarketplaceRegistration(codexHome)
-      await codex(control, 'marketplace/add', { source: join(resultDir, 'connection-marketplace') })
-      await rpc(control, 'runtime.connections.dependencies.install', {
-        providerId: PROVIDER,
-        aliases: ['source'],
-      })
+      await source.install(control)
       if (controlContextOnly) return verifyResumedGoalControlContext(control)
       await createSingleRootLocalProject(control, workspacePath, 'conversation-events')
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
@@ -816,6 +832,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
             assert.equal(goal.goal.tokenBudget, 20000)
           }
           if (phase === 'human') await human.cleanup(control)
+          if (phase === 'workflow') await verifyWorkflowReplay(control, getTask, match)
         }
         await writeFile(
           join(resultDir, 'conversation-event-evidence.json'),

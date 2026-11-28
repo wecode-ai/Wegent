@@ -1,3 +1,4 @@
+import { encodeSseEvent } from './model-sse.mjs'
 import { modelToolOutputText } from './model-tool-output.mjs'
 import {
   functionCall,
@@ -66,13 +67,13 @@ function createSse(events) {
               },
             }
           : event
-      return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
+      return encodeSseEvent(normalizedEvent)
     })
     .join('')
 }
 
 // Script only the model: task-result delivery and its history read stay native.
-function delegatedTaskResultEvents(body) {
+function delegatedTaskResultEvents(body, { includeExecutionMetadata = true } = {}) {
   const latestUser = (Array.isArray(body.input) ? body.input : [])
     .filter(item => item.role === 'user')
     .at(-1)
@@ -101,7 +102,12 @@ function delegatedTaskResultEvents(body) {
     .filter(Boolean)
     .at(-1)
   if (status === 'done') assert.ok(answer, 'A completed task must provide its actual result')
-  return [assistantMessage(`任务 ${taskId}（${status}）：${answer ?? '本次执行未产出回答。'}`)]
+  const outcome = answer ?? '本次执行未产出回答。'
+  return [
+    assistantMessage(
+      includeExecutionMetadata ? `任务 ${taskId}（${status}）：${outcome}` : outcome
+    ),
+  ]
 }
 
 function codexRequestMetadata(body) {

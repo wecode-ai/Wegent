@@ -11,6 +11,7 @@ export interface RuntimeTransportGateRule {
   hold?: boolean
   holdFollowing?: boolean
   drop?: boolean
+  afterReload?: boolean
 }
 
 interface Capture {
@@ -26,6 +27,18 @@ const gates = new Map<
   string,
   { rule: RuntimeTransportGateRule; capture?: Capture; following: Array<() => void> }
 >()
+const reloadGateKey = 'wework.e2e.runtimeTransportGatesAfterReload'
+let restoredReloadGates = false
+
+function restoreReloadGates() {
+  if (restoredReloadGates) return
+  restoredReloadGates = true
+  const queued = globalThis.sessionStorage?.getItem(reloadGateKey)
+  if (!queued) return
+  sessionStorage.removeItem(reloadGateKey)
+  for (const rule of JSON.parse(queued) as RuntimeTransportGateRule[])
+    gates.set(rule.id, { rule, following: [] })
+}
 
 function requireE2E(): void {
   if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
@@ -51,10 +64,20 @@ function valuesAt(value: unknown, path: string[]): unknown[] {
 
 export function armRuntimeTransportGate(rule: RuntimeTransportGateRule): void {
   requireE2E()
+  restoreReloadGates()
   if (rule.drop && rule.kind !== 'response') {
     throw new Error('Dropped runtime transport gates must target responses')
   }
   if (gates.has(rule.id)) throw new Error(`Duplicate runtime gate: ${rule.id}`)
+  if (rule.afterReload) {
+    const queued = JSON.parse(
+      sessionStorage.getItem(reloadGateKey) ?? '[]'
+    ) as RuntimeTransportGateRule[]
+    if (queued.some(candidate => candidate.id === rule.id))
+      throw new Error(`Duplicate runtime gate: ${rule.id}`)
+    sessionStorage.setItem(reloadGateKey, JSON.stringify([...queued, rule]))
+    return
+  }
   gates.set(rule.id, { rule, following: [] })
 }
 
@@ -66,6 +89,7 @@ export function deliverRuntimeTransport(
   deliver: () => void,
   drop?: () => void
 ): void {
+  restoreReloadGates()
   const gate = [...gates.values()].find(
     candidate =>
       candidate.rule.kind === kind &&
@@ -140,6 +164,14 @@ export function releaseRuntimeTransportGate(id: string): void {
 
 export function resetRuntimeTransportGates(keep: string[] = []): void {
   requireE2E()
+  const stored = globalThis.sessionStorage?.getItem(reloadGateKey)
+  if (stored) {
+    const queued = (JSON.parse(stored) as RuntimeTransportGateRule[]).filter(rule =>
+      keep.includes(rule.id)
+    )
+    if (queued.length) sessionStorage.setItem(reloadGateKey, JSON.stringify(queued))
+    else sessionStorage.removeItem(reloadGateKey)
+  }
   for (const [id, { capture, following }] of gates) {
     if (keep.includes(id)) continue
     if (capture && !capture.dropped && !capture.deliveries) capture.deliver()

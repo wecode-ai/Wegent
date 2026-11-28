@@ -79,6 +79,39 @@ function installNativeModelOwner() {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test.each([
+    { label: 'omitted', value: undefined, params: {} },
+    { label: 'empty', value: '', params: {} },
+    { label: 'whitespace', value: ' \t\n ', params: {} },
+    { label: 'fresh false', value: JSON.stringify({ fresh: false }), params: { fresh: false } },
+    { label: 'fresh true', value: JSON.stringify({ fresh: true }), params: { fresh: true } },
+  ])('forwards fresh owned-process options ($label)', async ({ value, params }) => {
+    const snapshot = { processes: [], degraded: [] }
+    const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(snapshot as never)
+    const results: Array<{ ok: boolean; value: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'fresh-owned-processes',
+            action: 'getOwnedProcessSnapshot',
+            selector: 'body',
+            ...(value === undefined ? {} : { value }),
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    expect(native).toHaveBeenCalledWith('diagnostics.processSnapshot', params)
+    expect(results).toContainEqual(
+      expect.objectContaining({ ok: true, value: JSON.stringify(snapshot) })
+    )
+  })
+
   test('forwards startup splash size changes through the native host', async () => {
     const previous = { width: 1000, height: 620, maximized: false }
     const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(previous as never)

@@ -1,5 +1,4 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
-pub use super::stand_in_inbox::dots_inbox::project_delegation_result;
 use super::*;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -7,8 +6,6 @@ use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
-#[path = "stand_in_dots_delegation.rs"]
-mod dots_delegation;
 use connections::validate_connections;
 #[path = "personal_stand_in_share_copy.rs"]
 mod share_copy;
@@ -22,10 +19,6 @@ pub use connections::{
     connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
     source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
     training_source_granted,
-};
-pub use dots_delegation::{
-    active_delegated_source, is_primary_dingtalk, permits_delegated_message,
-    permits_delegated_reply, requires_dingtalk_delegation,
 };
 pub use teams::{stand_in_team, supports_role_delegation, team_scope_id, StandInTeam};
 
@@ -51,7 +44,6 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
     }
     if value["primary"].is_object() {
         changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
-        changed |= dots_delegation::migrate_delegation_version(&mut value["primary"]);
     }
     changed |= value
         .as_object_mut()
@@ -220,7 +212,7 @@ pub(super) fn read_personal(
     read_personal_state(connection, user, device).map(|(settings, _)| settings)
 }
 
-fn personal_snapshot(
+pub(super) fn personal_snapshot(
     connection: &Connection,
     user: i64,
     device: &str,
@@ -330,6 +322,43 @@ pub fn role_receives_participating_issues(role: &Value) -> bool {
         && role["collaboration"]["includeParticipatingIssues"] == true
 }
 
+#[derive(Clone, Copy)]
+pub enum IssueIntakeTrigger {
+    Assignment,
+    Mention,
+}
+
+impl IssueIntakeTrigger {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Assignment => "assignment",
+            Self::Mention => "mention",
+        }
+    }
+
+    pub fn matches(self, role: &Value, scope: &str) -> bool {
+        role["collaboration"]
+            .get(scope)
+            .map_or(true, |mode| mode == "both" || mode == self.key())
+    }
+}
+
+pub fn collaboration_scope_tags<'a>(role: &'a Value, scope: &str) -> &'a Value {
+    let source = &role["collaboration"];
+    source["tagFilters"].get(scope).unwrap_or(&source["tags"])
+}
+
+pub fn collaboration_project_tags<'a>(role: &'a Value, project: &str, store: &str) -> &'a Value {
+    let source = &role["collaboration"];
+    if let Some(filter) = source["projectTagFilters"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == project && row["store"] == store)
+    }) {
+        return &filter["tags"];
+    }
+    collaboration_scope_tags(role, "projects")
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -339,6 +368,7 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
             "recoveringDispatch",
             "triggerCommentId",
             "triggerMessage",
+            "issueScopeTags",
         ] {
             fields.remove(key);
         }
@@ -346,7 +376,7 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);
-    config["tags"] = role["collaboration"]["tags"].clone();
+    config["tags"] = collaboration_project_tags(role, project, store).clone();
     config["handlingPolicy"] = project_policy(role, project, store);
     if let Some(boundary) = role["projectBoundaries"].as_array().and_then(|rows| {
         rows.iter()
@@ -357,15 +387,17 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config
 }
 
+fn valid_project_ref(project: &Value) -> bool {
+    project["id"]
+        .as_str()
+        .is_some_and(|id| !id.trim().is_empty())
+        && matches!(project["store"].as_str(), Some("local" | "cloud"))
+}
+
 fn validate_projects(value: &Value) -> bool {
-    value.as_array().is_some_and(|projects| {
-        projects.iter().all(|project| {
-            project["id"]
-                .as_str()
-                .is_some_and(|id| !id.trim().is_empty())
-                && matches!(project["store"].as_str(), Some("local" | "cloud"))
-        })
-    })
+    value
+        .as_array()
+        .is_some_and(|projects| projects.iter().all(valid_project_ref))
 }
 
 /// Validate a normalized independent role and its execution and connection settings.
@@ -477,6 +509,12 @@ mod session_policy_tests {
 }
 
 fn valid_collaboration(source: &Value) -> bool {
+    let valid_tags = |value: &Value| {
+        value.as_array().is_some_and(|tags| {
+            tags.iter()
+                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
+        })
+    };
     source["enabled"].is_boolean()
         && source["allProjects"].is_boolean()
         && source
@@ -485,11 +523,30 @@ fn valid_collaboration(source: &Value) -> bool {
         && source
             .get("includeParticipatingIssues")
             .map_or(true, Value::is_boolean)
+        && ["projectTrigger", "participatingTrigger"]
+            .iter()
+            .all(|key| {
+                source.get(key).map_or(true, |value| {
+                    matches!(value.as_str(), Some("both" | "assignment" | "mention"))
+                })
+            })
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
-        && source["tags"].as_array().is_some_and(|tags| {
-            tags.iter()
-                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
+        && valid_tags(&source["tags"])
+        && source.get("tagFilters").map_or(true, |filters| {
+            filters.as_object().is_some_and(|filters| {
+                filters.iter().all(|(key, tags)| {
+                    matches!(key.as_str(), "projects" | "participating" | "independent")
+                        && valid_tags(tags)
+                })
+            })
+        })
+        && source.get("projectTagFilters").map_or(true, |filters| {
+            filters.as_array().is_some_and(|filters| {
+                filters
+                    .iter()
+                    .all(|row| valid_project_ref(row) && valid_tags(&row["tags"]))
+            })
         })
 }
 
@@ -512,20 +569,38 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     identities
 }
 
+pub fn is_primary_dingtalk(identity: &Value, source: &Value) -> bool {
+    identity["id"] == "@primary" && source_provider(source) == DINGTALK_PROVIDER
+}
+
+pub fn requires_dingtalk_delegation(identity: &Value, source: &Value) -> bool {
+    // Preserve the confirmation boundary for ordinary DingTalk connections.
+    is_primary_dingtalk(identity, source)
+        && (source["delegated"] == true
+            || source["policy"]["askBeforeAct"] != true
+            || (identity["dingTalkConnectionMode"] != "confirmed"
+                && (identity["delegation"]["version"].as_u64().unwrap_or(0) > 0
+                    || !is_selected_conversation(source))))
+}
+
+fn is_selected_conversation(source: &Value) -> bool {
+    matches!(source["kind"].as_str(), Some("direct" | "group"))
+        && source["id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id != "*")
+        && source.get("scope").is_none()
+        && source.get("collectionKey").is_none()
+}
+
 pub fn matches_delegation_account(settings: &Value, role: &Value, source: &Value) -> bool {
-    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
-        return source["delegated"] != true;
-    }
-    let policy = &settings["primary"]["delegation"];
-    if policy["accountInvalidated"] == true {
+    if source["delegated"] == true {
         return false;
     }
-    if source["delegated"] != true {
-        return policy["accountId"].is_null();
+    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
+        return true;
     }
-    policy["accountId"].is_string()
-        && policy["accountId"] == source["accountId"]
-        && policy["profile"] == source["profile"]
+    let prior = &settings["primary"]["delegation"];
+    prior["accountId"].is_null() && prior["accountInvalidated"] != true
 }
 
 /// Project a saved identity or team into the fields allowed to leave its account.
@@ -587,10 +662,22 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
         .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
+fn retire_dingtalk_delegation(identity: &mut Value) {
+    if let Some(fields) = identity.as_object_mut() {
+        fields.remove("delegation");
+    }
+    if let Some(sources) = identity
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+    {
+        sources.retain(|source| {
+            source_provider(source) != DINGTALK_PROVIDER || source["delegated"] != true
+        });
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct StandInSaveOptions<'a> {
-    pub(super) direct_save: bool,
-    pub(super) verified_account: Option<&'a Value>,
     pub(super) backend: Option<&'a str>,
 }
 
@@ -693,25 +780,6 @@ impl LocalTaskStore {
         backend: Option<&str>,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-            user, device, backend, value, None,
-        )
-    }
-
-    /// Keep connector-verified identity out of client input when saving a delegation.
-    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-        &self,
-        user: i64,
-        device: &str,
-        backend: Option<&str>,
-        value: Value,
-        verified_account: Option<&Value>,
-    ) -> Result<Value, TaskRuntimeError> {
-        if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
-            return Err(TaskRuntimeError::Invalid(
-                "Verify the selected DingTalk account before preparing delegation".into(),
-            ));
-        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let saved = self.save_personal_stand_in_on(
@@ -719,55 +787,10 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            StandInSaveOptions {
-                direct_save: true,
-                verified_account,
-                backend,
-            },
+            StandInSaveOptions { backend },
         )?;
         connection.commit()?;
         Ok(saved)
-    }
-
-    /// Revoke a verified connector identity change without retiring a newer selection.
-    pub fn invalidate_delegation_account(
-        &self,
-        user: i64,
-        device: &str,
-        source: &Value,
-        expected_version: &Value,
-    ) -> Result<bool, TaskRuntimeError> {
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous = read_personal(&connection, user, device)?;
-        let mut settings = previous.clone();
-        if settings["executionDeviceId"] != device
-            || settings["version"] != *expected_version
-            || !dots_delegation::invalidate_account(&mut settings["primary"], source)?
-        {
-            return Ok(false);
-        }
-        settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
-        write_personal(&connection, &settings)?;
-        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
-            &connection,
-            user,
-            &settings,
-        )?;
-        super::stand_in_ghost_proposals::retire_stale_candidates(
-            &connection,
-            user,
-            &settings["version"],
-        )?;
-        super::stand_in_processing::update_processing_configuration(
-            &connection,
-            user,
-            &previous,
-            &settings,
-        )?;
-        super::stand_in_telemetry::configuration_changes(&connection, user, &previous, &settings);
-        connection.commit()?;
-        Ok(true)
     }
 
     /// Update a routing reference without applying intake changes to local identities.
@@ -831,11 +854,7 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            StandInSaveOptions {
-                direct_save: true,
-                verified_account: None,
-                backend: None,
-            },
+            StandInSaveOptions { backend: None },
         );
         transaction.rollback()?;
         result
@@ -851,6 +870,14 @@ impl LocalTaskStore {
         options: StandInSaveOptions<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
+        if let Some(primary) = value.get_mut("primary") {
+            retire_dingtalk_delegation(primary);
+        }
+        if let Some(roles) = value.get_mut("roles").and_then(Value::as_array_mut) {
+            for role in roles {
+                retire_dingtalk_delegation(role);
+            }
+        }
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("autoSelect");
@@ -890,9 +917,6 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
-        if value.get("primary").is_none() && previous["primary"]["delegation"].is_object() {
-            value["primary"] = previous["primary"].clone();
-        }
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
@@ -904,16 +928,9 @@ impl LocalTaskStore {
         }
         if value["primary"].is_object() {
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
-            dots_delegation::save_delegation(
-                &mut value["primary"],
-                &previous["primary"],
-                options.direct_save,
-                options.verified_account,
-            )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
-            dots_delegation::strip_source_markers(role);
             let before = previous["roles"]
                 .as_array()
                 .unwrap()
@@ -937,9 +954,6 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
-        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
-            connection, user, &value,
-        )?;
         if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
         }) {
@@ -1006,6 +1020,32 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    let mut trigger_boundaries = serde_json::Map::new();
+    for scope in ["projectTrigger", "participatingTrigger"] {
+        for trigger in [IssueIntakeTrigger::Assignment, IssueIntakeTrigger::Mention] {
+            if !trigger.matches(identity, scope) {
+                continue;
+            }
+            let before = &previous["issueTriggerBoundaries"][scope][trigger.key()];
+            let boundary = if !trigger.matches(previous, scope) {
+                &enabled_at
+            } else {
+                before
+            };
+            if boundary.is_string() {
+                trigger_boundaries
+                    .entry(scope.to_owned())
+                    .or_insert_with(|| json!({}))[trigger.key()] = boundary.clone();
+            }
+        }
+    }
+    if trigger_boundaries.is_empty() {
+        if let Some(fields) = identity.as_object_mut() {
+            fields.remove("issueTriggerBoundaries");
+        }
+    } else {
+        identity["issueTriggerBoundaries"] = Value::Object(trigger_boundaries);
+    }
     if identity["enabled"] == true && role_receives_participating_issues(identity) {
         identity["participatingIssuesEnabledAfter"] = if preserve
             && role_receives_participating_issues(previous)

@@ -310,6 +310,23 @@ describe('mock model controls', () => {
     }
   )
 
+  it('holds a malformed Chat Completions terminal frame until explicit release', async () => {
+    const matchText = 'held-malformed-done'
+    await post('/stream-rules', { matchText, finishReason: 'MALFORMED_RESPONSE', holdDone: true })
+    const pending = modelRequest(matchText, '/v1/chat/completions')
+    await pending.received
+    await waitForGate(matchText)
+    expect(pending.finished()).toBe(false)
+
+    expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
+    const frames = (await pending.result).split('\n').filter(line => line.startsWith('data: '))
+    expect(frames).toHaveLength(2)
+    expect(JSON.parse(frames[0].slice(6)).choices).toEqual([
+      { index: 0, delta: {}, finish_reason: 'MALFORMED_RESPONSE' },
+    ])
+    expect(frames[1]).toBe('data: [DONE]')
+  })
+
   it('holds /v1/responses tool-call completion until explicit release', async () => {
     const matchText = 'held-tool-done'
     await post('/tool-scenarios', {

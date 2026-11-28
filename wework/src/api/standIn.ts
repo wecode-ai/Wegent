@@ -31,8 +31,11 @@ export interface StandInBindingTarget {
 
 export interface StandInInstanceBinding {
   version: number
-  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  // Account-backed workspaces also use unavailable when no lifecycle read has succeeded.
+  status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped' | 'unavailable'
   target: StandInBindingTarget | null
+  stoppingTargets?: string[]
+  stoppingTargetGenerations?: Record<string, number>
 }
 
 export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
@@ -102,20 +105,6 @@ export interface ConnectionReadiness {
   authTarget?: ConnectionProviderDescriptor['authTarget']
 }
 
-export interface StandInDelegationResult {
-  action: 'reply' | 'needs_user' | 'skip'
-  status: 'complete' | 'submitting' | 'sent' | 'failed' | 'unknown'
-  reason: string
-  reasonCode?: 'owner_intervened' | 'model_skipped'
-  deliveryReason?: string
-  deliveryReasonCode?: string
-  attemptId?: string
-  recordId?: string
-  channelTaskId?: string
-  receiptId?: string
-  takenOver?: boolean
-}
-
 export interface StandInInboxMessage {
   id: string
   recordId: string
@@ -123,7 +112,6 @@ export interface StandInInboxMessage {
   senderId: string
   at: string
   source: StandInSourceConnection
-  delegationResult?: StandInDelegationResult
 }
 
 export interface StandInInboxWork {
@@ -137,8 +125,6 @@ export interface StandInInboxWork {
   refreshVersion?: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
-  delegationResult?: StandInDelegationResult
-  takenOverAt?: string
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -425,14 +411,27 @@ export interface StandInExecutorApi {
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   binding(
     deviceId: string,
-    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    operation?:
+      | 'get'
+      | 'bind'
+      | 'beginStop'
+      | 'completeStop'
+      | 'prepareBind'
+      | 'prepareReplacement'
+      | 'completeActivation'
+      | 'cancelActivation'
+      | 'markStopping'
+      | 'clearStopping'
+      | 'markStoppingWithGeneration'
+      | 'clearStoppingIfGeneration',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>
   lifecycle(
     userId: number,
     deviceId: string,
-    operation: 'start' | 'stop'
+    operation: 'start' | 'stop',
+    expectedVersion?: number
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
   setTaskPermissions(
@@ -515,13 +514,6 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
-  takeOverWork(userId: number, deviceId: string, workId: string): Promise<void>
-  verifyWorkDelivery(
-    userId: number,
-    deviceId: string,
-    workId: string,
-    recordId: string
-  ): Promise<void>
   runWork(
     userId: number,
     deviceId: string,
@@ -605,7 +597,7 @@ export interface StandInExecutorApi {
   personalGet(
     userId: number,
     deviceId: string,
-    options?: { deviceSettingsOnly?: boolean }
+    options?: { deviceSettingsOnly?: boolean; roleDirectory?: boolean }
   ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -834,12 +826,6 @@ export function createStandInExecutorApi(
     },
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
-    takeOverWork: async (userId, deviceId, workId) => {
-      await request('runtime.stand_in.work.takeover', { userId, workId }, deviceId)
-    },
-    verifyWorkDelivery: async (userId, deviceId, workId, recordId) => {
-      await request('runtime.stand_in.work.verify_delivery', { userId, workId, recordId }, deviceId)
-    },
     runWork: (userId, deviceId, workId, options) =>
       request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
@@ -1004,10 +990,16 @@ export function createStandInExecutorApi(
     },
     binding: (deviceId, operation = 'get', version, target) =>
       request('runtime.stand_in.binding', { operation, version, target }, deviceId),
-    lifecycle: async (userId, deviceId, operation) => {
+    lifecycle: async (userId, deviceId, operation, expectedVersion) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.lifecycle',
-        { userId, operation },
+        expectedVersion === undefined
+          ? { userId, operation }
+          : {
+              userId,
+              operation: operation === 'stop' ? 'stopIfVersion' : 'startIfVersion',
+              expectedVersion,
+            },
         deviceId
       )
       publishPersonalStandIn(saved)

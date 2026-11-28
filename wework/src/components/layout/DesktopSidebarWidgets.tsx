@@ -5,6 +5,7 @@ import { Archive, Loader2, Sparkles, SquareTerminal, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { Tooltip } from '@/components/ui/tooltip'
+import { cloudUpgradeReminder } from '@/features/cloud-devices/cloudDeviceUpgradeReminder'
 
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 
@@ -164,30 +165,36 @@ export function ProjectDeviceInlineStatus({
   testId: string
   className?: string
 }) {
+  const { t } = useTranslation('common')
   const label = getDeviceRouteLabel(deviceState)
   const title = getDeviceRouteTitle(deviceState)
   const online = deviceState.status === 'online'
+  const hasUpdate = online && Boolean(cloudUpgradeReminder(deviceState.device))
+  const updateNotice = hasUpdate
+    ? `${t('workbench.connection_status_online')} · ${t('workbench.connection_update_available')}`
+    : undefined
 
   return (
     <span
       data-testid={testId}
-      title={title}
-      aria-label={label}
+      title={updateNotice ? `${title} · ${updateNotice}` : title}
       className={cn(
         'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
         className
       )}
     >
       <span className="max-w-[96px] truncate">{label}</span>
+      {updateNotice && <span className="sr-only">{updateNotice}</span>}
       <span
         data-testid={`${testId}-dot`}
         aria-hidden="true"
         className={cn(
           'h-2 w-2 shrink-0 rounded-full',
+          hasUpdate && 'bg-warning',
           !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
         )}
         style={
-          online
+          online && !hasUpdate
             ? { backgroundColor: 'rgb(var(--color-device-online, var(--color-success)))' }
             : undefined
         }

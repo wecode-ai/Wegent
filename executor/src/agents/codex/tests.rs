@@ -6,6 +6,33 @@ use serde_json::json;
 
 use super::*;
 
+#[tokio::test]
+async fn guidance_input_delivers_file_only_and_rejects_missing_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    fs::write(&path, "guidance fixture contents").unwrap();
+    let mut request = ExecutionRequest {
+        prompt: json!(""),
+        ..Default::default()
+    };
+    request.extra.insert(
+        "attachments".to_owned(),
+        json!([{"id": -1, "filename": "notes.txt", "mime_type": "text/plain", "local_path": path}]),
+    );
+
+    let input = codex_guidance_input(&request).await.unwrap();
+    assert_eq!(input.len(), 1);
+    assert!(input[0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("guidance fixture contents")));
+
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        codex_guidance_input(&request).await.unwrap_err(),
+        "Attachment unavailable: notes.txt"
+    );
+}
+
 #[test]
 fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
     let _environment = environment::LaunchEnvironment::new();
@@ -3948,6 +3975,49 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         config["mcp_servers"]["wework_browser"]["default_tools_approval_mode"],
         "approve"
     );
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let runtime_file = runtime_dir.path().join("embedded-browser-bridge.json");
+    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE", &runtime_file);
+    // The environment-backed bridge must preserve restricted task approval.
+    for profile in [":read-only", ":workspace"] {
+        let mut restricted = ExecutionRequest::default();
+        restricted
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        let (restricted_overrides, _) = cdp_browser_mcp_config_overrides(&restricted).unwrap();
+        assert!(restricted_overrides.contains(
+            &"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".to_owned()
+        ));
+    }
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    assert!(!crate::browser_mcp::bridge_is_available());
+    fs::write(
+        &runtime_file,
+        format!(
+            r#"{{"schemaVersion":1,"pid":{},"address":"127.0.0.1:43127","token":"runtime-token","startedAtUnixMs":123,"fullControl":true}}"#,
+            std::process::id()
+        ),
+    )
+    .unwrap();
+    assert!(crate::browser_mcp::bridge_is_available());
+    // Only the authenticated runtime-file identity supplies the bridge here.
+    for profile in [":read-only", ":workspace"] {
+        let mut restricted = ExecutionRequest::default();
+        restricted
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        let (restricted_overrides, _) = cdp_browser_mcp_config_overrides(&restricted).unwrap();
+        assert!(restricted_overrides.contains(
+            &"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".to_owned()
+        ));
+    }
+    if let Some(value) = old_runtime_file {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    }
     assert_eq!(
         config["mcp_servers"]["wework_browser"]["http_headers"]["X-Wework-Browser-Label"],
         "workspace-browser-task-123"
@@ -4971,22 +5041,13 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
         notifications: hub,
         reader_task: tokio::spawn(async {}),
     });
-    let (_answer_tx, answer_rx) = mpsc::channel(1);
-    let router = InteractionAnswerRouter::new(answer_rx);
-    let (notifications, mut received) = mpsc::unbounded_channel();
-    let (errors, _error_rx) = mpsc::unbounded_channel();
     let request = json!({"id":91,"method":"item/commandExecution/requestApproval","params":{
         "threadId":"thread", "turnId":"turn", "itemId":"command", "expiresAtUnixMs":0
     }});
-    spawn_shared_approval_response(
-        &client,
-        &request,
-        Some(router),
-        errors,
-        Some(notifications.downgrade()),
-    )
-    .unwrap();
-    let event = tokio::time::timeout(Duration::from_secs(5), received.recv())
+    let transport = client.existing_process().await.unwrap();
+    let mut thread = transport.notifications.subscribe_thread("thread");
+    transport.track_server_interaction(&request);
+    let event = tokio::time::timeout(Duration::from_secs(5), thread.recv())
         .await
         .unwrap()
         .unwrap();
@@ -5001,6 +5062,10 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
         codex_approval_result(&request, &json!({})).unwrap()["decision"],
         "decline"
     );
+    assert!(!transport
+        .answer_server_interaction(&json!(91), json!({"decision":"accept"}))
+        .await
+        .unwrap());
     client.restart().await;
 }
 

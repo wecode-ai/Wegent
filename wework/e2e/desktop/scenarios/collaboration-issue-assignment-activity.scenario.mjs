@@ -153,6 +153,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await verifyAssignments(control, expected, null)
     await verifyAssignmentActivityReceipts(control, '本人已读')
 
+    const receipts = scoped(
+      '[data-testid="issue-assignment-receipts"] [data-testid^="issue-assignment-receipt-"]'
+    )
+    const received = await control.command('getAttribute', receipts, { value: 'data-testid' })
+    assert.ok(received, 'The local owner must have an initial assignment receipt')
+    await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+    await control.command('waitFor', '[data-testid="cloud-todo-detail-assignee-redeliver"]', {
+      text: localOwner,
+    })
+    await control.command('click', '[data-testid="cloud-todo-detail-assignee-redeliver"]')
+    expected.push({ name: localOwner, action: '重新投递' })
+    await verifyAssignments(control, expected, null)
+    await control.command('waitFor', `${receipts}:not([data-testid="${received}"])`)
+    await verifyAssignmentActivityReceipts(control, '本人已读')
+
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
     await control.command('click', '[data-testid="cloud-todo-detail-assignee-option-empty"]')
     await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {

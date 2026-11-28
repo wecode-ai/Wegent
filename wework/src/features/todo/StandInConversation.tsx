@@ -50,6 +50,7 @@ export function StandInConversation({
   draftRequest,
   onDraftRequestConsumed,
   contentFooter,
+  starterActions,
   delegationPanelOpen,
   sidebarTasks,
   renderDetails,
@@ -68,6 +69,7 @@ export function StandInConversation({
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
+  starterActions?: ReactNode
   delegationPanelOpen?: boolean
   sidebarTasks?: StandInSidebarTasks
   renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
@@ -267,20 +269,23 @@ export function StandInConversation({
         showExecutionTools={false}
         showModelSelector={showModelSelector}
         composerHeader={
-          !showModelSelector && modelControls.unavailable && !modelControls.loading ? (
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11 self-start md:min-h-8"
-              data-testid="stand-in-conversation-model-retry"
-              onClick={modelControls.refreshModelCatalog}
-            >
-              {t('standIn.errors.reload_conversation_models')}
-            </Button>
-          ) : null
+          <>
+            {starterActions}
+            {!showModelSelector && modelControls.unavailable && !modelControls.loading ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-11 self-start md:min-h-8"
+                data-testid="stand-in-conversation-model-retry"
+                onClick={modelControls.refreshModelCatalog}
+              >
+                {t('standIn.errors.reload_conversation_models')}
+              </Button>
+            ) : null}
+          </>
         }
         hideProcessing
-        showActivityDots
+        isAssistantView
         markReadWhenActive
         nativeConversation
         runtimeContext={

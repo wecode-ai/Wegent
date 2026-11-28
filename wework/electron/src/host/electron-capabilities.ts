@@ -1260,7 +1260,15 @@ export function createElectronCapabilityRouter(
   router.register('notification.acknowledgeReply', params =>
     acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
   )
-  router.register('preferences.get', () => preferences.read())
+  router.register('preferences.get', async params => {
+    const snapshot = await preferences.readSnapshot()
+    if (params.requireReadable === true && !snapshot.readable)
+      throw new HostCapabilityError(
+        'preferences_unreadable',
+        'Application preferences are unreadable'
+      )
+    return snapshot.preferences
+  })
   const updatePreferences = async (
     preferencePatch: Record<string, unknown>,
     expectedTelemetryConsentRevision?: number
@@ -1694,7 +1702,11 @@ export function registerDesktopServiceCapabilities(
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
   router.register('diagnostics.processSnapshot', async (options: ProcessSnapshotOptions = {}) => {
-    const snapshotOptions = { waitForSystemProcesses: options?.waitForSystemProcesses !== false }
+    if (options?.fresh !== undefined && typeof options.fresh !== 'boolean') invalidParam('fresh')
+    const snapshotOptions = {
+      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
+      ...(options?.fresh === undefined ? {} : { fresh: options.fresh }),
+    }
     if (process.env.VITE_WEWORK_E2E !== 'true')
       return services.processExplorer.snapshot(snapshotOptions)
     const startedAt = Date.now()

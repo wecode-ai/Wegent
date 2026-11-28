@@ -39,6 +39,8 @@ const MATERIALS = `${RECORD}
 
 /** Verify material-backed delivery; this does not simulate an external calendar provider. */
 export function createMeetingUserStory(options) {
+  const request = options.request ?? REQUEST
+  const materials = options.openRequest ? MATERIALS.replaceAll('明天', '今天') : MATERIALS
   let active = false
   let sourceTaskId
   let workerTaskId
@@ -87,6 +89,22 @@ export function createMeetingUserStory(options) {
     for (const fact of ['导出功能已完成', '14:00–15:00', '14:30–15:30', '回滚负责人尚未确定'])
       assert.ok(record.content.includes(fact), `The real record must support ${fact}`)
     sourceRead = true
+    if (options.openRequest) {
+      const title = history.title ?? TITLE
+      return [
+        assistantMessage(
+          [
+            RESULT,
+            '会上要决定导出功能能否按计划上线。参会前先核对开会时间。',
+            `已确认：导出功能已经完成，等上线评审。来源：《${title}》的背景和验收记录。`,
+            `时间有冲突：日历摘录为今天14:00–15:00，会议通知为14:30–15:30。来源：《${title}》的两条时间记录。`,
+            `1. 问组织者（会前）：到底哪个时间生效？两条记录会影响参会安排。依据：《${title}》的日历摘录和会议通知。`,
+            `2. 问发布负责人：由谁执行回滚？还没定人，发布前要落实。依据：《${title}》的待确认项。`,
+            `3. 问验收人员：导出功能还差哪项上线许可？已完成开发，会上要核对验收结论。依据：《${title}》的验收记录。`,
+          ].join('\n\n')
+        ),
+      ]
+    }
     return [
       assistantMessage(
         `${RESULT}\n时间有冲突：原日历摘录为明天14:00–15:00，会议通知为14:30–15:30，需要组织者确认。\n会前先确认准确时间和回滚负责人，再核对导出功能验收记录。\n原始资料：《${history.title ?? TITLE}》，会话 ${sourceTaskId}。`
@@ -110,16 +128,18 @@ export function createMeetingUserStory(options) {
         typeof latest?.content === 'string'
           ? latest.content
           : (latest?.content ?? []).map(part => part.text ?? '').join('')
-      let events = delegatedTaskResultEvents(body)
-      if (events) {
-        const receipt = text.match(
-          /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=done,/
-        )
-        if (receipt?.[2] === workerTaskId && JSON.stringify(events).includes(RESULT))
-          reports.add(receipt[1])
+      const receipt = text.match(
+        /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=done,/
+      )
+      let events
+      if (receipt?.[2] && receipt[2] === workerTaskId) {
+        events = delegatedTaskResultEvents(body, {
+          includeExecutionMetadata: !options.openRequest,
+        })
+        if (JSON.stringify(events).includes(RESULT)) reports.add(receipt[1])
       } else if (text.includes(RECORD)) events = [assistantMessage('会议原始材料已记录。')]
       else if (text.includes(WORK)) events = readMaterials(body)
-      else if (text.includes(REQUEST)) events = prepare(body)
+      else if (text.includes(request)) events = prepare(body)
       else if (text.startsWith('Review this silent intake batch')) {
         if (!has(body, 'meeting-story-intake'))
           events = call(body, 'meeting-story-intake', 'read_intake', {})
@@ -142,7 +162,7 @@ export function createMeetingUserStory(options) {
         const created = await rpc(control, 'runtime.tasks.create', {
           taskId: sourceTaskId,
           title: TITLE,
-          message: MATERIALS,
+          message: materials,
           workspacePath: options.workspacePath,
           modelSelection: {
             modelName: model.local_model_id,
@@ -156,7 +176,7 @@ export function createMeetingUserStory(options) {
             bot: [{ shell_type: 'Codex', name: 'Meeting materials' }],
             model_config: { model_id: model.local_model_id, model_provider: model.provider },
             user_id: STORY_USER,
-            prompt: MATERIALS,
+            prompt: materials,
           },
         })
         assert.equal(created.success, true)
@@ -166,19 +186,22 @@ export function createMeetingUserStory(options) {
           options.modelResponseTimeoutMs,
           'Record real meeting material'
         )
-        await openStoryPrimary(control)
-        await openStandInExamples(control)
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="stand-in-onboarding-example-meeting_prep"]'
-        )
+        if (options.openRequest) await options.openRequest(control)
+        else {
+          await openStoryPrimary(control)
+          await openStandInExamples(control)
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="stand-in-onboarding-example-meeting_prep"]'
+          )
+        }
         const draft = await control.command(
           'getText',
           `${STORY_CHAT} [data-testid="chat-message-input"]`
         )
         assert.equal(
           draft.trim(),
-          REQUEST,
+          options.openRequest ? request.replaceAll('\n', '') : request,
           'Use the ordinary example without adding QA instructions'
         )
         await control.command(
@@ -196,8 +219,9 @@ export function createMeetingUserStory(options) {
           item => item.role === 'assistant' && item.content?.includes(RESULT)
         )
         for (const value of [
-          sourceTaskId,
-          workerTaskId,
+          ...(options.openRequest
+            ? [TITLE, '1. 问组织者', '2. 问发布负责人', '3. 问验收人员']
+            : [sourceTaskId, workerTaskId]),
           '14:00–15:00',
           '14:30–15:30',
           '回滚负责人',

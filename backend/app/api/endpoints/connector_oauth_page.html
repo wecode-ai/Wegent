@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 Weibo, Inc. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="$language">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>$title · Wegent</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --background: #f4f6fa;
+        --card: #ffffff;
+        --border: #dfe4ee;
+        --text: #172033;
+        --secondary: #4d5c73;
+        --success: #14634a;
+        --success-background: #e4f6ee;
+        --declined: #8c480a;
+        --declined-background: #fff2db;
+        --button: #24324a;
+        --button-hover: #344561;
+        --button-text: #ffffff;
+        --shadow: #17203310;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: #101521;
+          --card: #192131;
+          --border: #344158;
+          --text: #f1f4fb;
+          --secondary: #bbc6d9;
+          --success: #a0e9c7;
+          --success-background: #193c34;
+          --declined: #ffd394;
+          --declined-background: #452f18;
+          --button: #e1e8f5;
+          --button-hover: #c9d6ec;
+          --button-text: #172033;
+          --shadow: #00000033;
+        }
+      }
+
+      body {
+        box-sizing: border-box;
+        display: grid;
+        min-height: 100vh;
+        min-height: 100dvh;
+        margin: 0;
+        padding: 1.25rem;
+        place-items: center;
+        color: var(--text);
+        background: var(--background);
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        box-sizing: border-box;
+        width: min(100%, 29rem);
+        padding: clamp(1.5rem, 6vw, 2.75rem);
+        border: 1px solid var(--border);
+        border-radius: 1.25rem;
+        background: var(--card);
+        box-shadow: 0 0.75rem 2.5rem var(--shadow);
+      }
+
+      .status-icon {
+        display: grid;
+        width: 3.25rem;
+        height: 3.25rem;
+        margin-bottom: 1.5rem;
+        place-items: center;
+        border-radius: 1rem;
+        color: var(--success);
+        background: var(--success-background);
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+
+      .declined .status-icon {
+        color: var(--declined);
+        background: var(--declined-background);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.5rem, 5vw, 2rem);
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+
+      p {
+        margin: 0.75rem 0 0;
+        color: var(--secondary);
+        line-height: 1.65;
+        overflow-wrap: anywhere;
+      }
+
+      button {
+        min-height: 2.75rem;
+        margin-top: 1.5rem;
+        padding: 0.625rem 1rem;
+        border: 1px solid transparent;
+        border-radius: 0.625rem;
+        color: var(--button-text);
+        background: var(--button);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--button-hover);
+      }
+
+      button:focus-visible {
+        outline: 2px solid var(--text);
+        outline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="$outcome" data-testid="connector-oauth-result-$outcome">
+      <div class="status-icon" aria-hidden="true">$symbol</div>
+      <h1>$title</h1>
+      <p>$instruction</p>
+      <button id="close-window" data-testid="connector-oauth-close-window" type="button" hidden>
+        $close_label
+      </button>
+    </main>
+    <script>
+      const closeButton = document.getElementById('close-window')
+      closeButton.addEventListener('click', () => window.close())
+      closeButton.hidden = false
+    </script>
+  </body>
+</html>

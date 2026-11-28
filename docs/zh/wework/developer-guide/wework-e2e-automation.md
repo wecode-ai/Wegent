@@ -82,20 +82,6 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 
 该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
 
-### 钉钉委托回复开发冒烟
-
-在包含钉钉接入、委托授权和可靠投递的同一候选提交上运行现有 Core 检查点：
-
-```bash
-pnpm --filter wework e2e:desktop -- --segment stand-in-dingtalk-delegation
-```
-
-检查点以真实 Electron、执行器和本地存储运行，使用钉钉 CLI 协议替身和固定模型决策。私聊和选中群 `@本人` 各覆盖三种首周模板，检查同会话证据、原会话回复、AI 标识、提交次数和 120 秒窗口。边界用例检查需要本人处理、越权范围、证据变化、断线恢复和执行器重启。协议与存储集成测试覆盖回执不匹配、提交前授权失效和恢复窗口边界等确定性故障。结果目录中的 `dingtalk-delegation-evidence.json` 记录该轮样本结果。
-
-定位桌面显示问题时，可用隔离的 `ai:verify` 会话检查工作详情中的投递状态、接管按钮、回执核查和回执内容。同一条记录的点击和状态断言优先由桌面检查点执行。`ai:verify` 启动空白会话，检查已有记录时需要指定隔离测试夹具的执行器目录，并保留其设备 ID。复用记录只用于核对界面显示，渠道提交和回执仍由检查点审计。
-
-发布候选仍需在获批的测试账号和会话验证真实钉钉接收方可见的消息、AI 标识、回执核查能力和实际耗时。真实模型对歧义、过期或敏感证据的判断需要使用约定模型与验收样本另行验证。两轮可以用自动化操作界面，结果分别记录实际渠道和模型，避免把协议替身及固定模型决策的通过结果计入真实环境验收。
-
 仅运行云端项目桌面 E2E：
 
 ```bash
@@ -239,6 +225,46 @@ Core/Cloud matrix job 提供跨 runner 的套件级并行。Linux Core、Windows
 checkpoint 并发上限保持 4。保留的 Core 性能基准分片以及 Cloud 的独占分片保持隔离，
 共享准备组继续共同调度。共享 runner 池仍可能引入外部排队，扩容也会增加环境准备成本；
 历史耗时回放只预测测试阶段，不能当作新 CI 的实测提速。
+
+### 复用桌面 E2E 基础设施
+
+- 通过检查点 runner 启动桌面应用。场景需要在启动前准备应用配置时使用
+  `prepareApp`，需要重启时用 runner 通过 `setRestartDesktopApp` 提供的函数。
+  该函数会等控制器重新连接并检查设备身份。普通发布包冷启动使用分阶段就绪检查。
+- 在 `e2e/desktop/modules/workspace-flows.mjs` 中复用
+  `createLocalCollaborationProject` 准备已有的本地项目，或用
+  `completeLocalCollaborationFolderImport` 驱动目录导入界面。两个入口共用隔离的 Git 仓库准备。
+  验证云协作项目时，可以用 `workspace-agent-setup.mjs` 的
+  `createWorkspaceAndProject` 完成创建并等到看板就绪。
+- 创建资源后立即记录对应的清理动作。需要逐项释放资源时，从
+  `e2e/desktop/modules/cleanup.mjs` 导入 `collectCleanupErrors`，按依赖顺序传入操作。
+  它会执行全部操作并返回错误，调用方负责记录每个清理失败、保留已有的场景错误，
+  以及在仅清理失败时让检查点失败。场景的 `cleanup` 执行时，控制器、代理和 Backend 仍可用。
+
+#### 模型 fixture
+
+- 普通场景使用 runner 提供的回环模型端点。通过场景的 `handleHttp` 钩子
+  提供场景需要的模型响应，应用、运行时和工具调用仍走真实链路。
+- 从 `e2e/desktop/modules/model-sse.mjs` 导入 `sse(events)` 编码一批事件，
+  或用 `writeSseEvents(response, events)` 逐帧写入。需要复用 Responses 协议的
+  终态输出合并逻辑时，用 `response-protocol.mjs` 中的 `createSse`。
+- 从 `e2e/desktop/modules/model-response-gates.mjs` 导入 `createModelResponseGates()`，
+  每段需要暂停的响应调用一次 `gates.pause()`。模型写出部分响应后等待
+  `gate.promise`，场景观测到目标状态后调用 `gate.resolve()`。在场景清理时调用
+  `gates.cleanup()`，统一释放仍在等待的响应。
+
+#### 等待可观测状态
+
+- 等界面出现、可点击或刷新时，优先使用桌面控制器的 `waitFor`、
+  `clickWhenEnabled` 或已有的 `waitForSnapshot`。
+- 需要重复读取 API 或运行时状态时，从 `e2e/desktop/modules/wait.mjs`
+  导入 `waitForValue(load, predicate, message, timeoutMs)`。条件返回
+  `true` 时得到本次读取的值，也可直接返回匹配项，例如
+  `items => items.find(item => item.id === taskId)`。轮询耗尽时会附上最后一次读取结果，
+  因此只读取可以写入 CI 日志的状态。
+- 等待已注册的事件或已有的异步操作时，使用同一模块的
+  `withTimeout(promise, timeoutMs, message)`。事件监听先于触发动作注册。
+  超时会结束等待，操作的取消和资源清理由场景负责。
 
 ### 测试专用轮询和退避时间
 

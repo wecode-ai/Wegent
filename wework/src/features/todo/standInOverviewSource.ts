@@ -5,12 +5,9 @@ import {
   type StandInSourceConnection,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { createContext } from 'react'
-
-export const StandInSourceNavigationContext = createContext<string | undefined>(undefined)
+import { PersonalAssistantDefinitionSaveError } from './personalAssistantDeviceSettings'
 
 export type StandInOverviewProfile = 'primary' | 'role' | 'create' | 'memory' | null
 interface OverviewObservation {
@@ -37,13 +34,12 @@ interface OverviewObservation {
 interface OverviewSnapshot {
   roleId?: string
   profile: StandInOverviewProfile
-  openConnectionSettings: boolean | MessageCenterSource
   calendarRequest: number
   focusRequest: number
-  exampleDraft?: { id: number; text: string }
+  exampleDraft?: { id: number; text: string; roleId?: string }
   proposal: StandInProposal | null
   proposalError: string | null
-  proposalSaveError: { id: string; message: string } | null
+  proposalSaveError: { id: string; message: string; appliedLocally?: boolean } | null
   resolving: boolean
   retryingSources: ReadonlySet<string>
   resolvedProposal: {
@@ -67,7 +63,6 @@ export function createStandInOverviewSource(initial: {
   let snapshot: OverviewSnapshot = {
     roleId: initial.roleId,
     profile: initial.profile,
-    openConnectionSettings: false,
     calendarRequest: initial.calendarRequest,
     focusRequest: 0,
     proposal: null,
@@ -199,13 +194,9 @@ export function createStandInOverviewSource(initial: {
     }
     void poll()
   }
-  const setProfile = (
-    profile: StandInOverviewProfile,
-    openConnectionSettings: boolean | MessageCenterSource = false
-  ) =>
+  const setProfile = (profile: StandInOverviewProfile) =>
     publish({
       profile,
-      openConnectionSettings,
       focusRequest:
         snapshot.focusRequest +
         (observation?.active && snapshot.profile !== null && profile === null ? 1 : 0),
@@ -319,9 +310,16 @@ export function createStandInOverviewSource(initial: {
       })
       observation?.closeReview()
       observation?.reload()
+      return applied
     } catch (cause) {
       if (operation === revision && ownsScope(owner))
-        publish({ proposalSaveError: { id: proposal.id, message: getStandInErrorMessage(cause) } })
+        publish({
+          proposalSaveError: {
+            id: proposal.id,
+            message: getStandInErrorMessage(cause),
+            appliedLocally: cause instanceof PersonalAssistantDefinitionSaveError,
+          },
+        })
     } finally {
       if (operation === revision && ownsScope(owner)) publish({ resolving: false })
     }
@@ -403,7 +401,8 @@ export function createStandInOverviewSource(initial: {
     ) {
       publish({ exampleDraft: typeof value === 'function' ? value(snapshot.exampleDraft) : value })
     },
-    draftExample: (text: string) => publish({ exampleDraft: { id: ++exampleSequence, text } }),
+    draftExample: (text: string) =>
+      publish({ exampleDraft: { id: ++exampleSequence, text, roleId: snapshot.roleId } }),
     pressPanel: (inside: boolean) => {
       pressedInPanel = inside
     },

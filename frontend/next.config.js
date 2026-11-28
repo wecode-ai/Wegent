@@ -146,6 +146,16 @@ const nextConfig = {
         ],
       },
       {
+        // The catch-all cache header takes precedence over proxied response headers.
+        source: '/api/connector-apps/oauth/callback',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-store',
+          },
+        ],
+      },
+      {
         source: '/auth/oauth/authorize',
         headers: [
           {

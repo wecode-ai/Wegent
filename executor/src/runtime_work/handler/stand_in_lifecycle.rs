@@ -13,11 +13,17 @@ fn stand_in_owner(origin: &Value) -> Option<i64> {
 }
 
 impl RuntimeWorkRpcHandler {
+    fn stand_in_binding_instance(&self) -> Option<&str> {
+        (std::env::var("WEWORK_DEVELOPMENT_ISOLATED").as_deref() == Ok("1"))
+            .then_some(self.device_id.as_str())
+    }
+
     pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
         let operation = payload["operation"].as_str().unwrap_or("get");
         LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(settings_error)?
             .stand_in_binding(
+                self.stand_in_binding_instance(),
                 operation,
                 payload["version"].as_i64().unwrap_or(-1),
                 payload["target"].clone(),
@@ -69,13 +75,34 @@ impl RuntimeWorkRpcHandler {
         stop_timeout: Duration,
     ) -> Result<Value, AppIpcError> {
         let user = super::runtime_owner::runtime_user(&payload)?;
-        let operation = payload["operation"].as_str().unwrap_or_default();
-        if !matches!(operation, "start" | "stop") {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Unknown lifecycle operation",
-            ));
-        }
+        let requested_operation = payload["operation"].as_str().unwrap_or_default();
+        let (operation, expected_version) = match requested_operation {
+            // A separate operation makes older Executors reject a conditional
+            // stop rather than ignore its version and stop a newer instance.
+            "stopIfVersion" | "startIfVersion" => (
+                if requested_operation == "stopIfVersion" { "stop" } else { "start" },
+                Some(
+                    payload["expectedVersion"]
+                        .as_i64()
+                        .filter(|version| *version >= 0)
+                        .ok_or_else(|| {
+                            AppIpcError::new(
+                                "bad_request",
+                                "expectedVersion must be a nonnegative integer for a conditional lifecycle operation",
+                            )
+                        })?,
+                ),
+            ),
+            "start" | "stop" if payload.get("expectedVersion").is_none() => {
+                (requested_operation, None)
+            }
+            _ => {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Unknown or invalid lifecycle operation",
+                ));
+            }
+        };
         let lifecycle = self.task_send_gate(&format!("stand-in-lifecycle:{user}"));
         let _lifecycle = lifecycle.lock().await;
         let processing = self.task_send_gate(&format!("stand-in-processing:{user}"));
@@ -87,7 +114,13 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("stand-in lifecycle gate poisoned");
             let settings = store
-                .transition_personal_stand_in(user, &self.device_id, operation)
+                .transition_personal_stand_in_with_version(
+                    user,
+                    &self.device_id,
+                    operation,
+                    expected_version,
+                    self.stand_in_binding_instance(),
+                )
                 .map_err(settings_error)?;
             if operation == "start" || settings["lifecycle"]["status"] == "stopped" {
                 return Ok(settings);
@@ -119,7 +152,7 @@ impl RuntimeWorkRpcHandler {
         // Cancellation uses the normal Runtime path, including queued turns and approvals.
         let results = stream::iter(tasks.into_iter().map(|task| async move {
             let result = self
-                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true)
+                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true, None)
                 .await;
             (task, result)
         }))
@@ -339,6 +372,75 @@ mod tests {
             .await
             .unwrap()["lifecycle"]
             .is_null());
+    }
+
+    #[tokio::test]
+    async fn stale_stop_version_cannot_stop_restarted_assistant() {
+        let root = tempfile::tempdir().unwrap();
+        let (handler, store) = fixture(root.path());
+        let initial = store.personal_stand_in(7, "mac").unwrap();
+        let stop =
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":initial["version"]});
+        let stopped = handler
+            .personal_stand_in_lifecycle(stop.clone())
+            .await
+            .unwrap();
+        assert_eq!(stopped["lifecycle"]["status"], "stopped");
+        assert_eq!(
+            handler.personal_stand_in_lifecycle(json!({"userId":7,"operation":"startIfVersion","expectedVersion":initial["version"]}))
+                .await.unwrap_err().code,
+            "version_conflict"
+        );
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), stopped);
+        let start =
+            json!({"userId":7,"operation":"startIfVersion","expectedVersion":stopped["version"]});
+        let target = json!({"userId":7,"deviceId":"mac"});
+        let marked = handler
+            .stand_in_binding(json!({"operation":"markStoppingWithGeneration","target":target}))
+            .unwrap();
+        assert_eq!(
+            handler
+                .personal_stand_in_lifecycle(start.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "version_conflict"
+        );
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), stopped);
+        handler
+            .stand_in_binding(json!({
+                "operation":"clearStoppingIfGeneration", "target":target,
+                "version":marked["stoppingTargetGenerations"]["7:mac"],
+            }))
+            .unwrap();
+        let restarted = handler.personal_stand_in_lifecycle(start).await.unwrap();
+        assert!(restarted["lifecycle"].is_null());
+        assert_eq!(
+            handler
+                .personal_stand_in_lifecycle(stop)
+                .await
+                .unwrap_err()
+                .code,
+            "version_conflict"
+        );
+        for payload in [
+            json!({"userId":7,"operation":"stopIfVersion"}),
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":-1}),
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":"1"}),
+            json!({"userId":7,"operation":"startIfVersion"}),
+            json!({"userId":7,"operation":"stop","expectedVersion":0}),
+            json!({"userId":7,"operation":"start","expectedVersion":0}),
+        ] {
+            assert_eq!(
+                handler
+                    .personal_stand_in_lifecycle(payload)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "bad_request"
+            );
+        }
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), restarted);
     }
 
     #[tokio::test]

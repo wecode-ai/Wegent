@@ -1,6 +1,7 @@
 //! Wework forwards received assignment notifications through the existing local RPC.
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn handle_stand_in_assignment(
@@ -53,7 +54,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         let project_configs = self
-            .cloud_issue_intake_configs(&personal, user, project, issue_id)
+            .cloud_issue_intake_configs(
+                &personal,
+                user,
+                project,
+                issue_id,
+                IssueIntakeTrigger::Assignment,
+            )
             .await?;
         let configs: Vec<Value> = project_configs
             .iter()

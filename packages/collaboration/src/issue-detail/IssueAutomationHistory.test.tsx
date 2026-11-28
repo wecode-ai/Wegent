@@ -6,6 +6,7 @@ import {
   localizeStandardStatusName,
 } from "../i18n";
 import {
+  assignmentHistoryLabels,
   IssueAssignmentHistoryList,
   IssueStatusHistoryList,
 } from "./IssueHistoryLists";
@@ -38,24 +39,14 @@ describe("automation operation attribution", () => {
       const html = renderToStaticMarkup(
         createElement(IssueAssignmentHistoryList, {
           entries: [{ ...assignment, ...(automated ? { automation } : {}) }],
-          memberName: () => "qindi",
-          labels: {
-            team: "Agent",
-            agent: "Bot",
-            group: "Group",
-            system: "System",
-            unassigned: "Unassigned",
-            actions: {
-              assign: "Assign",
-              reassign: "Reassign",
-              unassign: "Unassign",
-            },
-          },
+          memberName: () => "User 52",
+          labels: assignmentHistoryLabels(createCollaborationTranslator("en")),
         }),
       );
-      expect(html).toContain(automated ? automation.rule_name : "qindi");
-      expect(html).not.toContain(automated ? "qindi" : automation.rule_name);
+      expect(html).toContain(automated ? automation.rule_name : "User 52");
+      expect(html).not.toContain(automated ? "User 52" : automation.rule_name);
       expect(html).toContain("项目负责人");
+      expect(html).toContain("Reassign");
     },
   );
 
@@ -65,7 +56,7 @@ describe("automation operation attribution", () => {
       const html = renderToStaticMarkup(
         createElement(IssueStatusHistoryList, {
           entries: [{ ...status, ...(automated ? { automation } : {}) }],
-          memberName: () => "qindi",
+          memberName: () => "User 52",
           labels: {
             system: "System",
             unset: "Unset",
@@ -81,8 +72,8 @@ describe("automation operation attribution", () => {
           },
         }),
       );
-      expect(html).toContain(automated ? automation.rule_name : "qindi");
-      expect(html).not.toContain(automated ? "qindi" : automation.rule_name);
+      expect(html).toContain(automated ? automation.rule_name : "User 52");
+      expect(html).not.toContain(automated ? "User 52" : automation.rule_name);
     },
   );
 });

@@ -214,6 +214,105 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_redelivery_replaces_only_the_current_assignment_receipt() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(
+                serde_json::from_value(json!({"name":"Redeliver","project_key":"RED"})).unwrap(),
+            )
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Review","assignee_user_id":7})).unwrap(),
+            )
+            .unwrap();
+        let initial = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        let first_assignment = initial[0]["id"].as_str().unwrap();
+        assert!(issue.metadata["assignment_history"][0]
+            .get("redeliver")
+            .is_none());
+        store
+            .acknowledge_assignment(&project.id, &issue.id, first_assignment, 7, true)
+            .unwrap();
+        let received = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        let unchanged = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":7}))
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            unchanged.metadata["assignment_history"],
+            issue.metadata["assignment_history"]
+        );
+        assert_eq!(
+            store.assignment_receipts(&project.id, &issue.id).unwrap(),
+            received
+        );
+
+        let patch = |version, assignee| {
+            serde_json::from_value(json!({"version":version,"assignee_user_id":assignee})).unwrap()
+        };
+        assert!(matches!(
+            store.redeliver_task(&project.id, &issue.id, patch(issue.version, 7)),
+            Err(TaskRuntimeError::VersionConflict)
+        ));
+        assert!(matches!(
+            store.redeliver_task(&project.id, &issue.id, patch(unchanged.version, 8)),
+            Err(TaskRuntimeError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.redeliver_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(
+                    json!({"version":unchanged.version,"assignee_user_id":7,"title":"Extra"})
+                )
+                .unwrap()
+            ),
+            Err(TaskRuntimeError::Invalid(_))
+        ));
+
+        let updated = store
+            .redeliver_task(&project.id, &issue.id, patch(unchanged.version, 7))
+            .unwrap();
+        assert_eq!(updated.title, issue.title);
+        assert_eq!(updated.status, issue.status);
+        assert_eq!(updated.assignee_user_id, issue.assignee_user_id);
+        assert_eq!(
+            updated.metadata["assignment_history"][0],
+            issue.metadata["assignment_history"][0]
+        );
+        assert_eq!(
+            updated.metadata["assignment_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            updated.metadata["assignment_history"][1]["action"],
+            "reassign"
+        );
+        assert_eq!(updated.metadata["assignment_history"][1]["redeliver"], true);
+        let latest = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_ne!(latest[0]["id"], first_assignment);
+        assert_eq!(latest[0]["target_id"], "7");
+        assert_eq!(latest[0]["stand_in_received_at"], Value::Null);
+        assert!(store
+            .acknowledge_assignment(&project.id, &issue.id, first_assignment, 7, true)
+            .is_err());
+        assert_eq!(
+            store.assignment_receipts(&project.id, &issue.id).unwrap(),
+            latest
+        );
+    }
+
+    #[test]
     fn legacy_receipts_initialize_once_and_survive_unrelated_issue_updates() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.sqlite");

@@ -294,6 +294,11 @@ impl RuntimeWorkRpcHandler {
                 {
                     return;
                 }
+                if route_nested
+                    && crate::runtime_work::stand_in_requires_confirmation(&route_request)
+                {
+                    crate::agents::restrict_stand_in_approval(&mut message);
+                }
                 if !route_nested && is_root_codex_turn_event(codex_notification(&message).params) {
                     if !crate::agents::prepare_codex_runtime_notification(
                         &route_request,

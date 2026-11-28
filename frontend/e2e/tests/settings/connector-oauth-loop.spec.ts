@@ -25,6 +25,7 @@ import {
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
 const SLUG = `e2e-connector-oauth-${Date.now().toString(36)}`
+const OAUTH_SUCCESS_RESULT = 'connector-oauth-result-success'
 
 interface ConnectorConnectionView {
   status: string
@@ -54,7 +55,7 @@ async function authorizeViaApi(
   expect(consent.status()).toBe(302)
   const callback = await request.get(consent.headers().location)
   expect(callback.ok(), await callback.text()).toBeTruthy()
-  expect(await callback.text()).toContain('Connector is connected')
+  expect(await callback.text()).toContain(`data-testid="${OAUTH_SUCCESS_RESULT}"`)
 }
 
 async function connectorRuntimeToken(request: APIRequestContext, token: string): Promise<string> {
@@ -114,7 +115,7 @@ async function authorizeThroughProvider(page: Page): Promise<void> {
   await page.getByTestId(`authorize-connector-app-${SLUG}`).click()
   const popup = await popupPromise
   await popup.waitForURL(/\/api\/connector-apps\/oauth\/callback/, { timeout: 30_000 })
-  await expect(popup.locator('body')).toContainText('Connector is connected', {
+  await expect(popup.getByTestId(OAUTH_SUCCESS_RESULT)).toBeVisible({
     timeout: 30_000,
   })
   await popup.close()
@@ -158,6 +159,35 @@ test.describe('Connector app OAuth loop', () => {
       })
     }
     await providerControl(request, { rejectRefresh: false, revokeAll: true })
+  })
+
+  test('does not cache the OAuth result served through the web proxy', async ({ request }) => {
+    const connectorUrl = `${API_URL}/api/connector-apps/${SLUG}`
+    const headers = authHeaders(adminToken)
+    try {
+      const started = await request.post(`${connectorUrl}/oauth/sessions`, {
+        headers,
+        timeout: 10_000,
+      })
+      expect(started.ok(), await started.text()).toBeTruthy()
+      const session = (await started.json()) as { authorize_url: string }
+      const consent = await request.get(session.authorize_url, { maxRedirects: 0, timeout: 10_000 })
+      expect(consent.status()).toBe(302)
+      const redirect = new URL(consent.headers().location)
+      const callback = await request.get(redirect.pathname + redirect.search, {
+        headers: { 'Sec-Fetch-Site': 'cross-site' },
+        timeout: 10_000,
+      })
+      expect(callback.status()).toBe(200)
+      expect(await callback.text()).toContain(`data-testid="${OAUTH_SUCCESS_RESULT}"`)
+      expect(callback.headers()['cache-control']).toBe('no-store')
+    } finally {
+      const disconnected = await request.delete(`${connectorUrl}/connection`, {
+        headers,
+        timeout: 10_000,
+      })
+      expect(disconnected.status()).toBe(204)
+    }
   })
 
   test('prechecks and authorizes a custom connector from an external app', async ({
@@ -212,9 +242,26 @@ test.describe('Connector app OAuth loop', () => {
         await authorize.click()
         const popup = await popupPromise
         await expect(
-          popup.locator('body'),
+          popup.getByTestId(OAUTH_SUCCESS_RESULT),
           'Wegent accepted the provider OAuth callback'
-        ).toContainText('Connector is connected', { timeout: 20_000 })
+        ).toBeVisible({ timeout: 20_000 })
+        await Promise.all([
+          popup.waitForEvent('close', { timeout: 5_000 }),
+          popup
+            .getByTestId('connector-oauth-close-window')
+            .click({ timeout: 5_000 })
+            .catch((error: unknown) => {
+              // The popup can close before Playwright acknowledges the click.
+              if (
+                !(error instanceof Error) ||
+                !error.message.startsWith(
+                  'locator.click: Target page, context or browser has been closed'
+                )
+              ) {
+                throw error
+              }
+            }),
+        ])
         await expect(
           page.getByTestId('external-connector-authorized'),
           'The authorization page reports the stored grant'
@@ -518,6 +565,116 @@ test.describe('Connector app OAuth loop', () => {
     await expect(page.getByTestId(`disconnect-connector-app-${SLUG}`)).toHaveCount(0)
   })
 
+  test('refreshes from Integrations and offers authorization after refresh is rejected', async ({
+    page,
+    request,
+  }) => {
+    const row = page.getByTestId(`connector-app-connection-${SLUG}`)
+    const refresh = row.getByTestId(`retry-connector-app-${SLUG}`)
+    const authorize = row.getByTestId(`authorize-connector-app-${SLUG}`)
+    const disconnect = row.getByTestId(`disconnect-connector-app-${SLUG}`)
+    const clickRefresh = async () => {
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          response =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/connector-apps/${SLUG}/connection/refresh`
+            ),
+          { timeout: 15_000 }
+        ),
+        refresh.click({ timeout: 5_000 }),
+      ])
+      return response
+    }
+
+    const openWithExpiredGrant = async () => {
+      const removed = await request.delete(`${API_URL}/api/connector-apps/${SLUG}/connection`, {
+        headers: authHeaders(adminToken),
+      })
+      expect(removed.ok(), await removed.text()).toBeTruthy()
+      await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: false })
+      await openIntegrations(page)
+      await authorizeThroughProvider(page)
+      // The installed-apps endpoint can renew expired grants during tool discovery.
+      // Read the same catalog as Integrations to observe expiry without renewing.
+      await expect
+        .poll(
+          async () => {
+            const catalog = await request.get(`${API_URL}/api/connector-apps`, {
+              headers: authHeaders(adminToken),
+              timeout: 5_000,
+            })
+            expect(catalog.ok(), await catalog.text()).toBeTruthy()
+            const apps = (await catalog.json()) as Array<
+              Pick<InstalledAppView, 'slug' | 'connection'> & { can_refresh: boolean }
+            >
+            return apps.find(app => app.slug === SLUG)
+          },
+          {
+            message: 'Wait for the connector grant to expire with a refresh token',
+            timeout: 10_000,
+          }
+        )
+        .toMatchObject({ connection: { status: 'expired' }, can_refresh: true })
+      await openIntegrations(page)
+      await expect(refresh).toBeEnabled()
+      await expect(authorize).toHaveCount(0)
+    }
+
+    await test.step('Keep refresh disabled until the updated catalog is displayed', async () => {
+      await openWithExpiredGrant()
+      await providerControl(request, { tokenTtlSeconds: 3600 })
+      const catalogPath = /\/api\/connector-apps(?:\?.*)?$/
+      let releaseCatalog!: () => void
+      const catalogGate = new Promise<void>(resolve => {
+        releaseCatalog = resolve
+      })
+      // Hold the browser's catalog reload so the pending state can be asserted.
+      await page.route(
+        catalogPath,
+        async route => {
+          await catalogGate
+          await route.continue()
+        },
+        { times: 1 }
+      )
+      try {
+        const [, response] = await Promise.all([
+          page.waitForRequest(req => req.method() === 'GET' && catalogPath.test(req.url()), {
+            timeout: 15_000,
+          }),
+          clickRefresh(),
+        ])
+        expect(response.status()).toBe(200)
+        await expect(page.getByText(/^(Connection refreshed|连接已刷新)$/)).toBeVisible({
+          timeout: 5_000,
+        })
+        await expect(refresh).toBeDisabled({ timeout: 5_000 })
+        await expect(disconnect).toBeDisabled({ timeout: 5_000 })
+      } finally {
+        releaseCatalog()
+      }
+
+      await expect(row.getByText(/^(Authorized|已授权)$/)).toBeVisible({ timeout: 10_000 })
+      await expect(disconnect).toBeEnabled()
+      await expect(refresh).toHaveCount(0)
+      await expect(authorize).toHaveCount(0)
+    })
+
+    await test.step('Offer re-authorization when the provider rejects refresh', async () => {
+      await openWithExpiredGrant()
+      await providerControl(request, { rejectRefresh: true })
+      const response = await clickRefresh()
+      expect(response.status()).toBe(400)
+      expect(await response.text()).toContain('rejected')
+      await expect(authorize).toBeVisible({ timeout: 10_000 })
+      await expect(authorize).toBeEnabled()
+      await expect(refresh).toHaveCount(0)
+      await expect(disconnect).toHaveCount(0)
+    })
+  })
+
   test('rejects duplicate callbacks while successful polling remains idempotent', async ({
     request,
   }) => {
@@ -537,7 +694,7 @@ test.describe('Connector app OAuth loop', () => {
     expect(callbackUrl).toBeTruthy()
     const callback = await request.get(callbackUrl)
     expect(callback.ok(), await callback.text()).toBeTruthy()
-    expect(await callback.text()).toContain('Connector is connected')
+    expect(await callback.text()).toContain(`data-testid="${OAUTH_SUCCESS_RESULT}"`)
 
     const replay = await request.get(callbackUrl)
     expect(replay.status()).toBe(409)

@@ -154,7 +154,7 @@ export function createDesktopScenario({
         '0'
       )
       await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
+      await control.command('waitFor', '[data-testid="stand-in-project-scope"]')
       await captureScreenshot(control, '02-connection-editor.png', PANEL)
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await openConnectionTypePicker(control)
@@ -316,6 +316,7 @@ export function createDesktopScenario({
       assert.equal((await rpc('runtime.stand_in.memory.list', { userId: USER })).items.length, 1)
       await captureScreenshot(control, '14-last-role-deleted-primary-kept.png')
       await control.command('click', '[data-testid="stand-in-create-role"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-chat-advanced"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]', { visible: true })
       await control.command('fill', '[data-testid="stand-in-role-name"]', {
         value: '重新创建的角色',

@@ -103,6 +103,13 @@ test('the Cloud workflow command accepts populated and empty classifier matrices
         .sort()
     assert.deepEqual(selected(balanced), selected(original))
     assert(balanced.include.every((entry) => entry.segments.length > 0))
+    if (selected(original).includes('plugin-write-coordination')) {
+      const coordination = balanced.include.find((entry) =>
+        entry.segments.split(',').includes('plugin-write-coordination'),
+      )
+      assert.equal(coordination.segments, 'plugin-write-coordination')
+      assert.equal(balanced.include.length, Math.ceil(original.include.length * 1.5))
+    }
   }
 })
 
@@ -359,7 +366,7 @@ test('balancing distributes the four-worker tail across existing Core runners', 
       {
         id: 'core-1',
         segments:
-          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,archived-fork-cleanup',
       },
       { id: 'core-2', segments: 'codex-native-catalog' },
       { id: 'core-6', segments: 'running-conversation-history' },

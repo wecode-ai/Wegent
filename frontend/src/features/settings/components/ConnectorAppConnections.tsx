@@ -5,7 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Cable, Loader2, Search } from 'lucide-react'
+import { Cable, Loader2, RefreshCw, Search } from 'lucide-react'
 import { adminApis, type UserConnectorApp } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -39,9 +39,10 @@ export default function ConnectorAppConnections() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const activeRef = useRef(false)
   const loadGenerationRef = useRef(0)
+  const refreshesAwaitingCatalog = useRef(new Set<string>())
   const [authorizingSlug, setAuthorizingSlug] = useState<string | null>(null)
   const [disconnectingSlug, setDisconnectingSlug] = useState<string | null>(null)
-  const [retryingSlug, setRetryingSlug] = useState<string | null>(null)
+  const [refreshingSlugs, setRefreshingSlugs] = useState<ReadonlySet<string>>(() => new Set())
   const [disconnectTarget, setDisconnectTarget] = useState<UserConnectorApp | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -54,12 +55,21 @@ export default function ConnectorAppConnections() {
 
   const loadApps = useCallback(async () => {
     const generation = ++loadGenerationRef.current
+    const settledRefreshes = [...refreshesAwaitingCatalog.current]
     setLoading(true)
     setLoadError(null)
     try {
       const fetched = await adminApis.getUserConnectorApps()
       if (generation !== loadGenerationRef.current) return
       setApps(sortConnectorAppsByConnection(fetched))
+      if (settledRefreshes.length > 0) {
+        settledRefreshes.forEach(slug => refreshesAwaitingCatalog.current.delete(slug))
+        setRefreshingSlugs(slugs => {
+          const next = new Set(slugs)
+          settledRefreshes.forEach(slug => next.delete(slug))
+          return next
+        })
+      }
     } catch (error) {
       if (generation !== loadGenerationRef.current) return
       setLoadError(
@@ -128,30 +138,33 @@ export default function ConnectorAppConnections() {
     }
   }
 
-  const retryConnection = async (app: UserConnectorApp) => {
-    setRetryingSlug(app.slug)
+  const refreshConnection = async (app: UserConnectorApp) => {
+    setRefreshingSlugs(slugs => new Set(slugs).add(app.slug))
     try {
       const connection = await adminApis.refreshConnectorApp(app.slug)
+      if (!activeRef.current) return
       // The backend probes the upstream, so only a clean result is a recovery.
       const recovered = connection.status === 'connected' && !connection.last_error
       toast({
         variant: recovered ? undefined : 'destructive',
         title: t(
           recovered
-            ? 'common:integrations.connector_apps.retry_succeeded'
-            : 'common:integrations.connector_apps.retry_failed'
+            ? 'common:integrations.connector_apps.refresh_succeeded'
+            : 'common:integrations.connector_apps.refresh_failed'
         ),
         description: recovered ? undefined : (connection.last_error ?? undefined),
       })
-      window.dispatchEvent(new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT))
     } catch (error) {
+      if (!activeRef.current) return
       toast({
         variant: 'destructive',
-        title: t('common:integrations.connector_apps.retry_failed'),
+        title: t('common:integrations.connector_apps.refresh_failed'),
         description: (error as Error).message,
       })
     } finally {
-      setRetryingSlug(null)
+      // A rejected refresh can revoke the stored grant even when the request fails.
+      if (activeRef.current) refreshesAwaitingCatalog.current.add(app.slug)
+      window.dispatchEvent(new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT))
     }
   }
 
@@ -174,6 +187,7 @@ export default function ConnectorAppConnections() {
             variant="outline"
             size="sm"
             onClick={() => void loadApps()}
+            className="max-md:h-11"
             disabled={loading}
             data-testid="retry-connector-app-catalog"
           >
@@ -198,7 +212,7 @@ export default function ConnectorAppConnections() {
               value={searchQuery}
               onChange={event => setSearchQuery(event.target.value)}
               placeholder={t('common:integrations.connector_apps.search_placeholder')}
-              className="pl-9"
+              className="pl-9 max-md:h-11"
               data-testid="search-connector-app-connections"
             />
           </div>
@@ -211,79 +225,109 @@ export default function ConnectorAppConnections() {
             </p>
           ) : null}
           {visibleApps.map(app => {
-            const connected = app.connection.status === 'connected'
+            const { status, last_error: lastError, external_account_name: account } = app.connection
+            const connected = status === 'connected'
+            const oauth = app.auth_type === 'oauth2'
+            const needsRenewal = oauth && status === 'expired' && app.can_refresh
+            const showRefresh = needsRenewal || (oauth && connected && Boolean(lastError))
+            const showDisconnect = (connected && app.auth_type !== 'none') || needsRenewal
+            const refreshing = refreshingSlugs.has(app.slug)
+            const disconnecting = disconnectingSlug === app.slug
+            const statusVariant =
+              status === 'expired'
+                ? 'warning'
+                : status === 'error' || (connected && lastError)
+                  ? 'error'
+                  : connected
+                    ? 'success'
+                    : 'default'
             return (
               <div
                 key={app.slug}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"
+                className="flex flex-col gap-3 rounded-md border border-border/70 bg-surface px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
                 data-testid={`connector-app-connection-${app.slug}`}
               >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-text-primary">{app.name}</span>
-                    <Tag variant={connected ? 'success' : 'default'}>
-                      {statusLabel(app.connection.status)}
-                    </Tag>
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-fill-tertiary text-text-secondary">
+                    <Cable className="h-4 w-4" aria-hidden="true" />
                   </div>
-                  {app.description ? (
-                    <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
-                      {app.description}
-                    </p>
-                  ) : null}
-                  {connected && app.connection.last_error ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-error">
-                      {t('common:integrations.connector_apps.upstream_error', {
-                        message: app.connection.last_error,
-                      })}
-                    </p>
-                  ) : null}
-                  {connected && app.connection.external_account_name ? (
-                    <p className="mt-1 text-xs text-text-muted">
-                      {t('common:integrations.connector_apps.account', {
-                        name: app.connection.external_account_name,
-                      })}
-                    </p>
-                  ) : null}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="break-words text-sm font-medium text-text-primary">
+                        {app.name}
+                      </span>
+                      <Tag variant={statusVariant}>
+                        {needsRenewal
+                          ? t('common:integrations.connector_apps.refresh_needed')
+                          : statusLabel(status)}
+                      </Tag>
+                    </div>
+                    {app.description ? (
+                      <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
+                        {app.description}
+                      </p>
+                    ) : null}
+                    {(connected || needsRenewal) && account ? (
+                      <p className="mt-1 break-words text-xs text-text-muted">
+                        {t('common:integrations.connector_apps.account', { name: account })}
+                      </p>
+                    ) : null}
+                    {needsRenewal ? (
+                      <p className="mt-1 text-xs text-text-secondary">
+                        {t('common:integrations.connector_apps.refresh_hint')}
+                      </p>
+                    ) : null}
+                    {(connected || needsRenewal) && lastError ? (
+                      <p className="mt-1 break-words text-xs text-error">
+                        {t('common:integrations.connector_apps.upstream_error', {
+                          message: lastError,
+                        })}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-                {app.auth_type === 'oauth2' && !connected ? (
+                {oauth && !connected && !needsRenewal ? (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void authorize(app)}
-                    disabled={authorizingSlug === app.slug}
+                    className="self-end max-md:h-11 sm:self-auto"
+                    disabled={authorizingSlug === app.slug || refreshing || disconnecting}
                     data-testid={`authorize-connector-app-${app.slug}`}
                   >
                     {authorizingSlug === app.slug ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                     ) : null}
                     {t('common:integrations.connector_apps.authorize')}
                   </Button>
-                ) : connected ? (
-                  <div className="flex shrink-0 gap-2">
-                    {app.connection.last_error ? (
+                ) : showDisconnect ? (
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    {showRefresh ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => void retryConnection(app)}
-                        disabled={retryingSlug === app.slug}
+                        className="max-md:h-11"
+                        onClick={() => void refreshConnection(app)}
+                        disabled={refreshing || disconnecting}
                         data-testid={`retry-connector-app-${app.slug}`}
                       >
-                        {retryingSlug === app.slug ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : null}
-                        {t('common:integrations.connector_apps.retry')}
+                        <RefreshCw
+                          className={refreshing && !loadError ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
+                          aria-hidden="true"
+                        />
+                        {t('common:integrations.connector_apps.refresh')}
                       </Button>
                     ) : null}
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="border-error/40 text-error hover:bg-error/10 hover:text-error"
+                      className="text-text-secondary hover:bg-fill-tertiary hover:text-error max-md:h-11"
                       onClick={() => setDisconnectTarget(app)}
-                      disabled={disconnectingSlug === app.slug}
+                      disabled={refreshing || disconnecting}
                       data-testid={`disconnect-connector-app-${app.slug}`}
                     >
-                      {disconnectingSlug === app.slug ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {disconnecting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                       ) : null}
                       {t('common:integrations.connector_apps.disconnect')}
                     </Button>

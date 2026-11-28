@@ -92,7 +92,7 @@ async def test_github_oauth_session_persists_encrypted_user_connection(
         user_id=test_user.id,
     )
     state = parse_qs(urlsplit(session.authorize_url).query)["state"][0]
-    message = await ConnectorOAuthService.complete_callback(
+    outcome = await ConnectorOAuthService.complete_callback(
         test_db,
         code="provider-code",
         state_token=state,
@@ -104,7 +104,7 @@ async def test_github_oauth_session_persists_encrypted_user_connection(
         user_id=test_user.id,
     )
 
-    assert message.startswith("Connector is connected")
+    assert outcome == "success"
     assert result.status == "success"
     assert result.connection
     assert result.connection.external_account_name == "octocat"
@@ -389,12 +389,12 @@ async def test_dynamic_connector_oauth_uses_discovery_dcr_and_resource(
         "_cache_authorized_tools",
         AsyncMock(),
     )
-    message = await ConnectorOAuthService.complete_callback(
+    outcome = await ConnectorOAuthService.complete_callback(
         test_db,
         code="provider-code",
         state_token=query["state"][0],
     )
-    assert message.startswith("Connector is connected")
+    assert outcome == "success"
 
     refreshed = connector_app_service.get_app_by_slug(test_db, "weibo-design")
     assert refreshed is not None

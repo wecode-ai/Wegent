@@ -52,13 +52,13 @@ mod transcript_transport;
 pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::stand_in_requires_confirmation;
-pub(crate) use util::{calendar_allows_full_access, external_work_kind};
+pub(crate) use util::{calendar_allows_full_access, external_work_kind, ExternalWorkKind};
 pub(crate) use util::{normalize_runtime_goal_timestamps, prompt_text};
 mod worktrees;
 
 pub use codex_global_state::run_project_state_query;
 pub(crate) use collaboration_projects::sync_local_collaboration_projects;
-pub(crate) use events::CodexNotificationEventMapper;
+pub(crate) use events::{codex_approval_render_payload, CodexNotificationEventMapper};
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use handler::{read_codex_auth_status, CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS};
 pub(crate) use notification_mapping::codex_stream_debug_enabled;

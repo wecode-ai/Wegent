@@ -1,6 +1,7 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
+import { canonicalAssistantRoute } from '@/features/collaboration-exp/integration/deepLinks'
 import {
   resolveWorkspaceTabKind,
   type WorkspaceTabKind,
@@ -25,7 +26,8 @@ export function toBrowserPath(path: string): string {
   return joinBrowserPath(getRuntimeConfig().appBasePath, path)
 }
 
-export function navigateTo(path: string) {
+export function navigateTo(requestedPath: string) {
+  const path = canonicalAssistantRoute(requestedPath)
   const [pathname, search] = path.split('?')
   const kind = isSettingsRoute(pathname) ? null : resolveWorkspaceTabKind(pathname)
   if (kind && !new URLSearchParams(search).has('workspaceTab')) {

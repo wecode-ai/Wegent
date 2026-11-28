@@ -9,7 +9,14 @@ import {
 } from '@wegent/chat-core/async-resource'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
+import {
+  CalendarDays,
+  ChevronRight,
+  ClipboardList,
+  History,
+  MessageSquare,
+  Sunrise,
+} from 'lucide-react'
 import { useCallback, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -18,6 +25,9 @@ import {
   type StandInOnboardingConfiguration,
 } from './StandInOnboardingSetup'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInModels } from './useStandInModels'
+import { standInSettingsForChat } from './personalStandInSettingsResource'
+import { dequal } from 'dequal'
 
 const examples = [
   { id: 'daily_brief', icon: Sunrise },
@@ -33,14 +43,22 @@ type StandInOnboardingProps = {
   userId: number
   deviceId: string
   active?: boolean
+  startOnDemand?: boolean
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
-  onOpenConversation(): void
+  onOpenConversation?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
   configuration: StandInOnboardingConfiguration
-  children: ReactNode
+  children(resumeSetup?: ReactNode, launch?: StandInLaunch): ReactNode
+}
+
+export interface StandInLaunch {
+  busy: boolean
+  error?: string
+  start(): Promise<boolean>
+  openAdvanced(): void
 }
 
 export function StandInOnboarding(props: StandInOnboardingProps) {
@@ -59,6 +77,7 @@ function StandInOnboardingContent({
   userId,
   deviceId,
   active = true,
+  startOnDemand = false,
   bypass = false,
   guideOpen = false,
   onGuideClose,
@@ -70,6 +89,7 @@ function StandInOnboardingContent({
 }: StandInOnboardingProps) {
   const { t, i18n } = useTranslation('common')
   const scopeId = useId()
+  const [setup, setSetup] = useState<'runtime' | 'advanced'>()
   const createQuery = (language: string, initialData?: StandInOnboardingResult) => ({
     language,
     resource: createAsyncResource(
@@ -83,13 +103,13 @@ function StandInOnboardingContent({
     setQuery(createQuery(i18n.language, query.resource.getSnapshot().data))
   }
   const resource = query.resource
-  const observationKey = JSON.stringify([bypass, guideOpen])
+  const observationKey = JSON.stringify([bypass, guideOpen, setup])
   const subscribe = useCallback(
     (listener: () => void) => resource.subscribe(listener, observationKey),
     [resource, observationKey]
   )
   const snapshot = useSyncExternalStore(
-    deviceId && active && (!bypass || guideOpen) ? subscribe : subscribeIdleResource,
+    deviceId && active && (!bypass || guideOpen || setup) ? subscribe : subscribeIdleResource,
     resource.getSnapshot,
     getIdleResourceSnapshot
   )
@@ -102,6 +122,42 @@ function StandInOnboardingContent({
         ? getStandInErrorMessage(snapshot.error)
         : null
   const [saving, setSaving] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [recoveryError, setRecoveryError] = useState<string>()
+  const [launchPending, setLaunchPending] = useState(false)
+  const settings = configuration.settings
+  const loadLaunchModels = Boolean(
+    startOnDemand && active && settings && !bypass && !result?.state.completed
+  )
+  const launchModels = useStandInModels(
+    configuration.services,
+    {
+      enabled: true,
+      prompt: '',
+      executionDeviceId: deviceId,
+      version: settings?.version ?? 0,
+      model: settings?.primary?.model,
+    },
+    'codex',
+    loadLaunchModels
+  )
+  const lifecycle =
+    settings?.executionDeviceId === deviceId && settings.userId === userId
+      ? settings.lifecycle?.status
+      : undefined
+  const recover = async () => {
+    if (!lifecycle || recovering) return
+    setRecovering(true)
+    setRecoveryError(undefined)
+    try {
+      await api.lifecycle(userId, deviceId, lifecycle === 'stopped' ? 'start' : 'stop')
+      await configuration.onReload()
+    } catch (cause) {
+      setRecoveryError(getStandInErrorMessage(cause))
+    } finally {
+      setRecovering(false)
+    }
+  }
   const [dismissed, setDismissed] = useState(false)
   const [previousActive, setPreviousActive] = useState(active)
   if (previousActive !== active) {
@@ -111,22 +167,39 @@ function StandInOnboardingContent({
   const checking = active && !bypass && !dismissed && !result && !error
   const open =
     active &&
-    (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
+    !lifecycle &&
+    (guideOpen ||
+      (startOnDemand
+        ? Boolean(setup)
+        : !bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
-  const dismiss = () => {
-    if (saving || setupBusy) return
-    setDismissed(true)
-    if (guideOpen) {
-      onGuideClose?.()
-      return
+  const [scopeTitle, setScopeTitle] = useState<string | null>(null)
+  const [scopePageTitle, setScopePageTitle] = useState<string | null>(null)
+  const scopeTitleChanged = useCallback((title: string | null, pageTitle: string | null) => {
+    setScopeTitle(title)
+    setScopePageTitle(pageTitle)
+  }, [])
+  const settingsTitle = t('standIn.onboarding.connect_title')
+  const showConnectionPath = !guideOpen && Boolean(scopeTitle)
+  const pageTitle = guideOpen
+    ? t('standIn.onboarding.examples_dialog_title')
+    : scopePageTitle || scopeTitle || settingsTitle
+  const [backSlot, setBackSlot] = useState<HTMLDivElement | null>(null)
+  const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null)
+  const leaveSetup = (leaveWorkspace: boolean) => {
+    const dismiss = () => {
+      if (saving || setupBusy) return
+      setDismissed(true)
+      if (guideOpen) onGuideClose?.()
+      else if (startOnDemand) setSetup(undefined)
+      else if (leaveWorkspace) onClose?.()
+      else onOpenConversation?.()
     }
-    onClose?.()
-  }
-  const close = () => {
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()
   }
+  const close = () => leaveSetup(true)
   const dialogRef = useRef<HTMLElement>(null)
   const complete = async (openConversation: boolean) => {
     if (saving) return false
@@ -141,8 +214,9 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
-      if (openConversation) onOpenConversation()
+      if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
+      setSetup(undefined)
       onGuideClose?.()
       return true
     } catch (cause) {
@@ -152,6 +226,53 @@ function StandInOnboardingContent({
       setSaving(false)
     }
   }
+  const launch: StandInLaunch | undefined = startOnDemand
+    ? {
+        busy:
+          launchPending ||
+          checking ||
+          configuration.loading ||
+          (loadLaunchModels && launchModels.loading),
+        error: error ?? configuration.error ?? undefined,
+        openAdvanced: () => setSetup('advanced'),
+        async start() {
+          if (launchPending || lifecycle || configuration.loading) return false
+          if (bypass || result?.state.completed) return true
+          const model = launchModels.resolve(launchModels.selectedModel)
+          if (!settings || !model) {
+            setSetup('runtime')
+            return false
+          }
+          setLaunchPending(true)
+          try {
+            const next = standInSettingsForChat(settings, model)
+            if (!dequal(next, settings) && !(await configuration.onSave(next))) return false
+            return await complete(false)
+          } finally {
+            setLaunchPending(false)
+          }
+        },
+      }
+    : undefined
+  const resumeSetup = !startOnDemand &&
+    active &&
+    dismissed &&
+    !guideOpen &&
+    !bypass &&
+    !result?.state.completed && (
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
+        <p className="text-sm text-text-secondary">{t('standIn.onboarding.setup_required')}</p>
+        <Button
+          type="button"
+          size="sm"
+          className="min-h-11 md:min-h-9"
+          data-testid="stand-in-onboarding-resume"
+          onClick={() => setDismissed(false)}
+        >
+          {t('standIn.onboarding.resume_setup')}
+        </Button>
+      </div>
+    )
   return (
     <>
       <div
@@ -160,8 +281,40 @@ function StandInOnboardingContent({
         aria-hidden={open || undefined}
         data-testid="stand-in-onboarding-content"
       >
-        {result || dismissed || bypass || !active ? children : null}
-        {checking && !guideOpen ? (
+        {active && lifecycle && (
+          <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+            <p>
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.stopped'
+                  : 'standIn.instance.stop_pending'
+              )}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 md:min-h-8"
+              data-testid="stand-in-resume-device"
+              disabled={recovering}
+              onClick={() => void recover()}
+            >
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.resume_device'
+                  : 'standIn.instance.retry_stop'
+              )}
+            </Button>
+            {recoveryError && (
+              <p role="alert" className="text-error">
+                {recoveryError}
+              </p>
+            )}
+          </div>
+        )}
+        {startOnDemand || result || dismissed || bypass || !active
+          ? children(resumeSetup || undefined, launch)
+          : null}
+        {checking && !guideOpen && !startOnDemand ? (
           <p role="status" className="p-5 text-sm text-text-secondary">
             {t('standIn.onboarding.loading')}
           </p>
@@ -170,7 +323,7 @@ function StandInOnboardingContent({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-modal flex items-center justify-center bg-black/15 p-4"
             onMouseDown={event => {
               if (event.target === event.currentTarget) close()
             }}
@@ -183,37 +336,72 @@ function StandInOnboardingContent({
                   ref={dialogRef}
                   aria-labelledby={`${scopeId}-title`}
                   tabIndex={-1}
-                  className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
+                  className="flex max-h-[min(680px,calc(100dvh-3rem))] w-[92vw] max-w-[600px] flex-col overflow-hidden rounded-[20px] border border-border bg-background text-text-primary shadow-lg"
                   data-testid="stand-in-onboarding"
                 />
               }
             >
-              <div className="flex w-full flex-col gap-5">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 id={`${scopeId}-title`} className="heading-md font-medium">
-                    {t(
-                      guideOpen
-                        ? 'standIn.onboarding.examples_dialog_title'
-                        : 'standIn.onboarding.connect_title'
-                    )}
-                  </h2>
+              <header className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3 md:px-6">
+                <div className="flex min-w-0 items-center gap-2">
+                  {showConnectionPath ? (
+                    <nav
+                      aria-label={t('standIn.workspace.settings_path')}
+                      data-testid="stand-in-onboarding-navigation"
+                      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-secondary"
+                    >
+                      <div ref={setBackSlot} className="min-w-0" />
+                      <ChevronRight className="size-3 shrink-0" aria-hidden="true" />
+                      <h2
+                        id={`${scopeId}-title`}
+                        aria-current="page"
+                        className="heading-sm min-w-0 break-words font-medium text-text-primary"
+                        data-testid={
+                          scopePageTitle ? 'stand-in-path-scope' : 'stand-in-path-source'
+                        }
+                      >
+                        {pageTitle}
+                      </h2>
+                    </nav>
+                  ) : (
+                    <h2
+                      id={`${scopeId}-title`}
+                      className="heading-sm min-w-0 break-words font-medium"
+                    >
+                      {pageTitle}
+                    </h2>
+                  )}
+                </div>
+                {!showConnectionPath && (
                   <Button
                     variant="ghost"
-                    className="h-11 md:h-9"
+                    className="h-11 shrink-0 md:h-9"
                     data-testid="stand-in-onboarding-close"
                     disabled={saving || setupBusy}
-                    onClick={close}
+                    onClick={() => leaveSetup(guideOpen)}
                   >
-                    {t(guideOpen ? 'standIn.close' : 'standIn.onboarding.exit')}
+                    {t(guideOpen || startOnDemand ? 'standIn.close' : 'standIn.onboarding.exit')}
                   </Button>
-                </div>
-                {result && !guideOpen ? (
+                )}
+              </header>
+              <div className="flex min-h-0 flex-col gap-5 overflow-y-auto px-5 py-5 md:px-6">
+                {!guideOpen && (result || (error && configuration.onSelectDevice)) ? (
                   <StandInOnboardingSetup
                     ref={setupRef}
-                    configuration={configuration}
+                    configuration={
+                      result ? configuration : { ...configuration, settings: null, error: null }
+                    }
                     api={api}
                     onComplete={complete}
                     onBusyChange={setSetupBusy}
+                    backSlot={backSlot}
+                    backLabel={
+                      scopeTitle && scopePageTitle
+                        ? t('standIn.onboarding.back_to_connection', { name: scopeTitle })
+                        : t('standIn.onboarding.back_to_setup')
+                    }
+                    footerSlot={footerSlot}
+                    runtimeOnly={setup === 'runtime'}
+                    onScopeTitleChange={scopeTitleChanged}
                   />
                 ) : result ? (
                   <>
@@ -277,6 +465,7 @@ function StandInOnboardingContent({
                   </Button>
                 ) : null}
               </div>
+              <div ref={setFooterSlot} className="shrink-0 empty:hidden" />
             </DialogSurface>
           </div>,
           document.body

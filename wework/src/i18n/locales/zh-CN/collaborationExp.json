@@ -5,15 +5,10 @@
   "unavailable": "此任务暂不可用，请检查连接与访问权限后重试。",
   "shell": {
     "back": "返回",
-    "navigation": "协作导航",
-    "resize": "调整相邻分栏宽度",
-    "assistant": "助理",
-    "tasks": "任务",
-    "projects": "项目",
-    "account": "用户菜单",
-    "settings": "设置"
+    "resize": "调整相邻分栏宽度"
   },
   "tasks": {
+    "projectUnavailable": "此项目暂不可用，请检查连接与访问权限。",
     "rhythm": {
       "title": "工作节奏",
       "waiting": "轮到我了",
@@ -110,6 +105,7 @@
     "handoffActions": {
       "assign": "指派",
       "reassign": "重新指派",
+      "redeliver": "重新投递",
       "unassign": "取消指派",
       "unknown": "交接"
     },
@@ -178,6 +174,21 @@
     "continueDiscussion": "继续讨论"
   },
   "assistant": {
+    "entry": {
+      "back": "返回我的助理",
+      "linkTitle": "无法打开这个助理链接",
+      "loadTitle": "助理加载失败",
+      "loadFailed": "请重试加载助理。",
+      "errors": {
+        "missing_identity": "这个链接没有指定助理。",
+        "conflict": "链接中的助理和设备没有指向同一个助理。",
+        "not_found": "链接中的助理当前不可用。",
+        "forbidden": "你无权访问链接中的助理或设备。",
+        "ambiguous": "这个链接匹配到多个助理。",
+        "lookup_failed": "暂时无法验证链接中的助理。请重试。",
+        "unsupported": "当前助理页面无法打开这个讨论或页面。"
+      }
+    },
     "availability": {
       "online": "在线",
       "offline": "离线",
@@ -293,5 +304,38 @@
     "sourceUnavailable": "此保存位置暂不可用，请检查连接和账号后重试。",
     "permissionDenied": "当前项目为只读，无法创建任务。请检查权限或选择其他项目。",
     "assigneeUnavailable": "此负责人当前不可分配，请重新选择。"
+  },
+  "externalAgent": {
+    "name": "智能体名称",
+    "transport": "接入方式",
+    "hook": "HTTP Hook 与回调",
+    "worker": "WebSocket Worker",
+    "hookUrl": "Hook 地址",
+    "method": "请求方法",
+    "format": "请求体格式",
+    "form": "表单",
+    "text": "纯文本",
+    "authorization": "Authorization 请求头（可选）",
+    "template": "请求体模板",
+    "templateHint": "变量在投递时替换。保留回调地址、凭据、调用 ID 和投递 ID，外部服务可用它们把回复写回事项。",
+    "workerHint": "保存后会生成连接凭据。使用 Worker SDK 在外部系统启动连接。",
+    "workerCreated": "智能体已添加，等待 Worker 连接。",
+    "workerTokenHint": "凭据只显示一次。请复制到外部服务的凭据存储。遗失时，可停用此智能体并重新接入。",
+    "workerEndpoint": "Worker 连接地址",
+    "workerToken": "Worker 凭据",
+    "copyToken": "复制凭据",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请重试。",
+    "workerStartHint": "用连接地址设置 WEWORK_ENDPOINT，用凭据设置 WEWORK_WORKER_TOKEN。",
+    "back": "返回",
+    "saving": "正在保存…",
+    "done": "完成",
+    "save": "添加智能体",
+    "saveFailed": "添加外部智能体失败",
+    "workerConnected": "Worker 已连接。",
+    "checkConnection": "检查连接",
+    "checking": "正在检查…",
+    "connectionCheckFailed": "暂时无法检查 Worker 连接，请重试。",
+    "workerGuide": "安装与启动 Worker"
   }
 }

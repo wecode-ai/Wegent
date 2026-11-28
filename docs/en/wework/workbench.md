@@ -201,7 +201,7 @@ System notification permission also applies. The center differs from **Needs you
 
 Opening Issue details from a notification reads the project and Issue from their owning local or cloud source and verifies the project association. Inactive tabs do not preload records; reactivation reads them again while an already-loaded detail from the same source can remain visible. Switching accounts or data sources clears the old displayed result. Failed reads can be retried from the detail. Moving to another comment within the same Issue updates comment focus without rereading the project and Issue.
 
-Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
+Send `/standin` in an [enrolled bot chat](./personal-stand-in.md#im-conversations) to use assistant mode. Task notification subscriptions are independent.
 
 Both synchronous and asynchronous Codex business questions can be answered in IM. Desktop tasks share existing account IM conversations by default without choosing a recipient. Desktop-task delivery respects an explicit opt-out from IM notifications. When enabled, questions are sent even while the desktop is active. Tasks started from a bound private IM conversation send questions back to that conversation. Question messages identify the task and whether it is waiting for your answer or continuing other work. Quoting a question with text or an option number answers the original task directly. Ordinary messages enter the stand-in conversation, where it considers pending questions and recent chat: clear answers are submitted, unrelated requests are handled normally, and ambiguity is clarified first. A single pending question never automatically consumes an ordinary message. Requests containing several questions ask them one at a time and submit the collected answers to the original task. Quoted question replies take priority over ordinary chat and stand-in routing. Ordinary messages are not consumed by the question reply handler. Task subscriptions control foreground notifications rather than selecting recipients.
 
@@ -307,9 +307,11 @@ Message, scroll-position, and measured-height caches are bounded. Archiving a ta
 
 After restoring a conversation, you can answer an existing MCP form or another runtime request that expects a direct response even while the model catalog is loading or the configured model is unavailable. Sending a new chat message still requires an available model.
 
+<a id="message-actions"></a>
+
 ## Use selected response text
 
-Hover a message for its copy action. A user message shows an edit/pencil action only when editing is supported; change it in the editor and follow its submit/cancel controls. Not every historical or assistant message is editable. Quoting selected text differs from changing the original message.
+Hover a message for its copy action. The latest ordinary user message shows a pencil when editing is supported. If the latest user message was sent as guidance, wait for the response to finish, hover the guidance, and choose **Revise and continue**. Update the text and choose **Send correction** to update that guidance in place and continue the next turn from the revised content. No duplicate user message is added below it, and the earlier response remains in chronological order. An attachment-only guidance message also opens the edit form so you can add text or send the attachments again.
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 
