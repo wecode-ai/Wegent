@@ -565,16 +565,23 @@ async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
 }
 
 #[tokio::test]
-async fn cancel_timeout_force_settles_task_and_returns_success() {
-    let (handler, root) = isolated_runtime_work_handler("cancel-timeout-force-settle");
+async fn cancel_timeout_defers_same_session_until_execution_exits() {
+    let (handler, root) = isolated_runtime_work_handler("cancel-timeout-keep-slot");
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
         "Task".to_owned(),
     ));
-    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (cancel_tx, mut cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+    let first = SpawnTurnRequest::new("task-1".into(), "codex".into(), ExecutionRequest::default());
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .enqueue(first.clone())
+        .is_some());
+    let execution = handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     let response = handler
         .cancel_task_with_timeout(
@@ -589,17 +596,27 @@ async fn cancel_timeout_force_settles_task_and_returns_success() {
 
     assert_eq!(response["accepted"], true);
     assert_eq!(response["cleanupPending"], true);
-    assert!(!handler.is_active_local_task("task-1"));
-    let task = handler
-        .local_task_link("task-1")
-        .expect("cancelled task should remain stored");
-    assert_eq!(task.status, "cancelled");
-    assert!(!task.running);
-    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
-        .await
-        .expect("cancel should be sent before forced settlement")
-        .expect("cancel receiver should remain available");
+    assert!(handler.is_current_local_task_execution("task-1", execution));
+    assert!(handler.local_task_link("task-1").unwrap().running);
+    cancel_rx
+        .try_recv()
+        .expect("stop request should reach the worker");
+    handler.submit_continuation(first, false).await.unwrap();
+    assert!(handler.is_queued_local_task("task-1"));
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .take_available()
+        .is_empty());
+    assert!(handler.is_current_local_task_execution("task-1", execution));
+
+    assert!(handler.settle_cancelled_local_task_execution("task-1", execution));
     drop(stopped_tx);
+    assert!(!handler.local_task_link("task-1").unwrap().running);
+    let ready = handler.turn_scheduler.lock().unwrap().finish("task-1");
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].local_task_id, "task-1");
     let _ = fs::remove_dir_all(root);
 }
 

@@ -431,14 +431,7 @@ fn restore_personal_conversation_team(
         return None;
     }
     let saved = runtime_event_request_from_link(link);
-    if saved
-        .extra
-        .get("team_ref")
-        .and_then(Value::as_str)
-        .is_none()
-    {
-        return None;
-    }
+    saved.extra.get("team_ref").and_then(Value::as_str)?;
     // Grants are rebound at dispatch. Pipeline state owns the full roster;
     // its last persisted native turn only represents one participant.
     request.bot = saved.bot.clone();

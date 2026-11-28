@@ -248,9 +248,23 @@ class TerminalHandoffGateway(unittest.TestCase):
             ]
 
     @contextmanager
-    def _reject_handoff_write(
-        self, task_id: int, *, after_pair: bool = False
+    def _reject_redis_publish(self) -> Iterator[None]:
+        self.redis.execute_command("ACL", "SETUSER", "default", "-publish")
+        try:
+            yield
+        finally:
+            self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
+
+    @contextmanager
+    def _interrupt_handoff(
+        self, task_id: int, *, rust: bool, after_pair: bool = False
     ) -> Iterator[None]:
+        if rust and after_pair:
+            # Rust publishes terminal frames after committing the pair and before
+            # dispatch. Its RUNNING update occurs after receiver acknowledgement.
+            with self._reject_redis_publish():
+                yield
+            return
         name = self.marker.replace("-", "_")
         operation = "UPDATE" if after_pair else "INSERT"
         condition = (
@@ -284,7 +298,7 @@ class TerminalHandoffGateway(unittest.TestCase):
         self, task_id: int, assistant_id: int
     ) -> Iterator[None]:
         # A previous worker owns the dispatch identity. Force a rejected
-        # delivery after the writer has committed RUNNING.
+        # delivery before this callback can receive an acknowledgement.
         key = f"wegent:lock:pipeline-execution:{task_id}:{assistant_id}"
         self.assertTrue(self.redis.set(key, "fixture", nx=True, ex=20))
         try:
@@ -380,7 +394,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             if rust
             else f"pipelineAutoAdvance:{source_id}"
         )
-        with self._reject_handoff_write(task_id, after_pair=after_pair):
+        with self._interrupt_handoff(task_id, rust=rust, after_pair=after_pair):
             self._callback(task_id, source_id, answer, rust=rust, fail=True)
             self.assertIsNotNone(self.redis.zscore(queue, member))
             self.assertTrue(
@@ -395,8 +409,8 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertEqual(original[1]["result"]["value"], answer)
             if after_pair:
                 self.assertEqual(original[-1]["status"], "PENDING")
-            cancelled = self._json(self.api.post(f"/api/tasks/{task_id}/cancel"))
-            self.assertEqual(cancelled["status"], "CANCELLED")
+        cancelled = self._json(self.api.post(f"/api/tasks/{task_id}/cancel"))
+        self.assertEqual(cancelled["status"], "CANCELLED")
         _, expected_rows = self._snapshot(task_id)
         if after_pair:
             self.assertEqual(expected_rows[-1]["status"], "CANCELLED")
@@ -441,7 +455,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             # The shared channel also carries ACK probes unrelated to this task.
             publish_callback_probe(self)
 
-        with self._reject_handoff_write(task_id):
+        with self._interrupt_handoff(task_id, rust=rust):
             self._callback(task_id, subtask_id, answer, rust=rust, fail=True)
         before, original = self._snapshot(task_id)
         self.assertEqual(before["spec"]["currentStage"], 0, before)
@@ -457,7 +471,7 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(original[-1]["result"]["value"], answer)
         self.assertFalse(self._model_requests())
 
-        with self._reject_handoff_write(task_id, after_pair=True):
+        with self._interrupt_handoff(task_id, rust=rust, after_pair=True):
             self._callback(
                 task_id, subtask_id, "late callback payload", rust=rust, fail=True
             )
@@ -473,8 +487,9 @@ class TerminalHandoffGateway(unittest.TestCase):
                 task_id, subtask_id, "unaccepted callback", rust=rust, fail=True
             )
             running, pending_rows = self._snapshot(task_id)
-            self.assertEqual(running["status"]["status"], "RUNNING", running)
-            self.assertEqual(pending_rows[-1]["status"], "RUNNING", pending_rows)
+            expected_status = "PENDING" if rust else "RUNNING"
+            self.assertEqual(running["status"]["status"], expected_status, running)
+            self.assertEqual(pending_rows[-1]["status"], expected_status, pending_rows)
             self.assertIn(marker, running["metadata"]["labels"])
             if rust:
                 self.assertIn("pipelinePendingHandoff", running["metadata"]["labels"])
@@ -764,12 +779,9 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.addCleanup(subscriber.close)
         subscriber.subscribe(f"callback:channel:{subtask_id}")
         self._wait_for(lambda: subscriber.get_message(timeout=0.1))
-        self.redis.execute_command("ACL", "SETUSER", "default", "-publish")
-        try:
+        with self._reject_redis_publish():
             self._callback(task_id, subtask_id, result, rust=False, fail=True)
             self.assertEqual(self._snapshot(task_id)[1][-1]["status"], "COMPLETED")
-        finally:
-            self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
 
         self._callback(task_id, subtask_id, "duplicate result", rust=False)
 
@@ -810,8 +822,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
         )
         # Exercise the real Redis Lua publication failure after the MySQL commit.
-        self.redis.execute_command("ACL", "SETUSER", "default", "-publish")
-        try:
+        with self._reject_redis_publish():
             self._json(
                 self.model.post("/stream-rules/release", json={"matchText": first})
             )
@@ -827,8 +838,6 @@ class TerminalHandoffGateway(unittest.TestCase):
                     f"wegent:terminal-delivery:{task_id}:{assistant_id}:result"
                 )
             )
-        finally:
-            self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
 
         assert_recovered_terminal_frames(
             self, subscription, task_id, assistant_id, marker, second

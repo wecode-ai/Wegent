@@ -3236,14 +3236,6 @@ impl RuntimeWorkRpcHandler {
             }
         };
         let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped && !require_stopped {
-            self.force_settle_local_task_execution(
-                &local_task_id,
-                thread_id.clone(),
-                "cancelled",
-                "cancel_timeout",
-            );
-        }
         let cleanup_pending = !local_stopped || !provider_stopped;
 
         if cancels_pending_send {
@@ -3274,53 +3266,16 @@ impl RuntimeWorkRpcHandler {
             .get_task(&local_task_id)
             .map(|link| link.runtime)
             .unwrap_or_else(|| "codex".to_owned());
-        let _operation = self.turn_queue_operation.lock().await;
-        let (previous, queued_turn, remaining_turns) = {
-            let mut scheduler = self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned");
-            if scheduler.queued_position(&local_task_id).is_none() {
-                return Ok(json!({
-                    "success": false,
-                    "accepted": false,
-                    "taskId": local_task_id,
-                    "runtime": runtime,
-                    "error": "runtime task is not queued",
-                    "code": "not_queued",
-                }));
-            }
-            let previous = scheduler.clone();
-            scheduler.refresh_automatic_waits(&self.store, None);
-            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
-                AppIpcError::new(
-                    "runtime_queue_failed",
-                    "queued turn is waiting for its session",
-                )
-            })?;
-            (previous, turn, scheduler.queued_turns.clone())
-        };
-        if let Err(error) = self
-            .persist_turn_queue(
-                remaining_turns,
-                Some(&previous),
-                std::slice::from_ref(&queued_turn),
-            )
-            .await
-        {
-            *self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned") = previous;
-            return Err(error);
+        if !self.drain_queued_turns(Some(&local_task_id)).await? {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": runtime,
+                "error": "runtime task is not queued",
+                "code": "not_queued",
+            }));
         }
-        self.reserve_turn_preparation(&queued_turn);
-        drop(_operation);
-        log_executor_event(
-            "runtime work queued turn force started",
-            &[("local_task_id", local_task_id.clone())],
-        );
-        self.launch_reserved_turn(queued_turn).await?;
         Ok(json!({
             "success": true,
             "accepted": true,

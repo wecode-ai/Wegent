@@ -2735,32 +2735,55 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn resume_persisted_turns(&self) {
         self.ensure_quota_waker();
-        let operation = self.turn_queue_operation.clone().lock_owned().await;
-        let (previous, turns, remaining_turns) = {
-            let mut scheduler = self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned");
-            let previous = scheduler.clone();
-            scheduler.refresh_automatic_waits(&self.store, None);
-            let turns = scheduler.take_available();
-            if turns.is_empty() {
-                return;
-            }
-            (previous, turns, scheduler.queued_turns.clone())
-        };
-        if let Err(error) = self
-            .persist_turn_queue(remaining_turns, Some(&previous), &turns)
-            .await
-        {
-            *self.turn_scheduler.lock().expect("turn scheduler poisoned") = previous;
+        if let Err(error) = self.drain_queued_turns(None).await {
             log_executor_event(
                 "runtime turn queue drain persistence failed",
                 &[("error", error.message)],
             );
-            return;
         }
-        self.dispatch_queued_turns(operation, turns);
+    }
+
+    pub(super) async fn drain_queued_turns(
+        &self,
+        forced_task: Option<&str>,
+    ) -> Result<bool, AppIpcError> {
+        let operation = self.turn_queue_operation.lock().await;
+        let (previous, turns, remaining) = {
+            let mut scheduler = self.turn_scheduler.lock().expect("turn scheduler poisoned");
+            if forced_task.is_some_and(|id| scheduler.queued_position(id).is_none()) {
+                return Ok(false);
+            }
+            let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
+            let turns = match forced_task {
+                Some(id) => vec![scheduler.force_start(id).ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_queue_failed",
+                        "queued turn is waiting for its session",
+                    )
+                })?],
+                None => scheduler.take_available(),
+            };
+            if turns.is_empty() {
+                return Ok(false);
+            }
+            (previous, turns, scheduler.queued_turns.clone())
+        };
+        self.commit_reserved_turns(previous, remaining, &turns)
+            .await?;
+        drop(operation);
+        for turn in turns {
+            if let Some(id) = forced_task {
+                log_executor_event(
+                    "runtime work queued turn force started",
+                    &[("local_task_id", id.to_owned())],
+                );
+                self.launch_reserved_turn(turn).await?;
+            } else {
+                self.start_queued_turn(turn);
+            }
+        }
+        Ok(true)
     }
 
     pub(super) fn dispatch_queued_turns(
