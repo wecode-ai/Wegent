@@ -3452,6 +3452,7 @@ test.describe('Agent conversation regression', () => {
     commands: string[] = []
   ): Promise<void> {
     type DeviceTask = {
+      team: { id: number }
       status: string
       device_id: string
       subtasks: Array<{
@@ -3501,7 +3502,7 @@ test.describe('Agent conversation regression', () => {
       headers: authHeaders(),
       data: {
         taskId,
-        teamId: deviceTeam.id,
+        teamId: before.team.id,
         deviceId: before.device_id,
         message: prompt,
         taskType: 'task',
