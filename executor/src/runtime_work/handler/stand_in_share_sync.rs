@@ -7,6 +7,8 @@ use wegent_protocol::assistant_share::AssistantShareDefinition;
 
 #[derive(serde::Deserialize)]
 struct ShareSource {
+    #[serde(default)]
+    roster_only: bool,
     kind: String,
     source: String,
     revision: u64,
@@ -76,8 +78,11 @@ impl RuntimeWorkRpcHandler {
             else {
                 continue;
             };
-            let assistants =
-                published_team_members(&connection, user, &settings, &root, &published).await?;
+            let assistants = if source.roster_only {
+                Vec::new()
+            } else {
+                published_team_members(&connection, user, &settings, &root, &published).await?
+            };
             Self::runtime_http_on(
                 &connection,
                 reqwest::Method::PUT,
