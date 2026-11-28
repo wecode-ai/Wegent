@@ -43,9 +43,10 @@ export function createConversationEventModel({
   function events(body, phase) {
     const marker = `${MARKER}_${phase}`
     const workflowConflict = phase === 'workflow_conflict'
+    const workflowCompletion = ['workflow', 'workflow_replay'].includes(phase)
     const preexistingChecks = phase === 'preexisting_checks'
     const prChecks = preexistingChecks || phase === 'assigned_issue'
-    const usesGoal = !prChecks && !['ordinary', 'workflow', 'workflow_conflict'].includes(phase)
+    const usesGoal = !prChecks && !workflowCompletion && !workflowConflict && phase !== 'ordinary'
     if (phase === 'owner' && modelRequestTexts(body).includes(`${marker}_CONTINUE`)) {
       if (!requestContainsToolOutput(body, `${marker}_complete`)) {
         return selectedToolCall(
@@ -164,7 +165,7 @@ export function createConversationEventModel({
             : {
                 '/eventType': workflowConflict ? 'git.event' : 'message.received',
                 '/topicId': workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
-                ...(phase === 'workflow'
+                ...(workflowCompletion
                   ? {
                       '/external/eventType': 'tracked.workflow_run',
                       '/external/payload/id': 44231414768,
@@ -262,7 +263,7 @@ export function createConversationEventModel({
             item.id ===
             (preexistingChecks
               ? 'preexisting-checks-record'
-              : phase === 'human'
+              : ['human', 'workflow_replay'].includes(phase)
                 ? 'long-archive-record'
                 : 'archive-record')
         )

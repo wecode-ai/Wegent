@@ -47,6 +47,10 @@ from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
 from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
 from ..llm_logging import log_llm_request_event as _log_llm_request_event
 from ..llm_logging import log_llm_response_event as _log_llm_response_event
+from ..models.response_validation import (
+    ModelResponseValidator,
+    validate_response_metadata,
+)
 from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.load_skill import LazySkillProviderTool
@@ -864,6 +868,7 @@ class LangGraphAgentBuilder:
                 config={
                     **exec_config,
                     "recursion_limit": _recursion_limit_for(self.max_iterations),
+                    "callbacks": [ModelResponseValidator()],
                 },
                 version="v2",
                 durability="exit",
@@ -966,6 +971,7 @@ class LangGraphAgentBuilder:
                     request_name="tool_limit_recovery",
                     tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
                 )
+                validate_response_metadata(response.response_metadata)
                 final_content = ""
                 if hasattr(response, "content"):
                     if isinstance(response.content, str):
@@ -1566,6 +1572,7 @@ class LangGraphAgentBuilder:
                 config={
                     **exec_config,
                     "recursion_limit": recursion_limit,
+                    "callbacks": [ModelResponseValidator()],
                 },
                 version="v2",
                 durability="exit",
@@ -1815,12 +1822,15 @@ class LangGraphAgentBuilder:
                         metadata = output.get("response_metadata") or output.get(
                             "generation_info", {}
                         )
+                    finish_reason = metadata.get("finish_reason") or metadata.get(
+                        "stop_reason"
+                    )
                     logger.info(
                         "[stream_tokens] Model end summary: agent_iteration=%d stop_reason=%s, "
                         "parsed_tool_calls=%d, content_tool_use_blocks=%d, "
                         "invalid_tool_calls=%d",
                         agent_iteration,
-                        metadata.get("finish_reason") or metadata.get("stop_reason"),
+                        finish_reason,
                         parsed_tool_calls_count,
                         content_tool_use_count,
                         invalid_tool_calls_count,
@@ -2197,6 +2207,7 @@ class LangGraphAgentBuilder:
                     request_name="tool_limit_recovery_stream",
                 )
                 async for chunk in self.llm.astream(recovery_input):
+                    validate_response_metadata(chunk.response_metadata)
                     if hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:

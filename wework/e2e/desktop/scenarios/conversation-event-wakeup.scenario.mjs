@@ -125,6 +125,8 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     at: new Date().toISOString(),
     ...(phase === 'workflow'
       ? {
+          objectId: WORKFLOW_CONFLICT_TOPIC,
+          version: id,
           external: {
             eventType: 'tracked.workflow_run',
             payload: {
@@ -147,6 +149,59 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
           }
         : {}),
   })
+
+  async function verifyWorkflowReplay(control, getTask, originalEvent) {
+    phase = 'workflow_replay'
+    const marker = `${MARKER}_${phase}`
+    const subscription = (task, key) =>
+      task.runtimeHandle?.connectionEventSubscriptions?.find(item => item.subscription_key === key)
+    const original = subscription((await getTask()).task, `${MARKER}_workflow`)
+    assert.equal(original?.status, 'delivered')
+    assert.ok(original.operation_id)
+
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `${marker} 通过另一条监听核对同一工作流结果。`,
+    })
+    await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+    const before = await waitForValue(
+      async () => (await getTask()).task,
+      task => !task.running && subscription(task, marker)?.status === 'armed',
+      'The second workflow subscription must be armed in the idle original thread',
+      modelResponseTimeoutMs
+    )
+    assert.notEqual(subscription(before, marker).observation_id, original.observation_id)
+    const beforeTurnId = before.executionState.turnId ?? before.executionState.latestTurnId
+    assert.ok(beforeTurnId)
+    const requestsBefore = modelRequests
+    // Independent collectors may report the same object version at different times.
+    events.push({
+      ...originalEvent,
+      text: `${marker}_EVENT_RECEIVED`,
+      at: new Date().toISOString(),
+    })
+    await saveEvents()
+    const replay = await waitForValue(
+      async () => subscription((await getTask()).task, marker),
+      item => ['delivered', 'needs_attention', 'error'].includes(item?.status) && item,
+      'The idle conversation must settle the duplicate workflow event',
+      30000
+    )
+    const journal = JSON.parse(
+      await readFile(join(executorHome, 'runtime-work/control-operations.json'), 'utf8')
+    )
+    const receipt = journal.operations[replay.operation_id]
+    assert.equal(replay.status, 'delivered', JSON.stringify(receipt?.error ?? replay))
+    assert.equal(replay.error_code, null)
+    assert.notEqual(replay.operation_id, original.operation_id)
+    assert.equal(receipt?.delivery_status, 'accepted')
+    assert.equal(receipt.result.commandId, original.operation_id)
+    await control.command('waitFor', '[data-testid="connection-event-status"]', { visible: false })
+    const { task: after } = await getTask()
+    assert.equal(after.threadId, before.threadId)
+    assert.equal(after.executionState.turnId ?? after.executionState.latestTurnId, beforeTurnId)
+    assert.equal(modelRequests, requestsBefore, 'A replay must not trigger a second model turn')
+  }
 
   async function verifyResumedGoalControlContext(control) {
     active = true
@@ -777,6 +832,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
             assert.equal(goal.goal.tokenBudget, 20000)
           }
           if (phase === 'human') await human.cleanup(control)
+          if (phase === 'workflow') await verifyWorkflowReplay(control, getTask, match)
         }
         await writeFile(
           join(resultDir, 'conversation-event-evidence.json'),
