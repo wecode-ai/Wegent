@@ -345,7 +345,7 @@ function StandInSettingsEditor({
   const [pendingTeamCopy, setPendingTeamCopy] = useState<boolean | null>(null)
   const save = async (disconnectProject = false, copyTeam = false) => {
     if (!draft || !role || moving || connectionDraftDirty) return
-    if (!saved?.roles.some(value => value.id === role.id) && !role.name.trim()) {
+    if (!savedRole && !role.name.trim()) {
       if (view === 'project') openView('create')
       else if (view === 'advanced' || view === 'connections') closeView()
       setRoleNameError(true)
@@ -504,11 +504,7 @@ function StandInSettingsEditor({
   const receivingSources = Boolean(
     role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
   )
-  const canDeleteRole =
-    initialProfileId &&
-    !initialProject &&
-    view === 'main' &&
-    saved?.roles.some(row => row.id === role?.id)
+  const canDeleteRole = initialProfileId && !initialProject && view === 'main' && savedRole
 
   const deviceControl = role && (
     <StandInDeviceSelect
@@ -928,6 +924,7 @@ function StandInSettingsEditor({
               prefix="stand-in"
               busy={saving}
               leading={
+                savedRole &&
                 !connectionDetailOpen &&
                 (footerLeading || canDeleteRole) && (
                   <>

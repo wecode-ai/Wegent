@@ -678,7 +678,9 @@ export function RequestUserInputSummary({ payload }: { payload: RequestUserInput
       <div className="ml-5 flex min-w-0 flex-col gap-1.5">
         {rows.map(row => (
           <div key={row.id} className="min-w-0">
-            <div className="font-medium text-text-secondary">{row.question}</div>
+            <div className="whitespace-pre-wrap break-words font-medium text-text-secondary">
+              {row.question}
+            </div>
             {row.answer ? (
               <div className="mt-0.5 whitespace-pre-wrap text-text-muted">{row.answer}</div>
             ) : null}
@@ -708,6 +710,38 @@ function highlightRm(commandText: string) {
   )
 }
 
+function nativeToolApprovalText(
+  payload: RequestUserInputPayload,
+  question: RequestUserInputQuestion
+) {
+  const { toolName, toolArguments } = payload
+  if (
+    !toolName ||
+    !toolArguments ||
+    typeof toolArguments !== 'object' ||
+    Array.isArray(toolArguments) ||
+    payload.serverName ||
+    question.header !== toolName ||
+    !question.question?.startsWith(toolName + '\n')
+  )
+    return question
+
+  let detail = ''
+  if (toolName === 'Bash' && typeof toolArguments.command === 'string') {
+    const { command, ...other } = toolArguments
+    // Keep every execution option visible alongside the exact command being approved.
+    detail = [
+      command,
+      ...Object.entries(other).map(
+        ([key, value]) => key + ': ' + (typeof value === 'string' ? value : JSON.stringify(value))
+      ),
+    ].join('\n')
+  } else if (Object.keys(toolArguments).length > 0) {
+    detail = JSON.stringify(toolArguments, null, 2)
+  }
+  return { ...question, header: undefined, question: detail ? toolName + '\n' + detail : toolName }
+}
+
 function localizeApprovalQuestions(
   payload: RequestUserInputPayload,
   t: ReturnType<typeof useConversationTranslation>['t']
@@ -721,10 +755,9 @@ function localizeApprovalQuestions(
   ) {
     return [
       {
-        ...question,
-        options: question.options?.map((option) => {
-          if (option.label !== 'Allow' && option.label !== 'Decline')
-            return option
+        ...nativeToolApprovalText(payload, question),
+        options: question.options?.map(option => {
+          if (option.label !== 'Allow' && option.label !== 'Decline') return option
           const allow = option.label === 'Allow'
           return {
             ...option,

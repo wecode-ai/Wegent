@@ -249,34 +249,51 @@ const payload = {
 }
 
 describe('RequestUserInputCard', () => {
-  test('localizes a Claude tool decision and submits its original value', async () => {
-    const onSubmit = vi.fn()
-    render(
-      <RequestUserInputCard
-        compact
-        payload={{
-          kind: 'request_user_input',
-          requestId: 'probe',
-          interactionKind: 'mcp_form',
-          questions: [
-            {
-              id: '__mcp_approval',
-              question: 'probe_environment',
-              options: [{ label: 'Allow' }, { label: 'Decline' }],
-            },
-          ],
-        }}
-        onSubmit={onSubmit}
-      />
-    )
-    expect(screen.getByRole('button', { name: /仅允许一次/ })).toBeVisible()
-    await userEvent.click(screen.getByRole('button', { name: /拒绝本次工具调用/ }))
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        answers: { __mcp_approval: { answers: ['Decline'] } },
-      })
-    )
-  })
+  test.each([
+    ['mcp__probe__environment', {}, 'mcp__probe__environment'],
+    [
+      'Bash',
+      { command: 'cat "$HOME/path"', description: 'Read a file', timeout: 1000 },
+      'Bash\ncat "$HOME/path"\ndescription: Read a file\ntimeout: 1000',
+    ],
+  ] as const)(
+    'presents %s approval once and submits its original decision',
+    async (toolName, toolArguments, expected) => {
+      const onSubmit = vi.fn()
+      render(
+        <RequestUserInputCard
+          compact
+          payload={{
+            kind: 'request_user_input',
+            requestId: 'probe',
+            interactionKind: 'mcp_form',
+            toolName,
+            toolArguments,
+            questions: [
+              {
+                id: '__mcp_approval',
+                header: toolName,
+                question: toolName + '\n' + JSON.stringify(toolArguments),
+                options: [{ label: 'Allow' }, { label: 'Decline' }],
+              },
+            ],
+          }}
+          onSubmit={onSubmit}
+        />
+      )
+      expect(screen.getByTestId('request-user-input-question-__mcp_approval').textContent).toBe(
+        expected
+      )
+      expect(screen.getAllByText(toolName, { exact: false })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: /仅允许一次/ })).toBeVisible()
+      await userEvent.click(screen.getByRole('button', { name: /拒绝本次工具调用/ }))
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: { __mcp_approval: { answers: ['Decline'] } },
+        })
+      )
+    }
+  )
 
   test('localizes Codex approvals while submitting protocol decision values', async () => {
     const user = userEvent.setup()

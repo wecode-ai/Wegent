@@ -149,6 +149,20 @@ test('retrying settings requires discarding the profile draft separately from an
   expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
 })
 
+test('creating an assistant has no instance stop action', async () => {
+  const { props } = standInOverviewFixture([newStandInRole('device', 'existing')])
+  render(
+    <StandInSettingsPage
+      {...props}
+      initialCreate
+      initialDeviceId="device"
+      footerLeading={<button>Stop assistant</button>}
+    />
+  )
+  expect(await screen.findByTestId('stand-in-create-team')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Stop assistant' })).toBeNull()
+})
+
 test('closing role settings confirms unsaved role changes after discarding an unfinished project tag', async () => {
   const role = newStandInRole('device', 'default')
   const { props } = standInOverviewFixture([
@@ -165,12 +179,14 @@ test('closing role settings confirms unsaved role changes after discarding an un
       {...props}
       initialProfileId={role.id}
       initialDeviceId={role.executionDeviceId}
+      footerLeading={<button>Stop assistant</button>}
       onCancel={onCancel}
     />
   )
   fireEvent.change(await screen.findByTestId('stand-in-role-name'), {
     target: { value: 'Unsaved role' },
   })
+  expect(screen.getByRole('button', { name: 'Stop assistant' })).toBeVisible()
   await enterUnfinishedProjectTag('stand-in-connections-open')
 
   fireEvent.click(screen.getByTestId('stand-in-close'))
