@@ -5,6 +5,17 @@ use wegent_protocol::pipeline::handoff_text;
 
 const STATE: &str = "personalPipeline";
 
+pub(super) fn project_pipeline_has_next_stage(link: &RuntimeTaskLink) -> bool {
+    let state = &link.runtime_handle[STATE];
+    state["claimId"].is_i64()
+        && state["phase"] != "finished"
+        && state["stage"]
+            .as_u64()
+            .and_then(|stage| stage.checked_add(1))
+            .and_then(|next| state["members"].get(next as usize))
+            .is_some()
+}
+
 pub(super) fn strip_personal_bot_mcp(bots: &mut Value) {
     for bot in bots.as_array_mut().into_iter().flatten() {
         if bot["native_capability_scope"] == "bot" {
@@ -60,11 +71,67 @@ fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String
 }
 
 impl RuntimeWorkRpcHandler {
+    fn claimed_pipeline_bots(
+        &self,
+        task: &str,
+        origin: &Value,
+        team: Option<&Value>,
+    ) -> Result<(i64, Value), AppIpcError> {
+        let denied =
+            || AppIpcError::new("permission_denied", "Project Pipeline claim is unavailable");
+        let execution = LocalTaskStore::open(self.task_store_path.as_ref())
+            .and_then(|store| store.execution_by_runtime_task_id(task))
+            .map_err(super::stand_in::settings_error)?
+            .filter(|run| {
+                matches!(run.status.as_str(), "claimed" | "running")
+                    && run.runtime_device_id.as_deref() == Some(self.device_id.as_str())
+                    && origin["cloudProjectId"] == run.cloud_project_id
+                    && team.and_then(Value::as_str) == Some(run.agent_id.as_str())
+            })
+            .ok_or_else(denied)?;
+        let mut payload = execution.execution_payload.ok_or_else(denied)?;
+        if payload["collaboration_model"] != "pipeline" || !payload["bot"].is_array() {
+            return Err(denied());
+        }
+        Ok((execution.id, payload["bot"].take()))
+    }
+
     pub(super) fn restore_personal_bot_grants(
         &self,
         task: &str,
         request: &mut ExecutionRequest,
     ) -> Result<(), AppIpcError> {
+        if let Some(marker) = request.extra.get("personalPipelineTurn") {
+            let binding = self.store.read_task(task, |link| {
+                let state = &link.runtime_handle[STATE];
+                (
+                    link.runtime_handle["origin"].clone(),
+                    state["claimId"].as_i64(),
+                    json!([state["root"], state["stage"]]),
+                )
+            });
+            if let Some((origin, claim_id, current)) =
+                binding.filter(|(origin, _, _)| origin["projectStore"] == "local")
+            {
+                let (id, bots) =
+                    self.claimed_pipeline_bots(task, &origin, request.extra.get("team_ref"))?;
+                if Some(id) != claim_id || marker != &current {
+                    return Err(AppIpcError::new(
+                        "stale_stage",
+                        "Project Pipeline claim has changed",
+                    ));
+                }
+                let bot = marker[1]
+                    .as_u64()
+                    .and_then(|stage| bots.get(stage as usize))
+                    .filter(|bot| bot["id"] == request.bot[0]["id"])
+                    .ok_or_else(|| {
+                        AppIpcError::new("stale_stage", "Project Pipeline member has changed")
+                    })?;
+                request.bot = json!([bot]);
+                return Ok(());
+            }
+        }
         if request.bot[0]["native_capability_scope"] != "bot"
             || !request
                 .extra
@@ -132,20 +199,24 @@ impl RuntimeWorkRpcHandler {
             .and_then(Value::as_str)
             != Some("pipeline")
             || !request.extra.get("team_ref").is_some_and(Value::is_string)
-            || turn.task_kind == Some(RuntimeTaskKind::Agent)
         {
             return Ok(());
         }
-        let (prior, terminated, awaiting_reply) = self
+        let (prior, terminated, awaiting_reply, origin) = self
             .store
             .read_task(&turn.local_task_id, |link| {
                 (
                     link.runtime_handle[STATE].clone(),
                     matches!(link.status.as_str(), "failed" | "cancelled" | "archived"),
                     link.interaction_status.is_some(),
+                    link.runtime_handle["origin"].clone(),
                 )
             })
             .unwrap_or_default();
+        let project = origin["projectStore"] == "local";
+        if turn.task_kind == Some(RuntimeTaskKind::Agent) && !project {
+            return Ok(());
+        }
         if let Some(marker) = request.extra.get("personalPipelineTurn") {
             if terminated
                 || marker != &json!([prior["root"], prior["stage"]])
@@ -177,16 +248,29 @@ impl RuntimeWorkRpcHandler {
         request.new_session = true;
         turn.resume_thread_id = None;
         turn.direct_thread_id = None;
-        let mut members = request.bot.clone();
-        if request.extra["team_ref"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("stand-in-team-"))
+        let (claim_id, mut members) = if project {
+            let (id, bots) = self.claimed_pipeline_bots(
+                &turn.local_task_id,
+                &origin,
+                request.extra.get("team_ref"),
+            )?;
+            (Some(id), bots)
+        } else {
+            (None, request.bot.clone())
+        };
+        if project
+            || request.extra["team_ref"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("stand-in-team-"))
         {
             strip_personal_bot_mcp(&mut members);
         }
         redact_execution_profile_secrets(&mut members);
         let state = json!({"root":request.subtask_id,"stage":0,"phase":"active","members":members,"original":request.prompt,"instructions":request.system_prompt});
         let mut state = state;
+        if let Some(id) = claim_id {
+            state["claimId"] = json!(id);
+        }
         state["useSavedPermissions"] =
             json!(request.extra.get("useSavedStandInTaskPermissions") == Some(&Value::Bool(true)));
         turn.runtime = stage_request(request, &state)?;
@@ -332,22 +416,26 @@ impl RuntimeWorkRpcHandler {
                 "Personal Team stage has changed",
             ));
         }
-        let user = link.runtime_handle["origin"]["userId"]
-            .as_i64()
-            .or_else(|| link.runtime_handle["executionRequest"]["user_id"].as_i64())
-            .ok_or_else(|| {
-                AppIpcError::new("permission_denied", "Personal Task owner is unavailable")
-            })?;
-        self.verify_local_stand_in_owner(user)?;
         let mut request = runtime_event_request_from_link(&link);
-        let reference = request
-            .extra
-            .get("team_ref")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AppIpcError::new("not_found", "Personal Team binding is unavailable"))?;
-        LocalTaskStore::open(self.task_store_path.as_ref())
-            .and_then(|store| store.personal_execution_team(user, reference))
-            .map_err(super::stand_in::settings_error)?;
+        if link.runtime_handle["origin"]["projectStore"] != "local" {
+            let user = link.runtime_handle["origin"]["userId"]
+                .as_i64()
+                .or_else(|| link.runtime_handle["executionRequest"]["user_id"].as_i64())
+                .ok_or_else(|| {
+                    AppIpcError::new("permission_denied", "Personal Task owner is unavailable")
+                })?;
+            self.verify_local_stand_in_owner(user)?;
+            let reference = request
+                .extra
+                .get("team_ref")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppIpcError::new("not_found", "Personal Team binding is unavailable")
+                })?;
+            LocalTaskStore::open(self.task_store_path.as_ref())
+                .and_then(|store| store.personal_execution_team(user, reference))
+                .map_err(super::stand_in::settings_error)?;
+        }
         if let Some(model) = self.runtime_model_config(task) {
             request.model_config = model;
         }
