@@ -356,7 +356,9 @@ pub(crate) fn manager_request_context(
         || request
             .backend_url
             .as_deref()
-            .is_none_or(|url| url.trim().is_empty())
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
         || !request.project_group_execution()
         || !is_manager_context(context.grant())
         || origin["projectStore"] != "backend"
