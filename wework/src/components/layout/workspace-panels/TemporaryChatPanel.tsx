@@ -974,7 +974,9 @@ export function TemporaryChatPanel({
       emptyStateText={
         historySource && !scopedHistory.available
           ? (historySourceUnavailableText ?? emptyStateText)
-          : emptyStateText
+          : isAssistantView && input.trim()
+            ? ''
+            : emptyStateText
       }
       expanded={expanded}
       wideComposer={wideComposer}

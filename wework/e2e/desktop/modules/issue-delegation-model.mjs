@@ -24,6 +24,7 @@ export function createIssueDelegationModel({
   simple,
   answer,
   holdChild = false,
+  runWorker,
 }) {
   const state = { spawned: false, childRan: false, completed: false }
   let waitId, childName
@@ -54,6 +55,11 @@ export function createIssueDelegationModel({
       const input = JSON.stringify(body.input)
       if (!input.includes(marker)) return false
       if (isCollaborationSubagentRequest(req.headers)) {
+        const workerEvents = runWorker?.(body)
+        if (workerEvents) {
+          reply(response, workerEvents)
+          return true
+        }
         assert.equal(state.childRan, false, 'Run one real native worker')
         state.childRan = true
         if (holdChild) childResponse = response

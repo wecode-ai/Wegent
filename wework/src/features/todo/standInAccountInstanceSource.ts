@@ -1,6 +1,7 @@
-import type {
-  PersonalAssistantAccount,
-  PersonalAssistantStopIntent,
+import {
+  assistantDefinitionName,
+  type PersonalAssistantAccount,
+  type PersonalAssistantStopIntent,
 } from '@/api/personalAssistantAccount'
 import { ApiError } from '@/api/http'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
@@ -251,7 +252,7 @@ export function createAccountStandInInstanceSource({
     if (configuredPrimaryStandInDevice(currentAccount) === deviceId) return
     const definitions = currentAccount.definitions.map(entry => ({
       roleId: entry.roleId,
-      name: entry.team.metadata.displayName ?? entry.bot.metadata.displayName ?? '',
+      name: assistantDefinitionName(entry) ?? '',
       prompt: entry.ghost.spec.systemPrompt,
       executionDeviceId:
         entry.roleId === '@primary' ? deviceId : entry.bot.spec?.execution_policy?.environment_id,

@@ -14,6 +14,51 @@ fn schedule_asks_before_act(automation: &Automation, role: &Value) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn scheduled_read_automation(
+        &self,
+        actor: &RuntimeTaskLink,
+        identity: &StandInMcpIdentity,
+    ) -> Option<Automation> {
+        use crate::runtime_work::automations::AutomationRunStatus;
+
+        let origin = &actor.runtime_handle["origin"];
+        let schedule = &actor.runtime_handle["executionRequest"]["standInSchedule"];
+        let id = schedule["id"].as_str()?;
+        let run_id = schedule["runId"].as_str()?;
+        let role_id = identity.role.as_deref().unwrap_or("@primary");
+        let automation = self.automation_store.get(id)?;
+        if origin["type"] != "stand_in_schedule"
+            || origin["automationId"] != id
+            || origin["standInId"] != role_id
+            || schedule["userId"] != identity.user
+            || schedule["roleId"] != role_id
+            || schedule["version"] != automation.version
+            || automation.task_request["standInOwner"]["userId"] != identity.user
+            || automation.task_request["standInOwner"]["roleId"] != role_id
+            || automation.task_request["deviceId"] != self.device_id
+            || (!automation.enabled && schedule["claimedOneTime"] != true)
+        {
+            return None;
+        }
+        let run = self
+            .automation_store
+            .list_runs(Some(id))
+            .into_iter()
+            .find(|run| run.id == run_id)?;
+        if !matches!(
+            run.status,
+            AutomationRunStatus::Pending | AutomationRunStatus::Running
+        ) || !run.coordination.as_ref().is_some_and(|binding| {
+            binding.user_id == identity.user
+                && binding.role_id == role_id
+                && binding.automation_version == automation.version
+                && binding.task_id == actor.local_task_id
+        }) {
+            return None;
+        }
+        Some(automation)
+    }
+
     pub(super) fn validate_stand_in_schedule_start(
         &self,
         request: &ExecutionRequest,
@@ -296,12 +341,61 @@ impl RuntimeWorkRpcHandler {
         if args.get("taskId").is_some() {
             return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
         }
-        let calendar = match args["template"].as_str() {
+        let mut calendar = match args["template"].as_str() {
             None => json!({}),
             Some("weekly_review") => json!({"template":"weekly_review"}),
             Some(_) => return Err(AppIpcError::new("bad_request", "Unknown calendar template")),
         };
-        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":calendar});
+        let role_id = args
+            .get("roleId")
+            .map(|_| required(args, "roleId"))
+            .transpose()?
+            .unwrap_or("@primary");
+        if role_id != "@primary" {
+            if !calendar["template"].is_null() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "The built-in weekly review belongs to the default assistant",
+                ));
+            }
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(super::stand_in::settings_error)?;
+            let settings = store
+                .personal_stand_in(identity.user, &self.device_id)
+                .map_err(super::stand_in::settings_error)?;
+            let available = stand_in_identities(&settings).into_iter().any(|role| {
+                role["id"] == role_id
+                    && role["enabled"] == true
+                    && role["executionDeviceId"] == self.device_id
+            });
+            if !available {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Choose an enabled assistant on this device",
+                ));
+            }
+        }
+        let sources = self.capture_delegated_read_sources(identity, args)?;
+        if !sources.is_empty() {
+            if role_id != "@primary" || !calendar["template"].is_null() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Only a default assistant arrangement can select connected read sources",
+                ));
+            }
+            calendar["readSources"] = json!(sources);
+            calendar["readSourceParent"] = json!(identity.task_id);
+        }
+        if let Some(tasks) = args.get("historyTaskIds") {
+            if !calendar["template"].is_null() || !calendar["readSources"].is_null() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Choose either a conversation archive or connected source reads",
+                ));
+            }
+            calendar["historyTaskIds"] = json!(self.capture_scheduled_history(identity, tasks)?);
+        }
+        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":role_id},"standInCalendar":calendar});
         self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 
@@ -357,6 +451,17 @@ impl RuntimeWorkRpcHandler {
         let mut payload = payload;
         payload["title"] = json!(automation.name);
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":ask_before_act});
+        let calendar = &automation.task_request["standInCalendar"];
+        if role_id == "@primary"
+            && calendar["readSources"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+        {
+            payload["origin"]["scheduledSourceRead"] = json!(true);
+        }
+        if calendar["historyTaskIds"].is_array() {
+            payload["origin"]["scheduledHistoryRead"] = json!(true);
+        }
         if review {
             payload["origin"]["weeklyReview"] = json!(true);
         }
@@ -521,6 +626,45 @@ mod tests {
             .await
             .unwrap()["automation"]
             .clone()
+    }
+
+    #[tokio::test]
+    async fn chat_can_schedule_work_for_an_enabled_local_assistant() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([
+            {"id":"knowledge","name":"Knowledge assistant","prompt":"Archive knowledge","enabled":true,"executionDeviceId":"mac",
+             "collaboration":{"enabled":false,"allProjects":false,"projects":[],"excludedProjects":[],"tags":[]}},
+            {"id":"paused","name":"Paused assistant","prompt":"Archive knowledge","enabled":false,"executionDeviceId":"mac",
+             "collaboration":{"enabled":false,"allProjects":false,"projects":[],"excludedProjects":[],"tags":[]}}
+        ]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+        let mut args = json!({
+            "requestId":"archive", "roleId":"knowledge", "title":"Archive knowledge",
+            "message":"Save the reviewed material", "cron":"0 18 * * 3", "timezone":"Asia/Shanghai"
+        });
+        let saved = handler
+            .create_stand_in_schedule(&owner(), &args)
+            .await
+            .unwrap();
+        assert_eq!(
+            saved["automation"]["taskRequest"]["standInOwner"],
+            json!({"userId":7,"roleId":"knowledge"})
+        );
+        args["requestId"] = json!("paused");
+        args["roleId"] = json!("paused");
+        assert_eq!(
+            handler
+                .create_stand_in_schedule(&owner(), &args)
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
     }
 
     #[tokio::test]

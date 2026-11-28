@@ -317,6 +317,7 @@ export function createDesktopScenario({
       const language = await control.command('getAttribute', 'html', { value: 'lang' })
       const english = language?.startsWith('en')
       await control.command('clickWhenEnabled', testId('stand-in-create-role'))
+      await control.command('clickWhenEnabled', testId('stand-in-chat-advanced'))
       await control.command('waitFor', testId('stand-in-role-device'))
       await control.command('select', testId('stand-in-role-device'), { value: CLOUD_DEVICE_ID })
       await control.command('fill', testId('stand-in-role-name'), { value: '跨设备发布工程' })

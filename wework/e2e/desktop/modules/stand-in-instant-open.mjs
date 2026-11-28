@@ -7,7 +7,7 @@ export async function verifyStandInInstantReturn(control) {
   const workspace = '[data-testid="personal-stand-in-workspace"]'
   const primary = `${workspace} [data-testid="stand-in-primary-open"]`
   const composer = `${workspace} [data-testid="stand-in-conversation"] [data-testid="chat-message-input"]`
-  const settingsButtonId = 'stand-in-details-open'
+  const settingsButtonId = 'stand-in-chat-advanced'
   await control.command('waitFor', `${primary}[aria-current="page"]`)
   await openStandInSettings(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
@@ -18,7 +18,7 @@ export async function verifyStandInInstantReturn(control) {
   await until(
     () => control.command('getActiveElementTestId', 'body'),
     active => active === settingsButtonId,
-    'Closing stand-in settings must return focus to the assistant details button'
+    'Closing advanced settings must return focus to the button that opened them'
   )
   await control.command('waitFor', composer)
   await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')

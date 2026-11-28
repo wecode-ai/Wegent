@@ -14,6 +14,7 @@ import { until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { createWelcomeDailyCheck } from '../modules/stand-in-welcome-daily-check.mjs'
 import { createDailyBriefStory } from '../modules/stand-in-daily-brief-story.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
@@ -47,6 +48,13 @@ export function createDesktopScenario({
   let coordinatorRound = 0
   let originalSettings
   let messageId
+  const dailyCheck = createWelcomeDailyCheck({
+    resultDir,
+    workspacePath,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
   const dailyStory = createDailyBriefStory({
     executorHome,
     captureScreenshot,
@@ -61,7 +69,9 @@ export function createDesktopScenario({
       })
     )
   return {
-    async prepareApp({ appEnvironment, appBinary }) {
+    async prepareApp(context) {
+      const { appEnvironment, appBinary } = context
+      await dailyCheck.prepareApp(context)
       const sharedRoot = appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT
       const root = sharedRoot ?? (await prepareHarnessRuntimeRoots(appBinary)).harnessRuntimeRoot
       const catalogPath = sharedRoot
@@ -103,6 +113,7 @@ export function createDesktopScenario({
       )
     },
     async handleHttp(req, response, url) {
+      if (await dailyCheck.handleHttp(req, response, url)) return true
       if (await dailyStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -546,6 +557,7 @@ export function createDesktopScenario({
         mail,
         model
       )
+      await dailyCheck.verify(control, (method, params) => rpc(control, method, params), mail)
       const openMailboxSettings = async (connections = 'stand-in-primary-connections-open') => {
         await openStandInSettings(control)
         await control.command('clickWhenEnabled', `[data-testid="${connections}"]`)

@@ -50,6 +50,10 @@ export function onboardingArrangementIds(items) {
 /** Checks first-use connection setup separately from the existing help examples. */
 async function verifyGuideExamples(control, completed = false) {
   if (!completed) {
+    const advanced = '[data-testid="stand-in-welcome-advanced"]'
+    await control.command('waitFor', `${advanced}, ${GUIDE}`, { visible: true })
+    if ((await control.command('getElementCount', GUIDE, { visible: true })) === '0')
+      await control.command('clickWhenEnabled', advanced)
     await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
     await control.command('waitFor', '[data-testid="stand-in-onboarding-complete"]:enabled')
     assert.equal(
@@ -298,7 +302,6 @@ export function createDesktopScenario(options) {
         initialScheduleIds,
         'Closing the introduction must not create any arrangement beyond the native memory default'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-resume"]')
       await verifyGuideExamples(control)
       const beforeSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')

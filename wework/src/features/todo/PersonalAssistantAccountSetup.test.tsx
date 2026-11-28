@@ -1,8 +1,10 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import { ApiError } from '@/api/http'
+import { ApiError, type HttpClient } from '@/api/http'
 import {
   assistantDefinitionInputs,
+  assistantDefinitionName,
+  createPersonalAssistantAccountApi,
   type PersonalAssistantAccount,
 } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
@@ -92,7 +94,9 @@ function setup(
         readAccount = read
         return (
           <>
-            <p>{assistant?.defaultTeamRef.name ?? 'local workspace'}</p>
+            <p>
+              {(assistant?.defaultTeamRef ?? assistant?.defaultBotRef)?.name ?? 'local workspace'}
+            </p>
             <button type="button" data-testid="test-account-reload" onClick={reloadAccount}>
               Refresh account
             </button>
@@ -603,6 +607,106 @@ test('saving and retrying a new shared role never uploads a device-only profile'
       executionDeviceId: newRole.executionDeviceId,
     },
   ])
+})
+
+test('applying a conversation proposal publishes only the changed shared definition', async () => {
+  const local = newStandInRole('mac', 'local')
+  const shared = { ...newStandInRole('mac', 'shared'), name: 'Device name', prompt: 'Old duties' }
+  const current = {
+    ...account,
+    definitions: [
+      {
+        roleId: 'shared',
+        team: makeTeam('Account name'),
+        bot: { metadata: account.defaultTeamRef },
+        ghost: { spec: { systemPrompt: 'Old duties' } },
+      },
+    ],
+  }
+  const updateDefinitions = vi.fn(async () => current)
+  const api = personalAssistantDeviceSettings(
+    {
+      personalAssistantAccountApi: { updateDefinitions },
+      standInApi: {
+        personalGet: async () => ({ ...blank, roles: [local, shared] }),
+        resolveProposal: async () => ({
+          ...blank,
+          roles: [
+            { ...local, prompt: 'Private work' },
+            { ...shared, prompt: 'New duties' },
+          ],
+        }),
+      },
+    } as unknown as WorkbenchServices,
+    () => current,
+    vi.fn()
+  ).standInApi!
+
+  await api.resolveProposal(7, 'mac', 'proposal', true)
+
+  expect(updateDefinitions).toHaveBeenCalledExactlyOnceWith(current.revision, [
+    {
+      roleId: 'shared',
+      name: 'Account name',
+      prompt: 'New duties',
+      executionDeviceId: 'mac',
+    },
+  ])
+})
+
+test('an incomplete cloud assistant definition shows an account error without mounting the workspace', async () => {
+  const get = vi.fn().mockResolvedValue({
+    assistant: {
+      ...account,
+      definitions: [{ roleId: 'support', bot: { metadata: { name: 'bot' } } }],
+    },
+  })
+  const services = {
+    personalAssistantAccountApi: createPersonalAssistantAccountApi({
+      get,
+    } as unknown as HttpClient),
+  } as WorkbenchServices
+  const workspace = vi.fn(() => <p>Assistant workspace</p>)
+
+  render(
+    <PersonalAssistantAccountSetup services={services} userId={7} active>
+      {workspace}
+    </PersonalAssistantAccountSetup>
+  )
+
+  expect(await screen.findByTestId('personal-assistant-account-retry')).toBeEnabled()
+  expect(workspace).not.toHaveBeenCalled()
+})
+
+test('opens the workspace with the original Bot-based cloud assistant response', async () => {
+  const get = vi.fn().mockResolvedValue({
+    assistant: {
+      defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
+      revision: 'original',
+      retiredRoleIds: [],
+      definitions: [
+        {
+          roleId: '@primary',
+          bot: { metadata: { name: 'primary', displayName: 'My existing assistant' } },
+          ghost: { spec: { systemPrompt: 'Keep my existing responsibilities' } },
+        },
+      ],
+    },
+  })
+  const services = {
+    personalAssistantAccountApi: createPersonalAssistantAccountApi({
+      get,
+    } as unknown as HttpClient),
+  } as WorkbenchServices
+
+  render(
+    <PersonalAssistantAccountSetup services={services} userId={7} active>
+      {assistant => <p>{assistant && assistantDefinitionName(assistant.definitions[0])}</p>}
+    </PersonalAssistantAccountSetup>
+  )
+
+  expect(await screen.findByText('My existing assistant')).toBeInTheDocument()
+  expect(screen.queryByTestId('personal-assistant-account-setup')).not.toBeInTheDocument()
 })
 
 test.each([false, true])(

@@ -12,7 +12,10 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { fetchJson, selectE2EModel } from '../modules/shared.mjs'
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInConversationFromHome,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import {
   assertStandInAccountDevice,
   readStandInBinding,
@@ -118,6 +121,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { timeoutMs: uiTimeoutMs }
       )
       await control.command('clickWhenEnabled', confirmMigration, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dashboard-open"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
       const assistant = await readCloudAssistant()
       const primary = assistant.definitions.find(definition => definition.roleId === '@primary')
@@ -204,6 +210,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           }
         )
       }
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await openStandInSettings(control)
       await control.command(
         'clickWhenEnabled',
@@ -298,6 +307,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const localChoice = '[data-testid="stand-in-instance-bind-1-' + deviceId + '"]'
       await control.command('clickWhenEnabled', localChoice, { timeoutMs: uiTimeoutMs })
       await assertStandInAccountDevice(1, deviceId, uiTimeoutMs, cloud)
+      await openStandInConversationFromHome(control, peerConversation, uiTimeoutMs)
       await control.command('waitFor', peerConversation, {
         text: modelReply,
         timeoutMs: uiTimeoutMs,

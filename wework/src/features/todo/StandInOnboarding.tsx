@@ -25,6 +25,9 @@ import {
   type StandInOnboardingConfiguration,
 } from './StandInOnboardingSetup'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInModels } from './useStandInModels'
+import { standInSettingsForChat } from './personalStandInSettingsResource'
+import { dequal } from 'dequal'
 
 const examples = [
   { id: 'daily_brief', icon: Sunrise },
@@ -40,6 +43,7 @@ type StandInOnboardingProps = {
   userId: number
   deviceId: string
   active?: boolean
+  startOnDemand?: boolean
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
@@ -47,7 +51,14 @@ type StandInOnboardingProps = {
   onExampleSelect?(prompt: string): void
   onClose?(): void
   configuration: StandInOnboardingConfiguration
-  children(resumeSetup?: ReactNode): ReactNode
+  children(resumeSetup?: ReactNode, launch?: StandInLaunch): ReactNode
+}
+
+export interface StandInLaunch {
+  busy: boolean
+  error?: string
+  start(): Promise<boolean>
+  openAdvanced(): void
 }
 
 export function StandInOnboarding(props: StandInOnboardingProps) {
@@ -66,6 +77,7 @@ function StandInOnboardingContent({
   userId,
   deviceId,
   active = true,
+  startOnDemand = false,
   bypass = false,
   guideOpen = false,
   onGuideClose,
@@ -77,6 +89,7 @@ function StandInOnboardingContent({
 }: StandInOnboardingProps) {
   const { t, i18n } = useTranslation('common')
   const scopeId = useId()
+  const [setup, setSetup] = useState<'runtime' | 'advanced'>()
   const createQuery = (language: string, initialData?: StandInOnboardingResult) => ({
     language,
     resource: createAsyncResource(
@@ -90,13 +103,13 @@ function StandInOnboardingContent({
     setQuery(createQuery(i18n.language, query.resource.getSnapshot().data))
   }
   const resource = query.resource
-  const observationKey = JSON.stringify([bypass, guideOpen])
+  const observationKey = JSON.stringify([bypass, guideOpen, setup])
   const subscribe = useCallback(
     (listener: () => void) => resource.subscribe(listener, observationKey),
     [resource, observationKey]
   )
   const snapshot = useSyncExternalStore(
-    deviceId && active && (!bypass || guideOpen) ? subscribe : subscribeIdleResource,
+    deviceId && active && (!bypass || guideOpen || setup) ? subscribe : subscribeIdleResource,
     resource.getSnapshot,
     getIdleResourceSnapshot
   )
@@ -111,7 +124,23 @@ function StandInOnboardingContent({
   const [saving, setSaving] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [recoveryError, setRecoveryError] = useState<string>()
+  const [launchPending, setLaunchPending] = useState(false)
   const settings = configuration.settings
+  const loadLaunchModels = Boolean(
+    startOnDemand && active && settings && !bypass && !result?.state.completed
+  )
+  const launchModels = useStandInModels(
+    configuration.services,
+    {
+      enabled: true,
+      prompt: '',
+      executionDeviceId: deviceId,
+      version: settings?.version ?? 0,
+      model: settings?.primary?.model,
+    },
+    'codex',
+    loadLaunchModels
+  )
   const lifecycle =
     settings?.executionDeviceId === deviceId && settings.userId === userId
       ? settings.lifecycle?.status
@@ -139,7 +168,10 @@ function StandInOnboardingContent({
   const open =
     active &&
     !lifecycle &&
-    (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
+    (guideOpen ||
+      (startOnDemand
+        ? Boolean(setup)
+        : !bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
   const [scopeTitle, setScopeTitle] = useState<string | null>(null)
@@ -160,6 +192,7 @@ function StandInOnboardingContent({
       if (saving || setupBusy) return
       setDismissed(true)
       if (guideOpen) onGuideClose?.()
+      else if (startOnDemand) setSetup(undefined)
       else if (leaveWorkspace) onClose?.()
       else onOpenConversation?.()
     }
@@ -183,6 +216,7 @@ function StandInOnboardingContent({
       if (!resource.hasSubscribers()) return false
       if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
+      setSetup(undefined)
       onGuideClose?.()
       return true
     } catch (cause) {
@@ -192,20 +226,53 @@ function StandInOnboardingContent({
       setSaving(false)
     }
   }
-  const resumeSetup = active && dismissed && !guideOpen && !bypass && !result?.state.completed && (
-    <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
-      <p className="text-sm text-text-secondary">{t('standIn.onboarding.setup_required')}</p>
-      <Button
-        type="button"
-        size="sm"
-        className="min-h-11 md:min-h-9"
-        data-testid="stand-in-onboarding-resume"
-        onClick={() => setDismissed(false)}
-      >
-        {t('standIn.onboarding.resume_setup')}
-      </Button>
-    </div>
-  )
+  const launch: StandInLaunch | undefined = startOnDemand
+    ? {
+        busy:
+          launchPending ||
+          checking ||
+          configuration.loading ||
+          (loadLaunchModels && launchModels.loading),
+        error: error ?? configuration.error ?? undefined,
+        openAdvanced: () => setSetup('advanced'),
+        async start() {
+          if (launchPending || lifecycle || configuration.loading) return false
+          if (bypass || result?.state.completed) return true
+          const model = launchModels.resolve(launchModels.selectedModel)
+          if (!settings || !model) {
+            setSetup('runtime')
+            return false
+          }
+          setLaunchPending(true)
+          try {
+            const next = standInSettingsForChat(settings, model)
+            if (!dequal(next, settings) && !(await configuration.onSave(next))) return false
+            return await complete(false)
+          } finally {
+            setLaunchPending(false)
+          }
+        },
+      }
+    : undefined
+  const resumeSetup = !startOnDemand &&
+    active &&
+    dismissed &&
+    !guideOpen &&
+    !bypass &&
+    !result?.state.completed && (
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
+        <p className="text-sm text-text-secondary">{t('standIn.onboarding.setup_required')}</p>
+        <Button
+          type="button"
+          size="sm"
+          className="min-h-11 md:min-h-9"
+          data-testid="stand-in-onboarding-resume"
+          onClick={() => setDismissed(false)}
+        >
+          {t('standIn.onboarding.resume_setup')}
+        </Button>
+      </div>
+    )
   return (
     <>
       <div
@@ -244,8 +311,10 @@ function StandInOnboardingContent({
             )}
           </div>
         )}
-        {result || dismissed || bypass || !active ? children(resumeSetup || undefined) : null}
-        {checking && !guideOpen ? (
+        {startOnDemand || result || dismissed || bypass || !active
+          ? children(resumeSetup || undefined, launch)
+          : null}
+        {checking && !guideOpen && !startOnDemand ? (
           <p role="status" className="p-5 text-sm text-text-secondary">
             {t('standIn.onboarding.loading')}
           </p>
@@ -310,7 +379,7 @@ function StandInOnboardingContent({
                     disabled={saving || setupBusy}
                     onClick={() => leaveSetup(guideOpen)}
                   >
-                    {t(guideOpen ? 'standIn.close' : 'standIn.onboarding.exit')}
+                    {t(guideOpen || startOnDemand ? 'standIn.close' : 'standIn.onboarding.exit')}
                   </Button>
                 )}
               </header>
@@ -331,6 +400,7 @@ function StandInOnboardingContent({
                         : t('standIn.onboarding.back_to_setup')
                     }
                     footerSlot={footerSlot}
+                    runtimeOnly={setup === 'runtime'}
                     onScopeTitleChange={scopeTitleChanged}
                   />
                 ) : result ? (
