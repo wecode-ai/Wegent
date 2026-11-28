@@ -124,6 +124,7 @@ export async function verifyLocalPersonalTeamAdoption(
   )
   assert.equal(runs.length, 1)
   const [run] = runs
+  assert.equal(run.assigner_user_id, owner)
   assert.equal(run.agent_id, agentId)
   assert.ok(run.claimed_at && run.runtime_device_id && run.runtime_task_id)
   const request = run.runtime_payload.executionRequest
@@ -144,6 +145,13 @@ export async function verifyLocalPersonalTeamAdoption(
   assert.equal(receipts[0].sender_id, agentId)
   assert.equal(receipts[0].metadata.runtime_address.taskId, run.runtime_task_id)
   assert.ok(receipts[0].content.includes(adoptedReceipt))
+  const receiptRow = `${content} [data-message-id="${receipts[0].message_id}"]`
+  await control.command('scrollIntoView', receiptRow)
+  await control.command('waitFor', receiptRow, { text: adoptedReceipt, timeoutMs: uiTimeoutMs })
+  await control.command('waitFor', receiptRow, {
+    text: group.members[0].name,
+    timeoutMs: uiTimeoutMs,
+  })
   await captureScreenshot(control, 'local-coordinate-10-project-agent-receipt.png', content)
   await writeFile(
     join(resultDir, 'local-personal-team-adoption.json'),
@@ -171,6 +179,7 @@ export async function verifyLocalPersonalTeamAdoption(
           messageId: receipts[0].message_id,
           senderType: receipts[0].sender_type,
           senderId: receipts[0].sender_id,
+          runtimeTaskId: receipts[0].metadata.runtime_address.taskId,
           executionId: receipts[0].metadata.execution_id,
           content: receipts[0].content,
         },
