@@ -151,7 +151,7 @@ async fn individual(
     serde_json::from_str(text).map_err(|error| error.to_string())
 }
 
-async fn cloud(
+pub(super) async fn cloud(
     context: &SpaceMcpRequestContext,
     name: &str,
     arguments: Value,

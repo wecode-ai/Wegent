@@ -42,7 +42,7 @@ pub(crate) fn account_scope(connection: &ConnectionConfig) -> String {
     format!("{}:{identity}", connection.backend_url)
 }
 
-fn token_claims(token: &str) -> Option<Value> {
+pub(crate) fn token_claims(token: &str) -> Option<Value> {
     token
         .split('.')
         .nth(1)

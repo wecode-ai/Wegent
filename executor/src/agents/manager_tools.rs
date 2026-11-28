@@ -21,7 +21,7 @@ impl std::fmt::Debug for ManagerTools {
 impl ManagerTools {
     pub(crate) fn new(request: &ExecutionRequest) -> Result<Self, String> {
         let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
-        let mut context = mcp::project_space_request_context(request)?;
+        let mut context = mcp::manager_request_context(request)?;
         mcp_http::bind_runtime_services(&mut context);
         let visible = if request.extra.get("enable_tools") == Some(&Value::Bool(false)) {
             Vec::new()

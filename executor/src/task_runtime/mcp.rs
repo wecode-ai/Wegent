@@ -153,6 +153,7 @@ pub(crate) struct SpaceMcpRequestContext {
     current_device_id: Option<String>,
     principal_id: Option<String>,
     bound_project_store: Option<String>,
+    managed_manager: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -230,6 +231,7 @@ impl SpaceMcpRequestContext {
             current_device_id: None,
             principal_id: None,
             bound_project_store: None,
+            managed_manager: false,
         }
     }
 
@@ -250,6 +252,7 @@ impl SpaceMcpRequestContext {
             current_device_id: None,
             principal_id: None,
             bound_project_store: None,
+            managed_manager: false,
         }
     }
 
@@ -316,6 +319,52 @@ pub(crate) fn space_mcp_client_config(
 ) -> Result<SpaceMcpClientConfig, String> {
     let context = project_space_request_context(request)?;
     register_space_client(context)
+}
+
+pub(crate) fn manager_request_context(
+    request: &ExecutionRequest,
+) -> Result<SpaceMcpRequestContext, String> {
+    let mut context = project_space_request_context(request)?;
+    let Some(origin) = request
+        .extra
+        .get("origin")
+        .filter(|origin| !origin["projectRobotExecutionId"].is_null())
+    else {
+        return Ok(context);
+    };
+    // Select only the explicitly supplied managed Task credential. Backend verifies
+    // its signature, current execution binding and manager authority on each call.
+    let claims = request
+        .auth_token
+        .as_deref()
+        .and_then(crate::plugin_account_auth::local_http::token_claims);
+    let bound = claims.is_some_and(|claims| {
+        claims["type"] == "task_token"
+            && claims["project_group_execution"] == true
+            && claims["device_manager_execution_id"].is_null()
+            && claims["user_id"].as_i64().is_some_and(|id| {
+                id > 0 && Some(id) == request.extra.get("user_id").and_then(Value::as_i64)
+            })
+            && claims["task_id"]
+                .as_i64()
+                .is_some_and(|id| id > 0 && id.to_string() == request.task_id)
+            && claims["subtask_id"]
+                .as_i64()
+                .is_some_and(|id| id > 0 && id.to_string() == request.subtask_id)
+    });
+    if !bound
+        || request
+            .backend_url
+            .as_deref()
+            .is_none_or(|url| url.trim().is_empty())
+        || !request.project_group_execution()
+        || !is_manager_context(context.grant())
+        || origin["projectStore"] != "backend"
+    {
+        return Err("Managed project manager requires its bound Task credential".to_owned());
+    }
+    context.managed_manager = true;
+    Ok(context)
 }
 
 pub(crate) fn project_space_request_context(
@@ -1025,6 +1074,26 @@ async fn call_individual_tool(
             Ok(false) => return text_result(error, true),
             Err(error) => return text_result(error, true),
         }
+    }
+    // The managed platform owns admission and resumption. Its Task-scoped MCP
+    // reads the execution binding and returns the committed Backend receipt.
+    if context.managed_manager && matches!(name, "submit_workflow_plan" | "update_issue_status") {
+        if name == "update_issue_status" {
+            arguments = match normalize_issue_status_decision(&arguments, grant) {
+                Ok(mut decision) => {
+                    // The MCP signature defaults an omitted comment to an empty string.
+                    if decision["comment"].is_null() {
+                        decision.as_object_mut().unwrap().remove("comment");
+                    }
+                    decision
+                }
+                Err(error) => return text_result(error, true),
+            };
+        }
+        return match batch::cloud(context, name, arguments).await {
+            Ok(receipt) => text_result(receipt.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
     let default_project_id = grant
         .as_ref()
@@ -4538,6 +4607,106 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(decision["status"], "in_review");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn managed_manager_plan_returns_backend_receipt_without_device_dispatch() {
+        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_url = format!("http://{}", listener.local_addr().unwrap());
+        let receipt = json!({"agent_assignments":[{"execution_id":24,"assignment_id":"review"}]});
+        let expected = receipt.clone();
+        let token = |claims: Value| {
+            format!(
+                "header.{}.signature",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string())
+            )
+        };
+        let claims = json!({"type":"task_token","task_id":33,"subtask_id":56,"user_id":7,"project_group_execution":true});
+        let credential = token(claims.clone());
+        let header = format!("Bearer {credential}");
+        let app = Router::new().route("/api/mcp/wework-space/sse", post(move |headers: HeaderMap, Json(rpc): Json<Value>| async move {
+            assert_eq!(headers["authorization"], header);
+            let receipt = match rpc["params"]["name"].as_str().unwrap() {
+                "submit_workflow_plan" => {
+                    assert_eq!(rpc["params"]["arguments"]["plan"]["round_id"], "round-1");
+                    expected
+                }
+                "update_issue_status" => {
+                    assert_eq!(rpc["params"]["arguments"],json!({"idempotency_key":"33","target_status":"completed","reason":"reviewed"}));
+                    json!({"id":"ISSUE-1","status":"completed"})
+                }
+                _ => panic!("unexpected Backend MCP call"),
+            };
+            Json(json!({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":receipt.to_string()}]}}))
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut request = ExecutionRequest {
+            backend_url: Some(backend_url),
+            task_id: "33".into(),
+            subtask_id: "56".into(),
+            ..Default::default()
+        };
+        request.extra.insert("user_id".into(), json!(7));
+        request.extra.insert(
+            "origin".into(),
+            json!({"type":"issue_dispatch","dispatchRole":"manager",
+            "dispatch_kind":"collaboration_group","projectRobotExecutionId":"23",
+            "cloudProjectId":"12","loopItemId":"ISSUE-1","projectStore":"backend"}),
+        );
+        assert!(manager_request_context(&request).is_err());
+        for (key, value) in [
+            ("type", json!("access")),
+            ("user_id", json!(8)),
+            ("subtask_id", json!(55)),
+            ("device_manager_execution_id", json!(23)),
+            ("project_group_execution", json!(false)),
+        ] {
+            let mut wrong = claims.clone();
+            wrong[key] = value;
+            request.auth_token = Some(token(wrong));
+            assert!(manager_request_context(&request).is_err(), "{key}");
+        }
+        request.auth_token = Some(credential);
+        let context = manager_request_context(&request).unwrap();
+        request
+            .extra
+            .get_mut("origin")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("projectRobotExecutionId");
+        assert!(!manager_request_context(&request).unwrap().managed_manager);
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let result = call_tool_with_context(
+            &runtime,
+            "submit_workflow_plan",
+            json!({"plan":{"round_id":"round-1"}}),
+            &context,
+        )
+        .await;
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap(),
+            receipt
+        );
+        let decision = call_tool_with_context(
+            &runtime,
+            "update_issue_status",
+            json!({"status":"completed","reason":"reviewed"}),
+            &context,
+        )
+        .await;
+        assert_eq!(decision["isError"], false);
+        assert_eq!(
+            serde_json::from_str::<Value>(decision["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
+            json!({"id":"ISSUE-1","status":"completed"})
+        );
         server.abort();
     }
 

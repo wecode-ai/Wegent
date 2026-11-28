@@ -171,6 +171,8 @@ pub const MODEL_CONFIG_KEY_ORDER: &[&str] = &[
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct ExecutionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Value>,
     pub task_id: i64,
     pub subtask_id: i64,
     pub subtask_next_id: Option<i64>,
@@ -280,6 +282,7 @@ pub struct ExecutionRequest {
 impl Default for ExecutionRequest {
     fn default() -> Self {
         Self {
+            origin: None,
             task_id: 0,
             subtask_id: 0,
             subtask_next_id: None,
@@ -592,6 +595,9 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
     };
 
     let mut metadata = Map::new();
+    if let Some(origin) = &request.origin {
+        metadata.insert("origin".into(), origin.clone());
+    }
     metadata.insert("task_id".into(), serde_json::json!(request.task_id));
     metadata.insert("subtask_id".into(), serde_json::json!(request.subtask_id));
     metadata.insert("user".into(), request.user.clone());
