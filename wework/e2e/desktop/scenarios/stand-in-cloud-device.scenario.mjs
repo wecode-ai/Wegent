@@ -679,12 +679,11 @@ export function createDesktopScenario({
         migrated,
         'Successful migration must retain portable responsibilities on the target'
       )
-      // The migration returns to the source when the destination stays paused.
-      const migratedRole = testId(`stand-in-overview-role-${migrated.id}`)
-      await control.command('waitFor', migratedRole, { visible: true, timeoutMs: uiTimeoutMs })
-      assert.notEqual(
-        await control.command('getAttribute', migratedRole, { value: 'aria-current' }),
-        'page',
+      // The stopped source can show its device picker instead of a role list.
+      const activeCopy = `${testId(`stand-in-overview-role-${migrated.id}`)}[aria-current="page"]`
+      assert.equal(
+        await control.command('getElementCount', activeCopy),
+        '0',
         'Copying a paused role must not switch the conversation to that role'
       )
       const migratedDefinition = (await readInitialAssistant()).assistant.definitions.find(

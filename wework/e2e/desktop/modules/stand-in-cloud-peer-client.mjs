@@ -9,7 +9,10 @@ import { DesktopE2EServer } from './desktop-server.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
-import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import {
+  closeStandInSettingsAfterBinding,
+  openStandInSettings,
+} from './stand-in-profile-navigation.mjs'
 import { bindStoppedStandIn } from './stand-in-instance-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 import { until } from './plugin-regression-fixture.mjs'
@@ -417,9 +420,7 @@ export function createStandInCloudPeerClient({
           localProfileBefore.lifecycle,
           'Stale stop confirmation must not stop the newly selected local device'
         )
-        // Binding reconciliation can close the profile after the device is verified.
-        await control.command('clickIfPresent', testId('stand-in-primary-profile-close'))
-        await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
+        await closeStandInSettingsAfterBinding(control, uiTimeoutMs)
 
         // 3. While @primary points to client 1's private localDevice, client 2 (simultaneously signed in)
         // falls back cleanly to CLOUD_DEVICE_ID without overwriting cloud @primary and executes on CLOUD_DEVICE_ID.
