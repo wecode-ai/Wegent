@@ -451,10 +451,10 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     status: 'pending',
     priority: 'high',
   })
-  await clearToolScenario(request, adopter.leadPrompt)
+
   await clearToolScenario(request, adopter.workerPrompt)
   await replay(reviewer)
-  await scenario(adoptedTitle, [
+  await configureToolScenario(request, adopter.leadPrompt, [
     {
       toolCalls: [
         {
@@ -517,7 +517,9 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       async () => (await api<{ status: string }>('/api/v1/loop-items/' + adoptedIssue.id)).status
     )
     .toBe('in_review')
-  const accepted = modelRequestText((await getScenarioModelBodies(request, adoptedTitle)).slice(2))
+  const accepted = modelRequestText(
+    (await getScenarioModelBodies(request, adopter.leadPrompt)).slice(2)
+  )
   expect(accepted).toContain(reviewer.workerResult)
   const adoptedRuns = await ctx.executions(adoptedIssue.id)
   const member = adoptedRuns.find(r => r.agentId === reviewer.agentId)!
