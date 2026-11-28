@@ -23,6 +23,7 @@ from pydantic import (
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
+from shared.knowledge_module import MAX_TOP_K
 from shared.utils.decision_model import validate_decision_model_spec
 from shared.utils.model_category import resolve_model_category
 
@@ -1158,7 +1159,7 @@ class RetrievalConfig(BaseModel):
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
-    top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
+    top_k: int = Field(5, ge=1, le=MAX_TOP_K, description="Number of results to return")
     score_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )

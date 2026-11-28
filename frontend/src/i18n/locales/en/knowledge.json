@@ -815,7 +815,7 @@
       "keyword": "Full-Text Search",
       "hybrid": "Hybrid Search",
       "topK": "Top K",
-      "topKHint": "Number of results to return (1-10)",
+      "topKHint": "Number of results to return (1-50)",
       "scoreThreshold": "Score Threshold",
       "scoreThresholdHint": "Minimum similarity score (0-1)",
       "threshold": "Threshold",

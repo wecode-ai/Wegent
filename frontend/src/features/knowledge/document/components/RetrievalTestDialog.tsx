@@ -401,12 +401,12 @@ export function RetrievalTestDialog({
                         <Input
                           type="number"
                           min={1}
-                          max={20}
+                          max={50}
                           step={1}
                           value={testConfig.top_k}
                           onChange={e => {
                             const value = parseInt(e.target.value, 10)
-                            if (!isNaN(value) && value >= 1 && value <= 20) {
+                            if (!isNaN(value) && value >= 1 && value <= 50) {
                               setTestConfig(prev => ({ ...prev, top_k: value }))
                             }
                           }}

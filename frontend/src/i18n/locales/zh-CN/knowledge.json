@@ -815,7 +815,7 @@
       "keyword": "全文检索",
       "hybrid": "混合检索",
       "topK": "Top K",
-      "topKHint": "返回的结果数量 (1-10)",
+      "topKHint": "返回的结果数量 (1-50)",
       "scoreThreshold": "Score 阈值",
       "scoreThresholdHint": "最低相似度分数 (0-1)",
       "threshold": "阈值",

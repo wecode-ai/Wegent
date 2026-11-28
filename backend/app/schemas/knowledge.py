@@ -45,7 +45,7 @@ from app.schemas.rag import SplitterConfig
 from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
 from shared.knowledge_cleanup import ContentDeletionOutcome
-from shared.knowledge_module import VALID_RETRIEVAL_MODES
+from shared.knowledge_module import MAX_TOP_K, VALID_RETRIEVAL_MODES
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ class RetrievalConfigCreate(BaseModel):
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
-    top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
+    top_k: int = Field(5, ge=1, le=MAX_TOP_K, description="Number of results to return")
     score_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )
@@ -414,7 +414,7 @@ class RetrievalConfigUpdate(BaseModel):
         None, description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
     top_k: Optional[int] = Field(
-        None, ge=1, le=10, description="Number of results to return"
+        None, ge=1, le=MAX_TOP_K, description="Number of results to return"
     )
     score_threshold: Optional[float] = Field(
         None, ge=0.0, le=1.0, description="Minimum score threshold"
