@@ -560,9 +560,12 @@ impl LocalTaskStore {
             "account-team-{:x}",
             Sha256::digest(json!([user, role, namespace, name]).to_string().as_bytes())
         );
-        let mut metadata = portable(
-            &json!({"name":team["metadata"]["displayName"],"bot":bots,"collaboration_model":team["spec"]["collaborationModel"]}),
-        )?;
+        let mut metadata = portable(&json!({
+            "name": team["metadata"]["displayName"],
+            "bot": bots,
+            "collaboration_model": team["spec"]["collaborationModel"],
+            "system_prompt": team["spec"]["systemPrompt"]
+        }))?;
         metadata["id"] = json!(reference);
         metadata["accountRoleId"] = json!(role);
         metadata["accountTeam"] = team["metadata"].clone();
@@ -734,7 +737,7 @@ mod tests {
                 "ghost":{"spec":{"systemPrompt":format!("Work as {name}")}}
             })
         };
-        let mut source = json!({"roleId":"review","team":{"metadata":{"name":"review","namespace":"personal-assistant","displayName":"Review"},"spec":{"collaborationModel":"pipeline"}},
+        let mut source = json!({"roleId":"review","team":{"metadata":{"name":"review","namespace":"personal-assistant","displayName":"Review"},"spec":{"collaborationModel":"pipeline","systemPrompt":"Team-wide review policy"}},
             "bot":{"spec":{"execution_policy":{"mode":"user_select"},"model_policy":{"mode":"user_select"}}},
             "members":[member("research",true),member("review",false)]});
         let reference = store.import_account_execution_team(7, &source).unwrap();
@@ -744,6 +747,7 @@ mod tests {
         assert_eq!(saved["bot"][0]["requireConfirmation"], true);
         assert_eq!(saved["bot"][1]["system_prompt"], "Work as review");
         assert_eq!(saved["collaboration_model"], "pipeline");
+        assert_eq!(saved["system_prompt"], "Team-wide review policy");
         assert!(reopened.personal_execution_team(8, &reference).is_err());
         source["members"].as_array_mut().unwrap().reverse();
         assert_eq!(
