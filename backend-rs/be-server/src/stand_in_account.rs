@@ -245,19 +245,6 @@ fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
     })
 }
 
-fn team_document(name: &str, display_name: &str, bot_ref: &Value) -> Value {
-    resource(
-        "Team",
-        name,
-        display_name,
-        json!({
-            "collaborationModel":"solo",
-            "members":[{"botRef":bot_ref,"role":"leader"}],
-            "bind_mode":["task"]
-        }),
-    )
-}
-
 fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
@@ -284,7 +271,16 @@ fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
-    let team = team_document(&name, &definition.name, &reference);
+    let team = resource(
+        "Team",
+        &name,
+        &definition.name,
+        json!({
+            "collaborationModel":"solo",
+            "members":[{"botRef":reference,"role":"leader"}],
+            "bind_mode":["task"]
+        }),
+    );
     (
         json!({"roleId":definition.role_id,"teamRef":reference}),
         [ghost, bot, team],
@@ -346,73 +342,6 @@ async fn insert_documents(
     Ok(())
 }
 
-fn legacy_account(rows: &[Row]) -> Option<&Value> {
-    rows.iter()
-        .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
-        .map(|row| &row.document.0)
-        .filter(|account| {
-            let spec = &account["spec"];
-            spec.get("defaultBotRef").is_some() && spec.get("defaultTeamRef").is_none()
-        })
-}
-
-fn legacy_team_upgrade(rows: &[Row], account: &Value) -> MysqlResult<(Value, Vec<Value>)> {
-    let bots: HashMap<_, _> = rows
-        .iter()
-        .filter(|row| row.kind == "Bot")
-        .map(|row| (row.name.as_str(), &row.document.0))
-        .collect();
-    let occupied_teams: HashSet<_> = rows
-        .iter()
-        .filter(|row| row.kind == "Team")
-        .map(|row| row.name.to_ascii_lowercase())
-        .collect();
-    let mut upgraded = account.clone();
-    let spec = upgraded["spec"]
-        .as_object_mut()
-        .ok_or(MysqlError::RowNotFound)?;
-    let default_ref = spec
-        .remove("defaultBotRef")
-        .ok_or(MysqlError::RowNotFound)?;
-    let identities = spec
-        .get_mut("identities")
-        .and_then(Value::as_array_mut)
-        .ok_or(MysqlError::RowNotFound)?;
-    let mut teams = Vec::with_capacity(identities.len());
-    let mut primary = false;
-    let mut names = HashSet::new();
-    for identity in identities {
-        let entry = identity.as_object_mut().ok_or(MysqlError::RowNotFound)?;
-        let bot_ref = entry.remove("botRef").ok_or(MysqlError::RowNotFound)?;
-        let name = bot_ref["name"].as_str().ok_or(MysqlError::RowNotFound)?;
-        if bot_ref["namespace"] != NAMESPACE || !names.insert(name.to_owned()) {
-            return Err(MysqlError::RowNotFound);
-        }
-        if occupied_teams.contains(&name.to_ascii_lowercase()) {
-            return Err(MysqlError::InvalidQuery {
-                reason: "Legacy personal assistant Team name is already occupied".into(),
-            });
-        }
-        let bot = bots.get(name).ok_or(MysqlError::RowNotFound)?;
-        let display_name = bot["metadata"]["displayName"]
-            .as_str()
-            .ok_or(MysqlError::RowNotFound)?;
-        if entry.get("roleId").and_then(Value::as_str) == Some("@primary") {
-            if bot_ref != default_ref {
-                return Err(MysqlError::RowNotFound);
-            }
-            primary = true;
-        }
-        teams.push(team_document(name, display_name, &bot_ref));
-        entry.insert("teamRef".into(), bot_ref);
-    }
-    if !primary {
-        return Err(MysqlError::RowNotFound);
-    }
-    spec.insert("defaultTeamRef".into(), default_ref);
-    Ok((upgraded, teams))
-}
-
 async fn lock_account_owner(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<()> {
     let _: (i64,) = tx
         .fetch_optional(
@@ -422,20 +351,6 @@ async fn lock_account_owner(tx: &mut impl MysqlTransaction, user: i64) -> MysqlR
         .await?
         .ok_or(MysqlError::RowNotFound)?;
     Ok(())
-}
-
-// Called only after the account owner row is locked, before the first consistent read.
-async fn load_account_rows(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<Vec<Row>> {
-    let rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    let Some(account) = legacy_account(&rows) else {
-        return Ok(rows);
-    };
-    let (account, teams) = legacy_team_upgrade(&rows, account)?;
-    insert_documents(tx, user, teams).await?;
-    update_document(tx, user, &account).await?;
-    let rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    view(&rows)?;
-    Ok(rows)
 }
 
 #[brz_http_server::get("/api/v1/personal-assistant")]
@@ -454,17 +369,7 @@ async fn read_account(mysql: &brz_mysql::MysqlService, user: i64) -> MysqlResult
     let rows: Vec<Row> = mysql
         .with_transaction(async |tx| tx.fetch_all(SELECT, (user, NAMESPACE)).await)
         .await?;
-    if legacy_account(&rows).is_none() {
-        return view(&rows);
-    }
-    // Reread in a fresh transaction after taking the lock so concurrent first
-    // requests see a completed upgrade instead of the earlier read snapshot.
-    mysql
-        .with_transaction(async |tx| {
-            lock_account_owner(tx, user).await?;
-            view(&load_account_rows(tx, user).await?)
-        })
-        .await
+    view(&rows)
 }
 
 #[brz_http_server::post("/api/v1/personal-assistant")]
@@ -494,7 +399,7 @@ async fn initialize_for(
             // Acquire the existing user row before the first consistent read. Concurrent
             // initializers see the winner's commit without locking an empty Kind index range.
             lock_account_owner(tx, user).await?;
-            let current = view(&load_account_rows(tx, user).await?)?;
+            let current = view(&tx.fetch_all(SELECT, (user, NAMESPACE)).await?)?;
             if !current["assistant"].is_null() {
                 return Ok(current);
             }
@@ -654,7 +559,7 @@ async fn set_stop_intent(
                 return Ok(StopIntentOutcome::DeviceNotFound);
             };
             let device_id = crate::device_identity::record_route_id(&device);
-            let mut rows = load_account_rows(tx, user).await?;
+            let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
             let Some(account) = rows
                 .iter_mut()
                 .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
@@ -682,7 +587,7 @@ async fn replace_definitions(
 ) -> MysqlResult<Option<Value>> {
     mysql.with_transaction(async |tx| {
         lock_account_owner(tx, user).await?;
-        let mut rows = load_account_rows(tx, user).await?;
+        let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
         let current = view(&rows)?;
         if current["assistant"]["revision"] != body.revision {
             return Ok(None);

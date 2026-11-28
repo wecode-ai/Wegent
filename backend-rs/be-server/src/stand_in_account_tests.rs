@@ -217,11 +217,11 @@ pub(crate) async fn verify_concurrent_initialization(
         final_account["assistant"]["revision"],
         updated["assistant"]["revision"]
     );
-    verify_legacy_account_upgrade(mysql, user + 2).await?;
+    verify_legacy_account_is_not_migrated(mysql, user + 2).await?;
     Ok(())
 }
 
-async fn verify_legacy_account_upgrade(
+async fn verify_legacy_account_is_not_migrated(
     mysql: &brz_mysql::MysqlService,
     user: i64,
 ) -> anyhow::Result<()> {
@@ -233,101 +233,63 @@ async fn verify_legacy_account_upgrade(
         "INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (?,'Device','legacy-device','default',JSON_OBJECT('spec',JSON_OBJECT('deviceType','cloud','deviceId','legacy-runtime')),true,NOW(),NOW())",
         (user,),
     ).await?;
-    let mut original = Vec::new();
-    let mut identities = Vec::new();
-    for (role_id, display_name, prompt) in [
-        ("@primary", "Legacy assistant", "Keep my primary prompt"),
-        ("support", "Legacy support", "Keep my support prompt"),
-    ] {
-        let (identity, [ghost, bot, _]) = definition_documents(Definition {
+    let request = || Initialize {
+        definitions: vec![Definition {
             execution_device_id: Some("legacy-device".into()),
-            role_id: role_id.into(),
-            name: display_name.into(),
-            prompt: prompt.into(),
-        });
-        original.extend([ghost, bot]);
-        // Accounts created before the Team-backed contract referenced Bots directly.
-        identities.push(json!({"roleId":role_id,"botRef":identity["teamRef"]}));
-    }
-    let stop_states = json!({
-        "legacy-device":{"requestId":"pending","pending":true,"expectedVersion":7},
-        "old-device":{"requestId":"cleared","pending":false}
-    });
-    let mut records = original.clone();
-    records.push(resource(
+            role_id: "@primary".into(),
+            name: "Legacy assistant".into(),
+            prompt: "Keep my original prompt".into(),
+        }],
+    };
+    let (_, [ghost, bot, _]) = definition_documents(request().definitions.remove(0));
+    let bot_ref = json!({"name":DEFAULT_NAME,"namespace":NAMESPACE});
+    let account = resource(
         ACCOUNT_KIND,
         DEFAULT_NAME,
         "",
         json!({
-            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
-            "identities":identities,
-            "retiredRoleIds":["retired"],
-            "stopIntentStates":stop_states
+            "defaultBotRef":bot_ref,
+            "identities":[{"roleId":"@primary","botRef":bot_ref}]
         }),
-    ));
+    );
+    let original = vec![ghost, bot, account];
     mysql
-        .with_transaction(async |tx| insert_documents(tx, user, records).await)
+        .with_transaction(async |tx| insert_documents(tx, user, original.clone()).await)
         .await?;
 
-    let start = Initialize {
-        definitions: vec![Definition {
-            execution_device_id: None,
-            role_id: "@primary".into(),
-            name: "Never overwrite".into(),
-            prompt: "Never overwrite".into(),
-        }],
-    };
-    let stop = StopIntentChange {
-        expected_version: Some(7),
-        ..stop_change("legacy-runtime", StopIntentOperation::Mark, "pending", None)
-    };
-    let (read, initialized, marked) = tokio::try_join!(
-        read_account(mysql, user),
-        initialize_for(mysql, user, start),
-        set_stop_intent(mysql, user, stop),
-    )?;
-    assert_eq!(read, initialized);
-    assert_eq!(read, stop_intent_view(marked));
-    assert_eq!(
-        read["assistant"]["defaultTeamRef"],
-        json!({"name":DEFAULT_NAME,"namespace":NAMESPACE})
-    );
-    assert_eq!(read["assistant"]["retiredRoleIds"], json!(["retired"]));
-    assert_eq!(
-        read["assistant"]["stopIntents"],
-        json!([{"deviceId":"legacy-device","requestId":"pending","expectedVersion":7}])
-    );
-    assert_eq!(
-        read["assistant"]["stopIntentGenerations"],
-        json!({"legacy-device":"pending","old-device":"cleared"})
-    );
+    // The Team-backed account contract does not upgrade legacy cloud Bot records.
+    assert!(matches!(
+        read_account(mysql, user).await,
+        Err(MysqlError::RowNotFound)
+    ));
+    assert!(matches!(
+        initialize_for(mysql, user, request()).await,
+        Err(MysqlError::RowNotFound)
+    ));
+    assert!(matches!(
+        replace_definitions(
+            mysql,
+            user,
+            DefinitionChange {
+                revision: "legacy".into(),
+                desired: request(),
+            }
+        )
+        .await,
+        Err(MysqlError::RowNotFound)
+    ));
+    assert!(matches!(
+        set_stop_intent(
+            mysql,
+            user,
+            stop_change("legacy-runtime", StopIntentOperation::Mark, "pending", None)
+        )
+        .await,
+        Err(MysqlError::RowNotFound)
+    ));
 
     let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(rows.len(), 7);
-    let account = &rows
-        .iter()
-        .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
-        .unwrap()
-        .document
-        .0;
-    assert!(account["spec"].get("defaultBotRef").is_none());
-    assert_eq!(account["spec"]["stopIntentStates"], stop_states);
-    let definitions = read["assistant"]["definitions"].as_array().unwrap();
-    for (identity, definition) in account["spec"]["identities"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .zip(definitions)
-    {
-        assert!(identity.get("botRef").is_none());
-        assert_eq!(identity["roleId"], definition["roleId"]);
-        let team_ref = &identity["teamRef"];
-        assert_eq!(definition["team"]["metadata"]["name"], team_ref["name"]);
-        assert_eq!(
-            definition["team"]["spec"]["members"],
-            json!([{"botRef":team_ref,"role":"leader"}])
-        );
-    }
+    assert_eq!(rows.len(), original.len());
     for document in original {
         let (kind, name) = document_key(&document)?;
         assert_eq!(
@@ -339,7 +301,6 @@ async fn verify_legacy_account_upgrade(
             document
         );
     }
-    assert_eq!(read_account(mysql, user).await?, read);
     Ok(())
 }
 
