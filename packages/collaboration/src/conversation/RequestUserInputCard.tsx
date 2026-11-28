@@ -713,6 +713,37 @@ function localizeApprovalQuestions(
   t: ReturnType<typeof useConversationTranslation>['t']
 ): RequestUserInputQuestion[] | undefined {
   const interactionKind = payload.interactionKind ?? payload.interaction_kind
+  const question = payload.questions?.[0]
+  if (
+    interactionKind === 'mcp_form' &&
+    payload.questions?.length === 1 &&
+    question?.id === '__mcp_approval'
+  ) {
+    return [
+      {
+        ...question,
+        options: question.options?.map((option) => {
+          if (option.label !== 'Allow' && option.label !== 'Decline')
+            return option
+          const allow = option.label === 'Allow'
+          return {
+            ...option,
+            value: option.value ?? option.label,
+            label: t(
+              allow
+                ? 'request_user_input.approval_allow_once'
+                : 'request_user_input.approval_decline'
+            ),
+            description: t(
+              allow
+                ? 'request_user_input.approval_allow_once_description'
+                : 'request_user_input.approval_decline_tool_description'
+            ),
+          }
+        }),
+      },
+    ]
+  }
   if (interactionKind !== 'approval') return payload.questions
 
   const { detail, key: questionKey } = requestUserInputApprovalDescription(payload)

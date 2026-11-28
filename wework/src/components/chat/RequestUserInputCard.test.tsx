@@ -249,6 +249,35 @@ const payload = {
 }
 
 describe('RequestUserInputCard', () => {
+  test('localizes a Claude tool decision and submits its original value', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          requestId: 'probe',
+          interactionKind: 'mcp_form',
+          questions: [
+            {
+              id: '__mcp_approval',
+              question: 'probe_environment',
+              options: [{ label: 'Allow' }, { label: 'Decline' }],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.getByRole('button', { name: /仅允许一次/ })).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: /拒绝本次工具调用/ }))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: { __mcp_approval: { answers: ['Decline'] } },
+      })
+    )
+  })
+
   test('localizes Codex approvals while submitting protocol decision values', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

@@ -202,6 +202,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.approval_decline": "拒绝",
     "conversation.request_user_input.approval_decline_description":
       "拒绝本次请求，并让 Codex 继续。",
+    "conversation.request_user_input.approval_decline_tool_description": "拒绝本次工具调用。",
     "conversation.request_user_input.approval_deny_network_host":
       "始终拒绝 {{host}}",
     "conversation.request_user_input.approval_deny_network_host_description":
@@ -577,6 +578,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.approval_decline": "Deny",
     "conversation.request_user_input.approval_decline_description":
       "Deny this request and let Codex continue.",
+    "conversation.request_user_input.approval_decline_tool_description": "Deny this tool call.",
     "conversation.request_user_input.approval_deny_network_host":
       "Always deny {{host}}",
     "conversation.request_user_input.approval_deny_network_host_description":
