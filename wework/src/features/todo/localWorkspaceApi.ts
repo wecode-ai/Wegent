@@ -372,11 +372,10 @@ export function createLocalWorkspaceApi(
     return project.collaboration_groups ?? []
   }
   const persistProjectCollaborationGroups = async (
-    projectId: string,
+    project: CollaborationProject,
     groups: CollaborationGroup[]
   ) => {
-    const project = await delivery.projects.get(projectId)
-    await delivery.projects.update(projectId, {
+    await delivery.projects.update(project.id, {
       version: project.version,
       collaborationGroups: groups,
     })
@@ -780,14 +779,15 @@ export function createLocalWorkspaceApi(
       updateCollaborationGroup,
       removeCollaborationGroup,
       async addCollaborationGroup(projectId, groupId) {
-        const groups = await projectCollaborationGroups(projectId)
+        const project = await delivery.projects.get(projectId)
+        const groups = project.collaboration_groups ?? []
         const existing = groups.find(group => group.id === groupId)
         if (existing) return existing
         const source = (await projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID)).find(
           group => group.id === groupId
         )
         if (!source) throw new Error('Collaboration group was not found')
-        await persistProjectCollaborationGroups(projectId, [...groups, source])
+        await persistProjectCollaborationGroups(project, [...groups, source])
         return source
       },
     },
@@ -847,7 +847,8 @@ export function createLocalWorkspaceApi(
     input: Parameters<NonNullable<SharedWorkspaceApi['projects']['createCollaborationGroup']>>[1]
   ) {
     const now = new Date().toISOString()
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     const group: CollaborationGroup = {
       id: `local-group-${crypto.randomUUID()}`,
       workspace_id: LOCAL_WORKSPACE_ID,
@@ -885,7 +886,7 @@ export function createLocalWorkspaceApi(
       updated_at: now,
     }
     assertValidCollaborationGroup(group.leader, group.members, group.stages)
-    await persistProjectCollaborationGroups(projectId, [...groups, group])
+    await persistProjectCollaborationGroups(project, [...groups, group])
     return group
   }
 
@@ -894,7 +895,8 @@ export function createLocalWorkspaceApi(
     groupId: string,
     input: Parameters<NonNullable<SharedWorkspaceApi['projects']['updateCollaborationGroup']>>[2]
   ) {
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     const current = groups.find(group => group.id === groupId)
     if (!current) throw new Error('Collaboration group was not found')
     if (current.version !== input.version) {
@@ -948,16 +950,17 @@ export function createLocalWorkspaceApi(
     }
     assertValidCollaborationGroup(updated.leader, updated.members, updated.stages)
     await persistProjectCollaborationGroups(
-      projectId,
+      project,
       groups.map(group => (group.id === groupId ? updated : group))
     )
     return updated
   }
 
   async function removeCollaborationGroup(projectId: string, groupId: string) {
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     await persistProjectCollaborationGroups(
-      projectId,
+      project,
       groups.filter(group => group.id !== groupId)
     )
   }
