@@ -38,6 +38,7 @@ const SPAWN = 'spawn-native-diagnostics-probe'
 const COMPLETE = 'complete-native-diagnostics-goal'
 const GOAL_DONE = 'Native diagnostic Goal completed'
 const FIXTURE = 'isolated-diagnostic-probe.tmp'
+const CHILD_FIXTURE = 'isolated-child-diagnostic-probe.tmp'
 const MACOS_COMMAND = String.raw`set -eu
 tmp=$(mktemp -d)
 sleep 25 &
@@ -61,12 +62,18 @@ export function createDesktopScenario({ workspacePath }) {
   let commandCompleted = false
   let childCompleted = false
 
-  function runDiagnostic(body, callId) {
+  function runDiagnostic(body, callId, fixture) {
     const result = accountCommandResult(body.input, callId)
     if (!result) {
-      return shellCommandResponse(body, callId, PLATFORM_COMMAND[process.platform], workspacePath, {
-        yield_time_ms: 10_000,
-      })
+      return shellCommandResponse(
+        body,
+        callId,
+        PLATFORM_COMMAND[process.platform].replaceAll(FIXTURE, fixture),
+        workspacePath,
+        {
+          yield_time_ms: 10_000,
+        }
+      )
     }
     if (result.sessionId) return shellCommandPollResponse(body, result.pollId, result.sessionId)
     assert.ok(result.output.includes(DONE), result.output)
@@ -74,7 +81,7 @@ export function createDesktopScenario({ workspacePath }) {
   }
 
   function childEvents(body) {
-    const events = runDiagnostic(body, CHILD_CALL)
+    const events = runDiagnostic(body, CHILD_CALL, CHILD_FIXTURE)
     if (events) return events
     childCompleted = true
     return [assistantMessage(CHILD_DONE)]
@@ -82,7 +89,7 @@ export function createDesktopScenario({ workspacePath }) {
 
   function goalEvents(body, input) {
     if (!commandCompleted) {
-      const events = runDiagnostic(body, CALL)
+      const events = runDiagnostic(body, CALL, FIXTURE)
       if (events) return events
       commandCompleted = true
     }
@@ -126,7 +133,11 @@ export function createDesktopScenario({ workspacePath }) {
     },
     async verify(control) {
       if (process.platform !== 'darwin') {
-        await writeFile(join(workspacePath, FIXTURE), 'Isolated command approval fixture')
+        await Promise.all(
+          [FIXTURE, CHILD_FIXTURE].map(fixture =>
+            writeFile(join(workspacePath, fixture), 'Isolated command approval fixture')
+          )
+        )
       }
       await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')
       await selectE2EModel(control)
