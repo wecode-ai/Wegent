@@ -271,6 +271,9 @@ export function createDesktopScenario({
       value: JSON.stringify({ collaborationExperienceEnabled: true }),
     })
     await control.command('navigate', 'body', { value: '/stand-in' })
+    await control.command('clickWhenEnabled', testId('stand-in-dashboard-open'), {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', testId('collaboration-exp-assistant-input'), {
       timeoutMs: uiTimeoutMs,
     })
