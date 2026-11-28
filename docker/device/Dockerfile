@@ -47,11 +47,13 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+COPY .github/ci/rust-toolchain /tmp/rust-toolchain
+
 RUN if [ -n "$RUSTUP_DIST_SERVER" ]; then export RUSTUP_DIST_SERVER; fi; \
     if [ -n "$RUSTUP_UPDATE_ROOT" ]; then export RUSTUP_UPDATE_ROOT; fi; \
     curl --proto '=https' --tlsv1.2 -fsS --retry 3 --connect-timeout 10 --max-time 60 \
         -o /tmp/wegent-rustup-init.sh "$RUSTUP_INIT_URL" \
-    && sh /tmp/wegent-rustup-init.sh -y --profile minimal --default-toolchain stable \
+    && sh /tmp/wegent-rustup-init.sh -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && rm -f /tmp/wegent-rustup-init.sh \
     && /root/.cargo/bin/cargo --version
 

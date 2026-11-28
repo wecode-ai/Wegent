@@ -80,7 +80,7 @@ cargo test --manifest-path executor/Cargo.toml --locked --all-features
 cargo test --manifest-path shared/rust/Cargo.toml --locked
 ```
 
-The Backend, Executor, and shared library Cargo workspaces all set their minimum Rust version to 1.100.1 through `workspace.package.rust-version`, matching the CI toolchain pinned in `.github/ci/rust-toolchain`.
+The Backend, Executor, and shared library Cargo workspaces all set their minimum Rust version to 1.100.1 through `workspace.package.rust-version`, matching the CI toolchain pinned in `.github/ci/rust-toolchain`. Production image builds read the same pin.
 
 Each Backend and Executor workspace includes its application and private libraries as default members. The shared workspace has a separate lockfile for library tests; applications still resolve dependencies through their own lockfiles. Application `cargo test` does not run external dependency unit tests, so the existing Backend CI test job explicitly checks shared-library formatting, tests, and Clippy.
 

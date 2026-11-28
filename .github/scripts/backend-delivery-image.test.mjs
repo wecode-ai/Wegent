@@ -149,6 +149,7 @@ test("delivery inputs select the real image without selecting unrelated UI chang
     "chat_shell/pyproject.toml",
     "knowledge_engine/pyproject.toml",
     ".dockerignore",
+    ".github/ci/rust-toolchain",
     ".github/scripts/verify-backend-delivery-image.mjs",
     ".github/workflows/e2e-tests.yml",
   ]) {
