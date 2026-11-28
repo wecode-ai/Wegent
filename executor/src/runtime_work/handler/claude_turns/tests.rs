@@ -635,3 +635,245 @@ async fn terminal_claude_transcript_closes_approval_before_its_waiter_drops() {
         false
     );
 }
+
+async fn settle_project_stage(
+    handler: &RuntimeWorkRpcHandler,
+    task: &str,
+    request: &ExecutionRequest,
+    outcome: ExecutionOutcome,
+) {
+    let (cancel, _cancel_rx) = oneshot::channel();
+    let (_stopped, stop) = oneshot::channel();
+    let sink = ClaudeRuntimeEventSink {
+        handler: handler.clone(),
+        local_task_id: task.into(),
+        execution_id: handler.start_local_task_execution(task.into(), cancel, stop),
+        request: request.clone(),
+        transcript: Default::default(),
+    };
+    handler
+        .finish_claude_outcome(
+            &sink,
+            &ResponsesEventBuilder::new(task, &request.subtask_id, ""),
+            outcome,
+            vec![],
+        )
+        .await;
+}
+#[tokio::test]
+async fn project_form_wait_keeps_the_claim_until_answer_or_cancellation() {
+    for cancel in [false, true] {
+        let (handler, root) = super::super::tests::isolated_runtime_work_handler("project-form");
+        {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.settings.max_concurrent_agent_tasks = 0;
+            scheduler.settings.max_concurrent_stand_in_tasks = 0;
+            scheduler.settings.max_concurrent_tasks = 0;
+        }
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Review"})).unwrap())
+            .unwrap()
+            .id;
+        let agent = store
+            .create_chat_agent(
+                &project,
+                serde_json::from_value(json!({
+                    "name":"Review","runtime":"claude_code","execution_environment":"local",
+                    "execution_mode":"auto","execution_device_id":"device-1","created_by_user_id":0
+                }))
+                .unwrap(),
+            )
+            .unwrap()
+            .id;
+        let bots = json!([{"id":"author","name":"Author","shell_type":"ClaudeCode","contextPassing":"previous_bot"},{"id":"reviewer","name":"Reviewer","shell_type":"ClaudeCode"}]);
+        let team = json!({"id":uuid::Uuid::new_v4().to_string(),"name":"QA","leadId":"review","members":{"review":"sign off"}});
+        let mut settings = store.personal_stand_in(0, "device-1").unwrap();
+        settings["roles"] = json!([{"id":"review","name":"Reviewer","enabled":true,
+            "prompt":"","executionDeviceId":"device-1","version":0,"tags":[],
+            "migrationSource":"[\"previous-device\",0,\"original\"]",
+            "collaboration":{"enabled":false,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}}]);
+        settings["teams"] = json!([team]);
+        settings["transferredTeamDefinition"] = json!({"roleId":"review","definition":{
+            "name":"Review","runtime":"claude_code","collaboration_model":"pipeline","bot":bots
+        }});
+        store
+            .save_personal_stand_in(0, "device-1", settings)
+            .unwrap();
+        store
+            .adopt_personal_project_team(
+                0,
+                "device-1",
+                &project,
+                &team,
+                &BTreeMap::from([("review".into(), agent.clone())]),
+            )
+            .unwrap();
+        let group = &store.get_project(&project).unwrap().metadata["collaboration_groups"][0]["id"];
+        let issue = if cancel {
+            // Direct creation queues the native group without a desktop manager payload.
+            store.create_task(&project,serde_json::from_value(json!({
+                "title":"Review issue","assignee_group_id":group
+            })).unwrap()).unwrap()
+        } else {
+            let issue = store.create_task(&project,serde_json::from_value(json!({"title":"Review issue"})).unwrap()).unwrap();
+            // The desktop assigns an existing Issue with a locally materialized manager request.
+            let assignment = json!({"version":issue.version,"assignee_group_id":group,
+                "execution_payload":{"managerRuntimeRequest":{"runtime":"claude_code","executionRequest":{"user_id":0}}}});
+            store.update_task(&project,&issue.id,serde_json::from_value(assignment).unwrap()).unwrap()
+        }.id;
+        let claim = store
+            .claim_next_execution_for_runtime(Some("device-1"), "test", 300)
+            .unwrap()
+            .unwrap();
+        let task = claim.runtime_task_id.as_deref().unwrap();
+        store
+            .request_runtime_start(claim.id, "device-1", task, 300)
+            .unwrap();
+        store
+            .confirm_runtime_accepted(claim.id, "device-1", task, 300)
+            .unwrap();
+        store.mark_runtime_running(task).unwrap();
+        let payload = claim.execution_payload.as_ref().unwrap();
+        let origin = &payload["origin"];
+        let mut request =
+            execution_request(payload).expect("The claimed project must materialize a first turn");
+        apply_runtime_payload_metadata(&mut request, payload);
+        assert_eq!(request.extra["user_id"], 0);
+        assert_eq!(request.extra["team_ref"], agent);
+        assert_eq!(request.extra["collaboration_model"], "pipeline");
+        let mut first = SpawnTurnRequest::new(task.into(), "claude_code".into(), request);
+        let mut link = RuntimeTaskLink::new_pending(
+            task.into(),
+            root.to_string_lossy().into_owned(),
+            "Review".into(),
+        );
+        link.runtime = "claude_code".into();
+        link.runtime_handle["origin"] = origin.clone();
+        handler.store.upsert_task(link);
+        handler.begin_personal_pipeline(&mut first).unwrap();
+        handler.store.update_task(task, |link| {
+            store_runtime_execution_request(&mut link.runtime_handle, &first.request)
+        });
+        let wait = ExecutionOutcome::WaitingForUserInput {
+            stop_reason: "tool_deferred".into(),
+        };
+        settle_project_stage(&handler, task, &first.request, wait).await;
+        assert_eq!(
+            store
+                .execution_by_runtime_task_id(task)
+                .unwrap()
+                .unwrap()
+                .status,
+            "running"
+        );
+        handler.resume_personal_handoffs().await;
+        assert!(handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .is_empty());
+        if cancel {
+            handler.cancel_task(json!({"taskId":task})).await.unwrap();
+            assert_eq!(
+                store.list_executions(&project, None, None, true).unwrap()[0].status,
+                "cancelled"
+            );
+            handler.resume_personal_handoffs().await;
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .is_empty());
+        } else {
+            let address = handler.send_message_from_owner(json!({
+                "taskId":task,"message":"Use statute 42","executionRequest":{"prompt":"Use statute 42","task_id":task,"subtask_id":"answer"}
+            }),true).await.unwrap();
+            assert_ne!(address["success"], false, "{address}");
+            let mut queued = handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .pop_front()
+                .unwrap();
+            handler
+                .restore_personal_bot_grants(task, &mut queued.request)
+                .unwrap();
+            assert_eq!(queued.request.extra["user_id"], 0);
+            assert_eq!(queued.request.bot[0]["id"], "author");
+            assert_eq!(queued.request.prompt, "Use statute 42");
+            settle_project_stage(
+                &handler,
+                task,
+                &queued.request,
+                ExecutionOutcome::Completed {
+                    content: "Finding 42".into(),
+                },
+            )
+            .await;
+            let mut next = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    if let Some(next) = handler
+                        .turn_scheduler
+                        .lock()
+                        .unwrap()
+                        .queued_turns
+                        .pop_front()
+                    {
+                        break next;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Reviewer handoff failed: {:?}",
+                    handler
+                        .local_task_link(task)
+                        .map(|link| link.runtime_handle["startupFailure"].clone())
+                )
+            });
+            handler
+                .restore_personal_bot_grants(task, &mut next.request)
+                .unwrap();
+            assert_eq!(next.request.bot[0]["id"], "reviewer");
+            assert!(next.request.prompt.as_str().unwrap().contains("Finding 42"));
+            assert_eq!(
+                store
+                    .execution_by_runtime_task_id(task)
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                "running"
+            );
+            settle_project_stage(
+                &handler,
+                task,
+                &next.request,
+                ExecutionOutcome::Completed {
+                    content: "Signed 42".into(),
+                },
+            )
+            .await;
+            assert_eq!(
+                store.list_executions(&project, None, None, true).unwrap()[0].status,
+                "completed"
+            );
+            let comments = store.list_comments(&project, &issue, 0).unwrap();
+            let receipts: Vec<_> = comments
+                .iter()
+                .filter(|comment| comment.content == "Signed 42")
+                .collect();
+            assert_eq!(receipts.len(), 1);
+            assert_eq!(receipts[0].sender_type, "agent");
+            assert_eq!(receipts[0].sender_id, agent);
+            assert_eq!(receipts[0].metadata["execution_id"], claim.id);
+        }
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+}

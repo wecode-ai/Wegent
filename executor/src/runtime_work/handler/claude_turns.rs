@@ -474,6 +474,11 @@ impl RuntimeWorkRpcHandler {
             settlement.project_assistant_message(link, request, blocks);
         });
         if self.settle_personal_pipeline(id, request, &outcome) {
+            if let ExecutionOutcome::WaitingForUserInput { stop_reason } = &outcome {
+                let _ = sink
+                    .send(builder.response_waiting_for_user_input(stop_reason))
+                    .await;
+            }
             self.finish_local_task_execution(id, sink.execution_id);
             return;
         }

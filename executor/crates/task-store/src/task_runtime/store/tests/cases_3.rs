@@ -100,6 +100,7 @@ fn chat_agent_runtime_and_capabilities_round_trip_into_claim_payload() {
         .unwrap()
         .expect("Claude Code execution should be claimable");
     let payload = claim.execution_payload.unwrap();
+    assert_eq!(payload["origin"]["executionId"], claim.id);
     assert_eq!(payload["runtime"], "claude_code");
     assert_eq!(payload["bot"][0]["shell_type"], "ClaudeCode");
     assert_eq!(

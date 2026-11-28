@@ -142,6 +142,7 @@ pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option
     let mut origin = json!({
         "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
         "projectStore": "local",
+        "executionId": execution.id,
         "cloudProjectId": execution.cloud_project_id,
         "loopItemId": execution.loop_item_id,
         "workflowNodeId": stored.get("workflow_node_id"),
@@ -293,7 +294,11 @@ pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option
         }) {
             request.insert("system_prompt".to_owned(), instructions.clone());
         }
-        if stored.contains_key("project_coordination") {
+        // The command journal scopes replays to the submitter. Project capabilities and
+        // receipts remain scoped to the virtual Agent on this execution's claim.
+        let project_command = stored.contains_key("project_coordination")
+            || origin["dispatch_kind"] == "collaboration_group";
+        if project_command {
             request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
         request.insert(
@@ -315,7 +320,7 @@ pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option
             .as_object_mut()
             .expect("Execution extra was normalized");
         extra.insert("origin".to_owned(), origin);
-        if stored.contains_key("project_coordination") {
+        if project_command {
             extra.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
         extra.insert(

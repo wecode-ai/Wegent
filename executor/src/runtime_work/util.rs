@@ -156,6 +156,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
         .filter(|value| value.is_object())
         .cloned()
     {
+        // A continued conversation keeps its immutable origin but starts with a new queue claim.
+        if origin["projectStore"] == "local" {
+            if let Some(id) = origin["executionId"].as_i64() {
+                request
+                    .extra
+                    .insert("localExecutionClaimId".into(), json!(id));
+            }
+        }
         request.extra.insert("origin".to_owned(), origin);
     }
     if let Some(model_selection) = payload

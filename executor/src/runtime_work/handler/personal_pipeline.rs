@@ -16,6 +16,13 @@ pub(super) fn project_pipeline_has_next_stage(link: &RuntimeTaskLink) -> bool {
             .is_some()
 }
 
+pub(super) fn waiting_project_pipeline(link: &RuntimeTaskLink) -> bool {
+    let state = &link.runtime_handle[STATE];
+    state["claimId"].is_i64()
+        && state["phase"] == "waiting_input"
+        && !matches!(link.status.as_str(), "cancelled" | "failed" | "archived")
+}
+
 pub(super) fn strip_personal_bot_mcp(bots: &mut Value) {
     for bot in bots.as_array_mut().into_iter().flatten() {
         if bot["native_capability_scope"] == "bot" {
@@ -71,29 +78,31 @@ fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String
 }
 
 impl RuntimeWorkRpcHandler {
-    fn claimed_pipeline_bots(
+    fn claimed_pipeline_members(
         &self,
+        claim_id: i64,
         task: &str,
         origin: &Value,
         team: Option<&Value>,
-    ) -> Result<(i64, Value), AppIpcError> {
+        stage: Option<u64>,
+    ) -> Result<Value, AppIpcError> {
         let denied =
             || AppIpcError::new("permission_denied", "Project Pipeline claim is unavailable");
-        let execution = LocalTaskStore::open(self.task_store_path.as_ref())
-            .and_then(|store| store.execution_by_runtime_task_id(task))
-            .map_err(super::stand_in::settings_error)?
-            .filter(|run| {
-                matches!(run.status.as_str(), "claimed" | "running")
-                    && run.runtime_device_id.as_deref() == Some(self.device_id.as_str())
-                    && origin["cloudProjectId"] == run.cloud_project_id
-                    && team.and_then(Value::as_str) == Some(run.agent_id.as_str())
+        let project = origin["cloudProjectId"].as_str().ok_or_else(denied)?;
+        let agent = team.and_then(Value::as_str).ok_or_else(denied)?;
+        LocalTaskStore::open(self.task_store_path.as_ref())
+            .and_then(|store| {
+                store.claimed_pipeline_members(
+                    claim_id,
+                    &self.device_id,
+                    task,
+                    project,
+                    agent,
+                    stage,
+                )
             })
-            .ok_or_else(denied)?;
-        let mut payload = execution.execution_payload.ok_or_else(denied)?;
-        if payload["collaboration_model"] != "pipeline" || !payload["bot"].is_array() {
-            return Err(denied());
-        }
-        Ok((execution.id, payload["bot"].take()))
+            .map_err(super::stand_in::settings_error)?
+            .ok_or_else(denied)
     }
 
     pub(super) fn restore_personal_bot_grants(
@@ -113,21 +122,22 @@ impl RuntimeWorkRpcHandler {
             if let Some((origin, claim_id, current)) =
                 binding.filter(|(origin, _, _)| origin["projectStore"] == "local")
             {
-                let (id, bots) =
-                    self.claimed_pipeline_bots(task, &origin, request.extra.get("team_ref"))?;
-                if Some(id) != claim_id || marker != &current {
-                    return Err(AppIpcError::new(
-                        "stale_stage",
-                        "Project Pipeline claim has changed",
-                    ));
+                let stale =
+                    || AppIpcError::new("stale_stage", "Project Pipeline stage has changed");
+                if marker != &current {
+                    return Err(stale());
                 }
-                let bot = marker[1]
-                    .as_u64()
-                    .and_then(|stage| bots.get(stage as usize))
-                    .filter(|bot| bot["id"] == request.bot[0]["id"])
-                    .ok_or_else(|| {
-                        AppIpcError::new("stale_stage", "Project Pipeline member has changed")
-                    })?;
+                let stage = marker[1].as_u64().ok_or_else(stale)?;
+                let bot = self.claimed_pipeline_members(
+                    claim_id.ok_or_else(stale)?,
+                    task,
+                    &origin,
+                    request.extra.get("team_ref"),
+                    Some(stage),
+                )?;
+                if bot["id"].is_null() || bot["id"] != request.bot[0]["id"] {
+                    return Err(stale());
+                }
                 request.bot = json!([bot]);
                 return Ok(());
             }
@@ -220,7 +230,10 @@ impl RuntimeWorkRpcHandler {
         if let Some(marker) = request.extra.get("personalPipelineTurn") {
             if terminated
                 || marker != &json!([prior["root"], prior["stage"]])
-                || !matches!(prior["phase"].as_str(), Some("dispatching" | "active"))
+                || !matches!(
+                    prior["phase"].as_str(),
+                    Some("dispatching" | "active" | "waiting_input")
+                )
             {
                 return Err(AppIpcError::new(
                     "stale_stage",
@@ -230,7 +243,9 @@ impl RuntimeWorkRpcHandler {
             turn.runtime = stage_request(request, &prior)?;
             return Ok(());
         }
-        if prior["phase"] == "active" && awaiting_reply {
+        if !terminated
+            && (prior["phase"] == "waiting_input" || (prior["phase"] == "active" && awaiting_reply))
+        {
             turn.runtime = stage_request(request, &prior)?;
             return Ok(());
         }
@@ -249,10 +264,20 @@ impl RuntimeWorkRpcHandler {
         turn.resume_thread_id = None;
         turn.direct_thread_id = None;
         let (claim_id, mut members) = if project {
-            let (id, bots) = self.claimed_pipeline_bots(
+            let id = request
+                .extra
+                .get("localExecutionClaimId")
+                .or_else(|| request.extra.get("origin")?.get("executionId"))
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    AppIpcError::new("permission_denied", "Project Pipeline claim is unavailable")
+                })?;
+            let bots = self.claimed_pipeline_members(
+                id,
                 &turn.local_task_id,
                 &origin,
                 request.extra.get("team_ref"),
+                None,
             )?;
             (Some(id), bots)
         } else {
@@ -297,7 +322,11 @@ impl RuntimeWorkRpcHandler {
         let updated = self.store.try_update_task(task, |link| {
             let state = &mut link.runtime_handle[STATE];
             if marker != &json!([state["root"], state["stage"]])
-                || !matches!(state["phase"].as_str(), Some("active" | "dispatching"))
+                || !matches!(
+                    state["phase"].as_str(),
+                    Some("active" | "dispatching" | "waiting_input")
+                )
+                || matches!(link.status.as_str(), "cancelled" | "archived")
             {
                 stale = true;
                 return;
@@ -330,15 +359,25 @@ impl RuntimeWorkRpcHandler {
                         "ready"
                     };
                     phase = Some(next);
-                    state["phase"] = json!(next);
-                    link.status = "running".into();
-                    link.completed_at = None;
-                    if confirmation {
-                        link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.into());
-                    }
+                }
+                ExecutionOutcome::WaitingForUserInput { .. } if state["claimId"].is_i64() => {
+                    link.running = false;
+                    phase = Some("waiting_input");
                 }
                 ExecutionOutcome::Running | ExecutionOutcome::WaitingForUserInput { .. } => {}
-                _ => state["phase"] = json!("finished"),
+                _ => {
+                    if state["phase"] == "waiting_input" {
+                        link.interaction_status = None;
+                    }
+                    state["phase"] = json!("finished");
+                }
+            }
+            if let Some(next) = phase {
+                state["phase"] = json!(next);
+                link.status = "running".into();
+                link.completed_at = None;
+                link.interaction_status = matches!(next, "confirmation" | "waiting_input")
+                    .then(|| INTERACTION_AWAITING_USER_REPLY.into());
             }
         });
         if let Err(ref error) = updated {
@@ -496,6 +535,83 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_pipeline_stage_reads_only_its_bound_active_claim() {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("project-pipeline-claim");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let db = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+        let task = "continued-project-conversation";
+        let members = json!([
+            {"id":"first","shell_type":"Codex"},
+            {"id":"second","shell_type":"Codex","skills":["project-review"]}
+        ]);
+        for (id, bots) in [
+            (21, members),
+            (22, json!([{"id":"other","shell_type":"Codex"}])),
+        ] {
+            db.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,agent_id,status,runtime_device_id,runtime_task_id,execution_payload,created_at,updated_at)
+                VALUES(?1,'issue','project','agent','claimed','device-1',?2,?3,'now','now')",
+                rusqlite::params![id,task,json!({"bot":bots,"collaboration_model":"pipeline"}).to_string()]).unwrap();
+        }
+        let mut link = RuntimeTaskLink::new_pending(
+            task.into(),
+            root.to_string_lossy().into_owned(),
+            "Project".into(),
+        );
+        link.runtime_handle["origin"] = json!({"type":"issue_dispatch","projectStore":"local","cloudProjectId":"project","executionId":20});
+        let mut request = serde_json::from_value(json!({"task_id":task,"subtask_id":"native-turn-uuid","team_ref":"agent","collaboration_model":"pipeline"})).unwrap();
+        crate::runtime_work::util::apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"origin":{"type":"issue_dispatch","projectStore":"local","cloudProjectId":"project","executionId":21}}),
+        );
+        crate::runtime_work::util::restore_origin(&mut request, &link.runtime_handle);
+        assert_eq!(request.extra["origin"]["executionId"], 20);
+        handler.store.upsert_task(link);
+        let mut turn = SpawnTurnRequest::new(task.into(), "codex".into(), request);
+        handler.begin_personal_pipeline(&mut turn).unwrap();
+        assert_eq!(turn.request.bot[0]["id"], "first");
+        handler
+            .store
+            .update_task(task, |link| link.runtime_handle[STATE]["stage"] = json!(1));
+        turn.request.extra.insert(
+            "personalPipelineTurn".into(),
+            json!(["native-turn-uuid", 1]),
+        );
+        assert!(handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .is_err());
+        // Previously persisted Pipelines already hold the claim ID in their state.
+        turn.request.extra.remove("localExecutionClaimId");
+        turn.request.bot = json!([{"id":"second"}]);
+        handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .unwrap();
+        assert_eq!(turn.request.bot[0]["skills"], json!(["project-review"]));
+        for (device, runtime_task, project, agent) in [
+            ("other", task, "project", "agent"),
+            ("device-1", "other", "project", "agent"),
+            ("device-1", task, "other", "agent"),
+            ("device-1", task, "project", "other"),
+        ] {
+            assert!(store
+                .claimed_pipeline_members(21, device, runtime_task, project, agent, Some(1))
+                .unwrap()
+                .is_none());
+        }
+        db.execute(
+            "UPDATE loop_item_executions SET status='cancel_requested' WHERE id=21",
+            [],
+        )
+        .unwrap();
+        assert!(handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .is_err());
+        drop(db);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     async fn run_two_stages(confirm: bool) {
         let (handler, root) =

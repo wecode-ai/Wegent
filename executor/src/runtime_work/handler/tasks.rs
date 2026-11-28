@@ -1663,6 +1663,25 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(super::stand_in_role_delegation::denied)?;
                 delegation["attempt"] = json!(attempt);
             }
+            if personal_pipeline::waiting_project_pipeline(link)
+                && reply_input
+                && !super::super::util::is_private_discussion(&request)
+            {
+                let saved = runtime_event_request_from_link(link);
+                let user = saved
+                    .extra
+                    .get("user_id")
+                    .and_then(Value::as_i64)
+                    .filter(|id| *id >= 0)
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "permission_denied",
+                            "Project execution identity is unavailable",
+                        )
+                    })?;
+                request.extra.insert("user_id".into(), json!(user));
+                restore_pipeline_definition(&mut request, link, &saved);
+            }
             restore_personal_conversation_team(&mut request, link);
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
@@ -3213,6 +3232,26 @@ impl RuntimeWorkRpcHandler {
                     "runtime": "codex",
                 }),
             });
+        }
+        if !had_active_local_execution && pending_client_user_message_id.is_none() {
+            if let Some(waiting) = link
+                .as_ref()
+                .filter(|link| personal_pipeline::waiting_project_pipeline(link))
+            {
+                self.settle_cancelled_idle_task(&local_task_id, thread_id);
+                self.finish_queue_run(
+                    &local_task_id,
+                    &runtime_event_request_from_link(waiting),
+                    AutomationRunStatus::Cancelled,
+                    Some("cancelled".into()),
+                    None,
+                );
+                return Ok(task_action_success(
+                    &self
+                        .local_task_link(&local_task_id)
+                        .unwrap_or_else(|| waiting.clone()),
+                ));
+            }
         }
         let cancelled_preparing_turn = self.cancel_preparing_turn(&local_task_id);
         if cancelled_preparing_turn {
