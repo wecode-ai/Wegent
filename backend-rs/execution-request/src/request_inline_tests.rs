@@ -3,6 +3,40 @@ use super::*;
 use serde_json::{Map, json};
 
 #[test]
+fn project_group_execution_omits_personal_git_and_oauth_from_every_role() {
+    let git = json!([{"git_domain":"private.example","git_token":"private-test-token"}]);
+    let preferences = json!({"mcps":{"dingtalk":{"services":{
+        "docs":{"enabled":true,"credentials":{"url":"https://private.example"}}
+    }}}})
+    .to_string();
+    for label in [
+        json!({"projectGroupExecution":true}),
+        json!({"dispatchRole":"executor"}),
+        json!({"projectAutomationManagerSubtaskId":"987"}),
+    ] {
+        let mut labels = label;
+        labels["source"] = json!("project_automation");
+        let task = json!({"metadata":{"labels":labels}});
+        for prefs in [None, Some(preferences.as_str())] {
+            let execution = ExecutionConnections::for_task(&task, &git, prefs);
+            assert!(execution.git_accounts.is_null());
+            assert!(execution.mcp_preferences.is_none());
+            assert_eq!(
+                execution.task_data().unwrap(),
+                Some(json!({"project_group_execution":true}))
+            );
+        }
+    }
+    let personal = ExecutionConnections::for_task(&Value::Null, &git, Some(&preferences));
+    assert_eq!(personal.git_accounts, &git);
+    assert_eq!(
+        personal.task_data().unwrap().unwrap()["user_mcps"]["dingtalk"]["services"]["docs"]["credentials"]
+            ["url"],
+        "https://private.example"
+    );
+}
+
+#[test]
 fn deployment_default_headers_resolve_to_the_recorded_values() {
     // Recorded `model_config.default_headers`: the frozen
     // `EXECUTOR_ENV.DEFAULT_HEADERS` template with `task_data.*` paths

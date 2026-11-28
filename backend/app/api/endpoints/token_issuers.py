@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user_jwt_apikey_tasktoken
+from app.core.security import get_personal_resource_user
 from app.models.user import User
 from app.schemas.token_issuer import TokenIssueRequest, TokenIssueResponse
 from app.services.auth.outbound_token_service import (
@@ -26,7 +26,7 @@ async def issue_outbound_token(
     issuer_id: int,
     request: TokenIssueRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(get_personal_resource_user),
 ):
     try:
         return outbound_token_service.issue_token(

@@ -640,6 +640,9 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "user_selected_skills"
         )
     });
+    if request.project_group_execution() {
+        persisted.retain_project_group_scope();
+    }
     for value in persisted.extra.values_mut() {
         redact_execution_profile_secrets(value);
     }
@@ -684,6 +687,30 @@ mod stand_in_request_snapshot_tests {
             assert_eq!(request.extra["collaborationMode"], mode);
             assert_eq!(request.extra["collaboration_model"], "single");
         }
+    }
+
+    #[test]
+    fn project_group_scope_survives_resume_without_persisting_personal_task_data() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "task_data".into(),
+            json!({"project_group_execution":true,"user_mcps":{"private":"secret"}}),
+        );
+        let mut handle = json!({});
+        store_runtime_execution_request(&mut handle, &request);
+        let mut resumed = ExecutionRequest {
+            auth_token: Some("personal".into()),
+            model_config: json!({"api_key":"personal"}),
+            ..Default::default()
+        };
+        restore_origin(&mut resumed, &handle);
+        assert!(resumed.auth_token.is_none());
+        assert!(resumed.model_config["api_key"].is_null());
+        assert!(resumed.project_group_execution());
+        assert_eq!(
+            handle["executionRequest"]["task_data"],
+            json!({"project_group_execution":true})
+        );
     }
 
     #[test]

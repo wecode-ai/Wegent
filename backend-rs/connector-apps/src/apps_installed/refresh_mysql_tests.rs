@@ -71,6 +71,89 @@ async fn old_account_discovery_cannot_update_a_reauthorized_connection() {
     result.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; included by the existing Rust CI job"]
+async fn old_managed_group_tokens_cannot_resolve_personal_connector_grants() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+    assert!(address.starts_with("127.0.0.1:"));
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn(assert_legacy_connector_scope(mysql.clone())).await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+async fn assert_legacy_connector_scope(mysql: MysqlService) {
+    mysql
+        .execute(
+            "CREATE TABLE users (id BIGINT PRIMARY KEY, user_name VARCHAR(64),
+                password_hash TEXT, email TEXT, git_info JSON, is_active BOOL, `role` TEXT,
+                auth_source TEXT, preferences TEXT, created_at DATETIME, updated_at DATETIME)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql.execute("INSERT INTO users VALUES (?, 'owner', '', NULL, NULL, 1, 'user', 'local', '{}', NOW(), NOW())", (USER_ID,)).await.unwrap();
+    mysql.execute("CREATE TABLE managed_tasks (id BIGINT PRIMARY KEY, user_id BIGINT, kind VARCHAR(32), json JSON)", ()).await.unwrap();
+    let state = crate::ConnectorState {
+        tasks_table: "managed_tasks",
+        mysql,
+        auth: crate::config::AuthConfig {
+            jwt_key: "contract-key".into(),
+            algorithm: "HS256".into(),
+            legacy_jwt_keys: vec![],
+        },
+    };
+    for (id, labels, allowed) in [
+        (
+            11,
+            json!({"source":"project_automation","projectAutomationManagerSubtaskId":"111"}),
+            false,
+        ),
+        (
+            12,
+            json!({"source":"project_automation","dispatchRole":"executor"}),
+            false,
+        ),
+        (
+            13,
+            json!({"source":"project_automation","projectRobotExecutionId":"14"}),
+            true,
+        ),
+        (14, json!({}), true),
+        // Personal runtime Teams can also use transient IDs without a stored Task.
+        (15, Value::Null, true),
+        (0, Value::Null, true),
+    ] {
+        if !labels.is_null() {
+            state
+                .mysql
+                .execute(
+                    "INSERT INTO managed_tasks VALUES (?, ?, 'Task', CAST(? AS JSON))",
+                    (
+                        id,
+                        USER_ID,
+                        json!({"metadata":{"labels":labels}}).to_string(),
+                    ),
+                )
+                .await
+                .unwrap();
+        }
+        let token = wegent_identity::wework_auth_tokens::create_token(
+            &state.auth.jwt_key,
+            &state.auth.algorithm,
+            json!({"type":"task_token","task_id":id,"subtask_id":id*10,"user_id":USER_ID,
+                           "user_name":"owner","exp":chrono::Utc::now().timestamp()+3600}),
+        )
+        .unwrap();
+        let user = crate::mcp_server::resolve_user(&state, Some(&format!("Bearer {token}"))).await;
+        assert_eq!(
+            user.map(|u| u.users_id),
+            allowed.then_some(USER_ID),
+            "Task {id}"
+        );
+    }
+}
+
 async fn connect(address: &str) -> (MysqlService, MysqlService, String) {
     let url = |database: &str| format!("mysql://root@{address}/{database}?ssl-mode=disabled");
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();

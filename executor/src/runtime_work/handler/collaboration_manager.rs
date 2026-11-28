@@ -182,11 +182,15 @@ pub(super) fn apply_fresh_cloud_manager_profiles(
     #[derive(serde::Deserialize)]
     struct RuntimeProfiles {
         manager_model_config: serde_json::Map<String, Value>,
+        manager_callback_token: Option<String>,
         manager_model_selection: Option<serde_json::Map<String, Value>>,
         member_runtime_profiles: Option<Vec<Value>>,
     }
     let profiles: RuntimeProfiles = serde_json::from_value(profiles)
         .map_err(|_| "Backend did not return collaboration Runtime profiles".to_owned())?;
+    if let Some(token) = profiles.manager_callback_token {
+        payload["executionRequest"]["auth_token"] = Value::String(token);
+    }
     payload["executionRequest"]["model_config"] = Value::Object(profiles.manager_model_config);
     if let Some(selection) = profiles.manager_model_selection {
         payload["modelSelection"] = Value::Object(selection);

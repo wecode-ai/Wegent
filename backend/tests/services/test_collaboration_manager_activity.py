@@ -84,7 +84,11 @@ def test_replayed_resume_refreshes_profiles_only_while_authorized(
             raise WeworkRuntimeConfigurationError("Model unavailable")
         return {
             "managerRuntimeRequest": {
-                "executionRequest": {"model_config": {"api_key": next(credentials)}}
+                "executionRequest": {
+                    "model_config": {"api_key": next(credentials)},
+                    "user_id": s.member.id,
+                    "user_name": s.member.user_name,
+                }
             },
             "memberRuntimeProfiles": [],
         }
@@ -129,6 +133,11 @@ def test_replayed_resume_refreshes_profiles_only_while_authorized(
     assert first["message"] == replay["message"]
     assert first["runtime_profiles"]["manager_model_config"]["api_key"] == "first"
     assert replay["runtime_profiles"]["manager_model_config"]["api_key"] == "renewed"
+    from app.services.auth import verify_task_token
+
+    callback = verify_task_token(replay["runtime_profiles"]["manager_callback_token"])
+    assert callback.user_id == s.member.id
+    assert callback.device_manager_execution_id == s.execution.id
     assert "renewed" not in str(replay["message"])
 
     authorized = False

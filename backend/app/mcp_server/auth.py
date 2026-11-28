@@ -11,7 +11,7 @@ Example:
     from app.services.auth import create_task_token, verify_task_token
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 from jose import jwt
@@ -37,6 +37,8 @@ class MCPAuthInfo:
     auth_type: Literal["user", "task"]
     task_id: Optional[int] = None
     subtask_id: Optional[int] = None
+    project_group_execution: bool | None = False
+    project_knowledge_base_ids: frozenset[int] = frozenset()
 
 
 def authenticate_mcp_token(
@@ -59,6 +61,7 @@ def authenticate_mcp_token(
             auth_type="task",
             task_id=token_info.task_id,
             subtask_id=token_info.subtask_id,
+            project_group_execution=token_info.project_group_execution,
         )
 
     if not allow_user_token:
@@ -72,6 +75,39 @@ def authenticate_mcp_token(
         user_name=user.user_name,
         auth_type="user",
     )
+
+
+def scope_personal_resources(server_name: str, auth: MCPAuthInfo) -> MCPAuthInfo | None:
+    from app.db.session import SessionLocal
+    from app.services.auth.task_token import is_project_group_task
+
+    if auth.task_id is None or auth.task_id <= 0:
+        return (
+            None
+            if auth.project_group_execution and server_name == "subscription"
+            else auth
+        )
+    with SessionLocal() as db:
+        if not is_project_group_task(db, auth):
+            return auth
+        if server_name != "knowledge":
+            return None
+        from app.services.chat.task_default_knowledge_bases import (
+            resolve_task_default_knowledge_base_ids,
+        )
+        from app.services.knowledge.task_knowledge_base_service import (
+            task_knowledge_base_service,
+        )
+
+        ids = frozenset(
+            resolve_task_default_knowledge_base_ids(db, auth.task_id, auth.user_id)
+        )
+        ids = ids.union(
+            task_knowledge_base_service.get_bound_knowledge_base_ids(db, auth.task_id)
+        )
+        return replace(
+            auth, project_group_execution=True, project_knowledge_base_ids=ids
+        )
 
 
 __all__ = [

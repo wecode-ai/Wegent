@@ -95,6 +95,9 @@ pub fn task_git_auth_environment(
     request: &ExecutionRequest,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut values = task_git_metadata_environment(request);
+    if request.project_group_execution() {
+        return Ok(values);
+    }
     values.extend(crate::services::git_credentials::environment());
     let Some(git_domain) = request_git_domain(request) else {
         return Ok(values);
@@ -199,6 +202,9 @@ fn raw_git_token_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<(String, &'static str)> {
+    if request.project_group_execution() {
+        return None;
+    }
     if uses_device_local_git_credentials(request) {
         if !crate::services::git_credentials::environment().is_empty() {
             return None;

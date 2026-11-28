@@ -31,6 +31,13 @@ pub struct Execution {
     pub completed_at: Option<NaiveDateTime>,
 }
 
+/// Both group protocols persist this origin when admitting the manager and members.
+pub fn is_group_execution(context: &Value) -> bool {
+    context["dispatch_kind"] == "collaboration_group"
+        || crate::project_authority::integer(&context["collaboration_dispatch_execution_id"])
+            .is_some_and(|id| id > 0)
+}
+
 impl Execution {
     pub fn intent(&self) -> Value {
         serde_json::from_str::<Value>(&self.execution_payload)
@@ -127,6 +134,24 @@ pub fn terminal(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_group_execution_follows_the_dispatch_and_its_continuations() {
+        for role in ["manager", "member"] {
+            assert!(is_group_execution(
+                &json!({"dispatch_kind":"collaboration_group", "dispatch_role":role})
+            ));
+            assert!(is_group_execution(
+                &json!({"collaboration_dispatch_execution_id":17, "dispatch_role":role, "comment_continue_task_id":"task"})
+            ));
+        }
+        assert!(!is_group_execution(
+            &json!({"dispatch_role":"executor","dispatch_kind":"human_assignment"})
+        ));
+        assert!(!is_group_execution(
+            &json!({"dispatch_role":"member","collaboration_dispatch_execution_id":0})
+        ));
+    }
 
     #[test]
     fn automation_cannot_reuse_a_manual_owners_routing_snapshot() {

@@ -50,7 +50,9 @@ pub(super) fn configure_task_mcp(
     } else {
         request
     };
-    if super::super::instance_home::request_home(request).is_none() {
+    if !request.project_group_execution()
+        && super::super::instance_home::request_home(request).is_none()
+    {
         launch.mcp_unavailable = configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch

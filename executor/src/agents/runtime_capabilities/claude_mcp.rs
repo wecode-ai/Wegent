@@ -39,7 +39,8 @@ pub(super) fn prepare(
     let mut incoming = extract_claude_mcp_templates(request, global_mcps);
     let team = wegent_execution_contracts::is_coordinate_team(request)
         && request.bot.as_array().is_some_and(|bots| bots.len() > 1);
-    let saved = if team {
+    let isolated = team || request.project_group_execution();
+    let saved = if isolated {
         // Claude's MCP transport schema drops Codex's per-tool ACL fields.
         // Validate them before transport normalization removes this information.
         for (name, raw) in extract_codex_mcp_templates(request, global_mcps) {
@@ -91,14 +92,14 @@ pub(super) fn prepare(
     }
     servers.extend(managed);
     let config = json!({"mcpServers": servers});
-    let persisted = !team && persistable && {
+    let persisted = !isolated && persistable && {
         let previous = fs::read(&path)
             .ok()
             .and_then(|content| serde_json::from_slice::<Value>(&content).ok());
         previous.as_ref() == Some(&config) || super::write_json_file(&path, &config).is_ok()
     };
     if !persisted {
-        if !team {
+        if !isolated {
             super::mcp_environment::log_server_unavailable(
                 request,
                 "claude_mcps",
@@ -604,6 +605,36 @@ mod tests {
         let config: Value = serde_json::from_str(&arg[1]).unwrap();
         assert!(config["mcpServers"].get("current").is_some());
         assert!(config["mcpServers"].get("other").is_none());
+        assert_eq!(fs::read_to_string(path).unwrap(), saved);
+    }
+
+    #[test]
+    fn project_group_execution_preserves_project_tools_without_personal_connections() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("mcp.json");
+        let saved = json!({"mcpServers":{"personal":{"command":"personal"}}}).to_string();
+        fs::write(&path, &saved).unwrap();
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_data":{"project_group_execution":true},
+            "bot":[{"mcp_servers":{"project":{"command":"project"}}}]
+        }))
+        .unwrap();
+        let spec = prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        assert!(spec.args().iter().any(|arg| arg == "--strict-mcp-config"));
+        let args = spec
+            .args()
+            .windows(2)
+            .find(|args| args[0] == "--mcp-config")
+            .unwrap();
+        let config: Value = serde_json::from_str(&args[1]).unwrap();
+        assert!(config["mcpServers"].get("project").is_some());
+        assert!(config["mcpServers"].get("personal").is_none());
         assert_eq!(fs::read_to_string(path).unwrap(), saved);
     }
 

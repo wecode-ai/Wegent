@@ -30,7 +30,11 @@ pub(super) fn is_backend_task(request: &ExecutionRequest) -> bool {
 
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
-    env.extend(crate::plugin_account_auth::broker::environment());
+    if request.project_group_execution() {
+        env.insert("WEGENT_PLUGIN_AUTH_MODE".into(), "project".into());
+    } else {
+        env.extend(crate::plugin_account_auth::broker::environment());
+    }
     if is_backend_task(request) {
         env.insert(
             "WEGENT_BACKEND_TASK_ID".to_owned(),

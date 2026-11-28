@@ -837,12 +837,13 @@ fn fresh_cloud_manager_replaces_expired_credentials_for_manager_and_members() {
     assert!(apply_fresh_cloud_manager_profiles(&mut payload, Value::Null).is_err());
     apply_fresh_cloud_manager_profiles(
         &mut payload,
-        json!({"manager_model_config":model_config,
+        json!({"manager_model_config":model_config, "manager_callback_token":"group-callback",
             "manager_model_selection":{"modelName":"cloud-model","modelType":"group"},
             "member_runtime_profiles":members}),
     )
     .unwrap();
 
+    assert_eq!(payload["executionRequest"]["auth_token"], "group-callback");
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
     assert_eq!(payload["modelSelection"]["modelName"], "cloud-model");
     assert_eq!(

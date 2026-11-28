@@ -68,6 +68,78 @@ def allow_external_transport_rate_limit():
         yield
 
 
+async def test_project_group_token_only_reads_task_bound_knowledge(
+    test_db, test_user, monkeypatch
+):
+    import json
+    from contextlib import nullcontext
+
+    from app.mcp_server.auth import (
+        authenticate_mcp_token,
+        create_task_token,
+        verify_task_token,
+    )
+    from app.mcp_server.context import (
+        MCPRequestContext,
+        reset_mcp_context,
+        set_mcp_context,
+    )
+    from app.mcp_server.tools import knowledge
+    from app.models.task import TaskResource
+    from tests.mcp_server.test_knowledge_external import _create_kb
+
+    for kb_id, name in [(21, "Assigned"), (22, "Private")]:
+        _create_kb(test_db, kb_id, test_user.id, name, datetime(2026, 1, 1))
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="project-group",
+        json={
+            "metadata": {
+                "labels": {"source": "project_automation", "dispatchRole": "executor"}
+            },
+            "spec": {"knowledgeBaseRefs": [{"id": 21}]},
+        },
+    )
+    test_db.add(task)
+    test_db.flush()
+    token = create_task_token(task.id, 1, test_user.id, test_user.user_name)
+    signed = verify_task_token(token)
+    auth = authenticate_mcp_token(token)
+    monkeypatch.setattr("app.db.session.SessionLocal", lambda: nullcontext(test_db))
+    monkeypatch.setattr(knowledge, "SessionLocal", lambda: NonClosingSession(test_db))
+    from app.mcp_server import connectors_app
+
+    context = connectors_app.connector_mcp_token_info.set(signed)
+    try:
+        assert connectors_app._active_user(test_db, test_user.id) is None
+    finally:
+        connectors_app.connector_mcp_token_info.reset(context)
+    context = set_mcp_context(MCPRequestContext(auth, "", "knowledge"))
+    try:
+        mcp_server_module.ensure_subscription_tools_registered()
+        subscriptions = mcp_server_module.subscription_mcp_server._tool_manager
+        result = await subscriptions.call_tool(
+            "get_subscription", {"subscription_id": 1}
+        )
+        assert json.loads(result) == {"error": "Authentication required"}
+        mcp_server_module.ensure_knowledge_tools_registered()
+        knowledge_tools = mcp_server_module.knowledge_mcp_server._tool_manager
+        catalog = json.loads(
+            await knowledge_tools.call_tool("wegent_kb_list_knowledge_bases", {})
+        )
+        assert [kb["id"] for kb in catalog["items"]] == [21]
+        for kb_id, allowed in [(21, True), (22, False)]:
+            documents = json.loads(
+                await knowledge_tools.call_tool(
+                    "wegent_kb_list_documents", {"knowledge_base_id": kb_id}
+                )
+            )
+            assert ("error" not in documents) is allowed
+    finally:
+        reset_mcp_context(context)
+
+
 def _create_external_document_with_attachment(
     test_db,
     test_user,

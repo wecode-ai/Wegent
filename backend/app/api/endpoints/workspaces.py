@@ -10,7 +10,10 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user_jwt_apikey_tasktoken
+from app.core.security import (
+    get_current_user_jwt_apikey_tasktoken,
+    get_personal_resource_user,
+)
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
@@ -95,7 +98,7 @@ async def list_personal_resources(
         ),
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(get_personal_resource_user),
 ) -> PersonalResourcesResponse:
     """Discover owned resources, resolving execution readiness only on request."""
     return PersonalResourcesResponse.model_validate(

@@ -51,8 +51,16 @@ logger = logging.getLogger(__name__)
 
 
 def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
-    """Get user from token info."""
+    """Resolve personal catalog and write authority."""
+    if token_info.project_group_execution:
+        return None
     return db.query(User).filter(User.id == token_info.user_id).first()
+
+
+def _can_read_base(token_info: TaskTokenInfo, knowledge_base_id: int) -> bool:
+    return not token_info.project_group_execution or knowledge_base_id in getattr(
+        token_info, "project_knowledge_base_ids", ()
+    )
 
 
 def _get_read_user_for_knowledge_base(
@@ -61,6 +69,8 @@ def _get_read_user_for_knowledge_base(
     knowledge_base_id: int,
 ) -> Optional[User]:
     """Resolve the effective reader for a knowledge base."""
+    if not _can_read_base(token_info, knowledge_base_id):
+        return None
     return KnowledgeService.resolve_read_user_for_knowledge_base(
         db,
         user_id=token_info.user_id,
@@ -120,6 +130,13 @@ async def search_knowledge_base(
             "total": 0,
         }
 
+    if not _can_read_base(token_info, knowledge_base_id):
+        return {
+            "error": "Knowledge base unavailable",
+            "chunks": [],
+            "sources": [],
+            "total": 0,
+        }
     if search_hints is not None:
         try:
             search_hints = SearchHints.model_validate(search_hints)
@@ -231,7 +248,11 @@ def list_knowledge_bases(
     """
     db = SessionLocal()
     try:
-        user = _get_user_from_token(db, token_info)
+        user = (
+            db.get(User, token_info.user_id)
+            if token_info.project_group_execution
+            else _get_user_from_token(db, token_info)
+        )
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
         if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
@@ -254,6 +275,11 @@ def list_knowledge_bases(
             group_name=group_name,
             limit=limit,
             offset=offset,
+            **(
+                {"allowed_ids": token_info.project_knowledge_base_ids}
+                if token_info.project_group_execution
+                else {}
+            ),
         )
 
         return {

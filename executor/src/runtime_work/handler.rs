@@ -1340,11 +1340,12 @@ impl RuntimeWorkRpcHandler {
         {
             request.backend_url = Some(connection.backend_url.clone());
         }
-        // Coordinator work must retain the enabling actor, including absent credentials.
-        if request
-            .extra
-            .get("origin")
-            .is_some_and(|origin| origin.get("project_coordination").is_some())
+        // Project dispatches retain their scoped credentials, including absent ones.
+        if request.project_group_execution()
+            || request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin.get("project_coordination").is_some())
         {
             return;
         }

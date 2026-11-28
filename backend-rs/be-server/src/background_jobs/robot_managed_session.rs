@@ -135,6 +135,8 @@ async fn persist(
     labels["projectRobotExecutionId"] = json!(row.id.to_string());
     labels["projectAutomationSubtaskId"] = json!(setup.assistant_subtask_id.to_string());
     let context = row.context();
+    labels["projectGroupExecution"] =
+        json!(wegent_project_coordination::project_execution::is_group_execution(&context));
     if context["dispatch_role"] == "member" {
         labels["dispatchRole"] = json!("executor");
     }

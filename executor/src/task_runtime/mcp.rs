@@ -334,7 +334,11 @@ pub(crate) fn project_space_request_context(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+            .or_else(|| {
+                (!request.project_group_execution())
+                    .then(|| env::var("WEGENT_AUTH_TOKEN").ok())
+                    .flatten()
+            })
             .filter(|value| !value.trim().is_empty()),
     );
     context.current_device_id = request.device_id.clone();

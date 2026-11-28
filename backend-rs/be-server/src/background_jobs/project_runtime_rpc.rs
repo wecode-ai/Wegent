@@ -42,6 +42,7 @@ pub(crate) async fn continue_task(
         message,
         selection,
         None,
+        false,
     )
     .await?;
     let mut payload = json!({"deviceId":binding.device_id,"localTaskId":binding.task_id,"message":message,"executionRequest":execution});
@@ -128,6 +129,7 @@ pub(crate) async fn call(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn direct_execution(
     state: &AppState,
     user: &UserRow,
@@ -136,6 +138,7 @@ pub(crate) async fn direct_execution(
     message: &str,
     selection: Option<&Value>,
     device_manager_execution_id: Option<i64>,
+    project_group_execution: bool,
 ) -> Result<Value> {
     let auth = tokens::create_scoped_task_token(
         &state.auth,
@@ -144,17 +147,28 @@ pub(crate) async fn direct_execution(
         i64::from(user.id),
         &user.user_name,
         device_manager_execution_id,
+        project_group_execution,
     )
     .map_err(|error| anyhow::anyhow!("Task identity creation failed: {error:?}"))?;
-    let now = chrono::Utc::now().timestamp();
-    let ttl = crate::config::env_or_dotenv("SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES")
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(14_400);
-    let skill = sign(
+    let skill = if project_group_execution {
+        String::new()
+    } else {
+        let now = chrono::Utc::now().timestamp();
+        let ttl = crate::config::env_or_dotenv("SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES")
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(14_400);
+        sign(
+            state,
+            &json!({"type":"skill_identity","user_id":user.id,"user_name":user.user_name,"runtime_type":"executor","runtime_name":format!("wework-runtime-{task_id}"),"iat":now,"exp":now+ttl*60}),
+        )?
+    };
+    let config = runtime_model_config(
         state,
-        &json!({"type":"skill_identity","user_id":user.id,"user_name":user.user_name,"runtime_type":"executor","runtime_name":format!("wework-runtime-{task_id}"),"iat":now,"exp":now+ttl*60}),
-    )?;
-    let config = runtime_model_config(state, user, selection.unwrap_or(&Value::Null)).await?;
+        user,
+        selection.unwrap_or(&Value::Null),
+        project_group_execution,
+    )
+    .await?;
     let generated =
         10_000_000_000_000i64 + (super::store::id().parse::<i64>()? % 8_000_000_000_000);
     let title = message
@@ -203,6 +217,7 @@ pub(crate) async fn runtime_model_config(
     state: &AppState,
     user: &UserRow,
     selection: &Value,
+    project_group_execution: bool,
 ) -> Result<Value> {
     let model = selection["modelName"].as_str().unwrap_or("");
     let kind = selection["modelType"].as_str();
@@ -248,10 +263,11 @@ pub(crate) async fn runtime_model_config(
         if base.trim().is_empty() {
             bail!("Cloud model gateway is not configured");
         }
-        let access = sign(
-            state,
-            &json!({"sub":user.user_name,"user_id":user.id,"exp":chrono::Utc::now().timestamp()+30*60}),
-        )?;
+        let mut claims = json!({"sub":user.user_name,"user_id":user.id,"exp":chrono::Utc::now().timestamp()+30*60});
+        if project_group_execution {
+            claims["scope"] = json!(wegent_identity::runtime_model_auth::MODEL_INFERENCE_SCOPE);
+        }
+        let access = sign(state, &claims)?;
         let mut result = json!({"model":"openai","model_id":model,"api_format":"responses","protocol":"openai-responses","upstream_api_format":format,"codex_catalog_model_id":"wework-gpt-5.6-sol","base_url":format!("{}/api/runtime-work/llm-responses-proxy",base.trim_end_matches('/')),"api_key":access,"default_headers":{"X-Wegent-Model-Type":kind,"X-Wegent-Model-Namespace":namespace,"X-Wegent-Model-User-Id":owner.to_string(),"X-Wegent-Upstream-Header-wecode-executor":"codex","X-Wegent-Upstream-Header-wecode-source":"wegent-agent"},"runtime_config":{"codex":{"use_user_config":false,"configured":true}},"wework_model_kind":"cloud","tool_profile":"function","codex_responses_compat_proxy":true,"native_tool_search":false,"native_namespace_tools":false});
         apply_model_options(&mut result, options);
         return Ok(result);

@@ -8,6 +8,8 @@ use crate::auth::{AppAuthenticator, AuthFailure, UserRow};
 use crate::config::AuthConfig;
 use std::{future::Future, pin::Pin};
 
+pub const MODEL_INFERENCE_SCOPE: &str = "model:inference";
+
 /// Resolve a currently valid personal API key to its active owner.
 pub trait PersonalModelKeyReader: Send + Sync {
     fn owner_id<'a>(
@@ -90,7 +92,19 @@ pub async fn verify_runtime_model_token(
             .await
             .map(RuntimeModelIdentity::PersonalKey)
     } else {
-        crate::auth::verify_token(config, token).map(RuntimeModelIdentity::Session)
+        let claims = crate::auth::decode_session_claims(config, token)
+            .ok_or(AuthFailure::InvalidCredentials)?;
+        let subject = if claims.scope.as_ref().and_then(serde_json::Value::as_str)
+            == Some(MODEL_INFERENCE_SCOPE)
+            && claims.token_use.is_none()
+        {
+            claims.sub.filter(|name| !name.is_empty())
+        } else {
+            claims.username()
+        };
+        subject
+            .map(RuntimeModelIdentity::Session)
+            .ok_or(AuthFailure::InvalidCredentials)
     }
 }
 
@@ -150,6 +164,10 @@ mod tests {
         for (claims, accepted) in [
             (serde_json::json!({"sub":"session-owner"}), true),
             (
+                serde_json::json!({"sub":"session-owner","scope":MODEL_INFERENCE_SCOPE}),
+                true,
+            ),
+            (
                 serde_json::json!({"sub":"session-owner","token_use":"wework_access"}),
                 true,
             ),
@@ -162,10 +180,16 @@ mod tests {
                 false,
             ),
         ] {
-            let token =
-                crate::wework_auth_tokens::create_token(&config.jwt_key, &config.algorithm, claims)
-                    .unwrap();
+            let token = crate::wework_auth_tokens::create_token(
+                &config.jwt_key,
+                &config.algorithm,
+                claims.clone(),
+            )
+            .unwrap();
             let result = verify_runtime_model_token(&config, &Keys, &token).await;
+            if claims["scope"] == MODEL_INFERENCE_SCOPE {
+                assert!(crate::auth::verify_token(&config, &token).is_err());
+            }
             assert_eq!(result.is_ok(), accepted);
         }
     }

@@ -142,6 +142,7 @@ def _refresh_runtime_profiles(
     db: Session, dispatch: LoopItemExecution
 ) -> dict[str, Any]:
     """Recompile the original dispatch's model credentials for the next turn."""
+    from app.services.auth import create_task_token
     from app.services.collaboration_revocation import execution_authorized
 
     if (
@@ -164,8 +165,17 @@ def _refresh_runtime_profiles(
             503, "Collaboration Runtime profiles are unavailable"
         ) from exc
     manager = payload["managerRuntimeRequest"]
+    request = manager["executionRequest"]
     return {
-        "manager_model_config": manager["executionRequest"].get("model_config") or {},
+        "manager_callback_token": create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=request["user_id"],
+            user_name=request["user_name"],
+            project_group_execution=True,
+            device_manager_execution_id=dispatch.id,
+        ),
+        "manager_model_config": request.get("model_config") or {},
         "manager_model_selection": manager.get("modelSelection"),
         "member_runtime_profiles": payload["memberRuntimeProfiles"],
     }

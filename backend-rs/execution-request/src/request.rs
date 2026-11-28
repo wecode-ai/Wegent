@@ -49,7 +49,7 @@ use super::skill_generation;
 use super::skills::{
     BotSkills, SkillAccess, SkillBindingContext, get_bot_skills, preload_skill_refs,
 };
-use super::tokens::{create_skill_identity_token, create_task_token};
+use super::tokens::{create_scoped_task_token, create_skill_identity_token};
 
 #[path = "request_coordinate.rs"]
 pub(super) mod coordinate;
@@ -465,6 +465,32 @@ struct ExecutionOverrides<'a> {
     include_coordinate_members: bool,
 }
 
+struct ExecutionConnections<'a> {
+    project_group: bool,
+    git_accounts: &'a Value,
+    mcp_preferences: Option<&'a str>,
+}
+
+impl<'a> ExecutionConnections<'a> {
+    fn for_task(task: &Value, git: &'a Value, preferences: Option<&'a str>) -> Self {
+        let labels = &task["metadata"]["labels"];
+        let project_group = wegent_protocol::project_group_task_labels(labels);
+
+        Self {
+            project_group,
+            git_accounts: if project_group { &Value::Null } else { git },
+            mcp_preferences: if project_group { None } else { preferences },
+        }
+    }
+
+    fn task_data(&self) -> Result<Option<Value>, FastApiError> {
+        if self.project_group {
+            return Ok(Some(serde_json::json!({"project_group_execution":true})));
+        }
+        wegent_mcp_providers::mcp_user_service::build_request_task_data(self.mcp_preferences)
+    }
+}
+
 async fn build_request_with_runtime(
     state: &RequestServices<'_>,
     input: &BuildExecutionRequestInput<'_>,
@@ -478,6 +504,11 @@ async fn build_request_with_runtime(
         created_git_repository,
         include_coordinate_members,
     } = overrides;
+    let connections = ExecutionConnections::for_task(
+        input.task_json,
+        input.user_git_info,
+        input.user_preferences,
+    );
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
@@ -576,7 +607,7 @@ async fn build_request_with_runtime(
     // its token, and classify the transport the executor must expect.
     let git_identity = crate::git_identity::resolve_identity(
         state.repository_tokens.as_ref(),
-        input.user_git_info,
+        connections.git_accounts,
         git_domain.as_deref(),
     )
     .await
@@ -596,7 +627,7 @@ async fn build_request_with_runtime(
     let mut user_info = build_user_metadata(&user_json);
     state
         .user_info_extension
-        .decorate(input.user_preferences, &mut user_info)
+        .decorate(connections.mcp_preferences, &mut user_info)
         .await;
 
     // Model config (`get_model_config_for_bot` + placeholder processing).
@@ -750,25 +781,27 @@ async fn build_request_with_runtime(
     // `_get_bot_skills` runs; a `force_preload` ref joins the requested stage,
     // the rest join the available refs after the injected subscription Skill.
     let user_default_target_id = format!("user:{}", input.user_id);
-    let binding_refs = super::skills::list_user_default_skill_refs(
-        state.mysql,
-        input.user_id,
-        &user_default_target_id,
-        &binding_context,
-        Some(&skill_access),
-    )
-    .await
-    .map_err(dependency)?;
     let (shell_type, base_image) = resolve_shell_type(state, input).await?;
     let mut available_refs =
         super::skills::inject_subscription_manager_skill(is_subscription, team_json, &shell_type);
-    super::skills::route_binding_refs(binding_refs, &mut requested_skills, &mut available_refs);
+    if !connections.project_group {
+        let binding_refs = super::skills::list_user_default_skill_refs(
+            state.mysql,
+            input.user_id,
+            &user_default_target_id,
+            &binding_context,
+            Some(&skill_access),
+        )
+        .await
+        .map_err(dependency)?;
+        super::skills::route_binding_refs(binding_refs, &mut requested_skills, &mut available_refs);
+    }
     let mut skills = get_bot_skills(
         state.mysql,
         &merged,
         capability_mode,
         input.user_id,
-        input.user_preferences,
+        connections.mcp_preferences,
         &tokens,
         &user_default_target_id,
         Some(&skill_access),
@@ -877,7 +910,7 @@ async fn build_request_with_runtime(
                 &kinds_cache,
                 std::slice::from_ref(member),
                 &mut member_skills,
-                input.user_preferences,
+                connections.mcp_preferences,
                 &tokens,
                 input.team.user_id,
                 &input.team.namespace,
@@ -968,24 +1001,30 @@ async fn build_request_with_runtime(
     let mut bot_configs = vec![leader];
     bot_configs.append(&mut member_configs);
     // Tokens.
-    let auth_token = create_task_token(
+    let auth_token = create_scoped_task_token(
         state.auth,
         input.task_id,
         input.assistant_subtask_id,
         input.user_id,
         input.user_name,
+        None,
+        connections.project_group,
     )?;
-    let skill_identity_token = create_skill_identity_token(
-        state.auth,
-        input.user_id,
-        input.user_name,
-        input.task_id,
-        input.assistant_subtask_id,
-        // `_generate_skill_identity_token` (`request_builder.py:3410`): the
-        // assistant subtask's persisted `executor_name`, with the
-        // `task-…-subtask-…` fallback only when it is empty.
-        input.executor_name,
-    )?;
+    let skill_identity_token = if connections.project_group {
+        String::new()
+    } else {
+        create_skill_identity_token(
+            state.auth,
+            input.user_id,
+            input.user_name,
+            input.task_id,
+            input.assistant_subtask_id,
+            // `_generate_skill_identity_token` (`request_builder.py:3410`): the
+            // assistant subtask's persisted `executor_name`, with the
+            // `task-…-subtask-…` fallback only when it is empty.
+            input.executor_name,
+        )?
+    };
 
     // `_build_session_context` (`request_builder.py:554`): the persisted
     // executor sessions and the legacy bindings. It is the last read of the
@@ -1070,9 +1109,7 @@ async fn build_request_with_runtime(
         user_name: input.user_name.to_string(),
         // `_build_request_task_data(user)`: the enabled user-configured MCP
         // services, or `null` when the caller has none.
-        task_data: wegent_mcp_providers::mcp_user_service::build_request_task_data(
-            input.user_preferences,
-        )?,
+        task_data: connections.task_data()?,
         bot: Value::Array(bot_configs),
         mcp_servers,
         bot_name: input.bot.name.clone(),
@@ -1152,14 +1189,16 @@ async fn build_request_with_runtime(
             input.team.user_id,
         ),
         input.user_id,
-        input.user_preferences,
+        connections.mcp_preferences,
         &tokens,
         &skill_access,
         &input.team.namespace,
     )
     .await?;
     let has_local_device = execution_device_id(input.task_json, &request.workspace).is_some();
-    super::connectors::attach(state.mysql, &mut request, has_local_device).await?;
+    if !connections.project_group {
+        super::connectors::attach(state.mysql, &mut request, has_local_device).await?;
+    }
     // Compile only after late Skill resolution and connector authorization
     // have established the final tool surface. Otherwise stale personal MCP
     // servers can survive in the Bot even after a connector supersedes them.
@@ -1223,13 +1262,15 @@ async fn build_request_with_runtime(
     // `_apply_user_runtime_config` (`request_preparation.py:655`): it runs in
     // `prepare_execution_request`, after `TaskRequestBuilder.build` returned, so
     // its two kind reads follow every read above.
-    super::runtime_config::apply_user_runtime_config(
-        state.mysql,
-        &mut request.model_config,
-        input.user_id,
-        input.user_preferences,
-    )
-    .await?;
+    if !connections.project_group {
+        super::runtime_config::apply_user_runtime_config(
+            state.mysql,
+            &mut request.model_config,
+            input.user_id,
+            input.user_preferences,
+        )
+        .await?;
+    }
     Ok(request)
 }
 

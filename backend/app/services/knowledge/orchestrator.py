@@ -745,6 +745,7 @@ class KnowledgeOrchestrator:
         scope: str = "all",
         group_name: Optional[str] = None,
         *,
+        allowed_ids: frozenset[int] | None = None,
         offset: int = 0,
         limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
     ) -> KnowledgeBaseListResponse:
@@ -774,6 +775,7 @@ class KnowledgeOrchestrator:
             group_name=group_name,
             offset=offset,
             limit=limit,
+            **({"allowed_ids": allowed_ids} if allowed_ids is not None else {}),
         )
 
         # Use cached document_count from spec to avoid N+1 query problem

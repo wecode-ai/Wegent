@@ -179,7 +179,49 @@ impl Default for ExecutionRequest {
     }
 }
 
+/// Classify persisted managed Tasks, including those recorded before the explicit scope.
+pub fn project_group_task_labels(labels: &Value) -> bool {
+    labels["source"] == "project_automation"
+        && labels["projectGroupExecution"]
+            .as_bool()
+            .unwrap_or_else(|| {
+                // Existing managed Tasks predate the explicit group origin label.
+                labels["dispatchRole"] == "executor"
+                    || !labels["projectAutomationManagerSubtaskId"].is_null()
+            })
+}
+
 impl ExecutionRequest {
+    /// Project groups use their assigned Bot capabilities on every resumed turn.
+    pub fn project_group_execution(&self) -> bool {
+        self.extra
+            .get("task_data")
+            .is_some_and(|data| data["project_group_execution"] == true)
+            || self
+                .extra
+                .get("origin")
+                .is_some_and(Self::project_group_origin)
+    }
+
+    pub fn project_group_origin(origin: &Value) -> bool {
+        origin["dispatch_kind"] == "collaboration_group"
+            || origin["collaboration_dispatch_execution_id"]
+                .as_i64()
+                .is_some_and(|id| id > 0)
+            || origin
+                .get("dispatchId")
+                .or_else(|| origin.get("dispatch_id"))
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with("collaboration-group:"))
+    }
+
+    pub fn retain_project_group_scope(&mut self) {
+        self.extra.insert(
+            "task_data".into(),
+            serde_json::json!({"project_group_execution": true}),
+        );
+    }
+
     pub fn uses_ephemeral_codex_thread(&self) -> bool {
         self.ephemeral
             && self

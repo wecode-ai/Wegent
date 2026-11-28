@@ -946,21 +946,24 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     {
         request.backend_url = Some(config.backend_url.clone());
     }
-    if request
-        .auth_token
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
+    let personal_credentials = !request.project_group_execution();
+    if personal_credentials
+        && request
+            .auth_token
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
     {
         request.auth_token = Some(config.auth_token.clone());
     }
-    if request
-        .runtime_auth_token
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
+    if personal_credentials
+        && request
+            .runtime_auth_token
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
         && !config.runtime_auth_token.trim().is_empty()
     {
         request.runtime_auth_token = Some(config.runtime_auth_token.clone());

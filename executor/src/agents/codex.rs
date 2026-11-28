@@ -5039,6 +5039,7 @@ pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<Str
             // External work can declare local files without inheriting account credentials.
             .filter(|(key, _)| {
                 !restricted
+                    || (request.project_group_execution() && key == "WEGENT_PLUGIN_AUTH_MODE")
                     || matches!(
                         key.as_str(),
                         "WEGENT_EXECUTOR_BINARY" | "WEGENT_TASK_ID" | "WEGENT_TASK_WORKSPACE"

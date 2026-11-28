@@ -412,7 +412,9 @@ pub async fn prepare_claude_runtime(
     }
     deploy_request_skills(request, &skills_dir).await?;
 
-    let global_mcps = if super::instance_home::request_home(request).is_some() {
+    let global_mcps = if request.project_group_execution()
+        || super::instance_home::request_home(request).is_some()
+    {
         BTreeMap::new()
     } else {
         load_global_mcp_records().unwrap_or_else(|_| {
@@ -536,7 +538,9 @@ pub fn configure_request_mcps(
 ) -> Result<bool, String> {
     let team = wegent_execution_contracts::is_coordinate_team(request)
         && request.bot.as_array().is_some_and(|bots| bots.len() > 1);
-    if let Some(home) = super::instance_home::request_home(request).filter(|_| !team) {
+    if let Some(home) = super::instance_home::request_home(request)
+        .filter(|_| !team && !request.project_group_execution())
+    {
         return codex_mcp::prepare(&home, request, thread_config);
     }
     let mut mcp_servers = collect_request_mcp_servers(request);

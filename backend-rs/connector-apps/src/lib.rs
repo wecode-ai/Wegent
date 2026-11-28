@@ -34,6 +34,7 @@ pub mod test_support {
 }
 
 pub struct ConnectorState {
+    pub tasks_table: &'static str,
     pub mysql: brz_mysql::MysqlService,
     pub auth: config::AuthConfig,
 }

@@ -115,7 +115,15 @@ pub(super) async fn compile_request(
         &context,
         request,
         prepared,
-        manager_execution_id,
+        if group_dispatch
+            || wegent_project_coordination::project_execution::is_group_execution(&context)
+        {
+            ExecutionIdentity::Group {
+                manager_execution_id,
+            }
+        } else {
+            ExecutionIdentity::Personal
+        },
     )
     .await?;
     if group_dispatch {
@@ -154,6 +162,11 @@ pub(super) async fn compile_request(
     Ok(payload)
 }
 
+enum ExecutionIdentity {
+    Personal,
+    Group { manager_execution_id: Option<i64> },
+}
+
 async fn compile_wire(
     app: &AppState,
     command: &super::device_pull::PullCommand<'_>,
@@ -161,7 +174,7 @@ async fn compile_wire(
     context: &Value,
     mut request: Value,
     prepared: &ClaimPreparation,
-    manager_execution_id: Option<i64>,
+    identity: ExecutionIdentity,
 ) -> Result<Value> {
     let continuing = context["comment_continue_task_id"]
         .as_str()
@@ -197,6 +210,12 @@ async fn compile_wire(
     } else {
         message.to_owned()
     };
+    let (project_group_execution, manager_execution_id) = match identity {
+        ExecutionIdentity::Personal => (false, None),
+        ExecutionIdentity::Group {
+            manager_execution_id,
+        } => (true, manager_execution_id),
+    };
     let mut execution_request = runtime_rpc::direct_execution(
         app,
         &user,
@@ -205,8 +224,12 @@ async fn compile_wire(
         &prompt,
         request.get("modelSelection"),
         manager_execution_id,
+        project_group_execution,
     )
     .await?;
+    if project_group_execution {
+        execution_request["task_data"] = json!({"project_group_execution":true});
+    }
     if let Some(trigger) = context["comment_trigger_message_id"]
         .as_str()
         .filter(|id| !id.trim().is_empty())
@@ -390,7 +413,9 @@ async fn dispatch_profiles(
             &member_context,
             request,
             &template,
-            None,
+            ExecutionIdentity::Group {
+                manager_execution_id: None,
+            },
         )
         .await?;
         let name = [&agent.title, &agent.name]

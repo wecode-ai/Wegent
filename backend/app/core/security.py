@@ -1083,6 +1083,7 @@ def get_current_user_jwt_apikey_tasktoken(
                     request.state.device_manager_execution_id = (
                         token_info.device_manager_execution_id
                     )
+                    request.state.execution_task_identity = token_info
                     request.state.execution_task_id = token_info.task_id
                     request.state.execution_subtask_id = token_info.subtask_id
                     if is_telemetry_enabled():
@@ -1119,6 +1120,22 @@ def get_current_user_jwt_apikey_tasktoken(
             detail="Missing authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def get_personal_resource_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> User:
+    """Only a personal execution can exercise the user's own resource grants."""
+    from app.services.auth.task_token import is_project_group_task
+
+    token = getattr(request.state, "execution_task_identity", None)
+    if token is not None and is_project_group_task(db, token):
+        raise HTTPException(
+            status_code=403, detail="Personal resource access is unavailable"
+        )
+    return user
 
 
 def get_current_user_optional(

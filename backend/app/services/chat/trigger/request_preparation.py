@@ -480,6 +480,7 @@ def _build_cloud_gateway_model_config(
     model_type: Optional[str] = None,
     namespace: Optional[str] = None,
     resource_user_id: Optional[int] = None,
+    project_group_execution: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Build the backend LLM gateway config for an authorized cloud model.
 
@@ -552,10 +553,10 @@ def _build_cloud_gateway_model_config(
     backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
     if not backend_base:
         return None
-    token = create_access_token(
-        {"sub": creator.user_name, "user_id": creator.id},
-        expires_delta=30,
-    )
+    claims = {"sub": creator.user_name, "user_id": creator.id}
+    if project_group_execution:
+        claims["scope"] = "model:inference"
+    token = create_access_token(claims, expires_delta=30)
     model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
     provider_config = extract_and_process_model_config(
         model_spec=model_spec or {},

@@ -23,10 +23,11 @@ Usage:
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Protocol
 
 import jwt
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 
@@ -59,6 +60,44 @@ class TaskTokenInfo:
     manager_agent_id: Optional[str] = None
     device_manager_execution_id: Optional[int] = None
     expire_at: Optional[int] = None
+    project_group_execution: Optional[bool] = False
+
+
+class _ScopedTask(Protocol):
+    @property
+    def project_group_execution(self) -> bool | None: ...
+
+    @property
+    def task_id(self) -> int | None: ...
+
+    @property
+    def user_id(self) -> int: ...
+
+
+def is_project_group_task(db: Session, token: _ScopedTask) -> bool:
+    """Recognize current signatures and the persisted scope of legacy managed Tasks."""
+    if token.project_group_execution is not None:
+        return token.project_group_execution
+    if not token.task_id or token.task_id <= 0:
+        return False
+    from app.stores.tasks import task_store
+
+    task = task_store.get_by_id(db, task_id=token.task_id, owner_user_id=token.user_id)
+    if task is None or not isinstance(task.json, dict):
+        return False
+    metadata = task.json.get("metadata")
+    labels = metadata.get("labels") if isinstance(metadata, dict) else None
+    if not isinstance(labels, dict):
+        return False
+    return (
+        labels.get("source") == "project_automation"
+        and labels.get(
+            "projectGroupExecution",
+            labels.get("dispatchRole") == "executor"
+            or labels.get("projectAutomationManagerSubtaskId") is not None,
+        )
+        is True
+    )
 
 
 def create_task_token(
@@ -70,6 +109,9 @@ def create_task_token(
     dispatch_role: Optional[str] = None,
     manager_agent_id: Optional[str] = None,
     expires_delta_minutes: int = 1440,  # 24 hours
+    *,
+    project_group_execution: bool = False,
+    device_manager_execution_id: Optional[int] = None,
 ) -> str:
     """Create a task token for executor and MCP Server authentication.
 
@@ -99,6 +141,10 @@ def create_task_token(
         "exp": expire,
         "type": "task_token",
     }
+    if project_group_execution:
+        payload["project_group_execution"] = True
+    if device_manager_execution_id is not None:
+        payload["device_manager_execution_id"] = device_manager_execution_id
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return token
 
@@ -122,6 +168,11 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             logger.warning("Invalid token type: expected task_token")
             return None
 
+        scope = payload.get("project_group_execution")
+        if payload.get("device_manager_execution_id") is not None or str(
+            payload.get("dispatch_id") or ""
+        ).startswith("collaboration-group:"):
+            scope = True
         return TaskTokenInfo(
             task_id=payload["task_id"],
             subtask_id=payload["subtask_id"],
@@ -132,6 +183,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             manager_agent_id=payload.get("manager_agent_id"),
             device_manager_execution_id=payload.get("device_manager_execution_id"),
             expire_at=payload.get("exp"),
+            project_group_execution=scope if isinstance(scope, bool) else None,
         )
     except jwt.ExpiredSignatureError:
         logger.warning("Task token has expired")
