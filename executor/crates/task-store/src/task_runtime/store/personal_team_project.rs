@@ -205,10 +205,10 @@ pub(super) fn protect_update(
         .collect();
     for group in next.as_array().into_iter().flatten() {
         let old = group["id"].as_str().and_then(|id| previous.get(id));
-        if old.is_some_and(|g| g["personal_team_managed"] == true)
-            || group["personal_team_managed"] == true
-        {
-            if !old.is_some_and(|g| {
+        let managed = old.is_some_and(|g| g["personal_team_managed"] == true)
+            || group["personal_team_managed"] == true;
+        if managed
+            && !old.is_some_and(|g| {
                 [
                     "personal_team_managed",
                     "binding_required",
@@ -221,11 +221,11 @@ pub(super) fn protect_update(
                 ]
                 .iter()
                 .all(|key| g[key] == group[key])
-            }) {
-                return Err(invalid(
-                    "Update the source assistant team or its project bindings to change the roster",
-                ));
-            }
+            })
+        {
+            return Err(invalid(
+                "Update the source assistant team or its project bindings to change the roster",
+            ));
         }
     }
     for (id, group) in previous {

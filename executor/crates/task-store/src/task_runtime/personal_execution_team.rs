@@ -460,14 +460,13 @@ pub(in crate::task_runtime::store) fn project_definition(
     {
         // A solo project Agent owns its lead Bot's grants. Additional Bots can
         // only receive grants already belonging to their exact project Bot.
-        let authorized =
-            by_id
-                .get(&bot["id"].to_string())
-                .copied()
-                .or_else(|| match project_bots {
-                    [lead] if index == 0 => Some(lead),
-                    _ => None,
-                });
+        let authorized = by_id
+            .get(&bot["id"].to_string())
+            .copied()
+            .or(match project_bots {
+                [lead] if index == 0 => Some(lead),
+                _ => None,
+            });
         if let Some(grants) = authorized {
             bot["native_capability_scope"] = json!("bot");
             for key in [
