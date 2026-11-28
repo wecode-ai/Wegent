@@ -215,6 +215,7 @@ export interface UserConnectorApp {
   auth_type: ConnectorAuthType
   tool_loading_mode: ConnectorToolLoadingMode
   connection: ConnectorConnection
+  can_refresh?: boolean
   keywords?: string[]
 }
 

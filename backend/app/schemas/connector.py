@@ -317,6 +317,8 @@ class ConnectorAppResponse(BaseModel):
     tool_loading_mode: ToolLoadingMode
     keywords: list[str] = Field(default_factory=list)
     connection: ConnectorConnectionResponse
+    # A stored OAuth grant can be renewed without opening the consent flow.
+    can_refresh: bool = False
 
 
 class ConnectorAppListItem(BaseModel):

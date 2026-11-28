@@ -28,6 +28,12 @@ Backend returns apps according to administrator visibility policy. OAuth grants 
 - Disabled apps disappear from user catalogs and runtime tool lists.
 - Changing an app's MCP URL or authentication type removes its old connections and requires fresh authorization.
 
+## Managing Authorization in Wegent Web
+
+Open **Settings → Integrations → App Connections** to see the grants for your account. Apps marked **Refresh needed** can still be renewed. Wegent tries to refresh the grant when a task uses the app, or you can select **Refresh** to renew it now. If the grant was revoked or can no longer be renewed, select **OAuth Authorization** to reconnect.
+
+After authorization completes, select **Close window** on the result page to return to Wegent.
+
 ## Using Apps In Wework
 
 After Wework connects to Wegent Cloud, it synchronizes Connector Apps that are visible and callable for the current user:

@@ -34,10 +34,15 @@ const ALLOWED_EXTERNAL_PATHS = [
   '/api/attachments/download/shared', // Signed attachment downloads for model providers
 ]
 
+const CONNECTOR_OAUTH_CALLBACK_PATH = '/api/connector-apps/oauth/callback'
+
 /**
  * Check if the request path is in the allowed external paths list
  */
-function isAllowedExternalPath(pathname: string): boolean {
+function isAllowedExternalPath(pathname: string, method: string): boolean {
+  if (method === 'GET' && pathname === CONNECTOR_OAUTH_CALLBACK_PATH) {
+    return true
+  }
   return ALLOWED_EXTERNAL_PATHS.some(allowedPath => pathname.startsWith(allowedPath))
 }
 
@@ -99,7 +104,7 @@ async function proxyRequest(
 
   // Security: Only allow same-origin requests or whitelisted paths
   // Non-same-origin requests to non-whitelisted paths return 404
-  if (!isSameOriginRequest(request) && !isAllowedExternalPath(targetPath)) {
+  if (!isSameOriginRequest(request) && !isAllowedExternalPath(targetPath, request.method)) {
     return NextResponse.json({ error: 'Not Found' }, { status: 404 })
   }
 
