@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from 'node:crypto'
+import type { Locator } from '@playwright/test'
 import JSZip from 'jszip'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { executorMockUrl, expect, test } from '../../fixtures/executor-test'
@@ -19,6 +20,50 @@ import {
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const SKILL_PATH = '/api/v1/kinds/skills'
+const LAYOUT_TIMEOUT = 5_000
+
+async function expectSlashMenuPlacement(menu: Locator, label: string, side?: 'above' | 'below') {
+  await expect(menu, `${label}: the slash menu should open`).toBeVisible({
+    timeout: LAYOUT_TIMEOUT,
+  })
+  await expect
+    .poll(
+      () =>
+        menu.evaluate(element => {
+          const selection = window.getSelection()
+          if (!selection?.isCollapsed || !selection.rangeCount) return null
+
+          const caret = selection.getRangeAt(0).getBoundingClientRect()
+          const rect = element.getBoundingClientRect()
+          const viewport = window.visualViewport
+          const left = viewport?.offsetLeft ?? 0
+          const top = viewport?.offsetTop ?? 0
+          const width = viewport?.width ?? window.innerWidth
+          const height = viewport?.height ?? window.innerHeight
+          const middle = top + height / 2
+          return {
+            caretHalf: caret.top < middle ? 'upper' : 'lower',
+            menuSide:
+              rect.bottom <= caret.top - 7
+                ? 'above'
+                : rect.top >= caret.bottom + 7
+                  ? 'below'
+                  : 'overlap',
+            withinViewport:
+              rect.left >= left + 7 &&
+              rect.right <= left + width - 7 &&
+              rect.top >= top + 7 &&
+              rect.bottom <= top + height - 7,
+          }
+        }),
+      { message: `${label}: the menu should fit and avoid the live caret`, timeout: LAYOUT_TIMEOUT }
+    )
+    .toMatchObject(
+      side
+        ? { caretHalf: side === 'above' ? 'lower' : 'upper', menuSide: side, withinViewport: true }
+        : { menuSide: expect.stringMatching(/^(above|below)$/), withinViewport: true }
+    )
+}
 
 async function uploadSkill(api: ApiClient, name: string, marker: string): Promise<number> {
   const zip = new JSZip()
@@ -226,6 +271,8 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
     await expect(option, 'The agent skill should be selectable on a follow-up').toBeVisible({
       timeout: 5_000,
     })
+    const menu = page.getByTestId('slash-skill-menu')
+    await expectSlashMenuPlacement(menu, 'Existing task', 'above')
     await input.press('Enter')
     await expect(option).toBeHidden()
     await expect(input).toHaveText('')
@@ -241,6 +288,54 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
     expect(
       context?.match(/The user has explicitly selected .* for this task: ([^*]+)/)?.[1]
     ).toContain(ghostOnDemand.name)
+
+    await test.step('Keep slash autocomplete in view in the new task composer', async () => {
+      await page.setViewportSize({ width: 1280, height: 1440 })
+      await page.goto(`/chat?teamId=${team.id}`, { waitUntil: 'domcontentloaded' })
+      await expect(input, 'The new task composer should use the fixture team').toHaveAttribute(
+        'data-team-id',
+        String(team.id),
+        { timeout: 10_000 }
+      )
+      const command = `/${ghostOnDemand.name}`
+      await input.pressSequentially(command, { timeout: LAYOUT_TIMEOUT })
+      await expect(option, 'The fixture skill should be offered on a new task').toBeVisible({
+        timeout: LAYOUT_TIMEOUT,
+      })
+      await expectSlashMenuPlacement(menu, 'New task', 'below')
+
+      await page.setViewportSize({ width: 360, height: 760 })
+      const draft = Array.from({ length: 24 }, () => 'Draft text').join('\n')
+      await input.fill(`\n${draft}`, { timeout: LAYOUT_TIMEOUT })
+      await input.evaluate(editor => {
+        const range = document.createRange()
+        range.selectNodeContents(editor)
+        range.collapse(true)
+        const selection = window.getSelection()!
+        selection.removeAllRanges()
+        selection.addRange(range)
+        editor.closest('.custom-scrollbar')!.scrollTop = 0
+      })
+      await input.pressSequentially(command, { timeout: LAYOUT_TIMEOUT })
+      await expect(option, 'The fixture skill should be offered on a narrow viewport').toBeVisible({
+        timeout: LAYOUT_TIMEOUT,
+      })
+      await expectSlashMenuPlacement(menu, 'Narrow viewport')
+
+      const scrollEditor = (toEnd: boolean) =>
+        input.evaluate((editor, toEnd) => {
+          const viewport = editor.closest('.custom-scrollbar')!
+          viewport.scrollTop = toEnd ? viewport.scrollHeight : 0
+          const caret = window.getSelection()!.getRangeAt(0).getBoundingClientRect()
+          return caret.bottom <= viewport.getBoundingClientRect().top
+        }, toEnd)
+      expect(await scrollEditor(true), 'The live caret should scroll above the editor').toBe(true)
+      await expect(menu, 'The slash menu should hide when its caret scrolls out').toBeHidden({
+        timeout: LAYOUT_TIMEOUT,
+      })
+      await scrollEditor(false)
+      await expectSlashMenuPlacement(menu, 'Caret scrolled back into the editor')
+    })
   } finally {
     client.dispose()
     for (const { path, status } of resources.reverse()) {
