@@ -161,6 +161,35 @@ test.describe('Connector app OAuth loop', () => {
     await providerControl(request, { rejectRefresh: false, revokeAll: true })
   })
 
+  test('does not cache the OAuth result served through the web proxy', async ({ request }) => {
+    const connectorUrl = `${API_URL}/api/connector-apps/${SLUG}`
+    const headers = authHeaders(adminToken)
+    try {
+      const started = await request.post(`${connectorUrl}/oauth/sessions`, {
+        headers,
+        timeout: 10_000,
+      })
+      expect(started.ok(), await started.text()).toBeTruthy()
+      const session = (await started.json()) as { authorize_url: string }
+      const consent = await request.get(session.authorize_url, { maxRedirects: 0, timeout: 10_000 })
+      expect(consent.status()).toBe(302)
+      const redirect = new URL(consent.headers().location)
+      const callback = await request.get(redirect.pathname + redirect.search, {
+        headers: { 'Sec-Fetch-Site': 'cross-site' },
+        timeout: 10_000,
+      })
+      expect(callback.status()).toBe(200)
+      expect(await callback.text()).toContain(`data-testid="${OAUTH_SUCCESS_RESULT}"`)
+      expect(callback.headers()['cache-control']).toBe('no-store')
+    } finally {
+      const disconnected = await request.delete(`${connectorUrl}/connection`, {
+        headers,
+        timeout: 10_000,
+      })
+      expect(disconnected.status()).toBe(204)
+    }
+  })
+
   test('prechecks and authorizes a custom connector from an external app', async ({
     browser,
     request,
