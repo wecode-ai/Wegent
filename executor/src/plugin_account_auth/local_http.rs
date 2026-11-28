@@ -849,6 +849,22 @@ fn unavailable() -> AppIpcError {
     )
 }
 impl PluginAuthTransport for LocalAuthContext {
+    fn account_scope(&self) -> Option<Value> {
+        let state = self.state.lock().ok()?;
+        if !self.route_matches(&state) {
+            return None;
+        }
+        let connection = self.connection.lock().ok()?;
+        let connection = connection.as_ref()?;
+        let native_user = state
+            .session
+            .as_ref()
+            .filter(|session| session.bound_to(Some(connection)))
+            .and_then(Session::native_owner)
+            .map(|(user_id, _, _)| user_id);
+        super::author_source::current_scope(connection, native_user)
+    }
+
     fn available(&self, registered: bool) -> bool {
         let Ok(state) = self.state.lock() else {
             return false;

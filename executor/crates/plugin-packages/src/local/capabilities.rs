@@ -43,6 +43,8 @@ pub use restore::{
     restore_enabled_claude_plugin_cache, restore_enabled_claude_plugin_cache_with_manifest,
 };
 mod activation_revision;
+mod author_source;
+pub use author_source::{personal_manifest_name_matches_slug, read_personal_author_source};
 mod manifest_migration;
 mod plugin_preparation;
 mod plugin_skills;
@@ -298,6 +300,7 @@ pub struct PluginSyncSpec {
     key: String,
     installed_plugin_id: Option<i64>,
     cloud_plugin_id: Option<i64>,
+    personal_source_owner: bool,
     pub marketplace: String,
     pub enabled: bool,
     version: String,
@@ -340,6 +343,7 @@ impl PluginSyncSpec {
             key,
             installed_plugin_id,
             cloud_plugin_id,
+            personal_source_owner: value["personal_source_owner"] == true,
             marketplace,
             enabled: value
                 .get("enabled")
@@ -374,6 +378,7 @@ impl PluginSyncSpec {
             key: key.to_owned(),
             installed_plugin_id: value_i64(plugin.get("installed_plugin_id")),
             cloud_plugin_id: value_i64(plugin.get("cloud_plugin_id")),
+            personal_source_owner: plugin["personal_source_owner"] == true,
             marketplace: value_string(plugin.get("marketplace"))
                 .or_else(|| {
                     key.split_once('@')
@@ -414,6 +419,7 @@ pub struct GlobalCapabilityStore {
     codex_only_plugins: bool,
     managed_mcp_python: Option<PathBuf>,
     workbench_root_override: Option<PathBuf>,
+    account_scope: Arc<std::sync::Mutex<Option<super::plugin_import::PluginAccountScope>>>,
 }
 
 pub struct CapabilitySyncHandler<P = NoopPackageProvider>

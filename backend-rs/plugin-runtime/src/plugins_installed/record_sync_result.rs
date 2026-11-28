@@ -599,15 +599,7 @@ where
         return Ok(());
     };
     record_installation_result(
-        session,
-        user_id,
-        device_id,
-        installed.id,
-        release_id,
-        result,
-        item,
-        flush,
-        false,
+        session, user_id, device_id, installed, release_id, result, item, flush, false,
     )
     .await
 }
@@ -617,18 +609,38 @@ async fn record_installation_result<Q: MysqlQuery>(
     session: &mut Q,
     user_id: i64,
     device_id: &str,
-    installed_id: i64,
+    installed: &InstalledKindRow,
     release_id: i64,
     result: &SyncResult,
     item: Option<SyncItem>,
     flush: &mut PendingFlush,
     confirmed_local: bool,
 ) -> MysqlResult<()> {
+    let installed_id = installed.id;
+    let source_preserved = item
+        .as_ref()
+        .is_some_and(|item| item.status_text() == "source_preserved");
+    if source_preserved
+        && (!item
+            .as_ref()
+            .is_some_and(|item| super::personal_source::valid_source(&item.source))
+            || !super::personal_source::owned_install(
+                session,
+                user_id,
+                &installed.json.0.to_value(),
+            )
+            .await?)
+    {
+        return Err(super::write_coordination::coordination_error(
+            "INVALID_LOCAL_COMPLETION",
+        ));
+    }
     let row: Option<PluginDeviceInstallationRow> = session
         .fetch_optional(DEVICE_ROW_QUERY, (installed_id, device_id))
         .await?;
     if let Some(row) = &row
         && !confirmed_local
+        && !source_preserved
         && auto_update_blocked(row, release_id)
     {
         return Ok(());
@@ -636,11 +648,19 @@ async fn record_installation_result<Q: MysqlQuery>(
     let (state, error_message) = device_install_state(result, item.as_ref());
     if item.is_none()
         && result.success
-        && row
-            .as_ref()
-            .is_some_and(|row| row.state == "installed" && row.actual_release_id == release_id)
+        && let Some(row) = &row
     {
-        return Ok(());
+        if row.state == "installed" && row.actual_release_id == release_id {
+            return Ok(());
+        }
+        if row.state == "source"
+            && row.desired_release_id == release_id
+            && row.actual_release_id == 0
+            && super::personal_source::owned_install(session, user_id, &installed.json.0.to_value())
+                .await?
+        {
+            return Ok(());
+        }
     }
     let Some(row) = row else {
         // `PluginDeviceInstallation(...)` plus `db.add`; the INSERT waits for
@@ -674,7 +694,7 @@ async fn record_installation_result<Q: MysqlQuery>(
     };
     let desired_changed = row.desired_release_id != release_id;
     let mut attempt_count = row.attempt_count;
-    if state == "installed" {
+    if matches!(state, "installed" | "source") {
         attempt_count = 0;
     } else if state == "failed" {
         attempt_count = if desired_changed {
@@ -688,6 +708,8 @@ async fn record_installation_result<Q: MysqlQuery>(
     let mut actual_release_id = row.actual_release_id;
     if state == "installed" {
         actual_release_id = release_id;
+    } else if state == "source" {
+        actual_release_id = 0;
     }
     let error_code = if state == "failed" {
         item.as_ref()
@@ -741,6 +763,9 @@ fn device_install_state(
                         .unwrap_or_else(|| "Device rejected plugin install".to_string()),
                 ),
             );
+        }
+        if item.status_text() == "source_preserved" {
+            return ("source", None);
         }
         if item.status_text() == "synced" {
             return ("installed", None);

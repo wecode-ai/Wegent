@@ -483,7 +483,10 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             ),
             None,
         )
-        if not plugin_result or plugin_result.status != "synced":
+        if not plugin_result or plugin_result.status not in {
+            "synced",
+            "source_preserved",
+        }:
             detail = self._item_failure_message(plugin_result)
             raise DeviceCapabilitySyncError(
                 detail

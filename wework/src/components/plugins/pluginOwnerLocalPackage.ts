@@ -19,6 +19,7 @@ export function marketplaceItemOwnsLocalCreatedPackage(
 
 /** Local plugins that can be edited / packaged for publish. */
 export function isPackableCreatedPlugin(plugin: InstalledPluginItem): boolean {
+  if (plugin.raw.spec.sourcePayload?.cloudAccountMismatch === true) return false
   const bundled = getInitializedBundledPluginMarketplace()
   const isBundled =
     bundled?.defaultPluginNames?.includes(plugin.raw.spec.source.pluginKey) &&

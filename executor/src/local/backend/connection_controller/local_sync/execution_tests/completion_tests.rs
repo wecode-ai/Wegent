@@ -103,6 +103,23 @@ async fn failed_materialization_never_confirms_an_installed_device() {
 }
 
 #[tokio::test]
+async fn full_refresh_confirms_preserved_author_source_without_claiming_a_cloud_runtime() {
+    let fixture = registered_fixture(Plan::AuthorSource).await;
+    let result = fixture.sync(json!({"full":true})).await.unwrap();
+    assert_eq!(result["localCompleted"], true);
+    let completions = fixture.completions.lock().unwrap();
+    assert_eq!(completions.len(), 1);
+    let item = &completions[0]["completion"]["result"]["plugins"][0];
+    assert_eq!(item["status"], "source_preserved");
+    assert_eq!(item["source"]["version"], "1.1.0");
+    assert_eq!(item["version"], "1.0.0");
+    assert_eq!(
+        load_journal(&fixture.path).unwrap()["reconcilePending"],
+        false
+    );
+}
+
+#[tokio::test]
 async fn receipt_contention_retries_with_the_same_result_without_reapplying() {
     let fixture = registered_fixture(Plan::Valid).await;
     *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();

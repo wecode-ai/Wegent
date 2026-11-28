@@ -647,3 +647,20 @@ async def test_legacy_current_device_still_retries_when_other_device_uses_v2(
         "installed_kind_id": installed_id,
         "response": recovered,
     }
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_source_ack_requires_dispatched_owner_capability(authorized):
+    payload = _payload()
+    payload["plugins"][0]["personal_source_owner"] = authorized
+    ack = _ack(payload)
+    ack["plugins"][0].update(
+        status="source_preserved",
+        source={"installed": True, "enabled": False, "version": "unpublished-draft"},
+    )
+    if not authorized:
+        assert "personal source" in validate_ack(payload, ack)
+        return
+    assert validate_ack(payload, ack) is None
+    ack["plugins"][0]["source"]["installed"] = "true"
+    assert "personal source" in validate_ack(payload, ack)

@@ -705,13 +705,22 @@ pub(crate) fn validate_plugin_ack(payload: &Value, response: &Value) -> Option<&
             .map(|(_, value)| *value)
             .expect("the identity was found above");
         let status = item.get("status").and_then(Value::as_str);
-        if !matches!(status, Some("synced" | "removed" | "failed" | "superseded")) {
+        if !matches!(
+            status,
+            Some("synced" | "source_preserved" | "removed" | "failed" | "superseded")
+        ) {
             return Some("Device returned an invalid plugin acknowledgement status");
         }
         if item.get("operation").and_then(Value::as_str) != Some(operation) {
             return Some("Device returned a mismatched plugin operation");
         }
-        if status == Some("synced")
+        if status == Some("source_preserved")
+            && (expected_spec.get("personal_source_owner") != Some(&Value::Bool(true))
+                || !super::personal_source::valid_source(&item["source"]))
+        {
+            return Some("Device returned an invalid personal source acknowledgement");
+        }
+        if matches!(status, Some("synced" | "source_preserved"))
             && (operation != "upsert"
                 || item.get("version") != expected_spec.get("version")
                 || item.get("checksum") != expected_spec.get("checksum"))
@@ -1037,6 +1046,25 @@ mod tests {
         assert_eq!(
             validate_plugin_ack(&payload, &bad_operation),
             Some("Device returned a mismatched plugin operation")
+        );
+    }
+    #[test]
+    fn source_ack_requires_dispatched_owner_and_valid_local_observation() {
+        let mut payload = json!({"scope":"plugins", "plugin_sync":{"version":2,"generation":1,"complete":true},
+            "plugins":[{"installed_plugin_id":7,"version":"1.0","checksum":"sha256:a"}]});
+        let mut ack = json!({"success":true,"scope":"plugins", "plugin_sync":payload["plugin_sync"],
+            "plugins":[{"id":7,"generation":1,"operation":"upsert","status":"source_preserved", "version":"1.0","checksum":"sha256:a",
+                "source":{"installed":true,"enabled":false,"version":"unpublished-draft"}}]});
+        assert_eq!(
+            validate_plugin_ack(&payload, &ack),
+            Some("Device returned an invalid personal source acknowledgement")
+        );
+        payload["plugins"][0]["personal_source_owner"] = json!(true);
+        assert_eq!(validate_plugin_ack(&payload, &ack), None);
+        ack["plugins"][0]["source"]["installed"] = json!("true");
+        assert_eq!(
+            validate_plugin_ack(&payload, &ack),
+            Some("Device returned an invalid personal source acknowledgement")
         );
     }
 }

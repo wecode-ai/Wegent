@@ -67,7 +67,14 @@ export async function openPlugin(control, fixture) {
 
 export async function uninstallInUi(control, fixture) {
   await openPlugin(control, fixture)
-  await control.command('click', testId(`plugin-marketplace-actions-${fixture.pluginId}`))
+  // A concurrent automatic update replaces this menu with its progress status.
+  await control.command(
+    'clickWhenEnabled',
+    testId(`plugin-marketplace-actions-${fixture.pluginId}`),
+    {
+      visible: true,
+    }
+  )
   await control.command('click', testId(`plugin-marketplace-uninstall-${fixture.pluginId}`))
   const startedAt = Date.now()
   await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))

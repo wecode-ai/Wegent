@@ -118,6 +118,26 @@ fn installed_id_at(
     slug: &str,
     revoking: bool,
 ) -> Result<Option<u64>, AuthError> {
+    installed_id_at_in_scope(
+        path,
+        shared_plugins,
+        codex_plugins,
+        root,
+        slug,
+        revoking,
+        super::broker::account_scope().as_ref(),
+    )
+}
+
+fn installed_id_at_in_scope(
+    path: &Path,
+    shared_plugins: &Path,
+    codex_plugins: &Path,
+    root: &Path,
+    slug: &str,
+    revoking: bool,
+    scope: Option<&Value>,
+) -> Result<Option<u64>, AuthError> {
     let root = root
         .canonicalize()
         .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
@@ -144,6 +164,12 @@ fn installed_id_at(
         .ok_or(AuthError("plugin_auth_invalid_package"))?;
     let mut matched = None;
     for entry in entries.values() {
+        // An author source remains local when this account does not own its link.
+        if entry["materialization"] == "author_source"
+            && super::author_source::require_scope(entry, scope).is_err()
+        {
+            continue;
+        }
         let package_matches =
             crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry)
                 .ok()
@@ -151,7 +177,20 @@ fn installed_id_at(
                 == Some(&root);
         let runtime_matches =
             !package_matches && registered_runtime(entry, codex_plugins).as_ref() == Some(&root);
-        if !package_matches && !runtime_matches {
+        let author_matches = !package_matches
+            && author_source_matches(
+                path,
+                shared_plugins,
+                codex_plugins,
+                entry,
+                &root,
+                &plugin,
+                slug,
+            )?;
+        if !package_matches && !runtime_matches && !author_matches {
+            continue;
+        }
+        if author_matches && entry["enabled"] != true {
             continue;
         }
         if entry["managed"] != true {
@@ -178,6 +217,62 @@ fn installed_id_at(
         }
     }
     Ok(matched)
+}
+
+fn author_source_matches(
+    manifest: &Path,
+    shared_plugins: &Path,
+    codex_plugins: &Path,
+    entry: &Value,
+    root: &Path,
+    plugin: &Value,
+    slug: &str,
+) -> Result<bool, AuthError> {
+    if entry["materialization"] != "author_source"
+        || !entry["name"]
+            .as_str()
+            .zip(plugin["name"].as_str())
+            .is_some_and(|(slug, name)| {
+                crate::local::capabilities::personal_manifest_name_matches_slug(name, slug)
+            })
+    {
+        return Ok(false);
+    }
+    let codex_home = codex_plugins
+        .parent()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    let Some(source) =
+        crate::local::capabilities::read_personal_author_source(manifest, codex_home, entry)
+            .map_err(|_| AuthError("plugin_auth_invalid_package"))?
+    else {
+        return Ok(false);
+    };
+    let owns_root = ["source_path", "runtime_path"].into_iter().any(|field| {
+        source[field]
+            .as_str()
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .as_deref()
+            == Some(root)
+    });
+    if source["installed"] != true || !owns_root {
+        return Ok(false);
+    }
+    // A disabled account link cannot publish credentials; ownership still permits local auth.
+    if entry["enabled"] != true {
+        return Ok(true);
+    }
+    let capabilities = manifest
+        .parent()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    let trusted =
+        crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry)
+            .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
+    if super::author_source::definition(root, slug)?
+        != super::author_source::definition(&trusted, slug)?
+    {
+        return Err(AuthError("plugin_auth_definition_mismatch"));
+    }
+    Ok(true)
 }
 
 fn registered_runtime(entry: &Value, codex_plugins: &Path) -> Option<std::path::PathBuf> {
@@ -263,6 +358,214 @@ mod tests {
         assert_eq!(
             installed_id_at(&manifest, &shared, &codex_plugins, &root, "mail", true),
             Ok(Some(42))
+        );
+    }
+
+    #[test]
+    fn author_lifecycle_requires_owned_source_and_current_cloud_auth_definition() {
+        let temp = tempfile::tempdir().unwrap();
+        let scope = json!({"backendUrl":"https://backend.example","userId":7});
+        let installed_id_at =
+            |path: &Path, shared: &Path, codex: &Path, root: &Path, slug: &str, revoking: bool| {
+                installed_id_at_in_scope(path, shared, codex, root, slug, revoking, Some(&scope))
+            };
+        let codex_home = temp.path().join("agent");
+        let codex_plugins = codex_home.join("plugins");
+        let (manifest, shared, trusted, mut entry) = relocated_fixture(temp.path());
+        let marketplace = manifest
+            .parent()
+            .unwrap()
+            .join("bundled-marketplaces/wework-personal");
+        let source = marketplace.join("plugins/mail");
+        let runtime = codex_plugins.join("cache/wework-personal/mail/0.1.10");
+        let declaration = json!({"name":"mail","version":"0.1.10","connectors":[{
+            "slug":"mail","accountAuth":{"adapter":"auth.mjs"},"localAuth":{}
+        }]});
+        for root in [&source, &runtime, &trusted] {
+            fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+            fs::write(
+                root.join(".codex-plugin/plugin.json"),
+                declaration.to_string(),
+            )
+            .unwrap();
+        }
+        fs::write(
+            codex_home.join("config.toml"),
+            "[plugins.\"mail@wework-personal\"]\nenabled=true\n",
+        )
+        .unwrap();
+        crate::local::plugin_import::link_plugin_release(
+            crate::local::plugin_import::LinkPluginReleaseRequest {
+                marketplace_path: marketplace.to_string_lossy().into_owned(),
+                local_plugin_name: "mail".into(),
+                cloud_plugin_id: 7,
+                cloud_release_id: Some(2),
+                account_install: None,
+                account_scope: Some(
+                    crate::local::plugin_import::PluginAccountScope::new(
+                        "https://backend.example",
+                        7,
+                    )
+                    .unwrap(),
+                ),
+            },
+        )
+        .unwrap();
+        entry["name"] = json!("mail");
+        entry["marketplace"] = json!("wework-personal");
+        entry["version"] = json!("0.1.10");
+        entry["cloud_plugin_id"] = json!(7);
+        entry["materialization"] = json!("author_source");
+        entry["account_scope"] = scope.clone();
+        entry["personal_source_owner"] = json!(true);
+        let write_entry = |value: &Value| {
+            fs::write(&manifest, json!({"plugins":{"mail":value}}).to_string()).unwrap()
+        };
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            assert_eq!(
+                installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", false),
+                Ok(Some(42))
+            );
+        }
+        entry["enabled"] = json!(false);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            for revoking in [false, true] {
+                assert_eq!(
+                    installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", revoking),
+                    Ok(None)
+                );
+            }
+        }
+        assert_eq!(
+            installed_id_at(&manifest, &shared, &codex_plugins, &trusted, "mail", false),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+        entry["enabled"] = json!(true);
+        write_entry(&entry);
+        let package = super::super::PreparedPackage {
+            installed_plugin_id: 42,
+            connector_slug: "mail".into(),
+            checksum: entry["checksum"].as_str().unwrap().to_owned(),
+            auth_definition: declaration["connectors"][0]["accountAuth"].clone(),
+        };
+        assert_eq!(
+            super::super::author_source::validate_current(
+                &manifest,
+                &codex_home,
+                &entry,
+                &package,
+                Some(&scope)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            installed_id_at_in_scope(
+                &manifest,
+                &shared,
+                &codex_plugins,
+                &source,
+                "mail",
+                false,
+                None
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            super::super::author_source::validate_current(
+                &manifest,
+                &codex_home,
+                &entry,
+                &package,
+                None
+            ),
+            Err(AuthError("plugin_auth_package_sync_required"))
+        );
+        for other_scope in [
+            json!({"backendUrl":"https://other.example","userId":7}),
+            json!({"backendUrl":"https://backend.example","userId":8}),
+        ] {
+            assert_eq!(
+                installed_id_at_in_scope(
+                    &manifest,
+                    &shared,
+                    &codex_plugins,
+                    &runtime,
+                    "mail",
+                    false,
+                    Some(&other_scope)
+                ),
+                Ok(None)
+            );
+            assert_eq!(
+                super::super::author_source::validate_current(
+                    &manifest,
+                    &codex_home,
+                    &entry,
+                    &package,
+                    Some(&other_scope)
+                ),
+                Err(AuthError("plugin_auth_account_mismatch"))
+            );
+        }
+        entry["personal_source_owner"] = json!(false);
+        write_entry(&entry);
+        assert_eq!(
+            installed_id_at(&manifest, &shared, &codex_plugins, &source, "mail", false),
+            Ok(None)
+        );
+        entry["personal_source_owner"] = json!(true);
+        write_entry(&entry);
+        let mut modified = declaration;
+        modified["connectors"][0]["accountAuth"]["adapter"] = json!("other.mjs");
+        fs::write(
+            source.join(".codex-plugin/plugin.json"),
+            modified.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            installed_id_at(&manifest, &shared, &codex_plugins, &source, "mail", false),
+            Err(AuthError("plugin_auth_definition_mismatch"))
+        );
+        fs::write(
+            runtime.join(".codex-plugin/plugin.json"),
+            modified.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::author_source::validate_current(
+                &manifest,
+                &codex_home,
+                &entry,
+                &package,
+                Some(&scope)
+            ),
+            Err(AuthError("plugin_auth_definition_mismatch"))
+        );
+        entry["enabled"] = json!(false);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            for revoking in [false, true] {
+                assert_eq!(
+                    installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", revoking),
+                    Ok(None)
+                );
+            }
+        }
+        entry["enabled"] = json!(true);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            assert_eq!(
+                installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", false),
+                Err(AuthError("plugin_auth_definition_mismatch"))
+            );
+        }
+        entry["cloud_plugin_id"] = json!(8);
+        write_entry(&entry);
+        assert_eq!(
+            installed_id_at(&manifest, &shared, &codex_plugins, &source, "mail", false),
+            Ok(None)
         );
     }
 

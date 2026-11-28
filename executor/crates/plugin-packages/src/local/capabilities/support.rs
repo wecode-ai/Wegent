@@ -537,6 +537,9 @@ pub(super) fn plugin_manifest_entry(
     entry.insert("managed".to_owned(), json!(true));
     entry.insert("name".to_owned(), json!(spec.name));
     entry.insert("key".to_owned(), json!(spec.key));
+    if spec.personal_source_owner {
+        entry.insert("personal_source_owner".to_owned(), json!(true));
+    }
     if let Some(id) = spec.installed_plugin_id {
         entry.insert("installed_plugin_id".to_owned(), json!(id));
     }

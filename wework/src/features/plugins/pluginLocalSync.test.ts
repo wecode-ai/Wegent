@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from '@testing-library/react'
+import { toWegentStoreInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import { createPluginRecoveryNotice } from '@/components/plugins/workspace/pluginRecoveryNotice'
 import type { PluginOperationNoticeState } from '@/components/plugins/PluginOperationNotice'
 import { pluginMarketplaceCacheKey } from './pluginMarketplaceCache'
@@ -150,5 +151,54 @@ describe('local plugin operation progress', () => {
     finish({ localCompleted: true })
     await result
     expect(report.mock.calls.at(-1)).toEqual(['settled'])
+  })
+
+  it('revokes cloud materialization proof when a delta preserves the author source', async () => {
+    const plugin = toWegentStoreInstalledPlugin(
+      {
+        name: 'personal-fixture',
+        packageId: '10-personal-fixture-1.0.0',
+        marketplace: 'wework-personal',
+        version: '1.0.0',
+        enabled: true,
+        pluginPath: '/executor/store/package',
+      },
+      '/executor/store',
+      key => key
+    )
+    plugin.metadata.labels = { id: 10 }
+    const cloud = {
+      listInstalledPlugins: vi.fn().mockResolvedValue({ items: [plugin] }),
+    } as unknown as Parameters<typeof createLocalFirstPluginApi>[0]
+    const local = createLocalFirstPluginApi(cloud, cloud, {
+      apiBaseUrl: 'http://localhost:8000',
+      token: 'fixture-token',
+    })
+    request
+      .mockResolvedValueOnce({ enabled: true, protocolVersion: 1 })
+      .mockResolvedValueOnce({
+        localCompleted: true,
+        result: {
+          scope: 'plugin_delta',
+          plugins: [{ id: 10, status: 'synced', version: '1.0.0' }],
+        },
+      })
+      .mockResolvedValueOnce({ enabled: true, protocolVersion: 1 })
+      .mockResolvedValueOnce({
+        localCompleted: true,
+        result: {
+          scope: 'plugin_delta',
+          plugins: [{ id: 10, status: 'source_preserved', version: '1.0.0' }],
+        },
+      })
+
+    await local.syncInstalledPluginToDevice(10, 'device')
+    expect((await local.listInstalledPlugins()).items[0].status.localExecution).toEqual({
+      state: 'installed',
+      releaseId: null,
+    })
+
+    await local.syncInstalledPluginToDevice(10, 'device')
+    expect((await local.listInstalledPlugins()).items[0].status.localExecution).toBeUndefined()
   })
 })

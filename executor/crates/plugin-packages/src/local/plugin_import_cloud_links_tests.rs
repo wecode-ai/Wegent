@@ -18,6 +18,7 @@ impl Mutation {
                 cloud_plugin_id: 41,
                 cloud_release_id: Some(53),
                 account_install: None,
+                account_scope: None,
             }),
             Self::Unlink => unlink_plugin_release(UnlinkPluginReleaseRequest {
                 marketplace_path,
@@ -56,11 +57,13 @@ fn marketplace_fixture() -> TempDir {
                 local_plugin_name: "target-plugin".to_owned(),
                 cloud_plugin_id: 41,
                 cloud_release_id: Some(52),
+                account_scope: None,
             },
             LocalPluginCloudLink {
                 local_plugin_name: "other-plugin".to_owned(),
                 cloud_plugin_id: 99,
                 cloud_release_id: Some(100),
+                account_scope: None,
             },
         ],
     )
@@ -83,6 +86,7 @@ fn account_install_cannot_replace_a_different_cloud_plugin_link() {
             cloud_plugin_id: 99,
             cloud_release_id: Some(100),
             account_install: Some(mode),
+            account_scope: None,
         });
         assert_eq!(result.unwrap_err(), "PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT");
         assert_eq!(fs::read(&path).unwrap(), original);
@@ -100,9 +104,56 @@ fn account_install_preserves_the_linked_release_when_reusing_a_cloud_plugin() {
         cloud_plugin_id: 41,
         cloud_release_id: Some(53),
         account_install: Some(AccountInstallLinkMode::KeepRelease),
+        account_scope: None,
     })
     .unwrap();
     assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn explicit_account_links_adopt_legacy_scope_and_preserve_other_profiles() {
+    let marketplace = marketplace_fixture();
+    let scope_a = PluginAccountScope::new("https://backend-a.example/", 7).unwrap();
+    let scope_b = PluginAccountScope::new("https://backend-b.example", 7).unwrap();
+    for scope in [&scope_a, &scope_b] {
+        link_plugin_release(LinkPluginReleaseRequest {
+            marketplace_path: marketplace.path().display().to_string(),
+            local_plugin_name: "target-plugin".into(),
+            cloud_plugin_id: 41,
+            cloud_release_id: Some(53),
+            account_install: Some(AccountInstallLinkMode::KeepRelease),
+            account_scope: Some(scope.clone()),
+        })
+        .unwrap();
+    }
+    let links = read_plugin_cloud_links_strict(marketplace.path()).unwrap();
+    let target: Vec<_> = links
+        .iter()
+        .filter(|link| link.local_plugin_name == "target-plugin")
+        .collect();
+    assert_eq!(target.len(), 2);
+    assert!(target
+        .iter()
+        .any(|link| link.account_scope.as_ref() == Some(&scope_a)
+            && link.cloud_release_id == Some(52)));
+    assert!(target
+        .iter()
+        .any(|link| link.account_scope.as_ref() == Some(&scope_b)
+            && link.cloud_release_id == Some(53)));
+    assert!(links
+        .iter()
+        .any(|link| link.local_plugin_name == "other-plugin" && link.cloud_plugin_id == 99));
+    assert!(
+        personal_plugin_cloud_link_matches(marketplace.path(), "target-plugin", 41, &scope_a)
+            .unwrap()
+    );
+    assert!(!personal_plugin_cloud_link_matches(
+        marketplace.path(),
+        "target-plugin",
+        41,
+        &PluginAccountScope::new("https://backend-a.example", 8).unwrap()
+    )
+    .unwrap());
 }
 
 fn assert_personal_state_preserved(marketplace: &Path, manifests: &[Vec<u8>]) {

@@ -512,6 +512,7 @@ impl CapabilityReportProvider for EmptyCapabilities {
 
 fn socket_config(url: &str, root: &Path) -> LocalBackendConfig {
     LocalBackendConfig {
+        authenticated_user_id: None,
         backend_url: url.to_owned(),
         socket_url: url.to_owned(),
         auth_token: "test-auth".to_owned(),

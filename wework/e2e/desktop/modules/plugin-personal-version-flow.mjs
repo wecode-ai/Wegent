@@ -236,7 +236,14 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       assert.deepEqual(access.targets, [])
       assert.equal(access.allowCopy, false)
     }
-    const source = await snapshotPersonalSource(control, listing)
+    let source = await snapshotPersonalSource(control, listing)
+    if (alreadyShared) {
+      await writeFile(
+        join(source.sourcePath, 'unpublished-local-note.txt'),
+        'Keep my local changes'
+      )
+      source = await snapshotPersonalSource(control, listing)
+    }
     const manifest = JSON.parse(
       await readFile(join(source.sourcePath, '.codex-plugin', 'plugin.json'), 'utf8')
     )
@@ -249,6 +256,44 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     )
     await waitForAuthorCloudInstall(cloud, listing)
     await assertPersonalSourceUnchanged(source)
+    if (alreadyShared) {
+      // Historical links lack account scope. Repair only their metadata through the UI.
+      const registry = JSON.parse(await readFile(source.registryPath, 'utf8'))
+      for (const link of registry.cloudLinks ?? []) {
+        if (link.localPluginName === name) delete link.accountScope
+      }
+      await writeFile(source.registryPath, JSON.stringify(registry))
+      const originalFiles = source.files
+      const originalReleaseId = source.link.cloudReleaseId
+      await startChat(name)
+      await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[role="menuitem"][data-testid^="plugin-detail-sync-account-"]'
+      )
+      await until(
+        async () => JSON.parse(await readFile(source.registryPath, 'utf8')).cloudLinks,
+        links =>
+          links.some(
+            link =>
+              link.localPluginName === name &&
+              link.cloudPluginId === Number(listing.id) &&
+              link.accountScope?.userId === listing.ownerUserId &&
+              link.accountScope?.backendUrl.replace(/\/+$/, '') ===
+                cloud.backendUrl.replace(/\/+$/, '')
+          ),
+        'Sync to current account did not repair the author source account scope'
+      )
+      await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
+      await refreshPluginInventory(control)
+      source = await snapshotPersonalSource(control, listing)
+      assert.deepEqual(source.files, originalFiles, 'Account relinking changed the author source')
+      assert.equal(source.link.cloudReleaseId, originalReleaseId)
+      assert.equal(source.link.accountScope?.userId, listing.ownerUserId)
+      await assertPersonalSourceUnchanged(source)
+      const afterRefresh = await startChat(name)
+      assert.ok(afterRefresh.testIds.includes('plugin-detail-actions-bar'))
+    }
     if (!alreadyShared) {
       await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
       await waitForSnapshot(

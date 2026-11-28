@@ -457,6 +457,23 @@ class DeviceCapabilitySyncRequest(BaseModel):
     )
 
 
+class PersonalPluginSourceState(BaseModel):
+    """Observed local author state, distinct from a managed release installation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    installed: StrictBool
+    enabled: StrictBool
+    version: Optional[str] = Field(None, min_length=1, pattern=r"\S")
+
+    @model_serializer(mode="wrap")
+    def serialize_source(self, handler: Any) -> Dict[str, Any]:
+        result = handler(self)
+        if self.version is None:
+            result.pop("version", None)
+        return result
+
+
 class DeviceCapabilityItemResult(BaseModel):
     """Per-item capability sync result."""
 
@@ -472,11 +489,12 @@ class DeviceCapabilityItemResult(BaseModel):
     version: Optional[str] = None
     checksum: Optional[str] = None
     operation: Optional[Literal["upsert", "remove"]] = None
+    source: Optional[PersonalPluginSourceState] = None
 
     @model_serializer(mode="wrap")
     def serialize_item(self, handler: Any) -> Dict[str, Any]:
         result = handler(self)
-        for field in ("generation", "version", "checksum", "operation"):
+        for field in ("generation", "version", "checksum", "operation", "source"):
             if getattr(self, field) is None:
                 result.pop(field, None)
         return result

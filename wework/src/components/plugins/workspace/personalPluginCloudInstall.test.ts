@@ -240,9 +240,9 @@ test('a pending or failed account install cannot delay another personal plugin',
     id === 17 ? failing.promise : Promise.resolve()
   )
 
-  expect(schedule(first)).toBeUndefined()
-  schedule(first)
-  schedule(second)
+  const firstAttempt = schedule(first)
+  const repeatedAttempt = schedule(first)
+  const independentAttempt = schedule(second)
   await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledExactlyOnceWith())
   expect(mocks.install.mock.calls).toEqual([
     [17, undefined],
@@ -252,10 +252,13 @@ test('a pending or failed account install cannot delay another personal plugin',
 
   failing.reject(new ApiError('Account install failed', 503))
   await vi.waitFor(() => expect(console.warn).toHaveBeenCalled())
+  expect(await firstAttempt).toBe(false)
+  expect(await repeatedAttempt).toBe(false)
+  expect(await independentAttempt).toBe(true)
   expect(onInstalled).toHaveBeenCalledTimes(1)
 
   mocks.install.mockResolvedValue(undefined)
-  schedule(first)
+  expect(await schedule(first)).toBe(true)
   await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(2))
   expect(mocks.install.mock.calls.map(([id]) => id)).toEqual([17, 18, 17])
 })
@@ -292,18 +295,56 @@ test('first upload uses the exact packaged version and owner-only access', async
   expect(mocks.install).toHaveBeenCalledExactlyOnceWith(17, release.latestReleaseId)
 })
 
-test('a previous account link prevents first upload under a different account', async () => {
-  const { schedule, local } = fixture()
-  const linked = {
+test.each([
+  {
+    scenario: 'different current-account link',
+    linkedId: 45,
+    selected: undefined,
+    accepted: false,
+  },
+  { scenario: 'display-name-only match', selected: 'other', accepted: false },
+  { scenario: 'replaced cloud identity', selected: 'first', catalogId: 42, accepted: false },
+  { scenario: 'recipient listing', selected: 'first', recipient: true, accepted: false },
+  { scenario: 'canonical source match', selected: 'first', accepted: true },
+  { scenario: 'matching scoped cloud link', linkedId: 17, selected: 'other', accepted: true },
+])('binds account sync to its verified source: $scenario', async scenario => {
+  const { schedule, local, onInstalled } = fixture()
+  const plugin = {
     ...first,
-    spec: { ...first.spec, sourcePayload: { cloudPluginId: 45 } },
+    spec: {
+      ...first.spec,
+      displayName: 'Shared Tool',
+      sourcePayload: scenario.linkedId ? { cloudPluginId: scenario.linkedId } : {},
+    },
   }
-  mocks.list.mockResolvedValue({ items: [cloudRelease('first', 17)] })
-  schedule(linked)
-  await vi.waitFor(() => expect(console.warn).toHaveBeenCalled())
+  mocks.list.mockResolvedValue({
+    items: [
+      {
+        ...cloudRelease(scenario.selected ?? 'first', scenario.catalogId ?? 17),
+        displayName: 'Shared Tool',
+        ...(scenario.recipient ? { accessRole: 'recipient' } : {}),
+      },
+    ],
+  })
+  expect(
+    await schedule(plugin, scenario.selected ? { id: 17, name: scenario.selected } : undefined)
+  ).toBe(scenario.accepted)
   expect(local.packageCreatedPlugin).not.toHaveBeenCalled()
-  expect(local.linkPersonalPluginRelease).not.toHaveBeenCalled()
-  expect(mocks.install).not.toHaveBeenCalled()
+  expect(mocks.publish).not.toHaveBeenCalled()
+  if (scenario.accepted) {
+    expect(local.linkPersonalPluginRelease).toHaveBeenCalledExactlyOnceWith(
+      plugin,
+      17,
+      117,
+      expect.objectContaining({ accountInstall: 'keepRelease' })
+    )
+    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(17, undefined)
+    expect(onInstalled).toHaveBeenCalledOnce()
+  } else {
+    expect(local.linkPersonalPluginRelease).not.toHaveBeenCalled()
+    expect(mocks.install).not.toHaveBeenCalled()
+    expect(onInstalled).not.toHaveBeenCalled()
+  }
 })
 
 test('removal waits for its own in-flight account record and cancels later work', async () => {

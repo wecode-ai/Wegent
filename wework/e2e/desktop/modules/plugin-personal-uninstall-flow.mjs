@@ -310,30 +310,13 @@ export async function assertPersonalSourceUnchanged(snapshot) {
   )
 }
 
-async function openPersonalPlugin(
-  control,
-  plugin,
-  { expectSourceConflict = false, refresh = false, expectedVersion } = {}
-) {
+async function openPersonalPlugin(control, plugin, { refresh = false, expectedVersion } = {}) {
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
-  if (expectSourceConflict) {
-    // This fixture deliberately prevents account sync from taking author source
-    // ownership. Verify the failed reconciliation instead of waiting for success.
-    await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
-    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
-    await control.command(
-      'waitFor',
-      `${testId('plugin-operation-notice')}[data-notice-kind="error"]`,
-      {
-        text: `Plugin reconciliation failed for ${plugin.name}: PLUGIN_RUNTIME_METADATA_FAILED`,
-      }
-    )
-    await control.command('waitFor', `${testId('plugins-refresh-button')}:not(:disabled)`)
-  } else if (refresh) {
+  if (refresh) {
     await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
   }
   await openPersonalPluginDetail(control, plugin)
@@ -731,38 +714,27 @@ export async function prepareAuthorAccountInstall({
   const account = await accountPlugin(cloudEnvironment, plugin.name)
   assert.ok(account, 'The real backend did not create author account membership')
   const identity = accountIdentity(account)
-  const failures = [
+  const results = [
     ...(installed.sync?.plugins ?? []),
     ...(installed.sync?.results ?? []).flatMap(result => result.plugins ?? []),
   ]
-  const occupied = failures.find(
-    item => String(item.id) === identity.id && item.status === 'failed'
+  const preserved = results.find(
+    item => String(item.id) === identity.id && item.status === 'source_preserved'
   )
+  assert.equal(installed.sync?.success, true, 'The author source prevented account synchronization')
+  assert.ok(preserved, 'The author source must be acknowledged separately from a cloud runtime')
+  const registered = await materializedPlugin(executorHome, identity.id)
   assert.equal(
-    installed.sync?.success,
-    false,
-    'Account intent unexpectedly replaced unmanaged source'
-  )
-  assert.equal(occupied?.error_code, 'PLUGIN_RUNTIME_METADATA_FAILED')
-  // Both the installed local cache and the author marketplace directory are
-  // occupied; the guard that runs first depends on the runtime publication path.
-  assert.match(
-    occupied.error,
-    /Plugin (?:(?:path|runtime destination) is occupied by an unmanaged item|marketplace entry is occupied by an unrelated source)/
-  )
-  // The authored directory is deliberately unmanaged. Account intent must not
-  // grant the cloud synchronizer ownership of that source or its local cache.
-  assert.equal(
-    await materializedPlugin(executorHome, identity.id),
-    null,
-    'Creating account membership claimed the independent author source as a managed package'
+    registered?.materialization,
+    'author_source',
+    'Account membership must retain the independent author source'
   )
   assert.deepEqual(
     await sourceFiles(source.sourcePath),
     source.files,
     'Creating account membership replaced author source bytes'
   )
-  await openPersonalPlugin(control, plugin, { expectSourceConflict: true })
+  await openPersonalPlugin(control, plugin, { refresh: true })
   assert.equal(String(installed.plugin.metadata.labels.id), identity.id)
   return { identity, source }
 }
@@ -791,6 +763,23 @@ export async function resetPersonalRecipientAccount({
   return recipient.id
 }
 
+async function assertIdempotentRecipientUninstall(recipientCloud, installedId) {
+  const response = await fetch(
+    `${recipientCloud.backendUrl}/api/plugins/installed/${installedId}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${recipientCloud.authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    }
+  )
+  // The account-uninstall endpoint is idempotent for missing/non-owned IDs.
+  assert.equal(
+    response.status,
+    204,
+    'The stale-ID uninstall violated the existing idempotent response contract'
+  )
+}
+
 export async function verifyRecipientUninstallDoesNotRemoveOwner({
   control,
   cloudEnvironment,
@@ -803,26 +792,12 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
   assert.ok(recipient, 'The cross-account fixture needs its own recipient membership')
   const recipientId = String(recipient.metadata.labels.id)
   assert.notEqual(recipientId, ownerIdentity.id, 'Cross-account test reused the author install ID')
-  const denied = await fetch(
-    `${recipientCloud.backendUrl}/api/plugins/installed/${ownerIdentity.id}`,
-    {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${recipientCloud.authToken}` },
-      signal: AbortSignal.timeout(10_000),
-    }
-  )
-  // The existing account-uninstall endpoint is idempotent for missing/non-owned IDs.
-  assert.equal(
-    denied.status,
-    204,
-    'The stale-ID uninstall violated the existing idempotent response contract'
-  )
+  await assertIdempotentRecipientUninstall(recipientCloud, ownerIdentity.id)
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  // Remove only this recipient's own membership. The shared Home retains author source.
-  await pluginApi(recipientCloud, `/plugins/installed/${recipientId}`, 'DELETE')
-  assert.equal(await accountPlugin(recipientCloud, plugin.name), undefined)
-  await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  await uninstallPersonalPluginInUi(control, plugin, { refresh: true })
+  // The caller already verified the recipient menu. This shared native home
+  // still contains the author's source, so reconciling the recipient's package
+  // would correctly reject replacing it before this account-only uninstall.
+  await uninstallPersonalPluginInUi(control, plugin)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('uninstall-plugin-dialog'),
@@ -835,12 +810,28 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
     undefined,
     'Uninstall restored recipient membership'
   )
+  // With no native install or account membership, refresh correctly removes
+  // the UI uninstall action. Exercise both stale IDs at the real API boundary.
+  for (const staleId of [recipientId, ownerIdentity.id]) {
+    await assertIdempotentRecipientUninstall(recipientCloud, staleId)
+    await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
+    await assertPersonalSourceUnchanged(source)
+    assert.equal(
+      await accountPlugin(recipientCloud, plugin.name),
+      undefined,
+      'A no-membership uninstall restored recipient membership'
+    )
+  }
   await pluginApi(recipientCloud, `/plugins/marketplace/${plugin.id}/install`, 'POST')
   const restored = await accountPlugin(recipientCloud, plugin.name)
   assert.ok(restored && restored.spec.pluginId === Number(plugin.id))
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
   await captureVerificationScreenshot(control, 'personal-plugin-recipient-stale-owner-install.png')
-  return { ownerInstallId: ownerIdentity.id, recipientInstallId: recipientId }
+  return {
+    ownerInstallId: ownerIdentity.id,
+    recipientInstallId: recipientId,
+    absentRecipientUninstallVerified: true,
+  }
 }
 
 export async function verifyAuthorAccountUninstall({
@@ -856,7 +847,7 @@ export async function verifyAuthorAccountUninstall({
   const recipient = accountIdentity(await accountPlugin(recipientCloud, plugin.name))
   assert.ok(recipient)
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  await uninstallPersonalPluginInUi(control, plugin, { expectSourceConflict: true })
+  await uninstallPersonalPluginInUi(control, plugin, { refresh: true })
   await until(
     () => accountPlugin(cloudEnvironment, plugin.name),
     item => !item,

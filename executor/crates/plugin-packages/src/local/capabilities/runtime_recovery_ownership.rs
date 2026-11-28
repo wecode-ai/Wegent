@@ -174,6 +174,9 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         entry: &Value,
     ) -> Result<(), CapabilitySyncError> {
+        if self.personal_author_source(spec)?.is_some() {
+            return Ok(());
+        }
         let (files, directories) = self.runtime_state_paths(spec);
         for path in files.iter().chain(directories.iter()) {
             self.ensure_state_path(path, directories.contains(path))?;

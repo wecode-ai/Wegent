@@ -289,11 +289,33 @@ def validate_ack(payload: dict[str, Any], response: dict[str, Any]) -> str | Non
         if inferred_removal:
             continue
         operation, spec = expected[identity]
-        if item.get("status") not in {"synced", "removed", "failed", "superseded"}:
+        if item.get("status") not in {
+            "synced",
+            "source_preserved",
+            "removed",
+            "failed",
+            "superseded",
+        }:
             return "Device returned an invalid plugin acknowledgement status"
         if item.get("operation") != operation:
             return "Device returned a mismatched plugin operation"
-        if item.get("status") == "synced" and (
+        if item.get("status") == "source_preserved":
+            source = item.get("source")
+            if (
+                spec.get("personal_source_owner") is not True
+                or not isinstance(source, dict)
+                or type(source.get("installed")) is not bool
+                or type(source.get("enabled")) is not bool
+                or (
+                    "version" in source
+                    and (
+                        not isinstance(source["version"], str)
+                        or not source["version"].strip()
+                    )
+                )
+            ):
+                return "Device returned an invalid personal source acknowledgement"
+        if item.get("status") in {"synced", "source_preserved"} and (
             operation != "upsert"
             or item.get("version") != spec.get("version")
             or item.get("checksum") != spec.get("checksum")

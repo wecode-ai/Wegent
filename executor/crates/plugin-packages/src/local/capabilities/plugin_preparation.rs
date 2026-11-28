@@ -150,6 +150,7 @@ impl PreparedRuntime {
 pub(super) struct PreparedPlugin {
     pub spec: PluginSyncSpec,
     pub unchanged: bool,
+    pub author_source: Option<Value>,
     path: Option<PathBuf>,
     private_package: Option<tempfile::TempDir>,
     runtime: Option<PreparedRuntime>,
@@ -182,6 +183,7 @@ impl PreparedPlugin {
         let mut result = Self {
             spec,
             unchanged: false,
+            author_source: None,
             path,
             private_package,
             runtime: None,
@@ -190,6 +192,13 @@ impl PreparedPlugin {
         if let Some(source) = source {
             validate_package_identity(&source, &result.spec)
                 .map_err(PluginSyncFailure::runtime_metadata)?;
+            result.author_source = store
+                .personal_author_source(&result.spec)
+                .map_err(PluginSyncFailure::runtime_metadata)?;
+            if result.author_source.is_some() {
+                result.path = Some(source);
+                return Ok(result);
+            }
             if store.shared_packages {
                 // Directory-copy ownership needs the verified package as evidence.
                 // Recover that package before checking the active destination.
@@ -239,6 +248,18 @@ impl PreparedPlugin {
         manifest: &mut Value,
     ) -> Result<(), PluginSyncFailure> {
         let spec = &self.spec;
+        if self.author_source.is_some() {
+            let path = self
+                .path
+                .as_ref()
+                .expect("Author preservation has a verified package");
+            self.author_source = Some(
+                store
+                    .preserve_personal_author_source(spec, path, manifest)
+                    .map_err(PluginSyncFailure::runtime_metadata)?,
+            );
+            return Ok(());
+        }
         let Some(path) = &self.path else {
             ensure_object_field(manifest, "plugins").insert(spec.key.clone(), json!({"managed":true,
                 "name":spec.name,"key":spec.key,"marketplace":spec.marketplace,"version":spec.version,"updated_at":now_rfc3339_like()}));

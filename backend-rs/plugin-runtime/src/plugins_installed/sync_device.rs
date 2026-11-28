@@ -669,7 +669,11 @@ where
         && row.error_code.is_empty()
         && row.error_message.is_empty()
         && (row.actual_release_id == 0 || row.actual_release_id == release_id);
+    let preserved_source = row.state == "source"
+        && !desired_changed
+        && super::personal_source::owned_install(session, user_id, &installed.json).await?;
     let terminal = (row.state == "installed" && row.actual_release_id == release_id)
+        || preserved_source
         || row.state == "uninstalling"
         || auto_update_blocked(&row, release_id)
         || queued;

@@ -158,6 +158,75 @@ pub(super) async fn verify(
     eprintln!("[plugin-local-sync] Validating independent completion under contention");
     verify_contention(&context, state).await?;
     verify_independent_receipt_watermarks(&context).await?;
+    verify_personal_source_completion(&context).await?;
+    Ok(())
+}
+
+async fn verify_personal_source_completion(context: &Context<'_>) -> anyhow::Result<()> {
+    context
+        .mysql
+        .execute(
+            "INSERT INTO plugins (id,slug,name,owner_user_id,visibility,keywords_json,interface_json,created_at,updated_at) VALUES (991001,'source-completion','source-completion',81001,'personal',JSON_ARRAY(),JSON_OBJECT(),NOW(),NOW())",
+            (),
+        )
+        .await?;
+    context
+        .mysql
+        .execute(
+            "UPDATE kinds SET json=JSON_SET(json,'$.spec.pluginId',991001) WHERE id=?",
+            (context.id,),
+        )
+        .await?;
+    context.set_intent(101, true).await?;
+    let plan = context.plan().await?;
+    assert_eq!(plan["payload"]["plugins"][0]["personal_source_owner"], true);
+    let mut receipt = context.receipt(&plan, "source_preserved");
+    receipt["completion"]["result"]["plugins"][0]["source"] =
+        json!({"installed":true,"enabled":false,"version":"unpublished-draft"});
+    let response = context
+        .post(81001, "/api/plugins/local-sync/complete", receipt.clone())
+        .await?;
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(context.state().await?.as_deref(), Some("source"));
+    #[derive(FromMysqlRow)]
+    struct Releases {
+        desired_release_id: i64,
+        actual_release_id: i64,
+    }
+    let row: Releases = context.mysql.fetch_one("SELECT desired_release_id,actual_release_id FROM plugin_device_installations WHERE installed_kind_id=? AND device_id=?", (context.id,context.device.as_str())).await?;
+    assert_eq!((row.desired_release_id, row.actual_release_id), (42, 0));
+    for (owner, visibility) in [(81002, "personal"), (81001, "workspace")] {
+        context
+            .mysql
+            .execute(
+                "UPDATE plugins SET owner_user_id=?,visibility=? WHERE id=991001",
+                (owner, visibility),
+            )
+            .await?;
+        let response = context
+            .post(81001, "/api/plugins/local-sync/complete", receipt.clone())
+            .await?;
+        assert_eq!(
+            response.status().as_u16(),
+            422,
+            "Non-owned personal source receipt was accepted"
+        );
+        assert_eq!(context.state().await?.as_deref(), Some("source"));
+    }
+    context
+        .mysql
+        .execute(
+            "UPDATE kinds SET json=JSON_REMOVE(json,'$.spec.pluginId') WHERE id=?",
+            (context.id,),
+        )
+        .await?;
+    context
+        .mysql
+        .execute("DELETE FROM plugins WHERE id=991001", ())
+        .await?;
+    context.set_intent(102, false).await?;
+    let removal = context.plan().await?;
+    context.complete(&removal, "removed", 81001).await?;
     Ok(())
 }
 

@@ -6,6 +6,7 @@
 use super::*;
 use crate::local::plugin_cache::{
     native_cache_segment as native_version, preferred_native_version as preferred,
+    select_native_version,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -61,18 +62,27 @@ fn conflicts(
         Err(error) => return Err(error.into()),
     };
     let mut paths = Vec::new();
+    let mut remaining = Vec::new();
     for entry in entries {
         let entry = entry?;
         let Some(version) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if entry.file_type()?.is_dir()
-            && native_version(&version)
-            && preferred(&version, &spec.version)
-        {
-            paths.push(entry.path());
+        if entry.file_type()?.is_dir() && native_version(&version) {
+            if preferred(&version, &spec.version) {
+                paths.push(entry.path());
+            } else {
+                remaining.push(version);
+            }
         }
     }
+    // A retired local override must not expose an ambiguous remaining cache.
+    let _ = select_native_version(
+        remaining
+            .iter()
+            .map(String::as_str)
+            .chain([spec.version.as_str()]),
+    )?;
     paths.sort();
     Ok(paths)
 }

@@ -44,6 +44,29 @@ fn ordering_matches_native_semver_lexical_and_local_selection() {
     }
 }
 
+#[test]
+fn retiring_local_does_not_expose_a_cyclic_native_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let current = store(temp.path(), true);
+    let spec = desired("zz-custom");
+    let target = current.plugin_codex_link(&spec);
+    let base = target.parent().unwrap();
+    for version in ["local", "2.0.0", "10.0.0", "11-custom"] {
+        let path = base.join(version);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("keep.txt"), version).unwrap();
+    }
+    let before = tree_fingerprint(base).unwrap();
+
+    let error = Selection::prepare(&current, &spec, &json!({}))
+        .err()
+        .unwrap();
+
+    assert!(error.to_string().contains("version order is ambiguous"));
+    assert_eq!(tree_fingerprint(base).unwrap(), before);
+    assert!(!pending(&current, &spec.key));
+}
+
 #[tokio::test]
 async fn manual_pin_retains_higher_runtime_data_and_survives_home_relocation() {
     let temp = tempfile::tempdir().unwrap();

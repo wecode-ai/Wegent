@@ -874,3 +874,32 @@ fn broker_owner_survives_token_rotation_but_not_account_switch() {
     profile.auth_token = token("b", 2);
     assert_ne!(old, account_scope(&profile));
 }
+
+#[test]
+fn author_scope_uses_the_live_profile_and_bound_native_owner() {
+    let context = context("http://backend");
+    assert_eq!(PluginAuthTransport::account_scope(&context), None);
+    configure_owner(&context, 1, "http://backend", (7, "alice"), "device");
+    let scoped = context.for_plugin(42, false);
+    let expected = json!({"backendUrl":"http://backend","userId":7});
+    assert_eq!(
+        PluginAuthTransport::account_scope(&scoped),
+        Some(expected.clone())
+    );
+    configure_owner(&context, 2, "http://backend", (7, "alice"), "device");
+    assert_eq!(PluginAuthTransport::account_scope(&scoped), Some(expected));
+    configure_owner(&context, 3, "http://backend", (8, "bob"), "device");
+    assert_eq!(PluginAuthTransport::account_scope(&scoped), None);
+    assert_eq!(
+        PluginAuthTransport::account_scope(&context),
+        Some(json!({"backendUrl":"http://backend","userId":8}))
+    );
+    context
+        .connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(7);
+    assert_eq!(PluginAuthTransport::account_scope(&context), None);
+}

@@ -24,6 +24,7 @@ pub struct SyncItem {
     pub version: Value,
     pub checksum: Value,
     pub operation: Value,
+    pub source: Value,
 }
 
 impl SyncItem {
@@ -50,6 +51,7 @@ impl SyncItem {
             version: field("version"),
             checksum: field("checksum"),
             operation: field("operation"),
+            source: field("source"),
         }
     }
 
@@ -71,6 +73,7 @@ impl SyncItem {
             ("version", &self.version),
             ("checksum", &self.checksum),
             ("operation", &self.operation),
+            ("source", &self.source),
         ] {
             if !value_field.is_null() {
                 value.insert(name.to_string(), value_field.clone());

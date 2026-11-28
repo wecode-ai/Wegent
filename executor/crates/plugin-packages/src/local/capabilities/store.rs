@@ -19,11 +19,20 @@ impl GlobalCapabilityStore {
             codex_only_plugins: env::var("WEGENT_PLUGIN_RUNTIME_TARGET").as_deref() == Ok("codex"),
             managed_mcp_python: None,
             workbench_root_override: None,
+            account_scope: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
     pub fn with_manifest(mut self, manifest: ManagedCapabilityManifest) -> Self {
         self.manifest = manifest;
+        self
+    }
+
+    pub fn with_account_scope(
+        self,
+        scope: super::super::plugin_import::PluginAccountScope,
+    ) -> Self {
+        *self.account_scope.lock().unwrap() = Some(scope);
         self
     }
 
@@ -146,6 +155,7 @@ impl GlobalCapabilityStore {
                 key: key.clone(),
                 installed_plugin_id: value_i64(plugin.get("installed_plugin_id")),
                 cloud_plugin_id: value_i64(plugin.get("cloud_plugin_id")),
+                personal_source_owner: plugin["personal_source_owner"] == true,
                 marketplace: value_string(plugin.get("marketplace"))
                     .or_else(|| {
                         key.split_once('@')
@@ -168,6 +178,9 @@ impl GlobalCapabilityStore {
             let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) else {
                 continue;
             };
+            if plugin["materialization"] == "author_source" {
+                continue;
+            }
             if !store_path.is_dir() {
                 continue;
             }

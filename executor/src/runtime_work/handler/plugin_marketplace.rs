@@ -991,11 +991,21 @@ mod tests {
     }
 
     #[test]
-    fn marketplace_listing_keeps_healthy_sources_when_one_inventory_fails() {
+    fn marketplace_listing_keeps_healthy_plugins_and_sources_when_one_inventory_fails() {
         let home = tempfile::tempdir().unwrap();
         let cache = home.path().join("plugins/cache");
         fs::create_dir_all(&cache).unwrap();
         fs::write(cache.join("broken"), "not a directory").unwrap();
+        for version in ["2.0.0", "10.0.0", "11-custom"] {
+            fs::create_dir_all(cache.join("healthy/ambiguous").join(version)).unwrap();
+        }
+        let healthy_package = cache.join("healthy/second/1.0.0/.codex-plugin");
+        fs::create_dir_all(&healthy_package).unwrap();
+        fs::write(
+            healthy_package.join("plugin.json"),
+            r#"{"name":"second","version":"1.0.0"}"#,
+        )
+        .unwrap();
         let config = json!({
             "config": {"plugins": {"first@broken": {"enabled": true}, "second@healthy": {"enabled": true}}},
             "layers": [{"name": {"type": "user"}, "config": {"marketplaces": {
@@ -1009,7 +1019,10 @@ mod tests {
         assert_eq!(sources[0]["id"], "broken");
         assert!(sources[0]["installed"].is_null());
         assert_eq!(sources[1]["id"], "healthy");
-        assert_eq!(sources[1]["installed"][0]["id"], "second@healthy");
+        assert_eq!(sources[1]["installed"][0]["id"], "ambiguous@healthy");
+        assert!(sources[1]["installed"][0]["version"].is_null());
+        assert_eq!(sources[1]["installed"][1]["id"], "second@healthy");
+        assert_eq!(sources[1]["installed"][1]["version"], "1.0.0");
     }
 
     #[test]

@@ -225,6 +225,7 @@ pub struct LinkPluginReleaseRequest {
     pub cloud_plugin_id: i64,
     pub cloud_release_id: Option<i64>,
     pub account_install: Option<AccountInstallLinkMode>,
+    pub account_scope: Option<PluginAccountScope>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,6 +313,37 @@ pub struct LocalPluginCloudLink {
     local_plugin_name: String,
     cloud_plugin_id: i64,
     cloud_release_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_scope: Option<PluginAccountScope>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginAccountScope {
+    pub backend_url: String,
+    pub user_id: i64,
+}
+
+impl PluginAccountScope {
+    pub fn new(backend_url: impl Into<String>, user_id: i64) -> Result<Self, String> {
+        let backend_url = backend_url.into().trim().trim_end_matches('/').to_owned();
+        let parsed =
+            Url::parse(&backend_url).map_err(|_| "Invalid plugin account scope".to_owned())?;
+        if user_id <= 0
+            || !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err("Invalid plugin account scope".to_owned());
+        }
+        Ok(Self {
+            backend_url,
+            user_id,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -468,7 +500,27 @@ pub(crate) fn personal_plugin_has_cloud_link(
         .any(|link| link.local_plugin_name == plugin_name))
 }
 
+pub(crate) fn personal_plugin_cloud_link_matches(
+    marketplace_root: &Path,
+    plugin_name: &str,
+    cloud_plugin_id: i64,
+    account_scope: &PluginAccountScope,
+) -> Result<bool, String> {
+    let links = read_plugin_cloud_links_strict(marketplace_root)?;
+    let mut matching = links.iter().filter(|link| {
+        link.local_plugin_name == plugin_name && link.account_scope.as_ref() == Some(account_scope)
+    });
+    Ok(matching
+        .next()
+        .is_some_and(|link| link.cloud_plugin_id == cloud_plugin_id)
+        && matching.next().is_none())
+}
+
 pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), String> {
+    let requested_scope = request
+        .account_scope
+        .map(|scope| PluginAccountScope::new(scope.backend_url, scope.user_id))
+        .transpose()?;
     let plugin_name = validate_plugin_name(&request.local_plugin_name)?;
     let resolved = Path::new(&request.marketplace_path)
         .canonicalize()
@@ -484,26 +536,42 @@ pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), Stri
         return Err("Local plugin manifest is unavailable".to_owned());
     }
     let mut links = read_plugin_cloud_links_strict(&marketplace_root)?;
+    let existing = links
+        .iter()
+        .position(|link| {
+            link.local_plugin_name == plugin_name && link.account_scope == requested_scope
+        })
+        .or_else(|| {
+            requested_scope.as_ref().and_then(|_| {
+                links.iter().position(|link| {
+                    link.local_plugin_name == plugin_name
+                        && link.account_scope.is_none()
+                        && link.cloud_plugin_id == request.cloud_plugin_id
+                })
+            })
+        });
     if let Some(mode) = request.account_install {
-        let matching = links
-            .iter()
-            .filter(|link| link.local_plugin_name == plugin_name);
-        let mut existing = false;
-        for link in matching {
-            if link.cloud_plugin_id != request.cloud_plugin_id {
+        if let Some(index) = existing {
+            if links[index].cloud_plugin_id != request.cloud_plugin_id {
                 return Err("PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT".to_owned());
             }
-            existing = true;
-        }
-        if existing && matches!(mode, AccountInstallLinkMode::KeepRelease) {
-            return Ok(());
+            if matches!(mode, AccountInstallLinkMode::KeepRelease) {
+                if links[index].account_scope == requested_scope {
+                    return Ok(());
+                }
+                links[index].account_scope = requested_scope;
+                return write_plugin_cloud_links(&marketplace_root, links);
+            }
         }
     }
-    links.retain(|link| link.local_plugin_name != plugin_name);
+    if let Some(index) = existing {
+        links.remove(index);
+    }
     links.push(LocalPluginCloudLink {
         local_plugin_name: plugin_name.to_owned(),
         cloud_plugin_id: request.cloud_plugin_id,
         cloud_release_id: request.cloud_release_id,
+        account_scope: requested_scope,
     });
     write_plugin_cloud_links(&marketplace_root, links)
 }

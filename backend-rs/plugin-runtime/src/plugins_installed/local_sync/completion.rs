@@ -124,7 +124,12 @@ pub async fn record_until<M: Mysql, R: Redis + Sync>(
             .as_i64()
             .filter(|id| *id > 0)
             .ok_or_else(|| coordination_error("INVALID_LOCAL_COMPLETION"))?;
-        if !seen.insert(id) || !matches!(item["status"].as_str(), Some("synced" | "removed")) {
+        if !seen.insert(id)
+            || !matches!(
+                item["status"].as_str(),
+                Some("synced" | "source_preserved" | "removed")
+            )
+        {
             return Err(coordination_error("INVALID_LOCAL_COMPLETION"));
         }
     }
@@ -200,13 +205,18 @@ async fn record_one<M: Mysql, R: Redis + Sync>(
             };
             let revision = business_revision(&installed.json.0.to_value())?;
             if completion.installed_revisions.get(&id) != Some(&revision)
-                || installed.is_active != (item["status"] == "synced")
+                || installed.is_active != (item["status"] != "removed")
             {
                 tracing::info!(user_id, installed_id=id, device_id, generation=completion.generation,
                     expected_revision=?completion.installed_revisions.get(&id), current_revision=revision,
                     active=installed.is_active, status=?item["status"].as_str(),
                     "Local plugin completion superseded by current intent");
                 return Ok(false);
+            }
+            if item["status"] == "source_preserved" &&
+                (!crate::plugins_installed::personal_source::valid_source(&item["source"]) ||
+                 !crate::plugins_installed::personal_source::owned_install(&mut query, user_id, &installed.json.0.to_value()).await?) {
+                return Err(coordination_error("INVALID_LOCAL_COMPLETION"));
             }
             let state = plugin_sync_protocol::lock_plugin_sync_state(&mut query, user_id).await?;
             let watermark = plugin_sync_protocol::plugin_snapshot_watermark(&state.json, device_id, id);
@@ -222,7 +232,7 @@ async fn record_one<M: Mysql, R: Redis + Sync>(
                 ).await?;
                 let release = installed.json.0.to_value()["spec"]["releaseId"].as_i64().unwrap_or(0);
                 let matches = if installed.is_active {
-                    row.is_some_and(|row| row.state == "installed" && row.actual_release_id == release && row.desired_release_id == release)
+                    row.is_some_and(|row| row.desired_release_id == release && if item["status"] == "source_preserved" { row.state == "source" && row.actual_release_id == 0 } else { row.state == "installed" && row.actual_release_id == release })
                 } else { row.is_none() };
                 if matches && !has_legacy_device_rows(&mut query, user_id, device_id, id).await? {
                     return Ok(true);

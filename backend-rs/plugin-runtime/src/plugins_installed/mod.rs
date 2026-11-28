@@ -31,6 +31,7 @@ pub fn local_sync_enabled() -> bool {
     local_sync::enabled()
 }
 mod online_route;
+mod personal_source;
 pub(crate) mod plugin_sync_protocol;
 pub(crate) mod record_sync_result;
 pub(crate) mod registration_sync;

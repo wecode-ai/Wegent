@@ -19,6 +19,7 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_personal_source import owns_personal_plugin
 from app.services.plugin_release_components import components_with_manifest_account_auth
 from app.services.skill_resolution import get_runtime_skill_shells
 
@@ -395,6 +396,8 @@ class CapabilityPayloadResolver:
             cloud_plugin_id = None
         if cloud_plugin_id is not None and cloud_plugin_id > 0:
             payload["cloud_plugin_id"] = cloud_plugin_id
+            if owns_personal_plugin(db, installed, installed.user_id):
+                payload["personal_source_owner"] = True
         component_states = spec.get("componentStates") or {}
         if component_states:
             payload["component_states"] = component_states

@@ -54,6 +54,7 @@ import {
 import i18n from '@/i18n'
 import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
+import { beginPluginRefreshDiagnostics } from '@/lib/plugin-refresh-diagnostics'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
@@ -262,18 +263,55 @@ export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
   cloudReleaseId: number | null
+  accountScope?: { backendUrl: string; userId: number } | null
 }
 
-async function readLocalPluginCloudLinks(marketplacePath: string): Promise<LocalPluginCloudLink[]> {
+interface ScopedLocalPluginCloudLinks {
+  links: LocalPluginCloudLink[]
+  mismatchedAccountPluginNames: ReadonlySet<string>
+}
+
+async function readLocalPluginCloudLinks(
+  marketplacePath: string
+): Promise<ScopedLocalPluginCloudLinks> {
+  const cloudScope = readStoredPluginCloudScope()
   const links = await requestLocalExecutor<LocalPluginCloudLink[]>('executor.plugins.links.list', {
     marketplacePath,
   })
+  if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
   if (
     !Array.isArray(links) ||
     links.some(link => !link || typeof link.localPluginName !== 'string')
   )
     throw new Error('Invalid local plugin cloud links')
-  return links
+  const connection = readStoredCloudConnection()
+  const matchesAccount = (link: LocalPluginCloudLink) =>
+    Boolean(
+      link.accountScope &&
+      connection &&
+      link.accountScope.backendUrl.replace(/\/+$/, '') ===
+        connection.backendUrl.replace(/\/+$/, '') &&
+      link.accountScope.userId === connection.user.id
+    )
+  const currentLinks = links.filter(
+    link => matchesAccount(link) || (!connection && !link.accountScope)
+  )
+  const currentNames = new Set(currentLinks.map(link => link.localPluginName))
+  return {
+    links: currentLinks,
+    mismatchedAccountPluginNames: new Set(
+      connection
+        ? links
+            .filter(
+              link =>
+                link.accountScope &&
+                !matchesAccount(link) &&
+                !currentNames.has(link.localPluginName)
+            )
+            .map(link => link.localPluginName)
+        : []
+    ),
+  }
 }
 
 export interface PluginIdentityReference {
@@ -425,6 +463,8 @@ const MAX_DURABLE_DATA_URL_CHARS = 4096
 /** A marketplace switch can produce several equivalent snapshots; bound their disk footprint. */
 const MAX_DURABLE_READ_STATE_ENTRIES = 4
 type CachedPluginsState = LocalCodexPluginsState & {
+  /** Owns cloud-link projections; absent on unscoped legacy snapshots. */
+  cloudScope?: string | null
   catalogPartial?: boolean
   installedPartial?: boolean
   /** Only full inventory reads cover Codex; disk scans must not clear its failures. */
@@ -439,6 +479,7 @@ type CachedPluginsState = LocalCodexPluginsState & {
 type InstalledReadSnapshot = Pick<
   CachedPluginsState,
   | 'deviceId'
+  | 'cloudScope'
   | 'installedPlugins'
   | 'installedSources'
   | 'sourceReads'
@@ -453,10 +494,12 @@ let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
 let activeReadStateDeviceId: string | null = null
+let activeReadStateCloudScope: string | null | undefined
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let installedReadRevision = 0
 let activeInstalledIdentity: string | undefined
-let lastVerifiedInstalledScope: InstalledCatalogScope | undefined
+type AccountInstalledCatalogScope = InstalledCatalogScope & { cloudScope: string | null }
+let lastVerifiedInstalledScope: AccountInstalledCatalogScope | undefined
 let activeInventoryMutationVersion: number | undefined
 const installedCatalog = createVersionedInstalledCatalog<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -503,6 +546,7 @@ function invalidateReadState(deviceId: string | null = null): void {
   cachedStateAt = 0
   cachedStateParamsKey = ''
   activeReadStateDeviceId = deviceId
+  activeReadStateCloudScope = readStoredPluginCloudScope()
   inflightReadState.clear()
   inflightWegentStoreList = null
   didHydrateReadStateSession = false
@@ -522,18 +566,22 @@ function invalidateReadState(deviceId: string | null = null): void {
   }
 }
 
-function readStateParamsKey(params: {
-  marketplaceId?: string
-  mergeAllMarketplaces?: boolean
-  marketplaceKinds?: Array<'local'>
-}): string {
+function readStateParamsKey(
+  params: {
+    marketplaceId?: string
+    mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local'>
+  },
+  cloudScope = readStoredPluginCloudScope()
+): string {
   // Search query is applied in-memory after load; keep it out of the cache key so
   // typing/clearing search reuses the same plugin/list + plugin/installed snapshot.
-  return [
+  const selection = [
     params.marketplaceId?.trim() || '',
     params.mergeAllMarketplaces ? 'all' : 'selected',
     params.marketplaceKinds ? [...new Set(params.marketplaceKinds)].sort().join(',') : 'all-kinds',
   ].join('|')
+  return JSON.stringify([selection, cloudScope])
 }
 
 function parsePersistedReadStateStore(raw: string | null): PersistedReadStateStore | null {
@@ -834,11 +882,17 @@ function readStateMatchesDevice(
   state: LocalCodexPluginsState | null | undefined,
   deviceId: string
 ): state is LocalCodexPluginsState {
-  return Boolean(state && deviceId && state.deviceId.trim() === deviceId)
+  return Boolean(
+    state &&
+    deviceId &&
+    state.deviceId.trim() === deviceId &&
+    (state as CachedPluginsState).cloudScope === readStoredPluginCloudScope()
+  )
 }
 
 function resetInMemoryReadStateForDevice(deviceId: string): void {
-  if (activeReadStateDeviceId === deviceId) return
+  const cloudScope = readStoredPluginCloudScope()
+  if (activeReadStateDeviceId === deviceId && activeReadStateCloudScope === cloudScope) return
   pluginDetails.invalidate()
   installedReadRevision += 1
   activeInstalledIdentity = undefined
@@ -847,6 +901,7 @@ function resetInMemoryReadStateForDevice(deviceId: string): void {
   installedCatalog.invalidate()
   settingsScopeEpoch += 1
   activeReadStateDeviceId = deviceId
+  activeReadStateCloudScope = cloudScope
   cachedState = null
   cachedStateGeneration = nextReadStateGeneration++
   cachedCatalogGeneration = cachedStateGeneration
@@ -863,9 +918,9 @@ function hydrateReadStateCacheFromSession(deviceId: string): void {
   didHydrateReadStateSession = true
   if (cachedState) return
   const store = readPersistedReadStateStore()
-  const entry = Object.values(store.entries).sort(
-    (left, right) => right.cachedAt - left.cachedAt
-  )[0]
+  const entry = Object.values(store.entries)
+    .filter(entry => readStateMatchesDevice(entry.state, deviceId))
+    .sort((left, right) => right.cachedAt - left.cachedAt)[0]
   if (!entry) return
   if (Date.now() - entry.cachedAt > READ_STATE_DURABLE_TTL_MS) return
   if (!readStateMatchesDevice(entry.state, deviceId)) return
@@ -899,6 +954,7 @@ function withInstalledReadSnapshot(
   return {
     ...catalog,
     deviceId: installed.deviceId,
+    cloudScope: installed.cloudScope,
     installedPlugins: installed.installedPlugins,
     installedSources: installed.installedSources,
     sourceReads: installed.sourceReads,
@@ -918,6 +974,7 @@ function rememberInstalledReadSnapshot(
 ): void {
   if (
     !installed.deviceId ||
+    installed.cloudScope !== readStoredPluginCloudScope() ||
     installed.deviceId !== getKnownLocalExecutorDeviceId()?.trim() ||
     generation < cachedStateGeneration
   )
@@ -993,6 +1050,7 @@ export function isLocalCodexPluginsReadStateFresh(
  */
 export function warmLocalCodexPluginsReadState(): Promise<LocalCodexPluginsState> | null {
   if (!isDesktopRuntime()) return null
+  resetInMemoryReadStateForDevice(getKnownLocalExecutorDeviceId()?.trim() ?? '')
   if (!warmupReadStatePromise) {
     warmupReadStatePromise = readState({ mergeAllMarketplaces: true })
       .then(state => {
@@ -1036,7 +1094,9 @@ function readInstalledAuthStatus(
   )
 }
 
-async function captureInstalledReadScope(): Promise<InstalledCatalogScope> {
+async function captureInstalledReadScope(
+  cloudScope = readStoredPluginCloudScope()
+): Promise<AccountInstalledCatalogScope> {
   const executorStatus = await ensureLocalExecutorStarted()
   const knownDeviceId = getKnownLocalExecutorDeviceId()?.trim()
   const deviceId = executorStatus.deviceId?.trim() || knownDeviceId || ''
@@ -1045,10 +1105,16 @@ async function captureInstalledReadScope(): Promise<InstalledCatalogScope> {
     runtimeInstanceId: executorStatus.runtimeInstanceId,
   })
   const currentDeviceId = getKnownLocalExecutorDeviceId()?.trim()
+  if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
   if (currentDeviceId && deviceId !== currentDeviceId) throw new ExpiredPluginInventoryRequest()
   resetInMemoryReadStateForDevice(deviceId)
   const mutationVersion = getPluginInventoryMutationVersion()
-  const identity = JSON.stringify([deviceId, executorStatus.runtimeInstanceId, auth.sha256])
+  const identity = JSON.stringify([
+    deviceId,
+    executorStatus.runtimeInstanceId,
+    auth.sha256,
+    cloudScope,
+  ])
   if (
     (activeInstalledIdentity !== undefined && activeInstalledIdentity !== identity) ||
     (activeInventoryMutationVersion !== undefined &&
@@ -1063,22 +1129,24 @@ async function captureInstalledReadScope(): Promise<InstalledCatalogScope> {
     deviceId,
     runtimeInstanceId: executorStatus.runtimeInstanceId,
     account: auth.sha256,
+    cloudScope,
     revision: installedCatalogRevision(),
   }
 }
 
-function assertInstalledReadCurrent(scope: InstalledCatalogScope): void {
+function assertInstalledReadCurrent(scope: AccountInstalledCatalogScope): void {
   if (
+    scope.cloudScope !== readStoredPluginCloudScope() ||
     scope.revision !== installedCatalogRevision() ||
     (Boolean(getKnownLocalExecutorDeviceId()) &&
       scope.deviceId !== getKnownLocalExecutorDeviceId()?.trim()) ||
     activeInstalledIdentity !==
-      JSON.stringify([scope.deviceId, scope.runtimeInstanceId, scope.account])
+      JSON.stringify([scope.deviceId, scope.runtimeInstanceId, scope.account, scope.cloudScope])
   )
     throw new ExpiredPluginInventoryRequest()
 }
 
-async function verifyInstalledReadCurrent(scope: InstalledCatalogScope): Promise<void> {
+async function verifyInstalledReadCurrent(scope: AccountInstalledCatalogScope): Promise<void> {
   const current = await ensureLocalExecutorStarted()
   if (
     current.runtimeInstanceId !== scope.runtimeInstanceId ||
@@ -1118,7 +1186,7 @@ async function freshVerifiedReadState(): Promise<CachedPluginsState | null> {
     : null
 }
 
-function requestPluginInstalled(scope: InstalledCatalogScope, reuseRecent = false) {
+function requestPluginInstalled(scope: AccountInstalledCatalogScope, reuseRecent = false) {
   return installedCatalog.read(
     scope,
     () =>
@@ -1616,7 +1684,7 @@ async function resolvePersonalPluginSource(item: PluginMarketplaceItem, isCurren
   if (candidates?.length !== 1 || !isLocalMarketplacePath(candidates[0].pluginPath)) {
     throw new Error('Published plugin source is unavailable; refresh and retry')
   }
-  const links = await readLocalPluginCloudLinks(marketplacePath)
+  const { links } = await readLocalPluginCloudLinks(marketplacePath)
   requireCurrentPluginSourceScope(isCurrent)
   const linked = Array.isArray(links)
     ? links.filter(link => link.localPluginName === source.pluginName)
@@ -1761,10 +1829,12 @@ export async function listWegentStorePluginsFromDisk(
   requireComplete = false
 ): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
+  const cloudScope = readStoredPluginCloudScope()
   const key = JSON.stringify([
     getKnownLocalExecutorDeviceId(),
     getKnownLocalExecutorRuntimeInstanceId(),
     installedCatalogRevision(),
+    cloudScope,
   ])
   const pending =
     (!requireComplete && inflightWegentStoreList?.key === key
@@ -1772,6 +1842,7 @@ export async function listWegentStorePluginsFromDisk(
       : null) ??
     requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
       .then(listed => {
+        if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
         if (!listed || !Array.isArray(listed.plugins))
           throw new Error('Invalid local plugin inventory')
         if (!listed.plugins.length) {
@@ -1817,14 +1888,17 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
   if (!isElectronRuntime()) return { items: [] }
   const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
   const runtimeInstanceId = getKnownLocalExecutorRuntimeInstanceId()
+  const cloudScope = readStoredPluginCloudScope()
   resetInMemoryReadStateForDevice(deviceId)
   const revision = installedCatalogRevision()
-  const readDisk = () => readAndPublishDiskInstalledInventory(deviceId, runtimeInstanceId, revision)
+  const readDisk = () =>
+    readAndPublishDiskInstalledInventory(deviceId, runtimeInstanceId, revision, cloudScope)
   if (!deviceId || !runtimeInstanceId) return readDisk()
   const key = JSON.stringify([
     deviceId,
     runtimeInstanceId,
     revision,
+    cloudScope,
     getInitializedBundledPluginMarketplace()?.path,
   ])
   const existing = inflightLocalDiskInventory.get(key)
@@ -1840,10 +1914,12 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
 async function readAndPublishDiskInstalledInventory(
   deviceId: string,
   runtimeInstanceId: string | null,
-  revision: string
+  revision: string,
+  cloudScope: string | null
 ): Promise<LocalPluginInventoryRead> {
   const generation = nextReadStateGeneration++
   const { installedSources: diskSources, ...read } = await readDiskInstalledInventory(deviceId)
+  if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   if (
     deviceId &&
@@ -1856,6 +1932,7 @@ async function readAndPublishDiskInstalledInventory(
     cachedState = {
       ...(previous ?? emptyState),
       deviceId,
+      cloudScope,
       installedSources,
       sourceReads: { ...previous?.sourceReads, ...read.sourceReads },
       installedPartial: read.partial || previous?.installedPartial,
@@ -1880,6 +1957,7 @@ async function readDiskInstalledInventory(
   deviceId: string,
   options: { requireComplete?: boolean; skipCloudLinks?: boolean } = {}
 ) {
+  const cloudScope = readStoredPluginCloudScope()
   const generation = nextReadStateGeneration++
   const [personalResult, storeResult, configResult] = await Promise.allSettled([
     readPersonalMarketplacePluginsFromDisk(),
@@ -1911,9 +1989,10 @@ async function readDiskInstalledInventory(
       ? await readLocalPluginCloudLinks(personal.marketplacePath).catch(error => {
           if (options.requireComplete) throw error
           linksFailed = true
-          return [] as LocalPluginCloudLink[]
+          return null
         })
-      : []
+      : null
+  if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
   // Other reads can update the catalog while these disk requests are in flight.
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   if (
@@ -1943,9 +2022,10 @@ async function readDiskInstalledInventory(
     if (options.requireComplete) throw error
     if (storeResult.status === 'rejected' && !previous) throw error
   }
-  personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks, {
+  personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks?.links ?? [], {
     authoritative: Boolean(personal?.marketplacePath) && !options.skipCloudLinks,
     retainCachedDeviceId: linksFailed || options.skipCloudLinks ? deviceId : undefined,
+    mismatchedAccountPluginNames: cloudLinks?.mismatchedAccountPluginNames,
   })
   const storePlugins =
     storeResult.status === 'fulfilled'
@@ -2073,7 +2153,11 @@ function filterPluginItems(
 export function applyPluginCloudLinks(
   installedPlugins: InstalledPlugin[],
   cloudLinks: LocalPluginCloudLink[],
-  options: { authoritative?: boolean; retainCachedDeviceId?: string } = {}
+  options: {
+    authoritative?: boolean
+    retainCachedDeviceId?: string
+    mismatchedAccountPluginNames?: ReadonlySet<string>
+  } = {}
 ): InstalledPlugin[] {
   const previous =
     options.retainCachedDeviceId &&
@@ -2092,6 +2176,7 @@ export function applyPluginCloudLinks(
       (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
       plugin.spec.source.pluginKey
     const link = linksByPluginName.get(pluginName)
+    const accountMismatch = options.mismatchedAccountPluginNames?.has(pluginName) === true
     const payload = { ...sourcePayload }
     const retained = previous.find(
       item =>
@@ -2099,7 +2184,12 @@ export function applyPluginCloudLinks(
         item.spec.source.pluginKey === plugin.spec.source.pluginKey
     )?.spec.sourcePayload
     if (options.authoritative !== false || options.retainCachedDeviceId) {
-      for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId']) {
+      for (const key of [
+        'cloudPluginId',
+        'cloudReleaseId',
+        'cloudInstalledPluginId',
+        'cloudAccountMismatch',
+      ]) {
         if (
           !(
             key === 'cloudInstalledPluginId' &&
@@ -2108,9 +2198,15 @@ export function applyPluginCloudLinks(
           )
         )
           delete payload[key]
-        if (retained?.[key] !== undefined) payload[key] = retained[key]
+        if (!accountMismatch && retained?.[key] !== undefined) payload[key] = retained[key]
       }
     }
+    if (accountMismatch) {
+      for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId'])
+        delete payload[key]
+      payload.cloudAccountMismatch = true
+    } else if (link || options.mismatchedAccountPluginNames !== undefined)
+      delete payload.cloudAccountMismatch
     return {
       ...plugin,
       spec: {
@@ -2410,13 +2506,16 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
-  const paramsKey = readStateParamsKey(params)
+  const cloudScope = readStoredPluginCloudScope()
+  const paramsKey = readStateParamsKey(params, cloudScope)
   if (!params.refresh) {
     const fresh = await freshVerifiedReadState()
+    if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
     if (fresh && cachedStateParamsKey === paramsKey)
       return withFilteredMarketplaceItems(fresh, params.query)
   }
-  const scope = await captureInstalledReadScope()
+  const scope = await captureInstalledReadScope(cloudScope)
+  assertInstalledReadCurrent(scope)
   const deviceId = scope.deviceId
   hydrateReadStateCacheFromSession(deviceId)
   if (
@@ -2436,7 +2535,9 @@ async function readState(
     if (!params.refresh && cachedState && cachedStateParamsKey === paramsKey) {
       return withFilteredMarketplaceItems(cachedState, params.query)
     }
-    return withFilteredMarketplaceItems(await existingInflight, params.query)
+    const state = await existingInflight
+    assertInstalledReadCurrent(scope)
+    return withFilteredMarketplaceItems(state, params.query)
   }
 
   if (!params.refresh && cachedState && cachedStateParamsKey === paramsKey) {
@@ -2458,6 +2559,7 @@ async function readState(
   inflightReadState.set(paramsKey, loadPromise)
   try {
     const state = await loadPromise
+    assertInstalledReadCurrent(scope)
     return withFilteredMarketplaceItems(state, params.query)
   } finally {
     if (inflightReadState.get(paramsKey) === loadPromise) {
@@ -2475,7 +2577,7 @@ async function loadReadStateSnapshot(
     reuseInstalledInventory?: boolean
   },
   paramsKey: string,
-  scope: InstalledCatalogScope
+  scope: AccountInstalledCatalogScope
 ): Promise<LocalCodexPluginsState> {
   const generation = nextReadStateGeneration++
   const deviceId = scope.deviceId
@@ -2550,9 +2652,9 @@ async function loadReadStateSnapshot(
   const cloudLinks = personalMarketplace?.path
     ? await readLocalPluginCloudLinks(personalMarketplace.path).catch(() => {
         partial = linksFailed = true
-        return [] as LocalPluginCloudLink[]
+        return null
       })
-    : []
+    : null
   await verifyInstalledReadCurrent(scope)
   // Codex owns native marketplace membership; owned personal and store packages
   // come from the independent disk sources in the same live read.
@@ -2560,11 +2662,12 @@ async function loadReadStateSnapshot(
   const cloudLinkOptions = {
     authoritative: Boolean(personalMarketplace?.path),
     retainCachedDeviceId: catalogFailed || linksFailed ? deviceId : undefined,
+    mismatchedAccountPluginNames: cloudLinks?.mismatchedAccountPluginNames,
   }
   const installedPlugins = mergeLocalInstalledWithStorePackages(
     applyPluginCloudLinks(
       codexAndPersonalInstallations(installedSources),
-      cloudLinks,
+      cloudLinks?.links ?? [],
       cloudLinkOptions
     ),
     installedSources?.store ?? []
@@ -2580,11 +2683,12 @@ async function loadReadStateSnapshot(
     if (result?.items)
       sourceReads[source] = {
         ...result,
-        items: applyPluginCloudLinks(result.items, cloudLinks, cloudLinkOptions),
+        items: applyPluginCloudLinks(result.items, cloudLinks?.links ?? [], cloudLinkOptions),
       }
   }
   const marketplaceItems = applyLocalCatalogMembership(availableMarketplaceItems, installedPlugins)
   const loadedState: CachedPluginsState = {
+    cloudScope: scope.cloudScope,
     marketplaceItems,
     installedPlugins,
     marketplaces,
@@ -2684,6 +2788,7 @@ function pluginNameFromInstalledPlugin(plugin: InstalledPlugin): string {
 function pluginDetailCacheScope() {
   return {
     deviceId: getKnownLocalExecutorDeviceId()?.trim() ?? '',
+    cloudScope: readStoredPluginCloudScope(),
     inventoryGeneration: cachedStateGeneration,
     catalogGeneration: cachedCatalogGeneration,
   }
@@ -2696,6 +2801,8 @@ function rememberInstalledPluginDetail(
 ): void {
   if (
     !cachedState ||
+    scope.cloudScope !== readStoredPluginCloudScope() ||
+    cachedState.cloudScope !== scope.cloudScope ||
     !scope.deviceId ||
     scope.deviceId !== getKnownLocalExecutorDeviceId()?.trim() ||
     scope.deviceId !== cachedState.deviceId ||
@@ -2872,8 +2979,9 @@ async function readDetailForInstalledPlugin(
 
 async function loadInstalledPluginsOnly(
   options: { requireComplete?: boolean; skipCloudLinks?: boolean; reuseRecent?: boolean } = {},
-  capturedScope?: InstalledCatalogScope
+  capturedScope?: AccountInstalledCatalogScope
 ): Promise<{
+  cloudScope: string | null
   installedPlugins: InstalledPlugin[]
   deviceId: string
   partial?: boolean
@@ -2961,6 +3069,7 @@ async function loadInstalledPluginsOnly(
     installedSources.store
   )
   return {
+    cloudScope: scope.cloudScope,
     installedPlugins,
     deviceId,
     installedSources,
@@ -3019,18 +3128,18 @@ async function fetchRemoteCatalogItems(
   )
 }
 
-function readStoredRemoteCatalogCloudScope(): string | null {
+function readStoredPluginCloudScope(): string | null {
   const connection = readStoredCloudConnection()
-  return connection ? JSON.stringify([connection.apiBaseUrl, connection.user.id]) : null
+  return connection ? JSON.stringify([connection.backendUrl, connection.user.id]) : null
 }
 
 const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async options => {
   if (!isDesktopRuntime()) return { deviceId: '' }
   const accountEpoch = getPluginMarketplaceAccountEpoch()
-  const cloudScope = readStoredRemoteCatalogCloudScope()
+  const cloudScope = readStoredPluginCloudScope()
   const requestAccountIsCurrent = () =>
     getPluginMarketplaceAccountEpoch() === accountEpoch &&
-    readStoredRemoteCatalogCloudScope() === cloudScope
+    readStoredPluginCloudScope() === cloudScope
   const identity = await raceWithTimeout(
     readRemoteCatalogScope(),
     30_000,
@@ -3278,6 +3387,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId, scope) {
       if (!isElectronRuntime()) return
       if (scope) requireCurrentPluginSourceScope(scope.isCurrent)
+      const connection = readStoredCloudConnection()
       const ensured = scope
         ? installedPersonalPackageSource(plugin)
         : await this.ensureCreatedPluginInWeworkPersonal(plugin)
@@ -3287,6 +3397,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           localPluginName: ensured.pluginName,
           cloudPluginId,
           cloudReleaseId,
+          ...(connection && {
+            accountScope: { backendUrl: connection.backendUrl, userId: connection.user.id },
+          }),
           ...(scope && { accountInstall: scope.accountInstall }),
         })
       } catch (error) {
@@ -3431,13 +3544,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return requestLocalExecutor<string>('executor.plugins.example.save', { destinationPath })
     },
     readState(params = {}) {
-      const observeLocalCatalog =
-        (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
-        params.marketplaceKinds?.includes('local')
       // Observe the real call before any awaits; E2E must detect an early read
       // even if the Executor queues it behind package synchronization.
-      const startedAt = observeLocalCatalog
-        ? performance.mark('wework:plugin-local-catalog:started').startTime
+      const finishObservation = params.marketplaceKinds?.includes('local')
+        ? beginPluginRefreshDiagnostics('catalog')
         : undefined
       const result = readState({
         query: params.q,
@@ -3447,14 +3557,14 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         refresh: params.refresh,
         reuseInstalledInventory: params.reuseInstalledInventory,
       })
-      if (!observeLocalCatalog) return result
+      if (!finishObservation) return result
       return result.then(
         state => {
-          performance.mark('wework:plugin-local-catalog:completed', { detail: startedAt })
+          finishObservation()
           return state
         },
         error => {
-          performance.mark('wework:plugin-local-catalog:failed', { detail: startedAt })
+          finishObservation('failed')
           throw error
         }
       )

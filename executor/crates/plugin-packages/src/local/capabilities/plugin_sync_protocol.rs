@@ -183,14 +183,17 @@ impl ConnectionBinding {
         Ok(active)
     }
 
-    fn bind_manifest(&self, manifest: &mut Value) -> bool {
+    fn bind_manifest(&self, manifest: &mut Value, account_scope: Value) -> bool {
         // The caller holds the active binding through the manifest commit.
-        if manifest.get("plugin_sync_binding").and_then(Value::as_str) == Some(&self.identity) {
+        if manifest.get("plugin_sync_binding").and_then(Value::as_str) == Some(&self.identity)
+            && manifest["plugin_sync_account_scope"] == account_scope
+        {
             return false;
         }
         // Tokens are never persisted or logged. Changing the connection creates
         // a fresh ordering namespace while package caches remain reusable.
         manifest["plugin_sync_binding"] = json!(self.identity);
+        manifest["plugin_sync_account_scope"] = account_scope;
         manifest["plugin_sync"] =
             json!({"version": 2, "complete_generation": 0, "full_generation": 0, "entries": {}});
         for plugin in ensure_object_field(manifest, "plugins").values_mut() {

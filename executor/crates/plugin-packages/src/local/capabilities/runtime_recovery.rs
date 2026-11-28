@@ -200,6 +200,28 @@ impl GlobalCapabilityStore {
         manifest: &mut Value,
     ) -> Result<bool, CapabilitySyncError> {
         let spec = checked_spec(key, entry)?;
+        if entry["materialization"] == "author_source" {
+            let source = read_personal_author_source(
+                &self.manifest.path,
+                self.codex_plugins_dir
+                    .parent()
+                    .unwrap_or(&self.codex_plugins_dir),
+                entry,
+            )?
+            .ok_or_else(|| {
+                CapabilitySyncError::invalid_payload(
+                    "Author plugin source is unavailable; preserving the local installation",
+                )
+            })?;
+            let changed =
+                entry["author_source"] != source || entry.get("runtime_recovery_error").is_some();
+            manifest["plugins"][key]["author_source"] = source;
+            manifest["plugins"][key]
+                .as_object_mut()
+                .unwrap()
+                .remove("runtime_recovery_error");
+            return Ok(changed);
+        }
         cache_selection::recover(self, key, manifest)?;
         for (path, _) in self.plugin_runtime_targets(&spec) {
             self.ensure_runtime_path(&path, true)?;
@@ -730,6 +752,10 @@ impl GlobalCapabilityStore {
             }
             fields["runtime"] = Value::Object(runtime);
             ensure_root_object(&mut entry).extend(fields.as_object().unwrap().clone());
+            // This path publishes the cloud runtime, not the independent author source.
+            for field in ["materialization", "author_source"] {
+                entry.as_object_mut().unwrap().remove(field);
+            }
             // The sync payload is authoritative for component states: when it
             // clears them, drop the stale clone so recovery and dual-runtime
             // rewrites never resurrect outdated toggles.
@@ -890,7 +916,12 @@ pub(super) fn validate_package_identity(
             continue;
         }
         let value: Value = serde_json::from_slice(&fs::read(source)?)?;
-        if value.get("name").and_then(Value::as_str) != Some(spec.name.as_str()) {
+        let matches = value["name"].as_str().is_some_and(|name| {
+            name == spec.name
+                || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                    && author_source::personal_manifest_name_matches_slug(name, &spec.name))
+        });
+        if !matches {
             return Err(CapabilitySyncError::invalid_payload(
                 "Verified plugin package identity does not match the managed install",
             ));

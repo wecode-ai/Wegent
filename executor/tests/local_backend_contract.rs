@@ -1211,6 +1211,7 @@ impl LocalBackendTransport for RecordingTransport {
 
 fn local_backend_config() -> LocalBackendConfig {
     LocalBackendConfig {
+        authenticated_user_id: None,
         backend_url: "http://localhost:8000".to_owned(),
         socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),

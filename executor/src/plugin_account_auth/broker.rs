@@ -42,6 +42,7 @@ struct Endpoint {
     lifecycle: tokio::sync::mpsc::Sender<super::local_lifecycle::Request>,
     reconcile: tokio::sync::mpsc::Sender<ReconciliationRequest>,
     pending_logins: Arc<PendingLogins>,
+    account_scope: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
 }
 
 fn endpoint() -> &'static Mutex<Option<Endpoint>> {
@@ -80,6 +81,11 @@ pub(super) fn lifecycle_sender(
         .filter(|endpoint| endpoint.mode == "local")
         .map(|endpoint| endpoint.lifecycle.clone())
         .ok_or(AuthError("plugin_auth_broker_unavailable"))
+}
+
+pub(super) fn account_scope() -> Option<Value> {
+    let scope = endpoint().lock().ok()?.as_ref()?.account_scope.clone();
+    scope()
 }
 
 /// Backend registration requests a full audit.
@@ -179,6 +185,7 @@ async fn start_with_logins<T: super::PluginAuthTransport>(
         cancel.subscribe(),
         reconcile.clone(),
     );
+    let scope_transport = transport.clone();
     let endpoint_value = Endpoint {
         url: format!("http://{address}/v1/run"),
         token,
@@ -187,6 +194,7 @@ async fn start_with_logins<T: super::PluginAuthTransport>(
         lifecycle: lifecycle_sender,
         reconcile,
         pending_logins: pending_logins.clone(),
+        account_scope: Arc::new(move || scope_transport.account_scope()),
     };
     let revocation_transport = transport.clone();
     let revocation_home = endpoint_value.home.clone();

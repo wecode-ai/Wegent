@@ -23,12 +23,60 @@ use crate::{
 
 use super::LocalBackendConfig;
 
+pub(super) async fn probe_account_capabilities(
+    backend_url: &str,
+    auth_token: &str,
+    instance: &str,
+) -> Result<(Value, i64), String> {
+    let response = crate::agents::backend_url::backend_http_client()
+        .map_err(|_| "plugin_local_http_unavailable".to_owned())?
+        .post(format!(
+            "{}/api/plugins/local-sync",
+            backend_url.trim_end_matches('/')
+        ))
+        .bearer_auth(auth_token)
+        .json(&json!({"protocolVersion":1,"instanceId":instance,"probeOnly":true}))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|_| "plugin_local_http_unavailable".to_owned())?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Err("plugin_local_sync_unsupported".to_owned());
+    }
+    let capabilities = response
+        .json::<Value>()
+        .await
+        .map_err(|_| "plugin_local_invalid_response".to_owned())?;
+    if !status.is_success() {
+        return Err(capabilities["detail"]
+            .as_str()
+            .unwrap_or("plugin_local_http_failed")
+            .to_owned());
+    }
+    let account = authenticated_account_id(&capabilities).map_err(str::to_owned)?;
+    Ok((capabilities, account))
+}
+
+fn authenticated_account_id(capabilities: &Value) -> Result<i64, &'static str> {
+    if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 3 {
+        return Err("plugin_local_sync_unsupported");
+    }
+    capabilities["accountId"]
+        .as_i64()
+        .filter(|id| *id > 0)
+        .ok_or("plugin_local_invalid_response")
+}
+
 pub trait CapabilityReportProvider: Send + Sync + 'static {
     fn build_report(&self) -> Value;
 }
 
 pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
     fn invalidate_connection(&self) {}
+    fn bind_account_scope(&self, _backend_url: &str, _user_id: i64) -> Result<(), String> {
+        Ok(())
+    }
     fn local_plugin_digest(&self) -> Option<String> {
         None
     }
@@ -70,6 +118,10 @@ impl<P> CapabilitySyncRpcHandler for CapabilitySyncHandler<P>
 where
     P: CapabilityPackageProvider + Send + Sync + 'static,
 {
+    fn bind_account_scope(&self, backend_url: &str, user_id: i64) -> Result<(), String> {
+        CapabilitySyncHandler::bind_account_scope(self, backend_url, user_id)
+            .map_err(|error| error.to_string())
+    }
     fn invalidate_connection(&self) {
         CapabilitySyncHandler::invalidate_connection(self);
     }
@@ -98,9 +150,17 @@ where
 pub(super) fn default_capability_sync_handler(
     config: &LocalBackendConfig,
 ) -> CapabilitySyncHandler<HttpPackageProvider> {
+    let store = default_plugin_store();
+    let scope = config.authenticated_user_id.and_then(|user_id| {
+        crate::local::plugin_import::PluginAccountScope::new(&config.backend_url, user_id).ok()
+    });
+    let store = match scope {
+        Some(scope) => store.with_account_scope(scope),
+        None => store,
+    };
     CapabilitySyncHandler::with_package_provider(
         config.auth_token.clone(),
-        default_plugin_store(),
+        store,
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
         std::sync::Arc::new(crate::agents::CodexSkillConfigurationReloader),
     )

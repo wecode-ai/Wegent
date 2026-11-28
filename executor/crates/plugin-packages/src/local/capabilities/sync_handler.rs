@@ -70,6 +70,24 @@ where
         &self.auth_token
     }
 
+    pub fn bind_account_scope(
+        &self,
+        backend_url: &str,
+        user_id: i64,
+    ) -> Result<(), CapabilitySyncError> {
+        self.plugin_sync_binding.check()?;
+        let scope = super::super::plugin_import::PluginAccountScope::new(backend_url, user_id)
+            .map_err(CapabilitySyncError::invalid_payload)?;
+        let mut current = self.store.account_scope.lock().unwrap();
+        if current.as_ref().is_some_and(|current| current != &scope) {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Plugin account scope does not match the active connection",
+            ));
+        }
+        *current = Some(scope);
+        Ok(())
+    }
+
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         self.plugin_sync_binding.check()?;
         let protocol = plugin_sync_protocol::PluginSyncRequest::parse(&payload)?;
@@ -124,9 +142,19 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let activation_plugins: Vec<_> = plugin_specs
+            .iter()
+            .filter(|spec| {
+                !self
+                    .store
+                    .personal_author_source(spec)
+                    .is_ok_and(|source| source.is_some())
+            })
+            .cloned()
+            .collect();
         let mut activation = activation_revision::ActivationRevision::begin(
             &self.store,
-            &plugin_specs,
+            &activation_plugins,
             &skill_specs,
         )?;
         let mut manifest = {
@@ -319,6 +347,12 @@ where
             .try_sync_plugin(spec, manifest, lease, publication)
             .await
         {
+            Ok(()) if manifest["plugins"][&spec.key]["materialization"] == "author_source" => {
+                json!({"id":spec.installed_plugin_id,"name":spec.name,"status":"source_preserved",
+                    "version":manifest["plugins"][&spec.key]["version"],
+                    "checksum":manifest["plugins"][&spec.key]["checksum"],
+                    "source":author_source::receipt(&manifest["plugins"][&spec.key]["author_source"])})
+            }
             Ok(()) => match spec.installed_plugin_id {
                 Some(id) => json!({"id": id, "name": spec.name, "status": "synced"}),
                 None => json!({"name": spec.name, "status": "synced"}),
@@ -431,7 +465,9 @@ where
         activation: &mut activation_revision::ActivationRevision<'_>,
     ) -> Result<(), CapabilitySyncError> {
         for (key, plugin) in &stale {
-            activation.observe_plugin(&PluginSyncSpec::from_manifest_entry(key, plugin))?;
+            if plugin["materialization"] != "author_source" {
+                activation.observe_plugin(&PluginSyncSpec::from_manifest_entry(key, plugin))?;
+            }
         }
         let _personal_marketplace_lock = if stale.iter().any(|(key, plugin)| {
             PluginSyncSpec::from_manifest_entry(key, plugin).marketplace
@@ -447,6 +483,7 @@ where
 
         let stale_keys = stale
             .iter()
+            .filter(|(_, plugin)| plugin["materialization"] != "author_source")
             .map(|(key, _)| key.clone())
             .collect::<BTreeSet<_>>();
         let stale_marketplaces = stale
@@ -515,6 +552,7 @@ where
             .filter(|(key, plugin)| {
                 self.store
                     .can_remove_personal_marketplace_plugin(key, plugin)
+                    && plugin["materialization"] != "author_source"
             })
             .map(|(key, _)| key.clone())
             .collect::<BTreeSet<_>>();
@@ -541,7 +579,9 @@ where
         let result = (|| {
             for (key, plugin) in stale {
                 let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
-                ensure_object_field(&mut installed, "plugins").remove(&key);
+                if plugin["materialization"] != "author_source" {
+                    ensure_object_field(&mut installed, "plugins").remove(&key);
+                }
                 if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
                     && owned_personal.contains(&key)
                 {
