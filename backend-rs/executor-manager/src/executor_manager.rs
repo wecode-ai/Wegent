@@ -413,11 +413,16 @@ impl ExecutorManager {
     }
 
     /// Prepare an executor with the normal execution request without dispatching it.
-    pub async fn prepare_executor(&self, request: &impl Serialize) -> Result<PreparedExecutor> {
+    pub async fn prepare_executor(
+        &self,
+        request: &impl Serialize,
+        internal_token: &str,
+    ) -> Result<PreparedExecutor> {
         let url = format!("{}/executor-manager/executors/prepare", self.base);
         let response = self
             .recovery_client
             .post(url)?
+            .header("Authorization", format!("Bearer {internal_token}"))
             .json(request)
             .timeout(EXECUTOR_PREPARE_TIMEOUT)
             .send()

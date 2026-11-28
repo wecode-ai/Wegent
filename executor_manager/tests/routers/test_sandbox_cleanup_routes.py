@@ -5,8 +5,30 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from executor_manager.routers import sandbox as sandbox_routes
+from executor_manager.services.sandbox import SandboxTerminationError
+
+
+@pytest.mark.asyncio
+async def test_terminate_sandbox_returns_retryable_error_when_runtime_cannot_stop(
+    mocker,
+):
+    manager = mocker.Mock(
+        terminate_sandbox=mocker.AsyncMock(
+            side_effect=SandboxTerminationError("Sandbox 123 termination failed")
+        )
+    )
+    mocker.patch.object(sandbox_routes, "get_sandbox_manager", return_value=manager)
+
+    with pytest.raises(HTTPException) as exc:
+        await sandbox_routes.terminate_sandbox(
+            sandbox_id="123",
+            http_request=SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")),
+        )
+
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio

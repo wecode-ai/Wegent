@@ -27,7 +27,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from executor_manager.models.sandbox import SandboxStatus
-from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox import (
+    SandboxTerminationError,
+    get_sandbox_manager,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -480,7 +483,13 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
             },
         )
 
-    success, message = await manager.terminate_sandbox(sandbox.sandbox_id)
+    try:
+        success, message = await manager.terminate_sandbox(sandbox.sandbox_id)
+    except SandboxTerminationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "termination_failed", "message": str(exc)},
+        ) from exc
     if not success:
         raise HTTPException(
             status_code=500,

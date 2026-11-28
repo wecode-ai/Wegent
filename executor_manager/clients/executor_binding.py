@@ -3,6 +3,7 @@
 
 """Confirm a cloud executor's assignment before sending the turn to it."""
 
+import os
 from typing import Any
 
 from executor_manager.config.config import TASK_API_DOMAIN
@@ -10,7 +11,13 @@ from shared.models.openai_converter import get_metadata_field
 from shared.utils.http_client import traced_sync_client
 
 BINDING_TOKEN = "executor_binding_token"
+CALLBACK_TOKEN = "executor_callback_token"
 BINDING_SCHEME = "WegentExecutorBinding"
+
+
+def generate_callback_token() -> str:
+    """Return a random credential scoped to one task callback stream."""
+    return os.urandom(32).hex()
 
 
 class ObsoleteExecutorDispatch(Exception):
@@ -20,17 +27,41 @@ class ObsoleteExecutorDispatch(Exception):
 def bind_executor_for_dispatch(
     task: dict[str, Any], executor_name: str, executor_namespace: str
 ) -> dict[str, Any]:
+    task_id = int(get_metadata_field(task, "task_id"))
     metadata = task.get("metadata")
-    if not isinstance(metadata, dict) or BINDING_TOKEN not in metadata:
-        # Requests already queued by an older backend have no binding credential.
-        return task
+    if isinstance(metadata, dict) and BINDING_TOKEN in metadata:
+        _confirm_executor_binding(
+            task_id,
+            int(get_metadata_field(task, "subtask_id")),
+            metadata[BINDING_TOKEN],
+            executor_name,
+            executor_namespace,
+        )
 
-    token = metadata[BINDING_TOKEN]
+    # Older queued requests also need the credential provisioned with the container.
+    require_callback_token(
+        task_id, executor_name, sandbox=get_metadata_field(task, "type") == "sandbox"
+    )
+    runtime_task = task.copy()
+    for key in (CALLBACK_TOKEN, BINDING_TOKEN):
+        runtime_task.pop(key, None)
+    if isinstance(metadata, dict):
+        runtime_task["metadata"] = metadata.copy()
+        for key in (CALLBACK_TOKEN, BINDING_TOKEN):
+            runtime_task["metadata"].pop(key, None)
+    return runtime_task
+
+
+def _confirm_executor_binding(
+    task_id: int,
+    subtask_id: int,
+    token: Any,
+    executor_name: str,
+    executor_namespace: str,
+) -> None:
     if not isinstance(token, str) or not token:
         raise RuntimeError("Executor binding credential is invalid")
 
-    task_id = int(get_metadata_field(task, "task_id"))
-    subtask_id = int(get_metadata_field(task, "subtask_id"))
     url = (
         f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/tasks/{task_id}"
         f"/subtasks/{subtask_id}/executor-binding"
@@ -52,6 +83,30 @@ def bind_executor_for_dispatch(
     if response.json() != {"status": "bound"}:
         raise RuntimeError("Executor binding acknowledgement is invalid")
 
-    runtime_metadata = metadata.copy()
-    del runtime_metadata[BINDING_TOKEN]
-    return {**task, "metadata": runtime_metadata}
+
+def require_callback_token(
+    task_id: int, executor_name: str, *, sandbox: bool = False
+) -> str:
+    """Refuse reuse of a container whose callback credential is unavailable."""
+    from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+    token = get_sandbox_repository().load_executor_callback_token(
+        task_id, expected_executor_name=executor_name, sandbox=sandbox
+    )
+    if not token:
+        raise RuntimeError("Executor has no callback credential provisioned")
+    return token
+
+
+def prepare_callback_token(
+    task_id: int, executor_name: str, *, sandbox: bool = False
+) -> str:
+    """Return the callback credential for the task's prepared runtime."""
+    from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+    callback_token = get_sandbox_repository().reserve_executor_callback_token(
+        task_id, executor_name, generate_callback_token(), sandbox=sandbox
+    )
+    if not callback_token:
+        raise RuntimeError("Could not persist executor callback credential")
+    return callback_token

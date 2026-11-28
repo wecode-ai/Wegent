@@ -78,12 +78,16 @@ async def sync_executor_attachments(
     url = (
         f"{base_url}/executor-manager/tasks/" f"{sync_request.task_id}/attachments/sync"
     )
+    internal_token = settings.INTERNAL_SERVICE_TOKEN.strip()
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(
                 url,
                 json=sync_request.to_dict(),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {internal_token}",
+                },
             )
             response.raise_for_status()
             sync_response = AttachmentSyncResponse.from_dict(response.json())

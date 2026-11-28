@@ -248,6 +248,7 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         client
             .post(&url)
             .unwrap()
+            .header("authorization", "Bearer responses-fixture-internal-token")
             .json(&json!({
                 "event_type": event_type, "data": data,
                 "task_id": task_id, "subtask_id": subtask_id,
@@ -396,12 +397,14 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
 }
 
 pub(super) async fn start_callback_server(
-    state: AppState,
+    mut state: AppState,
 ) -> (
     String,
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<()>,
 ) {
+    state.internal_chat.internal_service_token =
+        Some("responses-fixture-internal-token".to_owned());
     let state = Arc::new(state);
     let application = Application::build(Arc::clone(&state)).await.unwrap();
     let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(

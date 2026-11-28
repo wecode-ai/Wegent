@@ -332,10 +332,9 @@ async function exerciseRecoveryFailure({
       .poll(async () => (await inspect()).prepare?.status)
       .toBe(mode === 'prepare' ? 500 : 200)
     if (mode === 'prepare') {
-      expect((await inspect()).prepare?.body.detail).toContain(
-        '127.0.0.1:1/wegent/recovery-missing'
-      )
-      expect((await inspect()).restore).toBeNull()
+      const { prepare, restore } = await inspect()
+      expect(prepare?.body.detail).toBe('Docker run error: exited with status 125')
+      expect(restore).toBeNull()
     } else {
       const { prepare, restore } = await inspect()
       expect(prepare?.body.executor_name).toBeTruthy()

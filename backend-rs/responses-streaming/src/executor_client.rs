@@ -86,21 +86,28 @@ impl std::error::Error for ExecutorDispatchError {}
 #[async_trait]
 pub trait ExecutorHttp: Send + Sync {
     /// POST one JSON body and decode the JSON response.
-    async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ExecutorDispatchError>;
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &Value,
+        service_token: &str,
+    ) -> Result<Value, ExecutorDispatchError>;
 }
 
 #[async_trait]
 impl ExecutorHttp for HttpClient {
-    async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ExecutorDispatchError> {
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &Value,
+        service_token: &str,
+    ) -> Result<Value, ExecutorDispatchError> {
         let request = self
             .post(url)
             .map_err(|error| ExecutorDispatchError::Transport(error.to_string()))?
             .header("content-type", "application/json")
             .header("accept", super::openai_client::OPENAI_ACCEPT)
-            .header(
-                "authorization",
-                super::openai_client::OPENAI_DUMMY_AUTHORIZATION,
-            );
+            .header("authorization", format!("Bearer {service_token}"));
         // Same Source client identity as the streaming path; one shared set
         // keeps the two outbound model requests from drifting apart.
         let response = super::openai_client::apply_openai_client_headers(request)
@@ -137,11 +144,12 @@ impl<H: ExecutorHttp> ExecutorClient<H> {
         &self,
         target_url: &str,
         payload: &DispatchPayload,
+        service_token: &str,
     ) -> Result<ExecutorAck, ExecutorDispatchError> {
         let url = executor_responses_url(target_url);
         let body = serde_json::to_value(payload)
             .map_err(|error| ExecutorDispatchError::Body(error.to_string()))?;
-        let response = self.http.post_json(&url, &body).await?;
+        let response = self.http.post_json(&url, &body, service_token).await?;
         serde_json::from_value(response)
             .map_err(|error| ExecutorDispatchError::Body(error.to_string()))
     }
@@ -174,7 +182,13 @@ mod tests {
 
     #[async_trait]
     impl ExecutorHttp for ScriptedHttp {
-        async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ExecutorDispatchError> {
+        async fn post_json(
+            &self,
+            url: &str,
+            body: &Value,
+            service_token: &str,
+        ) -> Result<Value, ExecutorDispatchError> {
+            assert_eq!(service_token, "test-service-token");
             self.posts
                 .lock()
                 .unwrap()
@@ -202,7 +216,11 @@ mod tests {
             ..DispatchPayload::new()
         };
         let ack = client
-            .dispatch("http://host:8001/executor-manager", &payload)
+            .dispatch(
+                "http://host:8001/executor-manager",
+                &payload,
+                "test-service-token",
+            )
             .await
             .expect("dispatch");
         assert_eq!(

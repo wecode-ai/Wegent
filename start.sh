@@ -1884,7 +1884,7 @@ stop_services() {
                     local backend_port
                     backend_port=$(get_runtime_service_port "backend")
                     echo -e "    Calling /api/shutdown/wait (K8s preStop style)..."
-                    curl -s -X POST "http://localhost:${backend_port}/api/shutdown/wait" -m 30 2>/dev/null || true
+                    curl -s -X POST "http://localhost:${backend_port}/api/shutdown/wait" -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN}" -m 30 2>/dev/null || true
                     echo ""
                 fi
 

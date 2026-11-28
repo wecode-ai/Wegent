@@ -19,6 +19,8 @@ from app.services.workspace_archive import archive_service, archive_storage_serv
 
 ACTIVE_TASK_STATES = [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
 
+INTERNAL_SERVICE_HEADERS = {"Authorization": "Bearer test-internal-token"}
+
 
 def _create_task(
     test_db: Session,
@@ -129,7 +131,10 @@ def test_manual_archive_endpoint_updates_task_archive(
         ),
     )
 
-    response = test_client.post(f"/api/internal/workspace-archives/{task.id}/archive")
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/archive",
+        headers=INTERNAL_SERVICE_HEADERS,
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -170,7 +175,10 @@ def test_manual_archive_endpoint_returns_404_without_executor(
         test_db, task_id=1386, user_id=test_user.id, is_active=task_state
     )
 
-    response = test_client.post(f"/api/internal/workspace-archives/{task.id}/archive")
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/archive",
+        headers=INTERNAL_SERVICE_HEADERS,
+    )
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No active executor found for task"
@@ -205,6 +213,7 @@ def test_archive_sandbox_endpoint_uses_sandbox_runtime(
             "executor_name": "sandbox-1501",
             "executor_namespace": "default",
         },
+        headers=INTERNAL_SERVICE_HEADERS,
     )
 
     assert response.status_code == 200
@@ -232,7 +241,17 @@ def test_archive_operations_reject_inactive_tasks(
     response = test_client.post(
         f"/api/internal/workspace-archives/{task.id}/{operation}",
         json={"executor_name": "sandbox-1505", "executor_namespace": "default"},
+        headers=INTERNAL_SERVICE_HEADERS,
     )
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        __import__("app.core.config", fromlist=["settings"]).settings,
+        "INTERNAL_SERVICE_TOKEN",
+        "test-internal-token",
+    )

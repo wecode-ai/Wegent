@@ -10,6 +10,7 @@ import httpx
 import pytest
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
+from app.core.config import settings
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import ExecutionRequest
@@ -28,8 +29,11 @@ from shared.models import ExecutionRequest
         httpx.RemoteProtocolError,
     ],
 )
-async def test_background_dispatch_closes_client_without_replaying(outcome) -> None:
+async def test_background_dispatch_closes_client_without_replaying(
+    outcome, monkeypatch
+) -> None:
     """Use the production SDK retry policy and send each background POST once."""
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "service-token")
     requests = []
     clients = []
 
@@ -76,6 +80,7 @@ async def test_background_dispatch_closes_client_without_replaying(outcome) -> N
                 emitter.emit_start.assert_not_awaited()
 
         assert len(requests) == 1
+        assert requests[0].headers["authorization"] == "Bearer service-token"
         assert len(clients) == 1
         assert clients[0].is_closed()
     finally:

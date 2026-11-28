@@ -14,6 +14,7 @@ to backend's callback endpoint without processing.
 """
 
 import asyncio
+import hmac
 import json
 import os
 import time
@@ -22,16 +23,29 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+)
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from executor_manager.clients.executor_binding import BINDING_SCHEME, BINDING_TOKEN
+from executor_manager.clients.executor_binding import (
+    BINDING_SCHEME,
+    BINDING_TOKEN,
+    CALLBACK_TOKEN,
+)
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
+from executor_manager.services.sandbox.repository import get_sandbox_repository
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
 from shared.models.attachment_sync import AttachmentSyncRequest, AttachmentSyncResponse
@@ -45,6 +59,32 @@ from shared.telemetry.context import (
 from shared.telemetry.context.large_data import log_json_body
 from shared.utils.http_client import traced_async_client
 from shared.utils.ip_util import get_host_ip
+
+
+def verify_internal_service_token(authorization: str = Header(default="")) -> None:
+    """Authenticate Backend requests before provisioning or queuing a runtime."""
+    expected_token = (os.getenv("INTERNAL_SERVICE_TOKEN") or "").strip()
+    if not expected_token:
+        raise HTTPException(
+            status_code=401, detail="Internal service token is not configured"
+        )
+
+    scheme, _, provided_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not provided_token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    if not hmac.compare_digest(provided_token.encode(), expected_token.encode()):
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+
+def verify_executor_dispatch_service(
+    authorization: str = Header(default=""),
+    internal_authorization: str = Header(
+        default="", alias="X-Wegent-Internal-Authorization"
+    ),
+) -> None:
+    """Allow the dispatcher to keep its turn-binding grant in Authorization."""
+    verify_internal_service_token(internal_authorization or authorization)
+
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -235,8 +275,49 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+def verify_executor_callback(event_data: dict, http_request: Request) -> None:
+    """Require the task-scoped credential issued for this callback stream."""
+    authorization = http_request.headers.get("Authorization", "")
+    scheme, _, provided_token = authorization.partition(" ")
+    if scheme != BINDING_SCHEME or not provided_token:
+        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+
+    task_id = event_data.get("task_id")
+    if type(task_id) is not int or task_id <= 0:
+        raise HTTPException(status_code=401, detail="Executor callback task is invalid")
+
+    repository = get_sandbox_repository()
+    expected_token = repository.load_executor_callback_token(task_id)
+    if expected_token and hmac.compare_digest(
+        provided_token.encode(), expected_token.encode()
+    ):
+        return
+
+    executor_name = event_data.get("executor_name")
+    if isinstance(executor_name, str) and executor_name:
+        sandbox_token = repository.load_executor_callback_token(
+            task_id, expected_executor_name=executor_name, sandbox=True
+        )
+        if sandbox_token and hmac.compare_digest(
+            provided_token.encode(), sandbox_token.encode()
+        ):
+            return
+    raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+
+def verify_executor_callback_from_body(
+    event_data: dict = Body(...), http_request: Request = None
+) -> None:
+    """FastAPI dependency adapter for task-scoped callback authentication."""
+    verify_executor_callback(event_data, http_request)
+
+
 @api_router.post("/callback")
-async def callback_handler(event_data: dict = Body(...), http_request: Request = None):
+async def callback_handler(
+    event_data: dict = Body(...),
+    http_request: Request = None,
+    _: None = Depends(verify_executor_callback_from_body),
+):
     """
     Receive callback interface for executor task progress and completion.
 
@@ -284,9 +365,14 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
         # Pure transparent proxy - forward to backend
         task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
         callback_url = f"{task_api_domain}/api/internal/callback"
+        internal_token = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
 
         async with traced_async_client(timeout=30.0) as client:
-            response = await client.post(callback_url, json=event_data)
+            response = await client.post(
+                callback_url,
+                json=event_data,
+                headers={"Authorization": f"Bearer {internal_token}"},
+            )
             if response.status_code != 200:
                 logger.warning(
                     f"[Callback] Backend returned error: "
@@ -385,7 +471,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
             result = executor.delete_executor(request.executor_name)
 
         # Clean up running task state and the warm-pool binding if we got task_id.
-        if task_id_str:
+        if task_id_str and result.get("status") in ("success", "not_found"):
             try:
                 from executor_manager.services.heartbeat_manager import (
                     HeartbeatType,
@@ -399,6 +485,10 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                 )
 
                 task_id = int(task_id_str)
+                if not get_sandbox_repository().delete_executor_binding(
+                    task_id, expected_executor_name=request.executor_name
+                ):
+                    return result
                 tracker = get_running_task_tracker()
                 heartbeat_mgr = get_heartbeat_manager()
 
@@ -408,8 +498,6 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                     f"(source: delete_executor, executor_name={request.executor_name})"
                 )
                 tracker.remove_running_task(task_id)
-                if result.get("status") in ("success", "not_found"):
-                    get_sandbox_repository().delete_executor_binding(task_id)
             except Exception as e:
                 logger.warning(f"Failed to clean up running task tracker: {e}")
 
@@ -1157,25 +1245,26 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
         if request.executor_name:
-            # Direct cancel to specified container
-            port, error = await asyncio.to_thread(
-                executor._get_container_port,
+            # Direct cancel to specified executor
+            address_result = await asyncio.to_thread(
+                executor.get_container_address,
                 request.executor_name,
             )
-            if not port:
+            if address_result.get("status") != "success":
+                error = address_result.get(
+                    "error_msg",
+                    f"Executor {request.executor_name} not found",
+                )
                 logger.warning(
-                    f"[v1/cancel] Container {request.executor_name} not found: {error}"
+                    f"[v1/cancel] Executor {request.executor_name} not found: {error}"
                 )
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Container {request.executor_name} not found: {error}",
+                    detail=f"Executor {request.executor_name} not found: {error}",
                 )
 
-            # Send cancel request to container
-            cancel_url = (
-                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
-                f"?task_id={request.task_id}"
-            )
+            base_url = address_result["base_url"].rstrip("/")
+            cancel_url = f"{base_url}/api/tasks/cancel?task_id={request.task_id}"
             if request.subtask_id is not None:
                 cancel_url += f"&subtask_id={request.subtask_id}"
 
@@ -1239,7 +1328,9 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.post("/executors/prepare")
+@api_router.post(
+    "/executors/prepare", dependencies=[Depends(verify_internal_service_token)]
+)
 async def prepare_executor(request: ExecutionRequest, http_request: Request):
     """Prepare a normal executor runtime without dispatching the task."""
     client_ip = http_request.client.host if http_request.client else "unknown"
@@ -1253,7 +1344,6 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
     try:
         task_dict = request.to_dict()
         task_dict["prepare_only"] = True
-
         result_map = await asyncio.to_thread(task_processor.process_tasks, [task_dict])
         result = result_map.get(request.task_id) or next(
             iter(result_map.values()),
@@ -1290,7 +1380,10 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.post("/tasks/{task_id}/attachments/sync")
+@api_router.post(
+    "/tasks/{task_id}/attachments/sync",
+    dependencies=[Depends(verify_internal_service_token)],
+)
 async def sync_task_attachments(
     task_id: int, payload: Dict[str, Any], http_request: Request
 ):
@@ -1434,7 +1527,9 @@ async def _cleanup_task_heartbeat(task_id: int) -> None:
         logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
 
 
-@api_router.post("/v1/responses")
+@api_router.post(
+    "/v1/responses", dependencies=[Depends(verify_executor_dispatch_service)]
+)
 async def openai_responses(http_request: Request):
     """OpenAI Responses API endpoint - async queue mode.
 
@@ -1476,7 +1571,9 @@ async def openai_responses(http_request: Request):
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
     # Only the backend-to-manager authorization header carries this grant.
-    metadata.pop(BINDING_TOKEN, None)
+    for key in (BINDING_TOKEN, CALLBACK_TOKEN, "callback_url"):
+        metadata.pop(key, None)
+        request_data.pop(key, None)
     scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
     if scheme == BINDING_SCHEME and credential:
         metadata[BINDING_TOKEN] = credential
@@ -1797,6 +1894,14 @@ async def restore_executor_workspace(
         logger.error(f"[Restore] Error restoring task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Load wecode-specific routes if available
+try:
+    from executor_manager.wecode.routers import register as _register_wecode_routes
+
+    _register_wecode_routes(api_router)
+except ImportError:
+    pass
 
 # Mount api_router to app
 app.include_router(api_router)

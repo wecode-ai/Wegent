@@ -537,6 +537,14 @@ pub struct InternalChatConfig {
 }
 
 impl InternalChatConfig {
+    /// Check the service credential before opening a Backend listener.
+    pub fn require_service_token(&self) -> Result<(), &'static str> {
+        self.internal_service_token
+            .as_ref()
+            .map(|_| ())
+            .ok_or("INTERNAL_SERVICE_TOKEN is required for Backend internal API authentication")
+    }
+
     /// Read internal chat storage settings from the environment.
     pub fn from_env() -> Self {
         let internal_service_token = env_or_dotenv("INTERNAL_SERVICE_TOKEN")

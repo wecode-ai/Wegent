@@ -81,10 +81,11 @@ impl CallbackResponse {
 
 /// `POST /api/internal/callback`.
 ///
-/// The source route is mounted without an auth dependency, so it is public.
-#[brz_http_server::post("/api/internal/callback", access = public)]
+/// The trusted executor service must present the internal-service bearer token.
+#[brz_http_server::post("/api/internal/callback")]
 async fn handle_callback(
     #[inject(state)] state: &AppState,
+    #[auth] _service: crate::internal_auth::InternalService,
     body: serde_json::Value,
 ) -> Result<CallbackResponse, FastApiError> {
     let request = parse_request(&body)?;

@@ -94,12 +94,12 @@ struct SandboxRestoreResponse {
 /// `POST /api/internal/workspace-archives/{task_id}/restore-sandbox`.
 #[brz_http_server::post(
     "/api/internal/workspace-archives/:task_id/restore-sandbox",
-    group = workspace_archive,
-    access = public
+    group = workspace_archive
 )]
 async fn restore_sandbox(
     #[inject(state)] state: &ArchiveState,
     task_id: i64,
+    #[auth] _service: wegent_identity::internal_auth::InternalService,
     body: Value,
 ) -> Result<SandboxRestoreResponse, FastApiError> {
     let request = SandboxArchiveRequest::from_value(body)?;

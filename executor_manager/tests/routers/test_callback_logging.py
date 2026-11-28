@@ -3,15 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from executor_manager.routers import routers
 
 
 class _FakeAsyncClient:
-    async def post(self, url, json):
+    async def post(self, url, json, headers=None):
         return SimpleNamespace(status_code=200, text="ok")
 
 
@@ -27,8 +29,8 @@ class _RecordingAsyncClient:
     def __init__(self, requests):
         self.requests = requests
 
-    async def post(self, url, json):
-        self.requests.append((url, json))
+    async def post(self, url, json, headers=None):
+        self.requests.append((url, json, headers))
         return SimpleNamespace(status_code=200, text="ok")
 
 
@@ -41,6 +43,35 @@ class _RecordingClientContext:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+@pytest.fixture(autouse=True)
+def bound_callback(mocker):
+    mocker.patch.object(
+        routers,
+        "get_sandbox_repository",
+        return_value=mocker.Mock(
+            load_executor_callback_token=lambda _: "callback-token"
+        ),
+    )
+
+
+@pytest.fixture
+def client():
+    with patch(
+        "executor_manager.executors.docker.executor.subprocess.run",
+        return_value=MagicMock(stdout="Docker version 27.0.0", returncode=0),
+    ):
+        from executor_manager.routers.routers import app
+
+        return TestClient(app)
+
+
+def _callback_request(authorization: str = "WegentExecutorBinding callback-token"):
+    return SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={"Authorization": authorization},
+    )
 
 
 class _FakeRecordingSpan:
@@ -60,7 +91,7 @@ async def test_callback_handler_logs_callback_summary_without_body(mocker):
         "validation_id": "validation-1",
         "delta": "hello",
     }
-    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    http_request = _callback_request()
     mocked_info = mocker.patch.object(routers.logger, "info")
     mocker.patch.object(
         routers, "traced_async_client", return_value=_FakeClientContext()
@@ -90,7 +121,7 @@ async def test_callback_handler_logs_executor_error_details(mocker):
             "message": "interactive form proxy failed",
         },
     }
-    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    http_request = _callback_request()
     mocked_warning = mocker.patch.object(routers.logger, "warning")
     mocker.patch.object(
         routers, "traced_async_client", return_value=_FakeClientContext()
@@ -135,7 +166,7 @@ async def test_callback_handler_updates_validation_without_local_registry(mocker
             }
         },
     }
-    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    http_request = _callback_request()
     mocker.patch.object(
         routers, "traced_async_client", return_value=_FakeClientContext()
     )
@@ -175,7 +206,7 @@ async def test_validation_error_uses_executor_error_message(mocker):
     )
 
     assert len(requests) == 1
-    url, payload = requests[0]
+    url, payload, headers = requests[0]
     assert url.endswith("/api/shells/validation-status/validation-1")
     assert payload["valid"] is False
     assert payload["errorMessage"] == "claude command not found"
@@ -225,7 +256,7 @@ async def test_callback_failure_does_not_clear_running_task(mocker):
         "subtask_id": 7,
         "validation_id": "validation-1",
     }
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = _callback_request()
     upstream = httpx.Response(503, json={"detail": "Database unavailable"})
     context = mocker.MagicMock()
     context.__aenter__.return_value.post = mocker.AsyncMock(return_value=upstream)
@@ -244,3 +275,109 @@ async def test_callback_failure_does_not_clear_running_task(mocker):
     assert response.headers["content-type"] == "application/json"
     update_validation.assert_not_awaited()
     get_tracker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_proxy_sends_internal_service_token(mocker) -> None:
+    requests = []
+    event = {"event_type": "error", "task_id": 42, "subtask_id": 7}
+    mocker.patch.dict("os.environ", {"INTERNAL_SERVICE_TOKEN": "proxy-token"})
+    mocker.patch(
+        "executor_manager.services.task_heartbeat_manager.get_running_task_tracker"
+    )
+    mocker.patch.object(
+        routers,
+        "traced_async_client",
+        return_value=_RecordingClientContext(requests),
+    )
+    mocker.patch.object(routers, "set_task_context")
+
+    await routers.callback_handler(event, _callback_request())
+
+    assert requests
+    assert all(
+        headers == {"Authorization": "Bearer proxy-token"} for _, _, headers in requests
+    )
+
+
+def test_callback_route_rejects_missing_token(client, mocker) -> None:
+    repository = mocker.Mock(load_executor_callback_token=lambda _: "callback-token")
+    mocker.patch.object(routers, "get_sandbox_repository", return_value=repository)
+
+    response = client.post(
+        f"{routers.ROUTE_PREFIX}/callback",
+        json={"event_type": "error", "task_id": 42},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication scheme"}
+
+
+def test_callback_route_rejects_wrong_token(client, mocker) -> None:
+    repository = mocker.Mock(load_executor_callback_token=lambda _: "callback-token")
+    mocker.patch.object(routers, "get_sandbox_repository", return_value=repository)
+
+    response = client.post(
+        f"{routers.ROUTE_PREFIX}/callback",
+        headers={"Authorization": "WegentExecutorBinding wrong-token"},
+        json={"event_type": "error", "task_id": 42},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication token"}
+
+
+def test_callback_route_accepts_task_scoped_token(client, mocker) -> None:
+    repository = mocker.Mock(load_executor_callback_token=lambda _: "callback-token")
+    mocker.patch.object(routers, "get_sandbox_repository", return_value=repository)
+    upstream_context = mocker.MagicMock()
+    upstream_context.__aenter__.return_value.post = mocker.AsyncMock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    mocker.patch.object(routers, "traced_async_client", return_value=upstream_context)
+    mocker.patch.object(routers, "set_task_context")
+
+    response = client.post(
+        f"{routers.ROUTE_PREFIX}/callback",
+        headers={"Authorization": "WegentExecutorBinding callback-token"},
+        json={"event_type": "response.created", "task_id": 42, "subtask_id": 7},
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("executor_name", "expected_status"),
+    [("archive-sandbox", 200), ("cloud-executor", 401)],
+)
+def test_sandbox_callback_is_bound_to_its_runtime(
+    client, mocker, executor_name, expected_status
+):
+    def load_token(task_id, *, expected_executor_name=None, sandbox=False):
+        assert task_id == 42
+        if not sandbox:
+            return "cloud-token"
+        return "sandbox-token" if expected_executor_name == "archive-sandbox" else None
+
+    repository = mocker.Mock(load_executor_callback_token=load_token)
+    mocker.patch.object(routers, "get_sandbox_repository", return_value=repository)
+    upstream_context = mocker.MagicMock()
+    upstream_post = mocker.AsyncMock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    upstream_context.__aenter__.return_value.post = upstream_post
+    mocker.patch.object(routers, "traced_async_client", return_value=upstream_context)
+
+    response = client.post(
+        f"{routers.ROUTE_PREFIX}/callback",
+        headers={"Authorization": "WegentExecutorBinding sandbox-token"},
+        json={
+            "event_type": "response.created",
+            "task_id": 42,
+            "subtask_id": 7,
+            "executor_name": executor_name,
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert upstream_post.await_count == (1 if expected_status == 200 else 0)

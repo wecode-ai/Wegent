@@ -519,6 +519,7 @@ async fn terminal_callback(
     };
     crate::internal_callback::handle_callback(
         app,
+        crate::internal_auth::InternalService,
         serde_json::json!({
             "task_id": 12,
             "subtask_id": 43,

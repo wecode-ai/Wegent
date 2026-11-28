@@ -60,6 +60,18 @@ def test_manager_scope_prefers_explicit_configuration(
     )
 
 
+def test_delete_sandbox_preserves_retry_state_when_session_lookup_fails(
+    mocker, mock_redis_client
+):
+    repository = _create_repository(mocker, mock_redis_client)
+    mock_redis_client.hget.side_effect = OSError("Redis temporarily unavailable")
+
+    assert repository.delete_sandbox("12345") is False
+
+    mock_redis_client.zrem.assert_not_called()
+    mock_redis_client.delete.assert_not_called()
+
+
 def test_manager_scope_uses_stable_heartbeat_url(
     monkeypatch, mocker, mock_redis_client
 ):

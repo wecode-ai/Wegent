@@ -131,7 +131,7 @@ pub(crate) fn start_event<R: Redis>(
 /// Input to an executor dispatch job.
 pub(crate) enum ExecutorDispatchBody {
     #[cfg(test)]
-    Prepared(Result<crate::executor_binding::DispatchRequest, String>),
+    Prepared(Box<Result<crate::executor_binding::DispatchRequest, String>>),
     Recover(Box<ExecutionRequest>),
 }
 
@@ -297,7 +297,7 @@ where
         } => {
             let body = match body {
                 #[cfg(test)]
-                ExecutorDispatchBody::Prepared(body) => body,
+                ExecutorDispatchBody::Prepared(body) => *body,
                 ExecutorDispatchBody::Recover(mut request) => {
                     let Some(app) = consumer.app.upgrade() else {
                         tracing::warn!(
@@ -754,6 +754,10 @@ fn executor_request(
                         crate::executor_binding::AUTHORIZATION_SCHEME,
                         dispatch.binding_token
                     ),
+                )
+                .header(
+                    "x-wegent-internal-authorization",
+                    format!("Bearer {}", dispatch.service_token),
                 ),
         )
         .json(&dispatch.body),

@@ -82,7 +82,10 @@ async def test_delete_executor_supports_legacy_executor_signature(mocker):
 
 
 @pytest.mark.asyncio
-async def test_delete_executor_clears_warmpool_management_state(mocker):
+@pytest.mark.parametrize("binding_revoked", [True, False])
+async def test_delete_executor_clears_only_its_management_state(
+    mocker, binding_revoked
+):
     http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
     mocker.patch.object(
         routers.ExecutorDispatcher,
@@ -101,6 +104,7 @@ async def test_delete_executor_clears_warmpool_management_state(mocker):
         return_value=tracker,
     )
     repository = mocker.MagicMock()
+    repository.delete_executor_binding.return_value = binding_revoked
     mocker.patch(
         "executor_manager.services.sandbox.repository.get_sandbox_repository",
         return_value=repository,
@@ -112,6 +116,12 @@ async def test_delete_executor_clears_warmpool_management_state(mocker):
     )
 
     assert result == {"status": "success", "executor_name": "executor-claim-1"}
-    heartbeat_manager.delete_heartbeat.assert_awaited_once()
-    tracker.remove_running_task.assert_called_once_with(123)
-    repository.delete_executor_binding.assert_called_once_with(123)
+    repository.delete_executor_binding.assert_called_once_with(
+        123, expected_executor_name="executor-claim-1"
+    )
+    if binding_revoked:
+        heartbeat_manager.delete_heartbeat.assert_awaited_once()
+        tracker.remove_running_task.assert_called_once_with(123)
+    else:
+        heartbeat_manager.delete_heartbeat.assert_not_awaited()
+        tracker.remove_running_task.assert_not_called()

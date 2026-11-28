@@ -62,7 +62,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         jwt_algorithm: auth.algorithm.clone(),
         auth,
         internal_chat: config::InternalChatConfig {
-            internal_service_token: None,
+            internal_service_token: Some("test-service-token".into()),
             max_extracted_text_length: 500_000,
             attachment_inject_max_chars: 32_000,
         },

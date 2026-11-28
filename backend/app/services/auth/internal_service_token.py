@@ -75,7 +75,7 @@ def verify_internal_service_token(
 
     # Use constant-time comparison to prevent timing attacks
     provided_token = credentials.credentials
-    if not hmac.compare_digest(provided_token, expected_token):
+    if not hmac.compare_digest(provided_token.encode(), expected_token.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",

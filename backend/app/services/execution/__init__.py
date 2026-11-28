@@ -264,12 +264,16 @@ class _ExecutorRuntimeClient:
         base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
         url = f"{base_url}/executor-manager/executors/prepare"
 
+        internal_token = (settings.INTERNAL_SERVICE_TOKEN or "").strip()
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     json=request.to_dict(),
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {internal_token}",
+                    },
                 )
                 response.raise_for_status()
                 data = response.json()

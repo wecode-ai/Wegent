@@ -5,9 +5,11 @@
 import importlib
 import json
 import os
+from collections.abc import ItemsView
 from typing import Any, Dict
 
 from executor_manager.config.config import EXECUTOR_CONFIG
+from executor_manager.executors.base import Executor
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -85,6 +87,11 @@ class ExecutorDispatcher:
         return executors
 
     _executors = _load_executors.__func__()
+
+    @classmethod
+    def registered_executors(cls) -> ItemsView[str, Executor]:
+        """Return the configured executors without dispatch fallback."""
+        return cls._executors.items()
 
     @classmethod
     def get_executor(cls, task_type: str):

@@ -11,13 +11,17 @@ This module handles scheduled tasks for sandbox management:
 Uses APScheduler for task scheduling.
 """
 
+import asyncio
 import os
 import time
-from typing import TYPE_CHECKING, Optional
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Callable, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from executor_manager.common.config import get_config
+from executor_manager.executors.dispatcher import ExecutorDispatcher
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -36,9 +40,10 @@ QUEUE_STALL_CHECK_INTERVAL = int(
 class SandboxScheduler:
     """Scheduler for sandbox background tasks.
 
-    Manages two periodic jobs:
+    Manages periodic lifecycle jobs:
     - Heartbeat check: Runs every HEARTBEAT_CHECK_INTERVAL (default 10s)
     - Sandbox GC: Runs every GC_INTERVAL (default 1 hour)
+    - Executor callback lease reconciliation: Runs before the binding TTL elapses
     """
 
     def __init__(self, sandbox_manager: "SandboxManager"):
@@ -110,6 +115,20 @@ class SandboxScheduler:
             replace_existing=True,
         )
 
+        ttl = get_config().executor.executor_binding_ttl
+        for executor_type, executor in ExecutorDispatcher.registered_executors():
+            renew = getattr(executor, "renew_callback_bindings", None)
+            if renew is None:
+                continue
+            self._scheduler.add_job(
+                self._renew_callback_bindings,
+                IntervalTrigger(seconds=min(300, ttl / 3)),
+                args=(renew,),
+                next_run_time=datetime.now(timezone.utc),
+                id=f"executor_callback_lease_{executor_type}",
+                replace_existing=True,
+            )
+
         self._scheduler.start()
         logger.info(
             f"[SandboxScheduler] Started with jobs: "
@@ -118,6 +137,9 @@ class SandboxScheduler:
             f"sandbox_gc (every {GC_INTERVAL}s), "
             f"queue_stall_check (every {QUEUE_STALL_CHECK_INTERVAL}s)"
         )
+
+    async def _renew_callback_bindings(self, renew: Callable[[], None]) -> None:
+        await asyncio.to_thread(renew)
 
     async def stop(self) -> None:
         """Stop the scheduler."""

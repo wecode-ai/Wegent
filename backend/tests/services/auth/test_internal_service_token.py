@@ -27,11 +27,12 @@ def test_missing_authorization_is_rejected_when_token_is_configured(monkeypatch)
     assert exc_info.value.detail == "Missing authentication token"
 
 
-def test_invalid_authorization_is_rejected_when_token_is_configured(monkeypatch):
+@pytest.mark.parametrize("token", ["invalid-token", "inválid-token"])
+def test_invalid_authorization_is_rejected_when_token_is_configured(monkeypatch, token):
     monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
 
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_service_token(credentials=_credentials("invalid-token"))
+        verify_internal_service_token(credentials=_credentials(token))
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Invalid authentication token"

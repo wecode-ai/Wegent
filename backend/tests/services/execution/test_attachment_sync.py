@@ -2,11 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for executor attachment sync prompt updates."""
+"""Tests for executor attachment synchronization and prompt updates."""
 
+import httpx
+import pytest
+
+from app.services.execution import attachment_sync
 from app.services.execution.attachment_sync import (
     apply_attachment_sync_response,
     rewrite_prompt_with_synced_attachments,
+    sync_executor_attachments,
 )
 from shared.models import AttachmentSyncItem, AttachmentSyncResponse, ExecutionRequest
 
@@ -149,3 +154,26 @@ def test_rewrite_prompt_with_failed_attachment_warns_once_for_content_blocks():
     combined = "\n".join(block["text"] for block in rewritten)
     assert "[Attachment 17 unavailable - download failed]" in combined
     assert combined.count("failed to download") == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_executor_attachments_authenticates_to_manager(monkeypatch):
+    monkeypatch.setattr(
+        attachment_sync.settings, "INTERNAL_SERVICE_TOKEN", " service-token "
+    )
+    request = ExecutionRequest(task_id=78, subtask_id=214, attachments=[{"id": 17}])
+
+    def respond(incoming: httpx.Request) -> httpx.Response:
+        assert incoming.url.path == "/executor-manager/tasks/78/attachments/sync"
+        assert incoming.headers["Authorization"] == "Bearer service-token"
+        return httpx.Response(
+            200,
+            json={"task_id": 78, "subtask_id": 214, "executor_name": "executor-78"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(attachment_sync.httpx, "AsyncClient", lambda **_: client)
+
+    response = await sync_executor_attachments(request)
+
+    assert response.executor_name == "executor-78"

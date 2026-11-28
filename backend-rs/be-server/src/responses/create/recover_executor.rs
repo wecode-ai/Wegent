@@ -228,7 +228,15 @@ async fn recover_executor(
     prepare.skip_git_clone = Some(restore_archive);
     prepare.executor_name = None;
     prepare.executor_namespace = None;
-    let executor = state.executor_manager.prepare_executor(&prepare).await?;
+    let service_token = state
+        .internal_chat
+        .internal_service_token
+        .as_deref()
+        .context("Executor Manager service credential is not configured")?;
+    let executor = state
+        .executor_manager
+        .prepare_executor(&prepare, service_token)
+        .await?;
     let namespace = executor
         .executor_namespace
         .as_deref()

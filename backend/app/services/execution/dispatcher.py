@@ -25,6 +25,7 @@ from typing import Any, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.async_utils import run_in_main_loop
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
 from app.services.chat.storage.db import TerminalPersistenceError
@@ -803,7 +804,7 @@ class ExecutionDispatcher:
         # Create OpenAI client pointing to executor-manager
         async with AsyncOpenAI(
             base_url=base_url,
-            api_key="dummy",  # Not used by executor_manager but required by client
+            api_key=settings.INTERNAL_SERVICE_TOKEN.strip(),
             timeout=300.0,
             max_retries=0,  # Queue submission is not idempotent; never replay it.
         ) as client:

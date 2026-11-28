@@ -608,6 +608,7 @@ jobs:
       HOME: /root
       UV_PYTHON: "3.11"
       UV_MANAGED_PYTHON: "true"
+      SANDBOX_EXECUTOR_BINDING_TTL: ${{ matrix.shardIndex == 1 && '9' || '86400' }}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: test-secret-key-for-ci-testing
       ENVIRONMENT: development
@@ -1097,6 +1098,7 @@ jobs:
           export NETWORK="$(docker inspect "$(hostname)" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}{{end}}')"
           export TASK_API_DOMAIN="http://$manager_ip:8000"
           export EXECUTOR_MANAGER_CALLBACK_URL="http://$manager_ip:8001/executor-manager/callback"
+          export CALLBACK_URL="$EXECUTOR_MANAGER_CALLBACK_URL"
           uv run --no-sync uvicorn main:app --host 0.0.0.0 --port 8001 \
             > workspace-manager.log 2>&1 &
           echo $! > workspace-manager.pid
@@ -1113,6 +1115,14 @@ jobs:
       - name: Verify backend is running
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
+
+      - name: Verify Docker Executor callbacks and dispatch past binding TTL
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/docker_callback_lease.py
 
       - name: Run DingTalk private-chat AI Card E2E
         if: matrix.shardIndex == 1
@@ -1285,6 +1295,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           E2E_API_URL: http://localhost:8000
+          E2E_INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-notification-directives
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
