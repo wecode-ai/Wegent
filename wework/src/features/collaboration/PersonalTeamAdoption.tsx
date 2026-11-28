@@ -98,6 +98,7 @@ export function PersonalTeamAdoption({
       const matched = new Map<string, string>()
       const accountTeamIds = new Map<string, number>()
       for (const definition of account?.definitions ?? []) {
+        if (!definition.team) continue
         const { namespace, name } = definition.team.metadata
         const id = owned.get(JSON.stringify([namespace, name]))
         if (id) accountTeamIds.set(definition.roleId, id)
