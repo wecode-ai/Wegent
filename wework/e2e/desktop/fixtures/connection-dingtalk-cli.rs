@@ -179,6 +179,11 @@ fn main() {
                 && option(&arguments, "--conversation-ids") == Some("scoped-group") =>
         {
             record("selected-group-messages");
+            if let Some(path) = env::var_os("WEWORK_E2E_DINGTALK_HANDBOOK_MESSAGES") {
+                let payload = fs::read_to_string(path).unwrap();
+                print!("{payload}");
+                return;
+            }
             (EMPTY_MESSAGES, 0)
         }
         ["chat", "message", "search-advanced", ..]

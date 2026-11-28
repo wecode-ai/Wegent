@@ -205,7 +205,7 @@ export function createDesktopScenario(options) {
       await fixture.prepareApp(context)
       await writeFile(messagesPath, dingTalkMessages([]))
       await writeFile(handbookPath, handbookContent)
-      context.appEnvironment.WEWORK_E2E_DINGTALK_GROUP_MESSAGES = messagesPath
+      context.appEnvironment.WEWORK_E2E_DINGTALK_HANDBOOK_MESSAGES = messagesPath
       context.appEnvironment.WEWORK_E2E_DINGTALK_HANDBOOK_REPLY = '1'
     },
     async handleHttp(req, response, url) {

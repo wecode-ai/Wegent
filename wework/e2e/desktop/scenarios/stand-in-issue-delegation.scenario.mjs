@@ -65,6 +65,11 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, wor
     ...standInRoleFixture(profile.executionDeviceId, ROLE),
     name: ROLE_NAME,
     enabled: true,
+    workspace: {
+      projectKey: 'welcome-development-workspace',
+      executionMode: 'current_workspace',
+      workspacePath,
+    },
     prompt: `${MARKER}：在我确认的本地仓库 ${workspacePath} 修复开发事项并测试。`,
     collaboration: {
       enabled: true,
@@ -213,6 +218,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, wor
     async verify(control) {
       await environment.waitForConnectedAppDevice()
       const rpc = (method, values) => requestExecutor(control, method, values, uiTimeoutMs)
+      await control.command('seedLocalProject', 'body', {
+        value: JSON.stringify({
+          projectKey: 'welcome-development-workspace',
+          name: '开发助理验证',
+          path: workspacePath,
+        }),
+      })
       await writeFile(source, BAD_SOURCE)
       const openHome = async () => {
         await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
