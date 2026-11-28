@@ -54,6 +54,14 @@ export function getTelemetryConfig(): TelemetryConfig {
   }
 }
 
+export function detailedTelemetryPreference(enabled: boolean) {
+  const { posthogHost, posthogKey } = getTelemetryConfig()
+  return {
+    detailedTelemetryEnabled: enabled,
+    detailedTelemetryDestination: enabled ? { host: posthogHost, projectKey: posthogKey } : null,
+  }
+}
+
 export function isOfficialReleaseBuild(): boolean {
   const { releaseChannel } = getTelemetryConfig()
   return releaseChannel === 'stable' || releaseChannel === 'beta'

@@ -4,6 +4,7 @@ import { createComposerLayoutChecks } from '../modules/streaming-text-composer-l
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createStreamingCompletionChecks } from '../modules/streaming-text-completion.mjs'
+import { createOversizedEventChecks } from '../modules/streaming-oversized-event.mjs'
 import { createStreamingCommandCancellationChecks } from '../modules/streaming-command-cancellation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
@@ -88,6 +89,7 @@ export function createDesktopScenario({
   subagentTextRelease,
 }) {
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
+  const oversizedEvent = createOversizedEventChecks({ resultDir, uiTimeoutMs })
   const commandCancellation = createStreamingCommandCancellationChecks({
     workspacePath,
     resultDir,
@@ -193,6 +195,7 @@ export function createDesktopScenario({
     cleanup() {
       backgroundWindowRefresh.cleanup()
       completion.cleanup()
+      oversizedEvent.cleanup()
       commandCancellation.cleanup()
       conversationScrollbar.cleanup()
       guidanceOrder.cleanup()
@@ -264,6 +267,7 @@ export function createDesktopScenario({
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
       if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
+      if (await oversizedEvent.handleModelRequest(body, response, responseId)) return true
       if (await completion.handleModelRequest(body, response, responseId)) {
         completionRequestHeaders = request.headers
         return true
@@ -590,6 +594,7 @@ export function createDesktopScenario({
         [
           'streaming-content',
           async control => {
+            await oversizedEvent.verify(control)
             await completion.verify(control)
             assert.match(
               completionRequestHeaders?.['x-wework-version'] ?? '',

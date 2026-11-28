@@ -1,3 +1,4 @@
+import type { ChatErrorType } from '@wegent/chat-core/chat-error'
 import { track } from '@/telemetry/client'
 import { activeRuntimeRunTraceId, mintRuntimeRunTraceId } from '@/telemetry/traceId'
 import { toKnownAiModelId, toKnownAiProvider } from '@/telemetry/modelCatalog'
@@ -48,7 +49,8 @@ export function createAiGenerationTelemetry(read: () => AiGenerationTelemetryInp
     address: RuntimeTaskAddress,
     subtaskId: string,
     result: 'success' | 'failure' | 'cancelled',
-    contextUsage?: RuntimeContextUsage
+    contextUsage?: RuntimeContextUsage,
+    errorType?: ChatErrorType
   ) => {
     const key = generationKey(address, subtaskId)
     const generation = pending.get(key)
@@ -85,6 +87,7 @@ export function createAiGenerationTelemetry(read: () => AiGenerationTelemetryInp
       ...(generation.responseSizeBytes !== undefined && {
         $ai_response_body_size: generation.responseSizeBytes,
       }),
+      ...(result === 'failure' && errorType && { error_type: errorType }),
       result,
     })
   }

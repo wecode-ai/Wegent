@@ -15,6 +15,8 @@ import {
   type SmartAppGeneratedEventMap,
 } from './generated/smartAppEvents'
 
+import { CHAT_ERROR_TYPES, type ChatErrorType } from '@wegent/chat-core/chat-error'
+
 export const EXECUTION_TARGETS = ['local', 'cloud', 'remote', 'unknown'] as const
 export type ExecutionTarget = (typeof EXECUTION_TARGETS)[number]
 export type TelemetryResult = 'success' | 'cancelled' | 'failure'
@@ -43,6 +45,7 @@ export interface AnalyticsEventMap
     $ai_latency: number
     $ai_cost?: number
     $ai_time_to_first_token?: number
+    error_type?: ChatErrorType
     $ai_response_body_size?: number
     result: 'success' | 'failure' | 'cancelled'
   }
@@ -307,6 +310,7 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
     '$ai_cost',
     '$ai_time_to_first_token',
     '$ai_response_body_size',
+    'error_type',
     'result',
   ],
   app_started: ['surface'],
@@ -389,6 +393,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     $ai_parent_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
     $ai_model: { maxLength: 128, pattern: SAFE_LABEL_PATTERN },
     $ai_provider: KNOWN_AI_PROVIDERS,
+    error_type: CHAT_ERROR_TYPES,
     result: ['success', 'failure', 'cancelled'],
   },
   app_started: { surface: ['main', 'popout', 'workspace'] },
