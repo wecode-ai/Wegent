@@ -5,15 +5,26 @@ use super::stand_in_shared_conversation::{
 };
 use super::*;
 use crate::task_runtime::personal_stand_in::{stand_in_team, team_scope_id};
-use sha2::{Digest, Sha256};
 
 const IDENTITY_INSTRUCTIONS: &str = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. When specialist delegation tools are available, use them for explicit owner requests that fit the specialist's responsibilities. Follow any role the user names, assign a clear match automatically, and ask when choosing between roles would change the outcome. Coordinate branches and report the final result here after they finish. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
+
+// The account API exposes the primary Bot's Ghost as assistantPrompt. Legacy
+// Solo profiles use that field directly; a bound Pipeline supplies each Ghost at its stage.
+fn account_profile_prompt<'a>(
+    prompt: &'a str,
+    bots: &Value,
+    mode: Option<&str>,
+    account_team: bool,
+) -> Option<&'a str> {
+    (!account_team && mode != Some("pipeline") && bots[0]["system_prompt"].as_str() != Some(prompt))
+        .then_some(prompt)
+}
 
 fn identity_system_prompt(
     base: &str,
     prompt: Option<&str>,
     preferences: Option<&str>,
-    collaboration: bool,
+    scope: &Value,
 ) -> String {
     let mut system = format!("{base}\n\n{IDENTITY_INSTRUCTIONS}");
     for value in [prompt, preferences]
@@ -26,8 +37,11 @@ fn identity_system_prompt(
     }
     append_connection_instructions(&mut system);
     append_conversation_instructions(&mut system, false);
-    if collaboration {
+    if scope == "collaboration" {
         append_collaboration_instructions(&mut system);
+    }
+    if team_scope_id(scope).is_some() {
+        system.push_str("\n\nYou are coordinating an assistant team. Use list_delegate_roles to read your current duty and the other members’ duties, then delegate to the team.");
     }
     system
 }
@@ -164,32 +178,50 @@ impl RuntimeWorkRpcHandler {
         let Some(user) = origin["userId"].as_i64() else {
             return Ok(());
         };
-        let preferences = if origin["standInId"].is_null() {
+        // Historical role conversations can predate Team references.
+        let reference = request.extra.get("team_ref").and_then(Value::as_str);
+        let primary = origin["standInId"].is_null();
+        let (team, preferences) = if primary || reference.is_some() {
             let store =
                 LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-            store
-                .configured_personal_stand_in(user, &self.device_id)
-                .map_err(settings_error)?["primary"]["preferences"]
-                .as_str()
-                .map(str::to_owned)
+            let team = reference
+                .map(|reference| store.personal_execution_team(user, reference))
+                .transpose()
+                .map_err(settings_error)?;
+            let preferences = if primary {
+                store
+                    .configured_personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?["primary"]["preferences"]
+                    .as_str()
+                    .map(str::to_owned)
+            } else {
+                None
+            };
+            (team, preferences)
         } else {
-            None
+            (None, None)
         };
-        request.system_prompt = identity_system_prompt(
-            &crate::task_runtime::runner_routing::lead_instructions(
-                "",
-                request
-                    .extra
-                    .get("collaboration_model")
-                    .and_then(Value::as_str),
-                &request.bot,
-            ),
-            Some(prompt),
-            preferences.as_deref(),
-            origin["conversationScope"] == "collaboration",
+        let mode = request
+            .extra
+            .get("collaboration_model")
+            .and_then(Value::as_str);
+        let team = team.as_ref().unwrap_or(&Value::Null);
+        let base = crate::task_runtime::runner_routing::lead_instructions(
+            team["system_prompt"].as_str().unwrap_or_default(),
+            mode,
+            &request.bot,
         );
-        request.extra.get_mut("origin").expect("validated origin")["assistantDefinitionDigest"] =
-            json!(format!("{:x}", Sha256::digest(prompt.as_bytes())));
+        request.system_prompt = identity_system_prompt(
+            &base,
+            account_profile_prompt(
+                prompt,
+                &request.bot,
+                mode,
+                team["accountRoleId"].is_string(),
+            ),
+            preferences.as_deref(),
+            &origin["conversationScope"],
+        );
         Ok(())
     }
 
@@ -394,13 +426,12 @@ impl RuntimeWorkRpcHandler {
         let personal = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
-        let mut shared_prompt = payload["options"]["assistantPrompt"].as_str();
+        let shared_prompt = payload["options"]["assistantPrompt"].as_str();
         let role = role_id.and_then(|id| {
             personal["roles"]
                 .as_array()
                 .and_then(|roles| roles.iter().find(|role| role["id"] == id))
         });
-        let cloud_role;
         let mut account_team_ref = None;
         if let Some(id) = role_id.filter(|_| role.is_none()) {
             let missing = || AppIpcError::new("not_found", "Stand-in role no longer exists");
@@ -408,7 +439,7 @@ impl RuntimeWorkRpcHandler {
                 return Err(missing());
             }
             self.verify_local_stand_in_owner(user)?;
-            cloud_role = self
+            let cloud_role = self
                 .runtime_http(reqwest::Method::GET, "/v1/personal-assistant", None)
                 .await?;
             let definition = cloud_role["assistant"]["definitions"]
@@ -419,11 +450,6 @@ impl RuntimeWorkRpcHandler {
                         .find(|definition| definition["roleId"] == id)
                 })
                 .ok_or_else(missing)?;
-            shared_prompt = Some(
-                definition["ghost"]["spec"]["systemPrompt"]
-                    .as_str()
-                    .ok_or_else(missing)?,
-            );
             account_team_ref = Some(
                 store
                     .import_account_execution_team(user, definition)
@@ -455,10 +481,6 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or("我的助理");
         let mut origin = json!({"runtimeTaskId":task_id,"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
-        if let Some(prompt) = shared_prompt {
-            origin["assistantDefinitionDigest"] =
-                json!(format!("{:x}", Sha256::digest(prompt.as_bytes())));
-        }
         if !scope.is_null() {
             origin["conversationScope"] = scope.clone();
         }
@@ -475,11 +497,8 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
-        if let Some(reference) = account_team_ref {
+        if let Some(reference) = &account_team_ref {
             config["teamRef"] = json!(reference);
-        }
-        if let Some(prompt) = shared_prompt {
-            config["prompt"] = json!(prompt);
         }
         config["handlingPolicy"] = json!({"automatic":false,"askBeforeAct":true});
         config = self.conversation_model(config, &payload["options"]).await?;
@@ -513,16 +532,20 @@ impl RuntimeWorkRpcHandler {
         let system = if let Some(snapshot) = &shared {
             shared_conversation_instructions(snapshot)?
         } else {
-            let mut system = identity_system_prompt(
+            identity_system_prompt(
                 system,
-                config["prompt"].as_str(),
+                match shared_prompt {
+                    Some(prompt) => account_profile_prompt(
+                        prompt,
+                        &prepared["executionRequest"]["bot"],
+                        prepared["executionRequest"]["collaboration_model"].as_str(),
+                        account_team_ref.is_some(),
+                    ),
+                    None => config["prompt"].as_str(),
+                },
                 config["preferences"].as_str(),
-                scope == "collaboration",
-            );
-            if team.is_some() {
-                system.push_str("\n\nYou are coordinating an assistant team. Use list_delegate_roles to read your current duty and the other members’ duties, then delegate to the team.");
-            }
-            system
+                scope,
+            )
         };
         prepared["executionRequest"]["system_prompt"] = json!(system);
         self.dispatch_stand_in_conversation(prepared, activity)
@@ -773,5 +796,106 @@ mod model_selection_tests {
             options["modelOptions"]
         );
         assert_eq!(prepared["executionRequest"]["model_config"], config);
+    }
+
+    #[tokio::test]
+    async fn account_conversation_keeps_team_and_bot_instructions_in_their_own_scope() {
+        let (mut handler, root) =
+            super::super::tests::isolated_runtime_work_handler("account-conversation");
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .settings
+            .max_concurrent_stand_in_tasks = 0;
+        let shared = "Shared Team instructions.";
+        let lead_prompt = "Lead-only instructions.";
+        let worker_prompt = "Worker-only instructions.";
+        let member = |name, role, instruction| {
+            json!({
+                "member":{"role":role}, "bot":{"metadata":{"name":name,"displayName":name},
+                    "spec":{"shellRef":{"name":"Codex"}}}, "ghost":{"spec":{"systemPrompt":instruction}}
+            })
+        };
+        let lead = member("lead", "leader", lead_prompt);
+        let worker = member("worker", "worker", worker_prompt);
+        let defs = ["solo", "pipeline"].map(|mode| {
+            let members = if mode == "solo" {
+                json!([lead])
+            } else {
+                json!([lead, worker])
+            };
+            json!({
+                "roleId":mode,"bot":lead["bot"],"ghost":lead["ghost"],
+                "team":{"metadata":{"name":mode,"namespace":"default","displayName":"Assistant"},
+                    "spec":{"collaborationModel":mode,"systemPrompt":shared}},
+                "members":members
+            })
+        });
+        let router = axum::Router::new().route(
+            "/api/v1/personal-assistant",
+            axum::routing::get(move || async move {
+                axum::Json(json!({"assistant":{"definitions":defs}}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "test".into(),
+            authenticated_user_id: Some(7),
+            ..Default::default()
+        })));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        for mode in ["solo", "pipeline"] {
+            let address = handler
+                .stand_in_conversation(json!({
+                    "userId":7,"roleId":mode,"message":"Begin","options":{"assistantPrompt":lead_prompt}
+                }))
+                .await
+                .unwrap();
+            let id = address["taskId"].as_str().unwrap();
+            let turns =
+                super::super::turns::read_runtime_turn_queue(handler.turn_queue_path.as_ref())
+                    .unwrap();
+            let request = &turns
+                .iter()
+                .find(|turn| turn.local_task_id == id)
+                .unwrap()
+                .request;
+            assert_eq!(
+                request.system_prompt.matches(lead_prompt).count(),
+                1,
+                "{mode} first turn"
+            );
+            assert_eq!(request.system_prompt.matches(shared).count(), 1);
+            let link = handler.local_task_link(id).unwrap();
+            if mode == "pipeline" {
+                let base = link.runtime_handle["personalPipeline"]["instructions"]
+                    .as_str()
+                    .unwrap();
+                assert!(!base.contains(lead_prompt));
+                assert!(!base.contains(worker_prompt));
+            }
+            let mut continued = ExecutionRequest::default();
+            restore_origin(&mut continued, &link.runtime_handle);
+            restore_personal_conversation_team(&mut continued, &link);
+            handler
+                .refresh_identity_conversation_origin(&mut continued, &link)
+                .unwrap();
+            handler
+                .apply_shared_stand_in_prompt(&mut continued, Some(lead_prompt))
+                .unwrap();
+            assert_eq!(
+                continued.system_prompt.matches(shared).count(),
+                1,
+                "{mode} continuation"
+            );
+            assert_eq!(
+                continued.system_prompt.matches(lead_prompt).count(),
+                usize::from(mode == "solo")
+            );
+        }
+        server.abort();
+        fs::remove_dir_all(root).unwrap();
     }
 }
