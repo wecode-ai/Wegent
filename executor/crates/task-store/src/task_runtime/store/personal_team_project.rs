@@ -29,6 +29,7 @@ fn project_agent(
     connection: &Connection,
     project: &str,
     id: &str,
+    user_id: i64,
 ) -> Result<LoopItem, TaskRuntimeError> {
     let agent = collaboration::collaboration_agent(connection, project, id)?;
     if agent.id != id
@@ -37,6 +38,9 @@ fn project_agent(
             && !collaboration::has_active_project_team_binding(connection, project, id)?)
     {
         return Err(invalid("Project Agent is not bound to this project"));
+    }
+    if agent.metadata["visibility"] == "private" && agent.created_by_user_id != user_id {
+        return Err(invalid("Private Agent is not shared with this member"));
     }
     Ok(agent)
 }
@@ -130,7 +134,7 @@ impl LocalTaskStore {
                 .get(role.as_str())
                 .copied()
                 .ok_or_else(|| invalid("Personal member has no local Team"))?;
-            let agent = project_agent(&tx, project_id, id)?;
+            let agent = project_agent(&tx, project_id, id, owner)?;
             if reference.starts_with("LA-") {
                 personal_stand_in::definition(&tx, owner, reference)?;
                 if reference != id {
@@ -263,7 +267,12 @@ pub(super) fn definition_for_claim(
     let project = get_item_from(connection, &execution.cloud_project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
     collaboration::collaboration_group(&project, group_id)?;
-    let agent = project_agent(connection, &execution.cloud_project_id, &execution.agent_id)?;
+    let agent = project_agent(
+        connection,
+        &execution.cloud_project_id,
+        &execution.agent_id,
+        execution.assigner_user_id,
+    )?;
     let (role, member) = binding
         .metadata
         .as_object()
@@ -453,9 +462,46 @@ mod tests {
             .unwrap();
         let expected = store.portable_personal_team(7, device, "review").unwrap();
         let mapping = BTreeMap::from([("review".into(), agent.id.clone())]);
+        // Older project Agent rows have no runtime. Their ordinary execution runtime is Codex.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET metadata=json_remove(metadata,'$.runtime') WHERE id=?1",
+                [&agent.id],
+            )
+            .unwrap();
+        let visibility = |value: &str| {
+            let current = get_item_from(&store.connection().unwrap(), &agent.id, "chat_agent")
+                .unwrap()
+                .unwrap();
+            store
+                .update_chat_agent(
+                    &project.id,
+                    &agent.id,
+                    serde_json::from_value(json!({
+                        "version":current.version,"visibility":value
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+        };
         assert!(store
             .adopt_personal_project_team(8, device, &project.id, &team, &mapping)
             .is_err());
+        visibility("private");
+        assert!(matches!(
+            store.adopt_personal_project_team(7, device, &project.id, &team, &mapping),
+            Err(TaskRuntimeError::Invalid(message)) if message == "Private Agent is not shared with this member"
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET created_by_user_id=7 WHERE id=?1",
+                [&agent.id],
+            )
+            .unwrap();
         store
             .adopt_personal_project_team(7, device, &project.id, &team, &mapping)
             .unwrap();
@@ -494,6 +540,32 @@ mod tests {
                 }
             )
             .is_err());
+        visibility("creator_admin");
+        let queued = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(
+                    json!({"title":"Recheck access","assignee_group_id":group["id"]}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        visibility("private");
+        assert!(matches!(
+            store.claim_next_execution_with_catalog(Some(device), "instance", 300, Some(&catalog)),
+            Err(TaskRuntimeError::Invalid(message)) if message == "Private Agent is not shared with this member"
+        ));
+        let status: (i64, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT assigner_user_id,status FROM loop_item_executions WHERE loop_item_id=?1",
+                [&queued.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, (0, "waiting_runtime".to_owned()));
+        visibility("creator_admin");
         store
             .create_task(
                 &project.id,

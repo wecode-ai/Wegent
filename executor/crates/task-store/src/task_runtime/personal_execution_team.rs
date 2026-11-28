@@ -447,7 +447,7 @@ pub(in crate::task_runtime::store) fn project_definition(
     } else {
         "codex"
     };
-    if project_agent["runtime"] != runtime {
+    if crate::task_runtime::store::record_rows::project_agent_runtime(project_agent) != runtime {
         return Err(TaskRuntimeError::Invalid(
             "Choose a project Agent with the source Team runtime".into(),
         ));

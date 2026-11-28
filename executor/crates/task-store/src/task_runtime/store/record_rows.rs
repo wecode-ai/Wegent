@@ -1,6 +1,10 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+pub(super) fn project_agent_runtime(metadata: &Value) -> &str {
+    metadata["runtime"].as_str().unwrap_or("codex")
+}
+
 pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
     let metadata = row.metadata;
     let name = row.title.or(row.name).unwrap_or_else(|| "AI".to_owned());
@@ -27,7 +31,7 @@ pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
         display_name: text("display_name", &name),
         namespace: text("namespace", "default"),
         name,
-        runtime: text("runtime", "codex"),
+        runtime: project_agent_runtime(&metadata).to_owned(),
         model: metadata
             .get("model")
             .and_then(Value::as_str)
@@ -527,11 +531,7 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        agent_runtime: agent_metadata
-            .get("runtime")
-            .and_then(Value::as_str)
-            .unwrap_or("codex")
-            .to_owned(),
+        agent_runtime: project_agent_runtime(&agent_metadata).to_owned(),
         agent_additional_skills: agent_metadata
             .get("additional_skills")
             .and_then(Value::as_array)
