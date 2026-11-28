@@ -391,6 +391,51 @@ pub enum CodexIdleMutationError {
 }
 
 impl CodexAppServerClient {
+    pub(crate) fn live_thread_diagnostics(&self, thread_id: &str) -> Value {
+        let Ok(state) = self.state.try_lock() else {
+            return json!({"available": false});
+        };
+        let Some(process) = state.process.as_ref() else {
+            return json!({"available": true, "processRunning": false});
+        };
+        let observed = process
+            .notifications
+            .native_activity
+            .try_lock()
+            .ok()
+            .map(|activity| activity.thread_diagnostics(thread_id));
+        let pending_interactions = process
+            .notifications
+            .pending_server_interactions
+            .try_lock()
+            .ok()
+            .map(|pending| {
+                pending
+                    .values()
+                    .filter_map(|entry| {
+                        let params = message_params(&entry.request);
+                        (stream_thread_id(params).as_deref() == Some(thread_id)).then(|| {
+                            json!({
+                                "requestId": entry.request.get("id"),
+                                "method": entry.request.get("method"),
+                                "turnId": params.get("turnId"),
+                                "itemId": params.get("itemId"),
+                                "expiresAtUnixMs": params.get("expiresAtUnixMs"),
+                            })
+                        })
+                    })
+                    .take(10)
+                    .collect::<Vec<_>>()
+            });
+        json!({
+            "available": true,
+            "processRunning": true,
+            "processGeneration": process.notifications.process_generation,
+            "observed": observed,
+            "pendingInteractions": pending_interactions,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn isolated_for_test(binary: impl Into<String>, home: PathBuf) -> Self {
         let binary = resolve_codex_binary(&binary.into());
@@ -5129,6 +5174,8 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
         toml_json_value(&json!([
             "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
             "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
+            "WEGENT_CODEX_DIAGNOSTICS_MCP_AUTHORIZATION",
+            "WEWORK_DIAGNOSTICS_MCP_FILE",
             "WEWORK_COMPUTER_USE_BRIDGE_URL",
             "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
         ]))
@@ -6028,6 +6075,12 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         environment.insert(
             "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
             format!("Bearer {}", endpoint.token),
+        );
+    }
+    if let Some((_, token)) = mcp_config::diagnostics_mcp_endpoint() {
+        environment.insert(
+            mcp_config::DIAGNOSTICS_MCP_AUTH_ENV.to_owned(),
+            format!("Bearer {token}"),
         );
     }
     // Auxiliary RPCs and turns must compare the same effective CLI directories.

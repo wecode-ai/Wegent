@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { requestExecutor } from './executor-rpc.mjs'
 import { execFileSync } from 'node:child_process'
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { modelRequestTexts } from './model-tool-output.mjs'
 import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
@@ -9,6 +10,7 @@ import {
   assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
+  mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -34,6 +36,7 @@ const STEP_TIMEOUT = 10_000
 
 export function createRepairWeWorkFlow(workspacePath) {
   let mode = null
+  let inspectedTaskId
   let questionSent = false
   let fixture
   let revision
@@ -70,9 +73,101 @@ export function createRepairWeWorkFlow(workspacePath) {
         ]
       } else if (!answered) {
         events = [assistantMessage('Waiting for the troubleshooting choice.')]
+      } else if (!requestContainsToolOutput(body, `repair-wework-session-${mode}`)) {
+        assert.ok(
+          inspectedTaskId,
+          'The pending conversation ID must be resolved before continuation'
+        )
+        events = mcpToolRequestEvents(body, {
+          toolName: 'inspect_conversation',
+          directToolName: 'mcp__wework_diagnostics__inspect_conversation',
+          argumentsValue: { taskId: inspectedTaskId },
+          searchCallId: `repair-wework-session-search-${mode}`,
+          toolCallId: `repair-wework-session-${mode}`,
+        }).events
+      } else if (!requestContainsToolOutput(body, `repair-wework-instance-${mode}`)) {
+        const session = JSON.parse(toolOutputText(body, `repair-wework-session-${mode}`))
+        assert.equal(session.taskId, inspectedTaskId)
+        assert.ok(session.threadId)
+        assert.equal(session.runtime, 'codex')
+        events = mcpToolRequestEvents(body, {
+          toolName: 'get_instance',
+          directToolName: 'mcp__wework_diagnostics__get_instance',
+          argumentsValue: {},
+          searchCallId: `repair-wework-instance-search-${mode}`,
+          toolCallId: `repair-wework-instance-${mode}`,
+        }).events
+      } else if (!requestContainsToolOutput(body, `repair-wework-traces-${mode}`)) {
+        events = mcpToolRequestEvents(body, {
+          toolName: 'read_trace_logs',
+          directToolName: 'mcp__wework_diagnostics__read_trace_logs',
+          argumentsValue: {},
+          searchCallId: `repair-wework-traces-search-${mode}`,
+          toolCallId: `repair-wework-traces-${mode}`,
+        }).events
+      } else if (mode === 0 && !requestContainsToolOutput(body, 'repair-wework-transport')) {
+        assert.match(toolOutputText(body, 'repair-wework-traces-0'), /executor-transport\.log/)
+        events = mcpToolRequestEvents(body, {
+          toolName: 'read_trace_logs',
+          directToolName: 'mcp__wework_diagnostics__read_trace_logs',
+          argumentsValue: { source: 'executor-transport.log' },
+          searchCallId: 'repair-wework-transport-search',
+          toolCallId: 'repair-wework-transport',
+        }).events
       } else if (mode === 0) {
+        const log = JSON.parse(toolOutputText(body, 'repair-wework-transport'))
+        assert.equal(log.source, 'executor-transport.log')
+        assert.ok(log.text.length > 0, 'The current instance must provide its transport trace')
+        const exportedLog = await readFile(log.logPath, 'utf8')
+        assert.ok(
+          exportedLog.endsWith(log.text),
+          'The local trace must preserve the full redacted excerpt'
+        )
         events = [assistantMessage(RESULTS[mode])]
+      } else if (!requestContainsToolOutput(body, 'repair-wework-renderer')) {
+        events = mcpToolRequestEvents(body, {
+          toolName: 'record_renderer',
+          directToolName: 'mcp__wework_diagnostics__record_renderer',
+          argumentsValue: { durationMs: 1_000 },
+          searchCallId: 'repair-wework-renderer-search',
+          toolCallId: 'repair-wework-renderer',
+        }).events
+      } else if (!requestContainsToolOutput(body, 'repair-wework-heap')) {
+        events = mcpToolRequestEvents(body, {
+          toolName: 'export_renderer_heap',
+          directToolName: 'mcp__wework_diagnostics__export_renderer_heap',
+          argumentsValue: {},
+          searchCallId: 'repair-wework-heap-search',
+          toolCallId: 'repair-wework-heap',
+        }).events
       } else if (!requestContainsToolOutput(body, 'repair-wework-checkout')) {
+        const recording = JSON.parse(toolOutputText(body, 'repair-wework-renderer'))
+        const instance = JSON.parse(toolOutputText(body, 'repair-wework-instance-1'))
+        assert.match(instance.instanceId, /^main-/)
+        assert.ok(instance.mainPid > 0 && instance.executorPid > 0)
+        assert.equal(recording.pid, instance.rendererPid)
+        assert.ok(recording.webContentsId > 0)
+        const [trace, profile, consoleLog] = await Promise.all(
+          [recording.tracePath, recording.profilePath, recording.consolePath].map(async path => {
+            assert.match(path, /diagnostics[/\\]renderer-/)
+            return JSON.parse(await readFile(path, 'utf8'))
+          })
+        )
+        assert.ok(trace.traceEvents.length > 0, 'The live Chromium trace must contain events')
+        assert.ok(profile.nodes.length > 0, 'The live CPU profile must contain stack frames')
+        assert.ok(Array.isArray(consoleLog.events), 'The renderer console export must be readable')
+        const heap = JSON.parse(toolOutputText(body, 'repair-wework-heap'))
+        assert.equal(heap.webContentsId, recording.webContentsId)
+        assert.equal(heap.pid, recording.pid)
+        assert.match(heap.heapPath, /renderer\.heapsnapshot$/)
+        const file = await open(heap.heapPath, 'r')
+        try {
+          const header = Buffer.alloc(128)
+          await file.read(header)
+          assert.match(header.toString('utf8'), /"snapshot"\s*:/)
+        } finally {
+          await file.close()
+        }
         events = selectedToolCall(
           'repair-wework-checkout',
           selectTool(body, 'exec_command', {
@@ -171,12 +266,28 @@ console.log('Repair verified at ' + git('-C', 'repair-worktree', 'rev-parse', 'H
             timeoutMs: STEP_TIMEOUT,
           })
           await control.command('waitFor', CARD, { text: QUESTION, timeoutMs: STEP_TIMEOUT })
+          const snapshot = JSON.parse(
+            await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+          )
+          const taskId = snapshot.workbench.currentRuntimeTask.taskId
+          inspectedTaskId = taskId
+          const live = await requestExecutor(
+            control,
+            'runtime.tasks.inspect_live_diagnostics',
+            { taskId },
+            STEP_TIMEOUT
+          )
+          assert.equal(live.taskId, taskId)
+          assert.ok(live.threadId)
+          assert.equal(live.runtime, 'codex')
+          assert.equal(typeof live.execution.available, 'boolean')
+          assert.equal(live.codex.processRunning, true)
           const option = `${CARD} [data-testid^="request-user-input-option-"][data-testid$="-${index}"]`
           assert.ok((await control.command('getText', option)).includes(label))
           await control.command('clickWhenEnabled', option, { timeoutMs: STEP_TIMEOUT })
           await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
             text: RESULTS[index],
-            timeoutMs: STEP_TIMEOUT,
+            timeoutMs: index === 0 ? STEP_TIMEOUT : 30_000,
           })
           if (index === 0) {
             await assert.rejects(access(join(fixture, 'checkout')), { code: 'ENOENT' })

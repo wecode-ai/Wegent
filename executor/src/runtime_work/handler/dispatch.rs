@@ -305,6 +305,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.permissions.set" => {
                 boxed_rpc(move || async move { self.set_stand_in_task_permissions(payload).await })
             }
+            "runtime.tasks.inspect_live_diagnostics" => {
+                boxed_rpc(move || async move { self.inspect_live_conversation(&payload) })
+            }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })
             }

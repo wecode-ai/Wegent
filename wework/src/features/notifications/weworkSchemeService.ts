@@ -279,6 +279,9 @@ export function createWeworkSchemeService() {
     return true
   }
   async function drain() {
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      console.info('[wework-scheme] drain ' + JSON.stringify({ hasInput: Boolean(input), running }))
+    }
     if (!input || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     requested = true
     if (running) return
@@ -293,7 +296,18 @@ export function createWeworkSchemeService() {
         for (const request of requests) {
           if (!input || revision !== generation) break
           if (!openedSchemeIds.has(request.id)) {
-            if (!(await open(request.url, false))) continue
+            const opened = await open(request.url, false)
+            if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+              console.info(
+                '[wework-scheme] resolved ' +
+                  JSON.stringify({
+                    id: request.id,
+                    kind: parseWeworkScheme(request.url)?.kind,
+                    opened,
+                  })
+              )
+            }
+            if (!opened) continue
             if (!input || revision !== generation) break
             openedSchemeIds.add(request.id)
           }

@@ -657,6 +657,15 @@ impl RuntimeWorkStore {
         self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
+    pub(super) fn try_read_loaded_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Result<Option<T>, ()> {
+        let index = self.index.try_lock().map_err(|_| ())?;
+        Ok(index.tasks.get(local_task_id).map(read))
+    }
+
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
         self.refresh_index_from_disk_if_changed();
         self.index

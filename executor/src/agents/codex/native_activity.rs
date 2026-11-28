@@ -108,6 +108,15 @@ impl GoalActivity {
 }
 
 impl CodexNativeActivity {
+    pub(super) fn thread_diagnostics(&self, thread_id: &str) -> Value {
+        json!({
+            "loaded": self.loaded_threads.contains(thread_id),
+            "activeTurns": self.turns.get(thread_id).map_or(0, HashSet::len),
+            "settledTurns": self.settled_turns.get(thread_id).map_or(0, HashSet::len),
+            "goalBusy": self.goals.get(thread_id).is_some_and(GoalActivity::is_busy),
+        })
+    }
+
     fn remember_model(&mut self, thread_id: &str, response: &Value, overwrite_known: bool) {
         let (model, provider) = model_identity(response);
         let identity = self.models.entry(thread_id.to_owned()).or_default();
