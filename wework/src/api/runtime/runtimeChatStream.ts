@@ -1,6 +1,6 @@
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload } from '@/types/api'
-import type { ChatStreamHandlers, RuntimeEventLaggedPayload } from '@/stream/chatStream'
+import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
 import {
@@ -566,14 +566,11 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
   )
 }
 
-function runtimeEventLaggedPayload(value: unknown): RuntimeEventLaggedPayload | null {
+function runtimeEventLaggedPayload(value: unknown): { skipped: number } | null {
   const payload = asRecord(value)
-  const reason = stringField(payload, 'reason')
-  // The executor replaces one oversized envelope with a recovery event without a count.
-  if (reason === 'event_too_large') return { skipped: 1, reason }
   const skipped = payload.skipped
   return typeof skipped === 'number' && Number.isFinite(skipped) && skipped >= 0
-    ? { skipped, ...(reason !== undefined && { reason }) }
+    ? { skipped }
     : null
 }
 
@@ -699,18 +696,12 @@ function logRuntimeChatStreamNativeEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  const isLagEvent = event.event === 'executor.event_lagged'
   logRuntimeTaskCreateStage('runtime-stream-native-event', {
     sequence: event.sequence,
     event: event.event,
     taskId: stringField(payload, 'taskId'),
     subtaskId: stringField(payload, 'subtaskId'),
     deviceId: stringField(payload, 'deviceId'),
-    ...(isLagEvent && {
-      reason: stringField(payload, 'reason'),
-      originalEvent: stringField(payload, 'originalEvent'),
-      originalBytes: typeof payload.originalBytes === 'number' ? payload.originalBytes : undefined,
-    }),
     blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
     blockType: stringField(asRecord(data.block), 'type'),
     replacesItemId: stringField(data, 'replacesItemId'),

@@ -252,7 +252,6 @@ export interface RuntimeTransportReplacedPayload {
 
 export interface RuntimeEventLaggedPayload {
   skipped: number;
-  reason?: string;
 }
 
 export interface RuntimeWorkChangedPayload {

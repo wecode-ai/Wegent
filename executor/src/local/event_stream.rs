@@ -461,50 +461,37 @@ fn event_envelope(raw: Value, sequence: u64) -> Value {
 }
 
 fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
-    let original_event = raw
+    let event = event_envelope(raw, sequence);
+    let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
+    if bytes <= EVENT_ENVELOPE_MAX_BYTES {
+        return event;
+    }
+
+    let original_event = event
         .get("event")
         .and_then(Value::as_str)
         .unwrap_or("executor.unknown")
         .chars()
         .take(EVENT_METADATA_MAX_CHARS)
         .collect::<String>();
-    let task_id = event_task_id(&raw).map(|task_id| {
+    let task_id = event_task_id(&event).map(|task_id| {
         task_id
             .chars()
             .take(EVENT_METADATA_MAX_CHARS)
             .collect::<String>()
     });
-    let event = event_envelope(raw, sequence);
-    let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
-    if bytes <= EVENT_ENVELOPE_MAX_BYTES {
-        return event;
-    }
-    let replacement = event_envelope(
-        json!({
-            "type": "event",
-            "event": "executor.event_lagged",
-            "payload": {
-                "reason": "event_too_large",
-                "originalEvent": original_event,
-                "originalBytes": bytes,
-                "taskId": task_id,
-                "latestSequence": sequence,
-            },
-        }),
-        sequence,
-    );
-    if serde_json::to_vec(&replacement).map_or(usize::MAX, |encoded| encoded.len())
-        <= EVENT_ENVELOPE_MAX_BYTES
-    {
-        return replacement;
-    }
+    // The original event name and task ID are bounded above, so the replacement
+    // fits even when their characters need JSON escaping.
     event_envelope(
         json!({
             "type": "event",
             "event": "executor.event_lagged",
             "payload": {
+                "skipped": 1,
                 "reason": "event_too_large",
+                "originalEvent": original_event,
                 "originalBytes": bytes,
+                "taskId": task_id,
                 "latestSequence": sequence,
             },
         }),
@@ -641,6 +628,7 @@ mod tests {
         }));
 
         assert_eq!(event["event"], "executor.event_lagged");
+        assert_eq!(event["payload"]["skipped"], 1);
         assert_eq!(event["payload"]["reason"], "event_too_large");
         assert_eq!(event["payload"]["taskId"], "task-1");
         assert_eq!(journal.events.len(), 1);
@@ -650,9 +638,9 @@ mod tests {
     fn oversized_event_metadata_cannot_overflow_the_replacement() {
         let mut journal = EventJournal::new();
         let event = journal.append(json!({
-            "event": "e".repeat(EVENT_ENVELOPE_MAX_BYTES),
+            "event": "\0".repeat(EVENT_ENVELOPE_MAX_BYTES),
             "payload": {
-                "taskId": "t".repeat(EVENT_ENVELOPE_MAX_BYTES),
+                "taskId": "\0".repeat(EVENT_ENVELOPE_MAX_BYTES),
                 "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
             },
         }));

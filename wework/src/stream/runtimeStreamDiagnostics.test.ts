@@ -120,36 +120,6 @@ test('delivers native completion when the stream log preference cannot be read',
   }
 })
 
-test('requests transcript recovery when the executor replaces an oversized event', async () => {
-  let receive!: (event: LocalExecutorEvent) => void
-  const stream = createRuntimeChatStream({
-    subscribe: async handler => {
-      receive = handler
-      return vi.fn()
-    },
-    request: vi.fn(),
-  })
-  const onRuntimeEventLagged = vi.fn()
-  const unsubscribe = stream.subscribe({ onRuntimeEventLagged })
-  try {
-    receive({
-      event: 'executor.event_lagged',
-      payload: {
-        reason: 'event_too_large',
-        originalEvent: 'response.completed',
-        originalBytes: 280_000,
-        taskId: 'task',
-      },
-    })
-    expect(onRuntimeEventLagged).toHaveBeenCalledExactlyOnceWith({
-      skipped: 1,
-      reason: 'event_too_large',
-    })
-  } finally {
-    unsubscribe()
-  }
-})
-
 test('captures actual stream dispatch timing without payloads or identities', () => {
   const listeners = new Map<string, (payload: unknown) => void>()
   const socket = {

@@ -24,7 +24,6 @@
     "wework/src/components/code/PierreCodeProvider.tsx",
     "wework/e2e/desktop/modules/streaming-text-completion.mjs",
     "wework/e2e/desktop/modules/streaming-oversized-event.mjs",
-    "wework/src/api/runtime/runtimeChatStream.ts",
     "wework/e2e/desktop/modules/streaming-command-cancellation.mjs",
     "packages/chat-core/src/response-api*",
     "packages/chat-core/src/runtime-turns.ts",
