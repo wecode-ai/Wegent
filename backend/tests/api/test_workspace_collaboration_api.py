@@ -758,12 +758,23 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     document = dict(source_group.json)
     document["metadata"] = {
         **document["metadata"],
-        "personalTeamSource": {"id": "test-source"},
+        "personalTeamSource": {"publicationId": 12345},
     }
     document["spec"] = {**document["spec"], "leader": dict(document["spec"]["leader"])}
     document["spec"]["leader"].pop("name", None)
     document["spec"]["leader"]["responsibility"] = "Review delivery"
     source_group.json = document
+    source_binding = ResourceMember(
+        resource_type="PersonalTeamProjectBinding",
+        resource_id=12345,
+        entity_type="collaboration_group",
+        entity_id=str(source_group.id),
+        role="Developer",
+        status="approved",
+    )
+    test_db.add(source_binding)
+    test_db.flush()
+    binding_id = source_binding.id
     test_db.commit()
     sourced_groups = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
@@ -806,6 +817,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         headers=_auth(test_token),
     )
     assert delete_project_codex_group_response.status_code == 204
+    assert test_db.query(ResourceMember).filter_by(id=binding_id).count() == 0
 
     delete_response = test_client.delete(
         (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),

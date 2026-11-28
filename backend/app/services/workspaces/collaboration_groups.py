@@ -332,6 +332,14 @@ class WorkspaceCollaborationGroupService:
             )
             for resource_grant in grants:
                 db.delete(resource_grant)
+            source = (group.json.get("metadata") or {}).get("personalTeamSource")
+            if source and source.get("publicationId"):
+                db.query(ResourceMember).filter_by(
+                    resource_type="PersonalTeamProjectBinding",
+                    resource_id=source["publicationId"],
+                    entity_type="collaboration_group",
+                    entity_id=str(group_id),
+                ).delete(synchronize_session=False)
         else:
             db.delete(grant)
         from app.services.collaboration_revocation import (
