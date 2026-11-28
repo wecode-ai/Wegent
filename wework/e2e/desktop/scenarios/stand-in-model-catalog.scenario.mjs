@@ -7,7 +7,10 @@ import {
   fetchJson,
 } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
+import {
+  finishStandInOnboarding,
+  assertStandInAccountDevice,
+} from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
@@ -109,6 +112,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         // Persistence assertions below read the local execution profile.
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await finishStandInOnboarding(control)
+        await assertStandInAccountDevice(userId, initial.executionDeviceId, uiTimeoutMs, cloud)
         for (const model of models) {
           await openStandInSettings(control)
           await control.command(

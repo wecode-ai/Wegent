@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInBindingTarget } from '@/api/standIn'
@@ -35,6 +35,7 @@ interface AssistantWorkspaceProps {
   localDeviceId: string
   devices: DeviceInfo[]
   onSelectDevice(deviceId: string): Promise<void>
+  headerActions?: ReactNode
   onClose(): void
 }
 
@@ -108,6 +109,7 @@ function AssistantWorkspaceContent({
   binding,
   conversation,
   services: assistantServices,
+  headerActions,
 }: AssistantWorkspaceProps) {
   const { state, services } = useWorkbench()
   const tabs = useOptionalWorkspaceTabs()
@@ -157,7 +159,12 @@ function AssistantWorkspaceContent({
       scroll: false,
       minWidth: 280,
       defaultWidth: 900,
-      actions: <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />,
+      actions: (
+        <>
+          <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />
+          {headerActions}
+        </>
+      ),
       content: (
         <AssistantHome
           active={active}

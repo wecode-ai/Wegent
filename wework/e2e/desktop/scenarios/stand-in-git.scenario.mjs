@@ -7,7 +7,10 @@ import { createGitReadonlyVerification } from '../modules/stand-in-git-readonly.
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
-import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
+import {
+  finishStandInOnboarding,
+  assertStandInAccountDevice,
+} from '../modules/stand-in-instance-flows.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelResponseTimeoutMs }) {
   let cloud
@@ -251,6 +254,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         // This protocol fixture installs its connection host on the local Executor.
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await finishStandInOnboarding(control)
+        await assertStandInAccountDevice(user.id, deviceId, uiTimeoutMs, cloud)
         await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',

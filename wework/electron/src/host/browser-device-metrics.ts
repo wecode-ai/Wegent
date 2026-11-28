@@ -14,14 +14,38 @@ export class BrowserDeviceMetricsController {
   private lease: DebuggerLease | null = null
   private pending: Promise<void> = Promise.resolve()
   private disposed = false
+  private appliedScale = 1
+  private pendingUpdates = 0
+  private revision = 0
+  private acknowledged = true
 
   constructor(private readonly target: DebuggerTarget) {}
+
+  inputTransform(): { scale: number; revision: number; emulated: boolean } | null {
+    if (this.disposed || this.pendingUpdates || !this.acknowledged) return null
+    const emulated = this.lease?.isActive() === true
+    return { scale: emulated ? this.appliedScale : 1, revision: this.revision, emulated }
+  }
 
   set(metrics: BrowserDeviceMetrics | null): Promise<void> {
     if (metrics && (!Number.isFinite(metrics.scale) || metrics.scale <= 0 || metrics.scale > 5)) {
       return Promise.reject(new Error('Browser device scale is invalid'))
     }
-    const update = this.pending.then(() => this.apply(metrics))
+    this.pendingUpdates += 1
+    this.revision += 1
+    const update = this.pending
+      .then(async () => {
+        try {
+          await this.apply(metrics)
+          this.acknowledged = true
+        } catch (error) {
+          this.acknowledged = false
+          throw error
+        }
+      })
+      .finally(() => {
+        this.pendingUpdates -= 1
+      })
     this.pending = update.catch(() => {})
     return update
   }
@@ -39,10 +63,11 @@ export class BrowserDeviceMetricsController {
       this.lease = null
     }
     if (!metrics) {
-      const lease = this.lease
+      const lease = this.lease ?? (!this.acknowledged ? acquireDebuggerSession(this.target) : null)
       if (!lease) return
       try {
         await lease.session.sendCommand('Emulation.clearDeviceMetricsOverride')
+        this.appliedScale = 1
       } finally {
         lease.release()
         if (this.lease === lease) this.lease = null
@@ -59,6 +84,7 @@ export class BrowserDeviceMetricsController {
         mobile: false,
         scale: metrics.scale,
       })
+      this.appliedScale = metrics.scale
     } catch (error) {
       if (!hadOverride) {
         lease.release()

@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -12,14 +13,15 @@ import { dequal } from 'dequal'
 export class PersonalAssistantSavePreflightError extends Error {}
 
 export class PersonalAssistantDefinitionSaveError extends Error {
-  readonly code = 'cloud_definition_save_unconfirmed'
+  readonly code: 'cloud_definition_save_unconfirmed' | 'cloud_definition_version_conflict'
   readonly saved: PersonalStandInSettings
 
-  constructor(saved: PersonalStandInSettings, cause: unknown) {
+  constructor(saved: PersonalStandInSettings, cause: unknown, conflict = false) {
     super('The device settings were saved but the cloud assistant definition was not confirmed', {
       cause,
     })
     this.saved = saved
+    this.code = conflict ? 'cloud_definition_version_conflict' : 'cloud_definition_save_unconfirmed'
   }
 }
 
@@ -29,9 +31,14 @@ function definitionBackupPrefix(backendUrl: string, userId: number) {
 
 export function collectPersonalAssistantDefinitionBackups(backendUrl: string, userId: number) {
   const prefix = definitionBackupPrefix(backendUrl, userId)
-  return Object.entries(localStorage)
-    .filter(([key]) => key.startsWith(prefix))
-    .map(([, value]) => JSON.parse(value) as unknown)
+  const backups: unknown[] = []
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (!key?.startsWith(prefix)) continue
+    const value = localStorage.getItem(key)
+    if (value !== null) backups.push(JSON.parse(value) as unknown)
+  }
+  return backups
 }
 
 async function preserveConflictingDefinitions(
@@ -234,13 +241,30 @@ export function personalAssistantDeviceSettings(
   const executor = services.standInApi
   const cloud = services.personalAssistantAccountApi
   if (!executor || !cloud) return services
+  let unresolvedDefinitionRevision: string | undefined
   return {
     ...services,
     standInApi: {
       ...executor,
       async personalGet(userId, deviceId, options) {
         const settings = await executor.personalGet(userId, deviceId)
-        const account = readAccount()
+        let account = readAccount()
+        const unresolved = unresolvedDefinitionRevision
+        if (unresolved !== undefined && !options?.deviceSettingsOnly) {
+          if (account?.revision === unresolved) {
+            const latest = await cloud.get()
+            if (!latest) throw new Error('Cloud assistant definition is unavailable')
+            const current = readAccount()
+            if (current?.revision !== account.revision) account = current
+            else {
+              publish(latest)
+              account = latest
+            }
+          }
+          if (unresolvedDefinitionRevision === unresolved && account?.revision !== unresolved) {
+            unresolvedDefinitionRevision = undefined
+          }
+        }
         if (!account) return settings
         await preserveConflictingDefinitions(
           settings,
@@ -265,7 +289,10 @@ export function personalAssistantDeviceSettings(
         if (!account || (transferRoleId && !definitionChange)) {
           return executor.personalSave(userId, deviceSettings, deviceId, transferRoleId)
         }
-        if (cloudDefinitionRevision !== account.revision) {
+        if (
+          cloudDefinitionRevision !== account.revision ||
+          unresolvedDefinitionRevision === account.revision
+        ) {
           throw Object.assign(
             new PersonalAssistantSavePreflightError('Cloud assistant definition changed'),
             {
@@ -327,14 +354,21 @@ export function personalAssistantDeviceSettings(
           return applyDefinitions(saved, current, isKnownDevice, false, bindingDevice)
         } catch (cause) {
           const latest = await cloud.get().catch(() => null)
+          const conflict =
+            (cause instanceof ApiError && cause.status === 409) ||
+            Boolean(latest && latest.revision !== account.revision)
           if (latest) {
             publish(latest)
             if (matchesDefinitions(latest, definitions))
               return applyDefinitions(saved, latest, isKnownDevice, false, bindingDevice)
           }
+          if (conflict && (!latest || latest.revision === account.revision)) {
+            unresolvedDefinitionRevision = account.revision
+          }
           throw new PersonalAssistantDefinitionSaveError(
-            applyDefinitions(saved, account, isKnownDevice, false, bindingDevice),
-            cause
+            applyDefinitions(saved, latest ?? account, isKnownDevice, false, bindingDevice),
+            cause,
+            conflict
           )
         }
       },

@@ -760,10 +760,13 @@ class DesktopE2EServer {
     desktopScenario?.attachServer?.(this.server)
   }
 
-  async start() {
+  async start({
+    modelPort = DESKTOP_MODEL_SERVER_PORT,
+    controlPort = DESKTOP_CONTROL_SERVER_PORT,
+  } = {}) {
     await Promise.all([
-      this.listen(this.server, DESKTOP_MODEL_SERVER_PORT),
-      this.listen(this.controlServer, DESKTOP_CONTROL_SERVER_PORT),
+      this.listen(this.server, modelPort),
+      this.listen(this.controlServer, controlPort),
     ])
     const address = this.server.address()
     const controlAddress = this.controlServer.address()
@@ -867,10 +870,12 @@ class DesktopE2EServer {
   }
 
   fail(error, response) {
-    if (!response.headersSent) {
-      json(response, 500, { error: error instanceof Error ? error.message : String(error) })
-    } else if (!response.writableEnded) {
-      response.destroy(error instanceof Error ? error : undefined)
+    if (response) {
+      if (!response.headersSent) {
+        json(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      } else if (!response.writableEnded) {
+        response.destroy(error instanceof Error ? error : undefined)
+      }
     }
     if (this.fatalError) return
     this.fatalError = error instanceof Error ? error : new Error(String(error))

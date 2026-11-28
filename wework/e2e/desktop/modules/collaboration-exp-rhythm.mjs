@@ -16,8 +16,7 @@ export function createCollaborationExpRhythmFixture(rpc, timeoutMs) {
   let taskId
   return {
     async prepare(project, completedIssue, fallbackOwnerId) {
-      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
-      ownerId = binding.target?.userId ?? fallbackOwnerId
+      ownerId = fallbackOwnerId
       original = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
