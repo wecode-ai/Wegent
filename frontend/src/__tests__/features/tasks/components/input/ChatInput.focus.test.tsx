@@ -37,7 +37,7 @@ jest.mock('@/features/common/UserContext', () => ({
 
 jest.mock('@/features/tasks/components/chat/MentionAutocomplete', () => ({
   __esModule: true,
-  default: () => null,
+  default: () => <div data-testid="mention-autocomplete" />,
 }))
 
 jest.mock('@/features/tasks/components/chat/SkillFlyAnimation', () => ({
@@ -192,16 +192,26 @@ test.each([
   { pendingCatalog: false, method: 'paste command', action: 'click' },
   { pendingCatalog: true, method: 'paste command', action: 'click' },
   { pendingCatalog: false, method: 'paste command', action: 'send unmatched path' },
+  { pendingCatalog: false, method: 'type', action: 'send unmatched path' },
+  { pendingCatalog: false, method: 'type', action: 'send with modifier' },
   { pendingCatalog: false, method: 'type', action: 'move caret' },
+  { pendingCatalog: false, method: 'type', action: 'switch from mention' },
+  { pendingCatalog: false, method: 'type', action: 'escape from option' },
   { pendingCatalog: false, method: 'type', action: 'keyboard' },
 ])(
   'preserves the draft for slash $method followed by $action (pending catalog: $pendingCatalog)',
   async ({ pendingCatalog, method, action }) => {
     const user = userEvent.setup()
     const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+    const viewportHeight = jest.replaceProperty(window, 'innerHeight', 800)
+    let caretTop = 120
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
-      value: () => ({ top: 0, left: 0 }),
+      value: function (this: Range) {
+        return this.startContainer.nodeType === Node.TEXT_NODE
+          ? { top: caretTop, bottom: caretTop + 26, left: window.innerWidth - 16 }
+          : { top: 0, bottom: 0, left: 0 }
+      },
     })
     try {
       const skill = {
@@ -218,20 +228,35 @@ test.each([
         handleSendMessage: jest.fn(),
         onSkillSelect: jest.fn(),
         isLoading: false,
+        enableTaskMentions: action === 'switch from mention',
       }
-      const suffix = ' and keep this path /tmp'
+      const suffix = action === 'switch from mention' ? ' @' : ' and keep this path /tmp'
       const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
       const editingCommand = method === 'paste within command'
       const draft = 'Check ' + command + (editingCommand ? 'pdf' : '') + suffix
+      const onRender = jest.fn()
+      const renderInput = (message: string, availableSkills: (typeof skill)[]) => (
+        <Profiler id="skill-autocomplete" onRender={onRender}>
+          <ChatInput {...props} message={message} availableSkills={availableSkills} />
+        </Profiler>
+      )
       const { rerender } = render(
-        <ChatInput
-          {...props}
-          message={'Check ' + (editingCommand ? '/pdf' : '') + suffix}
-          availableSkills={pendingCatalog ? [] : [skill]}
-        />
+        renderInput(
+          'Check ' + (editingCommand ? '/pdf' : '') + suffix,
+          pendingCatalog ? [] : [skill]
+        )
       )
       const input = screen.getByTestId('message-input')
       input.focus()
+      const editorViewport = input.parentElement!.parentElement!
+      let editorBottom = 800
+      jest
+        .spyOn(editorViewport, 'getBoundingClientRect')
+        .mockImplementation(() => ({ top: 0, bottom: editorBottom }) as DOMRect)
+      if (action === 'switch from mention') {
+        fireEvent.input(input)
+        expect(screen.getByTestId('mention-autocomplete')).toBeInTheDocument()
+      }
       function typeCommand(value: string) {
         input.textContent = 'Check ' + value + suffix
         window.getSelection()?.collapse(input.firstChild, 'Check '.length + value.length)
@@ -246,22 +271,47 @@ test.each([
       } else {
         typeCommand('/')
         if (method === 'paste query') await user.paste('docs/pdf')
-        else typeCommand('/docs/pdf')
+        else typeCommand(command)
       }
-      rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
+      rerender(renderInput(draft, [skill]))
 
       if (action === 'send unmatched path') {
+        const pasted = method === 'paste command'
+        const emptyMenu = screen.queryByText('common:skillSelector.no_available_skills')
+        if (pasted) {
+          expect(emptyMenu).not.toBeInTheDocument()
+          expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
+        } else {
+          expect(emptyMenu).toBeVisible()
+        }
         await user.keyboard('{Enter}')
         expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
         expect(props.setMessage).toHaveBeenLastCalledWith(draft)
         expect(props.onSkillSelect).not.toHaveBeenCalled()
-        expect(
-          screen.queryByText('common:skillSelector.no_available_skills')
-        ).not.toBeInTheDocument()
         return
       }
 
       const option = await screen.findByTestId('slash-skill-option')
+      expect(option).toBeVisible()
+      if (action === 'send with modifier') {
+        await user.keyboard('{Control>}{Enter}{/Control}')
+        expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
+      if (action === 'switch from mention') {
+        expect(screen.queryByTestId('mention-autocomplete')).not.toBeInTheDocument()
+      }
+      if (action === 'escape from option') {
+        await user.tab({ shift: true })
+        expect(option).toHaveFocus()
+        await user.keyboard('{Escape}')
+        expect(option).not.toBeInTheDocument()
+        expect(input).toHaveFocus()
+        expect(window.getSelection()?.anchorOffset).toBe('Check '.length + command.length)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
       if (action === 'move caret') {
         window.getSelection()?.collapse(input.firstChild, 0)
         fireEvent(document, new Event('selectionchange'))
@@ -272,6 +322,39 @@ test.each([
       }
 
       if (action === 'keyboard') {
+        const menu = screen.getByTestId('slash-skill-menu')
+        expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
+        expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
+        expect(fireEvent.keyDown(input, { key: 'ArrowUp', shiftKey: true })).toBe(true)
+        expect(fireEvent.keyDown(input, { key: 'ArrowDown', metaKey: true })).toBe(true)
+
+        onRender.mockClear()
+        caretTop = 135
+        await waitFor(() => expect(menu).toHaveStyle({ top: '169px' }))
+        expect(onRender).not.toHaveBeenCalled()
+
+        editorBottom = 100
+        fireEvent.scroll(editorViewport)
+        expect(menu).not.toBeVisible()
+        expect(fireEvent.keyDown(input, { key: 'ArrowDown' })).toBe(true)
+        expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
+        editorBottom = 800
+
+        caretTop = 180
+        window.getSelection()?.collapse(input.firstChild, 'Check /'.length)
+        fireEvent(document, new Event('selectionchange'))
+        expect(menu).toHaveStyle({ top: '214px' })
+
+        caretTop = 560
+        fireEvent.scroll(input)
+        expect(menu).toHaveStyle({ top: '552px', transform: 'translateY(-100%)' })
+
+        Object.defineProperty(menu, 'scrollHeight', { value: 300 })
+        viewportHeight.replaceValue(240)
+        caretTop = 112
+        fireEvent.resize(window)
+        expect(menu).toHaveStyle({ top: '104px', maxHeight: '96px' })
+
         await user.tab({ shift: true })
         expect(option).toHaveFocus()
         fireEvent(document, new Event('selectionchange'))
@@ -280,9 +363,11 @@ test.each([
         await user.click(option)
       }
       expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
+      expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
       expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
       expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
     } finally {
+      viewportHeight.restore()
       if (originalRect)
         Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRect)
       else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect')
