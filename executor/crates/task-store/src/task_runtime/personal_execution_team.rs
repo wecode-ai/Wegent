@@ -414,10 +414,8 @@ pub(in crate::task_runtime::store) fn project_definition(
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let by_id: std::collections::HashMap<_, _> = project_bots
-        .iter()
-        .map(|bot| (&bot["id"], bot))
-        .collect();
+    let by_id: std::collections::HashMap<_, _> =
+        project_bots.iter().map(|bot| (&bot["id"], bot)).collect();
     let mut bots = source["bot"].clone();
     for bot in bots.as_array_mut().into_iter().flatten() {
         if let Some(fields) = bot.as_object_mut() {
@@ -459,13 +457,10 @@ pub(in crate::task_runtime::store) fn project_definition(
     {
         // A solo project Agent owns its lead Bot's grants. Additional Bots can
         // only receive grants already belonging to their exact project Bot.
-        let authorized = by_id
-            .get(&bot["id"])
-            .copied()
-            .or(match project_bots {
-                [lead] if index == 0 => Some(lead),
-                _ => None,
-            });
+        let authorized = by_id.get(&bot["id"]).copied().or(match project_bots {
+            [lead] if index == 0 => Some(lead),
+            _ => None,
+        });
         if let Some(grants) = authorized {
             bot["native_capability_scope"] = json!("bot");
             for key in [
