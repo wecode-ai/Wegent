@@ -26,6 +26,12 @@ export function upgradeVerificationMatrix(channel, sourceVersion = "") {
           arch: "x64",
           channel: selected,
         },
+        {
+          runner: "windows-11-arm",
+          platform: "windows",
+          arch: "arm64",
+          channel: selected,
+        },
       ],
     ),
   };
@@ -94,9 +100,9 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const jobs = api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
     (page) => page.jobs,
   );
-  // Replays cannot publish and consume only these two platforms' immutable inputs.
+  // Replays cannot publish and consume only these three platforms' immutable inputs.
   // Ordinary dry runs and releases retain the complete producer gate.
-  const platforms = ["macOS arm64", "Windows x64"];
+  const platforms = ["macOS arm64", "Windows x64", "Windows arm64"];
   if (environment.REPLAY !== "true") platforms.push("macOS x64", "Linux x64");
   for (const platform of platforms) {
     const matches = jobs.filter((job) => job.name === `Build ${platform}`);
@@ -107,7 +113,7 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     (page) => page.artifacts,
   );
   const versions = new Set();
-  for (const platform of ["macos-arm64", "windows-x64"]) {
+  for (const platform of ["macos-arm64", "windows-x64", "windows-arm64"]) {
     const candidates = artifacts.filter(
       (artifact) =>
         artifact.name.startsWith("wework-upgrade-input-") &&

@@ -1,7 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 const VC_RUNTIME = /^(?:vcruntime|msvcp|concrt)\d+(?:_[a-z0-9_]+)?\.dll$/i
+
+/** VC++ runtime imports of a PE binary, lowercase. */
+export function windowsVcRuntimeImports(buffer) {
+  return windowsPeImports(buffer).filter(name => VC_RUNTIME.test(name))
+}
 
 /**
  * Add static CRT linking for a Windows Rust target.
@@ -22,11 +27,19 @@ export function windowsStaticCrtEnvironment(environment, target) {
   return { ...environment, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') }
 }
 
+// PE32+ binaries for both supported Windows architectures share the same
+// optional-header and import-directory layout; only the machine type differs
+// (0x8664 for x64, 0xaa64 for ARM64).
+const WINDOWS_PE_MACHINE_TYPES = new Set([0x8664, 0xaa64])
+
 /** Read normal and delay imports without executing an unprepared Windows binary. */
 export function windowsPeImports(buffer) {
   const pe = buffer.readUInt32LE(0x3c)
-  if (buffer.toString('ascii', pe, pe + 4) !== 'PE\0\0' || buffer.readUInt16LE(pe + 4) !== 0x8664)
-    throw new Error('Windows native runtime verification requires an x64 PE binary')
+  if (
+    buffer.toString('ascii', pe, pe + 4) !== 'PE\0\0' ||
+    !WINDOWS_PE_MACHINE_TYPES.has(buffer.readUInt16LE(pe + 4))
+  )
+    throw new Error('Windows native runtime verification requires an x64 or ARM64 PE binary')
   const optional = pe + 24
   if (buffer.readUInt16LE(optional) !== 0x20b) throw new Error('Expected PE32+ binary')
   const sections = optional + buffer.readUInt16LE(pe + 20)
@@ -64,11 +77,17 @@ export function windowsPeImports(buffer) {
 export async function assertWindowsNativeRuntimeIndependent(root) {
   const violations = []
   for (const executable of await windowsExecutables(root)) {
-    const runtimeImports = windowsPeImports(await readFile(executable)).filter(name =>
-      VC_RUNTIME.test(name)
+    const runtimeImports = windowsVcRuntimeImports(await readFile(executable))
+    if (!runtimeImports.length) continue
+    // App-local deployment does not depend on the machine-wide redist: the
+    // standard Windows DLL search order checks the executable's directory
+    // first. Imports satisfied there are accepted.
+    const siblings = new Set(
+      (await readdir(dirname(executable))).map(name => name.toLowerCase())
     )
-    if (runtimeImports.length) {
-      violations.push(`${relative(root, executable)} imports ${runtimeImports.join(', ')}`)
+    const missing = runtimeImports.filter(name => !siblings.has(name))
+    if (missing.length) {
+      violations.push(`${relative(root, executable)} imports ${missing.join(', ')}`)
     }
   }
   if (violations.length) {

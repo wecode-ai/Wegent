@@ -10,7 +10,10 @@ import { telemetryEvents } from './response-protocol.mjs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
+import {
+  legacyDshRuntimeIsPublished,
+  verifyDownloadedDshRuntimeCache,
+} from './dsh-runtime-cache.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
 import { request } from 'node:http'
 import { SELECTED_DESKTOP_SEGMENT } from './shared.mjs'
@@ -196,16 +199,21 @@ export async function prepareHarnessAppUi(
     timeoutMs: uiTimeoutMs,
   })
 
-  await observe('legacy-app-verification', () =>
-    verifyLegacyAppLaunch(control, {
-      legacyPackagePath,
-      electronUserDataDirectory,
-      uiTimeoutMs,
-    })
-  )
-  const legacyRuntimeCache = await observe('legacy-cache-verification', () =>
-    verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8')
-  )
+  // The first arm64 package has no legacy descriptor, so only platforms that
+  // publish it can exercise the rejection and verified archive cache.
+  let legacyRuntimeCache = null
+  if (legacyDshRuntimeIsPublished()) {
+    await observe('legacy-app-verification', () =>
+      verifyLegacyAppLaunch(control, {
+        legacyPackagePath,
+        electronUserDataDirectory,
+        uiTimeoutMs,
+      })
+    )
+    legacyRuntimeCache = await observe('legacy-cache-verification', () =>
+      verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8')
+    )
+  }
 
   return { legacyRuntimeCache }
 }

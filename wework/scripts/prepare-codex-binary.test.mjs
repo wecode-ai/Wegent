@@ -40,6 +40,10 @@ test('direct execution through a directory link still runs the native preparatio
     new URL('./lib/process-lock.mjs', import.meta.url),
     join(root, 'scripts/lib/process-lock.mjs')
   )
+  await cp(
+    new URL('./lib/windows-native-runtime.mjs', import.meta.url),
+    join(root, 'scripts/lib/windows-native-runtime.mjs')
+  )
   await writeFile(join(root, 'codex-binaries.lock.json'), '{"targets":{}}')
   await symlink(
     resolve('node_modules'),
@@ -330,5 +334,77 @@ describe('resolveCodexLegalSources', () => {
       license: '/tmp/bundled/LICENSE',
       notice: join('/tmp/codex-source', 'NOTICE'),
     })
+  })
+})
+
+describe('ensureWindowsAppLocalCrt', () => {
+  // Minimal PE32+ fixture importing the given DLLs (import directory only).
+  function peImporting(names, machine = 0xaa64) {
+    const bytes = Buffer.alloc(4096)
+    bytes.writeUInt32LE(0x80, 0x3c)
+    bytes.write('PE\0\0', 0x80)
+    bytes.writeUInt16LE(machine, 0x84)
+    bytes.writeUInt16LE(1, 0x86)
+    bytes.writeUInt16LE(0xf0, 0x94)
+    bytes.writeUInt16LE(0x20b, 0x98)
+    bytes.writeUInt32LE(0xc00, 0x190)
+    bytes.writeUInt32LE(0x1000, 0x194)
+    bytes.writeUInt32LE(0xc00, 0x198)
+    bytes.writeUInt32LE(0x400, 0x19c)
+    bytes.writeUInt32LE(0x400 + 0xc00, 0x98 + 112 + 1 * 8)
+    bytes.writeUInt32LE((names.length + 1) * 20, 0x98 + 116 + 1 * 8)
+    names.forEach((name, index) => {
+      bytes.writeUInt32LE(0x600 + index * 64 + 0xc00, 0x400 + index * 20 + 12)
+      bytes.write(name, 0x600 + index * 64)
+    })
+    return bytes
+  }
+
+  async function crtFixture(dllBytes, pinnedSha256) {
+    const target = 'aarch64-pc-windows-msvc'
+    const root = await mkdtemp(join(tmpdir(), 'wework-codex-crt-'))
+    temporaryDirectories.push(root)
+    const vendor = join(root, 'vendor', target)
+    const pathDir = join(vendor, 'codex-path')
+    const voiceBin = join(vendor, 'codex-resources', 'voice', 'bin')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(pathDir, { recursive: true })
+    await mkdir(voiceBin, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const sha256 = pinnedSha256 ?? createHash('sha256').update(dllBytes).digest('hex')
+    await writeFile(
+      join(vendor, 'codex-resources', 'voice', 'windows-crt.json'),
+      JSON.stringify({ [target]: { dllSha256: sha256 } })
+    )
+    await writeFile(join(voiceBin, 'vcruntime140.dll'), dllBytes)
+    await writeFile(join(pathDir, 'rg.exe'), peImporting(['KERNEL32.dll', 'VCRUNTIME140.dll']))
+    return { root, target, pathDir }
+  }
+
+  test('deploys the hash-pinned runtime beside importing executables', async () => {
+    const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
+    const { root, target, pathDir } = await crtFixture(Buffer.from('pinned crt'))
+    await ensureWindowsAppLocalCrt(root, target)
+    await expect(readFile(join(pathDir, 'vcruntime140.dll'), 'utf8')).resolves.toBe('pinned crt')
+  })
+
+  test('rejects a bundled runtime that does not match the manifest pin', async () => {
+    const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
+    const { root, target, pathDir } = await crtFixture(Buffer.from('tampered crt'), 'f'.repeat(64))
+    await expect(ensureWindowsAppLocalCrt(root, target)).rejects.toThrow(
+      /does not match the Codex windows-crt manifest/
+    )
+    await expect(readFile(join(pathDir, 'vcruntime140.dll'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  test('ignores non-Windows targets and packages without importing helpers', async () => {
+    const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
+    const { root, target } = await crtFixture(Buffer.from('pinned crt'))
+    await ensureWindowsAppLocalCrt(root, 'aarch64-apple-darwin')
+    await expect(
+      readFile(join(root, 'vendor', target, 'codex-path', 'vcruntime140.dll'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

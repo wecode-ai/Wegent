@@ -157,14 +157,14 @@ Prepare downloads, extraction, component composition, and plugin profiles while 
 
 Formal releases build and verify candidate packages, generate update manifests, and only then
 create the version tag and Release. Verification or manifest failures do not consume a tag.
-macOS arm64 and Windows x64 independently verify real-package upgrades and rollbacks.
+macOS arm64, Windows x64, and Windows arm64 independently verify real-package upgrades and rollbacks.
 macOS x64 adopts arm64's successful version paths and minimum source version without running
 release upgrade/rollback E2E. Its records retain x64 package hashes and download URLs, with
 `verification.kind=architecture-equivalence`, `arch=arm64`, and both arm64 package hashes
 declaring the evidence source. Source and target revisions must respectively match arm64;
 missing historical x64 package records block publication. Ordinary PRs do not run packaged
 upgrade E2E. Per-architecture release verification rules below apply
-to macOS arm64 and Windows x64; macOS x64 uses this explicit architecture equivalence policy.
+to macOS arm64, Windows x64, and Windows arm64; macOS x64 uses this explicit architecture equivalence policy.
 
 Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json` endpoints and fields. Add `upgradePolicy` to the component manifest. Each target declares `minSourceVersion`; exact source-to-target edges carry delivered-package hashes and upgrade/rollback evidence.
 
@@ -285,7 +285,7 @@ pnpm --dir wework/electron test src/runtime/release-store.test.ts src/runtime/re
 pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 ```
 
-Provide a verified `WEWORK_E2E_UPGRADE_PAIR`; the runner resolves the source application and executor without building. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Default-layout tests with the real application identity require a clean operating-system user; existing native application data stops verification and must never be cleared to run a test. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Verify macOS arm64 and Windows x64 independently; macOS x64 uses the previously described architecture-equivalence release proof with its own hashes. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
+Provide a verified `WEWORK_E2E_UPGRADE_PAIR`; the runner resolves the source application and executor without building. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Default-layout tests with the real application identity require a clean operating-system user; existing native application data stops verification and must never be cleared to run a test. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Verify macOS arm64, Windows x64, and Windows arm64 independently; macOS x64 uses the previously described architecture-equivalence release proof with its own hashes. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
 
 Release-pair tests seed isolated data according to the shipped source package's startup layout. Sources that bundle the legacy migration module migrate from the operating system's application data directory. Other sources open Workbench `user-data` directly. Both layouts verify model and cloud test credentials in the source, then exercise the real upgrade, rollback, and re-upgrade where applicable. Test configuration goes into the Codex Home the source reads at startup. After startup, native session and compressed-history checks use the Workbench Codex Home.
 
@@ -414,7 +414,7 @@ Upload immutable target assets and evidence before promoting rolling manifests. 
 
 Beta may import a Stable source only after verifying a new edge under Beta, without copying Stable's edges. Bind evidence to the channel and require an immutable package hash across channels. Stable catalogs reject Beta nodes and Beta minimum versions. Rollback restores the previous healthy local release rather than selecting an older release from the published catalog.
 
-After fixing a test driver, a non-publishing replay can reuse unexpired signed artifacts from a run whose macOS arm64 and Windows x64 builds both succeeded. A failed macOS x64 or Linux build does not block verification of these two platforms. Each verified platform still requires exactly one successful producer and valid provenance, version, artifact digest, and package hashes. Ordinary dry runs and publication still require all four producers to succeed:
+After fixing a test driver, a non-publishing replay can reuse unexpired signed artifacts from a run whose macOS arm64, Windows x64, and Windows arm64 builds all succeeded. A failed macOS x64 or Linux build does not block verification of these three platforms. Each verified platform still requires exactly one successful producer and valid provenance, version, artifact digest, and package hashes. Ordinary dry runs and publication still require all five producers to succeed:
 
 ```bash
 gh workflow run wework-app.yml --ref <test-driver-branch> -f verification_run_id=<original-build-run-id> -f publish_release=false

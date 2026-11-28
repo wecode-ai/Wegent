@@ -11,6 +11,7 @@ trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/wework/scripts/lib" "$stage/wework/third_party/codex" "$stage/LICENSES"
 cp "$repository/wework/scripts/prepare-codex-binary.mjs" "$stage/wework/scripts/"
 cp "$repository/wework/scripts/lib/process-lock.mjs" "$stage/wework/scripts/lib/"
+cp "$repository/wework/scripts/lib/windows-native-runtime.mjs" "$stage/wework/scripts/lib/"
 cp "$repository/wework/codex-binaries.lock.json" "$stage/wework/"
 cp "$repository/LICENSES/Apache-2.0.txt" "$stage/LICENSES/"
 cp "$repository/wework/third_party/codex/NOTICE" "$repository/wework/third_party/codex/RATATUI-LICENSE.txt" "$stage/wework/third_party/codex/"

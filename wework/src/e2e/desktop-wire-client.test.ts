@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { execFile } from 'node:child_process'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -43,6 +43,17 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
         operation: cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
           recursive: true,
         }),
+      },
+      {
+        name: 'create desktop package target library',
+        operation: mkdir(join(directory, 'wework/scripts/lib'), { recursive: true }),
+      },
+      {
+        name: 'copy desktop package target library',
+        operation: cp(
+          join(weworkDir, 'scripts/lib/desktop-package-target.mjs'),
+          join(directory, 'wework/scripts/lib/desktop-package-target.mjs')
+        ),
       },
       ...[
         '.github/scripts/node-async-resource-diagnostics.mjs',

@@ -26,8 +26,14 @@ const plans = await Promise.all(
     JSON.parse(await readFile(join(planDirectory, name), 'utf8'))
   )
 )
-if (plans.length !== 2 || new Set(plans.map(plan => plan.platform)).size !== 2)
-  throw new Error('Both independent package platforms require frozen upgrade plans')
+const expectedPlanTargets = ['macos/arm64', 'windows/x64', 'windows/arm64']
+const planTargets = plans.map(plan => `${plan.platform}/${plan.arch}`)
+if (
+  plans.length !== expectedPlanTargets.length ||
+  new Set(planTargets).size !== plans.length ||
+  planTargets.some(target => !expectedPlanTargets.includes(target))
+)
+  throw new Error('Every independent package platform requires a frozen upgrade plan')
 await mkdir(outputDirectory, { recursive: true })
 let consumed = 0
 for (const frozen of plans) {
@@ -38,12 +44,7 @@ for (const frozen of plans) {
     platform: frozen.platform,
     arch: frozen.arch,
   })
-  if (
-    !(
-      (frozen.platform === 'macos' && frozen.arch === 'arm64') ||
-      (frozen.platform === 'windows' && frozen.arch === 'x64')
-    )
-  )
+  if (!expectedPlanTargets.includes(`${frozen.platform}/${frozen.arch}`))
     throw new Error('Invalid upgrade platform')
   const selected = shards.filter(
     shard => shard.target.platform === frozen.platform && shard.target.arch === frozen.arch

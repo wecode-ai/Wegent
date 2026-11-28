@@ -6,10 +6,30 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
-import { prepareHarnessRuntimeRoots, resolveDesktopCodexBinary } from './desktop-build-flows.mjs'
+import {
+  codexTargetFor,
+  prepareHarnessRuntimeRoots,
+  resolveDesktopCodexBinary,
+} from './desktop-build-flows.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
 
 const execute = promisify(execFile)
+
+test('maps every supported Codex E2E host', () => {
+  assert.equal(codexTargetFor('darwin', 'arm64'), 'aarch64-apple-darwin')
+  assert.equal(codexTargetFor('darwin', 'x64'), 'x86_64-apple-darwin')
+  assert.equal(codexTargetFor('linux', 'arm64'), 'aarch64-unknown-linux-gnu')
+  assert.equal(codexTargetFor('linux', 'x64'), 'x86_64-unknown-linux-gnu')
+  assert.equal(codexTargetFor('win32', 'arm64'), 'aarch64-pc-windows-msvc')
+  assert.equal(codexTargetFor('win32', 'x64'), 'x86_64-pc-windows-msvc')
+})
+
+test('rejects unsupported Codex E2E hosts', () => {
+  assert.throws(
+    () => codexTargetFor('win32', 'ia32'),
+    /Unsupported Wework package target: win32-ia32/
+  )
+})
 
 test('resolves the per-run coding CLI instead of inheriting another run configuration', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-codex-selection-'))

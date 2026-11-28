@@ -57,6 +57,7 @@ async function fixture() {
 for (const [platform, arch, suffix] of [
   ['macos', 'arm64', 'mac-arm64/WeWork.app/Contents/Resources'],
   ['macos', 'x64', 'mac/WeWork.app/Contents/Resources'],
+  ['windows', 'arm64', 'win-arm64-unpacked/resources'],
   ['windows', 'x64', 'win-unpacked/resources'],
   ['linux', 'arm64', 'linux-arm64-unpacked/resources'],
   ['linux', 'x64', 'linux-unpacked/resources'],
@@ -71,7 +72,7 @@ for (const [platform, arch, suffix] of [
 
 test('rejects unsupported delivered packages', () => {
   assert.throws(
-    () => deliveredPackagePaths('/installer', 'windows', 'arm64'),
+    () => deliveredPackagePaths('/installer', 'windows', 'ia32'),
     /Unsupported delivered package/
   )
 })

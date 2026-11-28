@@ -36,6 +36,7 @@ const detectedTarget =
     : {
         'linux-x64': 'x86_64-unknown-linux-gnu',
         'linux-arm64': 'aarch64-unknown-linux-gnu',
+        'win32-arm64': 'aarch64-pc-windows-msvc',
         'win32-x64': 'x86_64-pc-windows-msvc',
       }[`${platform}-${arch}`]
 const target = process.env.WEWORK_DWS_TARGET?.trim() || detectedTarget
@@ -51,6 +52,7 @@ const archives = {
   'x86_64-apple-darwin': 'dws-darwin-amd64.tar.gz',
   'x86_64-unknown-linux-gnu': 'dws-linux-amd64.tar.gz',
   'aarch64-unknown-linux-gnu': 'dws-linux-arm64.tar.gz',
+  'aarch64-pc-windows-msvc': 'dws-windows-arm64.zip',
   'x86_64-pc-windows-msvc': 'dws-windows-amd64.zip',
 }
 const archiveName = archives[target]

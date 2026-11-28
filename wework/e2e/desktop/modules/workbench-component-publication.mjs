@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { resolveElectronBinary } from './electron-binary.mjs'
-import { fileURLToPath } from 'node:url'
 
 export function occupiedPublicationEntry(root, source, target) {
   if (!basename(source).startsWith('.content-')) return null

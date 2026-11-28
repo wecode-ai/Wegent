@@ -84,7 +84,8 @@ export function verifyUpgradeDuration({
     assert.ok(["stable", "beta"].includes(item.channel));
     assert.ok(
       (item.platform === "macos" && item.arch === "arm64") ||
-        (item.platform === "windows" && item.arch === "x64"),
+        (item.platform === "windows" &&
+          ["x64", "arm64"].includes(item.arch)),
     );
     assert.match(
       item.source_version ?? "",
@@ -111,8 +112,8 @@ export function verifyUpgradeDuration({
     );
     assert.equal(
       builds.length,
-      4,
-      "A release requires all four completed producer builds",
+      5,
+      "A release requires all five completed producer builds",
     );
   }
   const aggregates = jobs.filter(

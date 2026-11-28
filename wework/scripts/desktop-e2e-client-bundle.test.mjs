@@ -35,6 +35,8 @@ async function isolatedConsumer(name) {
   const consumer = join(root, name)
   const desktop = join(consumer, 'wework/e2e/desktop')
   await cp(join(wework, 'e2e/desktop'), desktop, { recursive: true })
+  // desktop-build-flows imports the shared native tar extractor and the
+  // desktop package target mapping.
   const sharedScripts = join(consumer, 'wework/scripts/lib')
   await mkdir(sharedScripts, { recursive: true })
   for (const file of ['ai-verify-devtools.mjs', 'desktop-control-queue.mjs']) {
@@ -44,6 +46,10 @@ async function isolatedConsumer(name) {
   await cp(
     join(wework, 'scripts/lib/extract-runtime-archive.mjs'),
     join(sharedScripts, 'extract-runtime-archive.mjs')
+  )
+  await cp(
+    join(wework, 'scripts/lib/desktop-package-target.mjs'),
+    join(sharedScripts, 'desktop-package-target.mjs')
   )
   await cp(
     join(wework, 'scripts/lib/windows-native-runtime.mjs'),

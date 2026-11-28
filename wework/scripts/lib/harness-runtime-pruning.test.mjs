@@ -42,6 +42,17 @@ describe('pruneHarnessRuntime', () => {
     await expectExists(join(root, '@reflink', 'reflink', 'index.js'))
   })
 
+  test('keeps only Windows arm64 native payloads', async () => {
+    const root = await runtimeFixture()
+    await pruneHarnessRuntime(root, 'windows-arm64')
+
+    await expectExists(join(root, 'node-pty', 'prebuilds', 'win32-arm64', 'pty.node'))
+    await expectMissing(join(root, 'node-pty', 'prebuilds', 'win32-x64'))
+    await expectMissing(join(root, 'node-pty', 'prebuilds', 'darwin-arm64'))
+    await expectExists(join(root, '@reflink', 'reflink-win32-arm64-msvc', 'reflink.node'))
+    await expectMissing(join(root, '@reflink', 'reflink-win32-x64-msvc'))
+  })
+
   test('removes dangling dependency links left by partial installs', async () => {
     const root = await runtimeFixture()
     const packageDependencies = join(root, 'node_modules', '.pnpm', 'package@1.0.0', 'node_modules')
@@ -147,11 +158,13 @@ async function runtimeFixture() {
     ['node-pty', 'prebuilds', 'darwin-x64'],
     ['node-pty', 'prebuilds', 'linux-x64'],
     ['node-pty', 'prebuilds', 'win32-x64'],
+    ['node-pty', 'prebuilds', 'win32-arm64'],
     ['node-pty', 'third_party'],
     ['@reflink', 'reflink'],
     ['@reflink', 'reflink-darwin-arm64'],
     ['@reflink', 'reflink-darwin-x64'],
     ['@reflink', 'reflink-win32-x64-msvc'],
+    ['@reflink', 'reflink-win32-arm64-msvc'],
     ['node_modules'],
     ['package'],
   ]
@@ -161,11 +174,13 @@ async function runtimeFixture() {
     writeFile(join(root, 'node-pty', 'prebuilds', 'darwin-x64', 'pty.node'), ''),
     writeFile(join(root, 'node-pty', 'prebuilds', 'linux-x64', 'pty.node'), ''),
     writeFile(join(root, 'node-pty', 'prebuilds', 'win32-x64', 'pty.node'), ''),
+    writeFile(join(root, 'node-pty', 'prebuilds', 'win32-arm64', 'pty.node'), ''),
     writeFile(join(root, 'node-pty', 'third_party', 'source.cc'), ''),
     writeFile(join(root, '@reflink', 'reflink', 'index.js'), ''),
     writeFile(join(root, '@reflink', 'reflink-darwin-arm64', 'reflink.node'), ''),
     writeFile(join(root, '@reflink', 'reflink-darwin-x64', 'reflink.node'), ''),
     writeFile(join(root, '@reflink', 'reflink-win32-x64-msvc', 'reflink.node'), ''),
+    writeFile(join(root, '@reflink', 'reflink-win32-arm64-msvc', 'reflink.node'), ''),
     writeFile(join(root, 'node_modules', '.modules.yaml'), 'prunedAt: now\n'),
     writeFile(
       join(root, 'node_modules', '.pnpm-workspace-state-v1.json'),
