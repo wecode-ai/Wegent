@@ -66,6 +66,15 @@ export async function openStandInSettings(control) {
   await control.command('waitFor', '[data-testid="stand-in-profile-panel"]')
 }
 
+export async function closeStandInSettingsAfterBinding(control, timeoutMs) {
+  // Binding reconciliation can unmount the settings between UI commands.
+  await control.command('clickIfPresent', '[data-testid="stand-in-primary-profile-close"]')
+  await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
+    visible: false,
+    timeoutMs,
+  })
+}
+
 /** Exercise the real shared header, memory discard guard and source hierarchy. */
 export async function verifyStandInProfileNavigation(control, captureScreenshot) {
   const absent = async selector =>

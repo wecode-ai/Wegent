@@ -198,7 +198,7 @@ mod tests {
         .await
         .expect("an unanswered approval must not hold the native turn");
         assert!(!transport
-            .answer_mcp_elicitation(&json!(17), json!({"action":"accept"}))
+            .answer_server_interaction(&json!(17), json!({"action":"accept"}))
             .await
             .unwrap());
     }
