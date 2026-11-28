@@ -270,3 +270,162 @@ it('clears a subscription error when a revision refresh succeeds', async () => {
     act(() => root.unmount())
   }
 })
+
+it('preserves live external replies between the refresh snapshot read and room join', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const progress = createMessage({
+    sender: { type: 'agent', id: 'worker', name: 'Worker' },
+    status: 'streaming',
+    metadata: { externalInvocation: true, externalReplyRevision: '2' },
+  })
+  const appended = {
+    ...progress,
+    content: 'Worker completed the check.',
+    metadata: { ...progress.metadata, externalReplyRevision: '3' },
+  }
+  const streaming = createMessage({
+    messageId: 'runtime',
+    sequenceNumber: 2,
+    sender: { type: 'agent', id: 'runtime', name: 'Runtime' },
+    status: 'streaming',
+    content: 'First chunk',
+  })
+  const delta: ProjectChatMessage = {
+    ...streaming,
+    type: 'agent_chunk',
+    content: ' and next',
+    metadata: { contentMode: 'delta' },
+    updatedAt: '2026-09-25T00:00:01Z',
+  }
+  const refreshRead = Promise.withResolvers<void>()
+  const finishRefresh = Promise.withResolvers<void>()
+  const joined = new Set<(message: ProjectChatMessage) => void>()
+  const listeners = new Set<(message: ProjectChatMessage) => void>()
+  const chunkListeners = new Set<(message: ProjectChatMessage) => void>()
+  let subscriptions = 0
+  function emit(message: ProjectChatMessage) {
+    if (joined.size) listeners.forEach(receive => receive(message))
+  }
+  const client = {
+    subscribe: vi.fn(async (...args: Parameters<ProjectChatClient['subscribe']>) => {
+      const receive = args[3]
+      const receiveChunk = args[4]!
+      listeners.add(receive)
+      chunkListeners.add(receiveChunk)
+      const snapshot = {
+        messages: [progress, streaming],
+        latestSequence: 2,
+        currentUserId: '42',
+      }
+      if (++subscriptions > 1) {
+        // The Backend has read the persisted progress but has not yet joined the room.
+        refreshRead.resolve()
+        await finishRefresh.promise
+      }
+      joined.add(receive)
+      return {
+        snapshot,
+        unsubscribe: () => {
+          listeners.delete(receive)
+          chunkListeners.delete(receiveChunk)
+          joined.delete(receive)
+        },
+      }
+    }),
+  }
+  function Harness({ revision }: { revision: number }) {
+    const chat = useIssueProjectChat(
+      client as unknown as ProjectChatClient,
+      'project-1',
+      'issue-1',
+      revision
+    )
+    return <div>{chat.messages.map(message => message.content).join(',')}</div>
+  }
+  try {
+    await act(async () => root.render(<Harness revision={2} />))
+    expect(joined.size).toBe(1)
+    act(() => root.render(<Harness revision={3} />))
+    await refreshRead.promise
+    // A fast Worker updates this message after the snapshot read. The established
+    // subscription must carry the live event until the new join is acknowledged.
+    act(() => {
+      emit(appended)
+      if (joined.size) chunkListeners.forEach(receive => receive(delta))
+    })
+    expect(container.textContent).toBe(`${progress.content},${streaming.content}`)
+    await act(async () => finishRefresh.resolve())
+    expect(container.textContent).toBe(`${appended.content},${streaming.content}${delta.content}`)
+    expect(joined.size).toBe(1)
+    expect(listeners.size).toBe(1)
+  } finally {
+    finishRefresh.resolve()
+    await act(async () => root.unmount())
+  }
+  expect(joined.size).toBe(0)
+  expect(listeners.size).toBe(0)
+  expect(chunkListeners.size).toBe(0)
+})
+
+it('releases the retained room and discards buffered replies when a newer refresh is denied', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const progress = createMessage({ content: 'Previously authorized content' })
+  const denied = new Error('Access denied')
+  const invalidatesSnapshot = (error: unknown) => error === denied
+  type Subscription = Awaited<ReturnType<ProjectChatClient['subscribe']>>
+  const olderRefresh = Promise.withResolvers<Subscription>()
+  const latestRefresh = Promise.withResolvers<Subscription>()
+  const unsubscribe = vi.fn()
+  const unsubscribeOlder = vi.fn()
+  let receiveLatest!: (message: ProjectChatMessage) => void
+  const subscription = (messages: ProjectChatMessage[], unsubscribe: () => void) => ({
+    snapshot: { messages, latestSequence: 1, currentUserId: '42' },
+    unsubscribe,
+  })
+  const client = {
+    subscribe: vi
+      .fn<ProjectChatClient['subscribe']>()
+      .mockResolvedValueOnce(subscription([progress], unsubscribe))
+      .mockImplementationOnce(() => olderRefresh.promise)
+      .mockImplementationOnce((_project, _issue, _after, receive) => {
+        receiveLatest = receive
+        return latestRefresh.promise
+      }),
+  }
+  function Harness({ revision }: { revision: number }) {
+    const chat = useIssueProjectChat(
+      client as unknown as ProjectChatClient,
+      'project-1',
+      'issue-1',
+      revision,
+      invalidatesSnapshot
+    )
+    return <div>{chat.messages.map(message => message.content).join(',')}</div>
+  }
+  try {
+    await act(async () => root.render(<Harness revision={1} />))
+    expect(container.textContent).toBe(progress.content)
+    await act(async () => root.render(<Harness revision={2} />))
+    await act(async () => root.render(<Harness revision={3} />))
+    // Both pending attempts must keep the original room lease alive.
+    expect(unsubscribe).not.toHaveBeenCalled()
+    act(() => receiveLatest({ ...progress, content: 'Unconfirmed reply' }))
+    expect(container.textContent).toBe(progress.content)
+    await act(async () => latestRefresh.reject(denied))
+    expect(container.textContent).toBe('')
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    await act(async () => olderRefresh.resolve(subscription([progress], unsubscribeOlder)))
+    expect(unsubscribeOlder).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toBe('')
+  } finally {
+    olderRefresh.resolve(subscription([], unsubscribeOlder))
+    latestRefresh.reject(denied)
+    await act(async () => root.unmount())
+  }
+  expect(unsubscribe).toHaveBeenCalledTimes(1)
+  expect(unsubscribeOlder).toHaveBeenCalledTimes(1)
+})

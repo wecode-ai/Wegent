@@ -8,6 +8,10 @@ interface ResourceRef {
 
 export interface PersonalAssistantDefinition {
   roleId: string
+  team: {
+    metadata: ResourceRef & { displayName?: string }
+    spec: { collaborationModel: 'solo'; members: [{ botRef: ResourceRef; role: 'leader' }] }
+  }
   bot: {
     spec?: { execution_policy?: { mode: string; environment_id?: string } }
     metadata: ResourceRef & { displayName?: string }
@@ -16,10 +20,18 @@ export interface PersonalAssistantDefinition {
 }
 
 export interface PersonalAssistantAccount {
-  defaultBotRef: ResourceRef
+  defaultTeamRef: ResourceRef
   revision: string
   retiredRoleIds: string[]
   definitions: PersonalAssistantDefinition[]
+  stopIntents?: PersonalAssistantStopIntent[]
+  stopIntentGenerations?: Record<string, string>
+}
+
+export interface PersonalAssistantStopIntent {
+  deviceId: string
+  requestId: string
+  expectedVersion?: number
 }
 
 interface AccountResponse {
@@ -71,6 +83,26 @@ export function createPersonalAssistantAccountApi(client: HttpClient) {
         desired: { definitions },
       })
       if (!assistant) throw new Error('Personal assistant definition was not returned')
+      return assistant
+    },
+    async updateStopIntent(
+      deviceId: string,
+      operation: 'mark' | 'clear',
+      requestId: string,
+      expectedRequestId?: string | null,
+      expectedVersion?: number
+    ) {
+      const { assistant } = await client.patch<AccountResponse>('/v1/personal-assistant', {
+        stopIntent: {
+          deviceId,
+          operation,
+          requestId,
+          ...(operation === 'mark'
+            ? { expectedRequestId: expectedRequestId ?? null, expectedVersion }
+            : {}),
+        },
+      })
+      if (!assistant) throw new Error('Personal assistant stop state was not returned')
       return assistant
     },
   }

@@ -27,7 +27,7 @@ function rhythmProtocol() {
         type: 'issue_dispatch',
         initiatedBy: 'stand_in',
         standInId: COLLABORATION_EXP_RHYTHM_ROLE,
-        userId: 7,
+        userId: 99,
         projectStore: 'local',
         cloudProjectId: 'local-project',
         loopItemId: issue.id,
@@ -37,7 +37,6 @@ function rhythmProtocol() {
   const bindings = [[], [binding]]
   const tasks = [{ ...task, status: 'queued', running: false }, task]
   const handlers = {
-    'runtime.stand_in.binding': () => ({ target: { userId: 7 } }),
     'runtime.stand_in.personal.get': () => settings,
     'runtime.stand_in.personal.save': input => input.settings,
     'runtime.runner.catalog': () => ({ models: [{ runtime: 'codex', is_default: true }] }),
@@ -70,6 +69,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
   )
   assert.ok(catalog.ci.core_shards.some(shard => shard.split(',').includes('collaboration-exp')))
   for (const helper of [
+    'collaboration-exp-assistant-entry',
     'collaboration-exp-rhythm',
     'collaboration-exp-state-motion',
     'collaboration-exp-pane-verification',
@@ -83,6 +83,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
   assert.deepEqual(COLLABORATION_EXP_USER_STORIES, [
     'default-off-preserves-baseline-and-makes-no-targeted-business-requests',
     'deliberate-beta-toggle-and-fixed-tab-survive-reload',
+    'assistant-waits-for-preferences-and-keeps-one-instance-across-retry-reload-and-navigation',
     'local-and-cloud-issues-keep-their-canonical-source',
     'project-notifications-and-deep-links-reuse-one-experiment-tab',
     'assistant-tasks-project-timeline-private-discussion-work-in-three-viewports',
@@ -153,8 +154,8 @@ test('rhythm waits for the bound native task without requiring a robot execution
   const result = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99)
   assert.equal(result.runningIssue, protocol.issue)
   assert.equal(result.runningIssue.execution_state, undefined)
-  assert.equal(result.runningIssue.created_by_user_id, 0)
-  assert.equal(result.ownerId, 7)
+  assert.equal(result.created_by_user_id ?? result.runningIssue.created_by_user_id, 0)
+  assert.equal(result.ownerId, 99)
   assert.deepEqual(result.address, { deviceId: 'local-device', taskId: 'native-task' })
   assert.equal(protocol.calls.filter(call => call.method === 'runtime.stand_in.run').length, 1)
   assert.equal(protocol.calls.filter(call => call.method === 'todos.bindings').length, 2)
@@ -164,7 +165,7 @@ test('rhythm waits for the bound native task without requiring a robot execution
   assert.ok(methods.indexOf('runtime.tasks.get') < methods.indexOf('todos.get'))
   await fixture.cleanup()
   assert.equal(protocol.calls.at(-1).method, 'runtime.stand_in.personal.save')
-  assert.deepEqual(protocol.calls.at(-1).input, { userId: 7, settings: protocol.settings })
+  assert.deepEqual(protocol.calls.at(-1).input, { userId: 99, settings: protocol.settings })
 })
 
 test('rhythm rejects an in-progress Issue when its bound native task is not running', async () => {

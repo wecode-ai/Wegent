@@ -17,11 +17,32 @@ import type { DownloadTargetPolicy } from './download-target-policy.js'
 import { createNativeContextMenuActions, installContextMenu } from './image-context-actions.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
-import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
+import {
+  BrowserScriptEvaluator,
+  type BrowserScriptEvaluationOptions,
+} from './browser-script-evaluator.js'
 import {
   BrowserDeviceMetricsController,
   type BrowserDeviceMetrics,
 } from './browser-device-metrics.js'
+import {
+  approvalTargetChanged,
+  nativeClickPoint,
+  resolveFileInputTarget,
+  resolveNativeClickTarget,
+  sameClickTransform,
+  sameNativeClickTarget,
+  sameTargetPage,
+  type BrowserClickTransform,
+  type BrowserNativeClickTargetSnapshot,
+  type BrowserTargetPage,
+  type BrowserUploadTargetSnapshot,
+} from './browser-approved-targets.js'
+import {
+  BrowserApprovedUploads,
+  type ApprovedUploadFile,
+  type ApprovedUploadSnapshot,
+} from './browser-approved-uploads.js'
 import {
   captureWebContentsDataUrl,
   type WebContentsCaptureOptions,
@@ -63,6 +84,7 @@ interface BrowserEntry {
   navigationError: BrowserPageState['navigationError']
   historyVisit: { id: string | null } | null
   historyGeneration: number
+  navigationRevision: number
   initialNavigation: boolean
   navigationCompletion: Promise<void>
   pendingLocalNavigation?: symbol
@@ -173,6 +195,7 @@ export class EmbeddedBrowserManager {
   >()
   private readonly requestHeaderRules = new Map<string, BrowserRequestHeaderRule>()
   private readonly history: BrowserHistoryStore
+  private readonly approvedUploads = new BrowserApprovedUploads()
   private agentCursorSequence = 0
   private eventSequence = 0
   private historyGeneration = 0
@@ -474,6 +497,7 @@ export class EmbeddedBrowserManager {
       navigationError: null,
       historyVisit: null,
       historyGeneration: this.historyGeneration,
+      navigationRevision: 0,
       initialNavigation: true,
       navigationCompletion: Promise.resolve(),
       scripts: new BrowserScriptEvaluator(contents),
@@ -575,6 +599,7 @@ export class EmbeddedBrowserManager {
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (isMainFrame) {
+        entry.navigationRevision += 1
         this.agentApprovals.cancelLabel(entry.label)
         entry.navigationError = null
         entry.historyVisit = null
@@ -675,58 +700,164 @@ export class EmbeddedBrowserManager {
   async evaluate(
     label: string,
     expression: string,
-    options: { awaitPromise?: boolean } = {}
+    options: BrowserScriptEvaluationOptions = {}
   ): Promise<unknown> {
     // Hidden guests can execute Electron's script while leaving its isolated-world
     // reply Promise pending. Return the main-world result through Chromium instead.
     return this.required(label).scripts.evaluate(expression, options)
   }
 
-  async uploadFiles(
+  async inspectUploadTarget(
     label: string,
-    selector: string | null,
-    files: string[]
-  ): Promise<{ selector: string }> {
-    const contents = this.required(label).contents
+    selector: string | null
+  ): Promise<BrowserUploadTargetSnapshot> {
+    const entry = this.required(label)
+    const { contents } = entry
+    const page = targetPage(entry)
     return withDebuggerSession(contents, async target => {
-      const effectiveSelector = selector?.trim() || 'input[type="file"]'
-      const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
-        root: { nodeId: number }
+      const resolved = await resolveFileInputTarget(target, selector)
+      if (this.required(label) !== entry || !sameTargetPage(page, targetPage(entry))) {
+        throw approvalTargetChanged('The file input page changed during inspection.')
       }
-      const { nodeId } = (await target.sendCommand('DOM.querySelector', {
-        nodeId: root.nodeId,
-        selector: effectiveSelector,
-      })) as { nodeId: number }
-      if (!nodeId) {
-        throw new Error(
-          `No file input element matches selector "${effectiveSelector}" in the embedded browser.`
-        )
+      return {
+        ...page,
+        selector: resolved.selector,
+        backendNodeId: resolved.backendNodeId,
       }
-      await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
-      return { selector: effectiveSelector }
     })
   }
 
-  clickAt(label: string, x: number, y: number): void {
-    const contents = this.required(label).contents
-    const point = {
-      x: Math.max(0, Math.round(x)),
-      y: Math.max(0, Math.round(y)),
+  async uploadFiles(
+    label: string,
+    selector: string | null,
+    files: string[],
+    expectedTarget?: BrowserUploadTargetSnapshot,
+    beforeCommit?: () => Promise<void | string[]>,
+    beforeDispatch?: () => void
+  ): Promise<{ selector: string }> {
+    const entry = this.required(label)
+    const { contents } = entry
+    return withDebuggerSession(contents, async target => {
+      const resolve = async () => {
+        try {
+          const resolved = await resolveFileInputTarget(target, selector)
+          if (
+            expectedTarget &&
+            (this.required(label) !== entry ||
+              !sameTargetPage(expectedTarget, targetPage(entry)) ||
+              resolved.selector !== expectedTarget.selector ||
+              resolved.backendNodeId !== expectedTarget.backendNodeId)
+          ) {
+            throw approvalTargetChanged('The approved file input or page changed.')
+          }
+          return resolved
+        } catch (error) {
+          if (!expectedTarget) throw error
+          throw approvalTargetChanged(
+            'The approved file input is no longer available or has changed.'
+          )
+        }
+      }
+      let resolved = await resolve()
+      const committedFiles = (await beforeCommit?.()) ?? files
+      if (expectedTarget) resolved = await resolve()
+      beforeDispatch?.()
+      await target.sendCommand('DOM.setFileInputFiles', {
+        files: committedFiles,
+        nodeId: resolved.nodeId,
+      })
+      return { selector: resolved.selector }
+    })
+  }
+
+  stageApprovedUpload(
+    file: ApprovedUploadFile,
+    signal: AbortSignal
+  ): Promise<ApprovedUploadSnapshot> {
+    return this.approvedUploads.create(file, signal)
+  }
+
+  async inspectNativeClickTarget(
+    label: string,
+    x: number,
+    y: number
+  ): Promise<BrowserNativeClickTargetSnapshot> {
+    const entry = this.required(label)
+    return withDebuggerSession(entry.contents, target =>
+      this.nativeClickTarget(entry, target, nativeClickPoint(x, y))
+    )
+  }
+
+  async clickAt(
+    label: string,
+    x: number,
+    y: number,
+    expectedTarget?: BrowserNativeClickTargetSnapshot,
+    beforeDispatch?: () => void
+  ): Promise<void> {
+    const entry = this.required(label)
+    const { contents } = entry
+    const point = nativeClickPoint(x, y)
+    const move = () => {
+      contents.focus()
+      contents.sendInputEvent({ type: 'mouseMove', ...point })
     }
-    contents.focus()
-    contents.sendInputEvent({ type: 'mouseMove', ...point })
-    contents.sendInputEvent({
-      type: 'mouseDown',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
-    contents.sendInputEvent({
-      type: 'mouseUp',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
+    if (expectedTarget) {
+      await withDebuggerSession(contents, async target => {
+        const verify = async () => {
+          try {
+            const actual = await this.nativeClickTarget(entry, target, point)
+            if (this.required(label) !== entry || !sameNativeClickTarget(actual, expectedTarget)) {
+              throw approvalTargetChanged('The approved click target changed.')
+            }
+          } catch {
+            throw approvalTargetChanged(
+              'The approved click target is no longer available or has changed.'
+            )
+          }
+        }
+        await verify()
+        beforeDispatch?.()
+        this.assertNativeClickContext(label, entry, expectedTarget)
+        move()
+        // Hover or focus can change the hit target before the button events.
+        await verify()
+        beforeDispatch?.()
+        this.assertNativeClickContext(label, entry, expectedTarget)
+        sendNativeClick(contents, point)
+      })
+      return
+    }
+    beforeDispatch?.()
+    move()
+    sendNativeClick(contents, point)
+  }
+
+  private async nativeClickTarget(
+    entry: BrowserEntry,
+    target: { sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown> },
+    point: { x: number; y: number }
+  ): Promise<BrowserNativeClickTargetSnapshot> {
+    const page = targetPage(entry)
+    const transform = targetTransform(entry)
+    const resolved = await resolveNativeClickTarget(target, point, transform.scale)
+    const snapshot = { ...page, ...transform, ...resolved }
+    this.assertNativeClickContext(entry.label, entry, snapshot)
+    return snapshot
+  }
+
+  private assertNativeClickContext(
+    label: string,
+    entry: BrowserEntry,
+    expected: BrowserNativeClickTargetSnapshot
+  ): void {
+    if (
+      this.required(label) !== entry ||
+      !sameTargetPage(expected, targetPage(entry)) ||
+      !sameClickTransform(expected, targetTransform(entry))
+    ) {
+      throw approvalTargetChanged('The approved click target or coordinate transform changed.')
+    }
   }
 
   state(label: string): BrowserPageState {
@@ -1224,7 +1355,7 @@ export class EmbeddedBrowserManager {
     // Renderer-owned <webview> elements follow their DOM layout automatically.
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     this.downloads.stop()
     for (const id of [...this.backgroundPages.keys()]) this.closeBackgroundPage(id)
     this.requestHeaderRules.clear()
@@ -1236,6 +1367,7 @@ export class EmbeddedBrowserManager {
       }
     }
     this.attachmentWaiters.clear()
+    return this.approvedUploads.stop()
   }
 
   private required(label: string): BrowserEntry {
@@ -1536,6 +1668,31 @@ function validRemoteBrowserUrl(value: string): string {
     throw new Error(`Browser background page URL protocol is not allowed: ${url.protocol}`)
   }
   return url.toString()
+}
+
+function targetPage(entry: BrowserEntry): BrowserTargetPage {
+  return {
+    contentsId: entry.contents.id,
+    url: entry.contents.getURL(),
+    navigationRevision: entry.navigationRevision,
+  }
+}
+
+function targetTransform(entry: BrowserEntry): BrowserClickTransform {
+  const metrics = entry.deviceMetrics.inputTransform()
+  if (!metrics)
+    throw approvalTargetChanged(
+      'Browser device metrics are changing; inspect the click target again.'
+    )
+  const scale = entry.contents.getZoomFactor() * metrics.scale
+  if (!Number.isFinite(scale) || scale <= 0)
+    throw approvalTargetChanged('The click coordinates could not be verified.')
+  return { scale, metricsRevision: metrics.revision, emulated: metrics.emulated }
+}
+
+function sendNativeClick(contents: WebContents, point: { x: number; y: number }) {
+  contents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
+  contents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
 }
 
 function isBrowserUrl(value: string): boolean {

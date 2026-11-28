@@ -69,6 +69,12 @@ export class DesktopPreferencesController {
     if (changesRecording && typeof patch.performanceRecordingEnabled !== 'boolean') {
       throw new Error('performanceRecordingEnabled must be a boolean')
     }
+    if (
+      Object.hasOwn(patch, 'browserFullControl') &&
+      typeof patch.browserFullControl !== 'boolean'
+    ) {
+      throw new Error('browserFullControl must be a boolean')
+    }
     if (!changesPopoutShortcut && !changesAppshotsShortcut && !changesRecording)
       return this.store.update(patch, expectedTelemetryConsentRevision)
 

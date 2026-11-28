@@ -87,19 +87,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         false
       )
       await control.command('waitFor', CHAT, { visible: false })
-      await control.command('waitFor', selector('stand-in-message-center'), { visible: false })
+      await control.command('waitFor', selector('stand-in-message-center-open'), { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-deferred.png')
-      await control.command('clickWhenEnabled', selector('stand-in-message-center-open'))
-      await control.command('waitFor', selector('message-center-start-setup'), {
-        text: '去连接钉钉',
-        visible: true,
-      })
-      await control.command('waitFor', selector('message-center-execution-hint'), {
-        visible: false,
-      })
-      await control.command('waitFor', resume, { visible: false })
-      await captureScreenshot(control, 'stand-in-onboarding-dingtalk-disconnected.png')
-      await control.command('clickWhenEnabled', selector('stand-in-primary-open'))
       await control.command('clickWhenEnabled', resume)
       await control.command('waitFor', selector('stand-in-onboarding-model'))
       const catalog = (await rpc('runtime.runner.catalog', {})).models
@@ -235,10 +224,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
-      await control.command('waitFor', selector('stand-in-im-channels'), {
-        text: '从聊天工具联系助理',
-        visible: true,
-      })
+      assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
@@ -327,6 +313,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('fill', tagInput, { value: invalidTag })
       await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
       await control.command('clickWhenEnabled', selector('stand-in-project-tags-discard'))
+      // Discarding the unfinished tag must not implicitly discard the added project scopes.
+      await control.command('waitFor', selector('stand-in-primary-discard'), { visible: true })
+      await control.command('clickWhenEnabled', selector('stand-in-primary-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), updated)
       await control.command('clickWhenEnabled', selector('stand-in-create-role'))

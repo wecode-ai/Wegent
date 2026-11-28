@@ -1323,17 +1323,6 @@ async function main() {
       executorBinary = builtExecutor
       if (localAssistantStory)
         assistantFixtureToken = await createStandInFixtureSession(cloudEnvironment)
-      if (
-        assistantCheckpoint &&
-        !['stand-in-cloud-device', 'stand-in-role-delegation-cross-device'].includes(
-          DESKTOP_SEGMENT
-        )
-      ) {
-        await initializeFixtureAssistant(
-          cloudEnvironment.backendUrl,
-          assistantFixtureToken ?? cloudEnvironment.authToken
-        )
-      }
       if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
         cloudHistorySearch = createCloudHistorySearchVerification()
         await cloudHistorySearch.prepareCloud(cloudEnvironment)
@@ -1855,6 +1844,20 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        cloudEnvironment &&
+        assistantCheckpoint &&
+        !desktopScenario?.verifiesStandInAccountMigration &&
+        !['stand-in-cloud-device', 'stand-in-role-delegation-cross-device'].includes(
+          DESKTOP_SEGMENT
+        )
+      ) {
+        await initializeFixtureAssistant(
+          cloudEnvironment.backendUrl,
+          assistantFixtureToken ?? cloudEnvironment.authToken,
+          JSON.parse(await control.command('getLocalExecutorStatus', 'body')).deviceId
+        )
+      }
       if (
         !desktopScenario.verifiesStandInOnboarding &&
         (DESKTOP_SEGMENT.startsWith('stand-in') ||

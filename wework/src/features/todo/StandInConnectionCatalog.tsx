@@ -191,7 +191,7 @@ export function StandInConnectionCatalog({
           provider?.displayName ??
           t(
             isDingTalk
-              ? 'standIn.dingtalk_delegation.provider'
+              ? 'standIn.workspace.connection_dingtalk'
               : 'standIn.workspace.connection_unknown_source'
           ),
         configured,

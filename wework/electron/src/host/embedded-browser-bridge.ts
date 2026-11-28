@@ -1,15 +1,30 @@
 import { randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
+import type {
+  BrowserNativeClickTargetSnapshot,
+  BrowserUploadTargetSnapshot,
+} from './browser-approved-targets.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
+import {
+  BrowserExpressionError,
+  type BrowserScriptEvaluationOptions,
+} from './browser-script-evaluator.js'
+import {
+  uploadFileIdentity,
+  type ApprovedUploadFile,
+  type ApprovedUploadSnapshot,
+} from './browser-approved-uploads.js'
 
 const RUNTIME_FILE = 'embedded-browser-bridge.json'
 const DEFAULT_LABEL = 'workspace-browser'
 const OPEN_TIMEOUT_MS = 15_000
 const DEFAULT_EVAL_TIMEOUT_MS = 10_000
+const WAIT_DEADLINE_MESSAGE = 'Embedded browser wait deadline exceeded'
 const MAX_BODY_BYTES = 1024 * 1024
 const EMBEDDED_BROWSER_DATA_KINDS = ['cookies', 'cache', 'storage', 'history'] as const
 type EmbeddedBrowserDataKind = (typeof EMBEDDED_BROWSER_DATA_KINDS)[number]
@@ -82,14 +97,15 @@ export class EmbeddedBrowserBridge {
       throw new Error('Failed to read embedded browser bridge address')
     }
     const runtimePath = join(this.executorHome, 'runtime', RUNTIME_FILE)
+    const record: RuntimeRecord = {
+      schemaVersion: 1,
+      pid: process.pid,
+      address: `127.0.0.1:${address.port}`,
+      token,
+      startedAtUnixMs: Date.now(),
+    }
     try {
-      await writeRuntimeRecord(runtimePath, {
-        schemaVersion: 1,
-        pid: process.pid,
-        address: `127.0.0.1:${address.port}`,
-        token,
-        startedAtUnixMs: Date.now(),
-      })
+      await writeRuntimeRecord(runtimePath, record)
     } catch (error) {
       server.close()
       throw error
@@ -242,22 +258,28 @@ export class EmbeddedBrowserBridge {
     request: BrowserBridgeRequest,
     signal: AbortSignal
   ): Promise<unknown> {
-    if (isMutatingAction(request.action) && (await this.fullControlEnabled())) {
+    const mutating = isMutatingAction(request.action)
+    if (mutating && (await this.fullControlEnabled())) {
       if (signal.aborted) throw new Error('Browser operation cancelled')
       if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
-      return this.dispatchAction(baseLabel, label, {
-        ...request,
-        options: { ...request.options, riskApproved: true },
-      })
+      return this.dispatchAction(
+        baseLabel,
+        label,
+        { ...request, options: { ...request.options, riskApproved: true } },
+        signal,
+        true,
+        undefined,
+        true
+      )
     }
-    const result = await this.dispatchAction(baseLabel, label, request)
-    if (
-      !isMutatingAction(request.action) ||
-      !result ||
-      typeof result !== 'object' ||
-      Array.isArray(result)
+    const result = await this.dispatchAction(
+      baseLabel,
+      label,
+      mutating ? { ...request, options: { ...request.options, riskApproved: false } } : request,
+      signal
     )
-      return result
+    if (!mutating || !result || typeof result !== 'object' || Array.isArray(result)) return result
+    const pendingTarget = takePendingApprovalTarget(result as Record<string, unknown>)
     const approval = this.browser.registerAgentApproval(
       label,
       request.action,
@@ -283,20 +305,34 @@ export class EmbeddedBrowserBridge {
       }
     }
     if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+    if (this.browser.activeLabel(baseLabel) !== label) {
+      return approvalTargetChangedResult(
+        request.action,
+        'Active browser tab changed before approval completed.'
+      )
+    }
     this.browser.emitAgentState(label, 'running', {
       action: request.action,
       target: actionTarget(request),
     })
-    return this.dispatchAction(baseLabel, label, {
-      ...request,
-      options: { ...request.options, riskApproved: true },
-    })
+    return this.dispatchAction(
+      baseLabel,
+      label,
+      { ...request, options: { ...request.options, riskApproved: true } },
+      signal,
+      true,
+      pendingTarget
+    )
   }
 
   private async dispatchAction(
     baseLabel: string,
     label: string,
-    request: BrowserBridgeRequest
+    request: BrowserBridgeRequest,
+    signal: AbortSignal,
+    riskApproved = false,
+    approvedTarget?: ApprovedBrowserTarget | null,
+    fullControlGrant = false
   ): Promise<unknown> {
     switch (request.action) {
       case 'status':
@@ -319,20 +355,17 @@ export class EmbeddedBrowserBridge {
         this.browser.goForward(label)
         return { ok: true }
       case 'evaluate':
-        return this.evaluate(
-          label,
-          expressionScript(requiredString(request.expression, 'expression'))
-        )
+        return this.evaluateDiagnostic(label, requiredString(request.expression, 'expression'))
       case 'inspect':
         return this.evaluate(
           label,
           (await this.loadScript('embedded_browser_inspect.js')).replace(
             '__WEWORK_INSPECT_OPTIONS__',
-            JSON.stringify(request.options ?? {})
+            () => JSON.stringify(request.options ?? {})
           )
         )
       case 'click':
-        return this.runClickAction(label, request)
+        return this.runClickAction(baseLabel, label, request, signal, fullControlGrant)
       case 'typeText':
       case 'fill':
       case 'hover':
@@ -342,13 +375,51 @@ export class EmbeddedBrowserBridge {
       case 'scroll':
       case 'scrollIntoView':
       case 'press':
-        return this.runAction(label, request)
-      case 'nativeClick':
-        this.browser.clickAt(
-          label,
-          requiredCoordinate(request.x, 'x'),
-          requiredCoordinate(request.y, 'y')
-        )
+        return this.runAction(baseLabel, label, request, signal, false, fullControlGrant)
+      case 'nativeClick': {
+        const x = requiredCoordinate(request.x, 'x')
+        const y = requiredCoordinate(request.y, 'y')
+        if (!this.browser.has(label)) throw new Error(`Embedded browser is unavailable: ${label}`)
+        if (!riskApproved) {
+          const clickTarget = await this.browser.inspectNativeClickTarget(label, x, y)
+          const pending = browserApprovalRequired(
+            request.action,
+            `Click browser position (${x}, ${y})?`,
+            {
+              x,
+              y,
+            }
+          )
+          attachPendingApprovalTarget(pending, { kind: 'nativeClick', target: clickTarget })
+          return pending
+        }
+        try {
+          if (fullControlGrant && !(await this.fullControlEnabled())) {
+            return approvalTargetChangedResult(
+              request.action,
+              'Browser control settings changed before click.'
+            )
+          }
+          if (!fullControlGrant && approvedTarget?.kind !== 'nativeClick') {
+            return approvalTargetChangedResult(
+              request.action,
+              'The approved click target could not be verified.'
+            )
+          }
+          await this.browser.clickAt(
+            label,
+            x,
+            y,
+            approvedTarget?.kind === 'nativeClick' ? approvedTarget.target : undefined,
+            () => this.assertApprovedDispatch(baseLabel, label, signal)
+          )
+        } catch (error) {
+          if ((error as { code?: unknown })?.code === 'user_control')
+            return agentControlPausedResult(request.action)
+          if ((error as { code?: unknown })?.code === 'approval_target_changed')
+            return approvalTargetChangedResult(request.action, errorMessage(error))
+          throw error
+        }
         return {
           ok: true,
           kind: 'browser.action',
@@ -357,12 +428,21 @@ export class EmbeddedBrowserBridge {
           executionKind: 'trusted-event',
           synthetic: false,
         }
+      }
       case 'waitFor':
-        return this.waitForCondition(label, request)
+        return this.waitForCondition(label, request, signal)
       case 'uploadFile':
-        return this.uploadFile(label, request)
+        return this.uploadFile(
+          baseLabel,
+          label,
+          request,
+          signal,
+          riskApproved,
+          approvedTarget?.kind === 'uploadFile' ? approvedTarget.target : undefined,
+          fullControlGrant
+        )
       case 'clearData':
-        return this.clearData(request)
+        return this.clearData(label, request, riskApproved)
       case 'screenshot':
         if (!embeddedBrowserScreenshotAvailable()) {
           throw new Error('Embedded browser screenshots are currently supported on macOS only')
@@ -417,7 +497,7 @@ export class EmbeddedBrowserBridge {
   private async evaluate(
     label: string,
     expression: string,
-    options?: { awaitPromise?: boolean }
+    options?: BrowserScriptEvaluationOptions
   ): Promise<unknown> {
     return withTimeout(
       this.browser.evaluate(label, expression, options),
@@ -426,8 +506,29 @@ export class EmbeddedBrowserBridge {
     )
   }
 
-  private async runClickAction(label: string, request: BrowserBridgeRequest): Promise<unknown> {
-    const preview = await this.runAction(label, request, true)
+  private evaluateReadOnly(label: string, expression: string): Promise<unknown> {
+    return this.evaluate(label, `(${expression})`, { readOnly: true })
+  }
+
+  private async evaluateDiagnostic(label: string, expression: string): Promise<unknown> {
+    try {
+      return { ok: true, value: await this.evaluateReadOnly(label, expression) }
+    } catch (error) {
+      if (error instanceof BrowserExpressionError && error.kind === 'read_only_rejected') {
+        return readOnlyExpressionRejectedResult()
+      }
+      throw error
+    }
+  }
+
+  private async runClickAction(
+    baseLabel: string,
+    label: string,
+    request: BrowserBridgeRequest,
+    signal: AbortSignal,
+    fullControlGrant: boolean
+  ): Promise<unknown> {
+    const preview = await this.runAction(baseLabel, label, request, signal, true)
     const point = actionCursorPoint(request, preview)
     if (!point) return preview
     const moveSequence = this.browser.showAgentCursor(label, point.x, point.y)
@@ -438,13 +539,16 @@ export class EmbeddedBrowserBridge {
     )
     if (!arrived) throw new Error('Timed out waiting for embedded browser agent cursor arrival')
     if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
-    return this.runAction(label, request)
+    return this.runAction(baseLabel, label, request, signal, false, fullControlGrant)
   }
 
   private async runAction(
+    baseLabel: string,
     label: string,
     request: BrowserBridgeRequest,
-    previewOnly = false
+    signal: AbortSignal,
+    previewOnly = false,
+    fullControlGrant = false
   ): Promise<unknown> {
     const input = {
       action: request.action === 'typeText' ? 'type' : request.action,
@@ -459,12 +563,27 @@ export class EmbeddedBrowserBridge {
       options: request.options ?? null,
       previewOnly,
     }
+    const script = (await this.loadScript('embedded_browser_action.js')).replace(
+      '__WEWORK_ACTION_INPUT__',
+      () => JSON.stringify(input)
+    )
+    if (fullControlGrant && !(await this.fullControlEnabled())) {
+      return approvalTargetChangedResult(
+        request.action,
+        'Browser control settings changed before execution.'
+      )
+    }
+    if (signal.aborted) throw new Error('Browser operation cancelled')
+    if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+    if (this.browser.activeLabel(baseLabel) !== label) {
+      return approvalTargetChangedResult(
+        request.action,
+        'Active browser tab changed before execution.'
+      )
+    }
     return this.evaluate(
       label,
-      (await this.loadScript('embedded_browser_action.js')).replace(
-        '__WEWORK_ACTION_INPUT__',
-        JSON.stringify(input)
-      ),
+      script,
       // This script returns synchronously. A Promise callback can be destroyed by
       // the navigation that the action itself dispatched.
       { awaitPromise: false }
@@ -479,56 +598,119 @@ export class EmbeddedBrowserBridge {
     })
   }
 
-  private async waitForCondition(label: string, request: BrowserBridgeRequest): Promise<unknown> {
+  private async waitForCondition(
+    label: string,
+    request: BrowserBridgeRequest,
+    signal: AbortSignal
+  ): Promise<unknown> {
     const timeoutMs = request.timeoutMs ?? DEFAULT_EVAL_TIMEOUT_MS
     const pollMs = clampNumber(request.options?.pollMs, 50, 1000, 100)
-    const startedAt = Date.now()
+    const rawCondition = request.options?.condition
+    const condition =
+      rawCondition && typeof rawCondition === 'object' && !Array.isArray(rawCondition)
+        ? { ...(rawCondition as Record<string, unknown>) }
+        : {}
+    const expression = condition.expression || request.expression
+    if (expression && typeof expression !== 'string') return readOnlyExpressionRejectedResult()
+    delete condition.expression
+    delete condition.expressionMatched
+    const options = { ...request.options, condition }
+    const startedAt = performance.now()
+    const deadline = startedAt + timeoutMs
     const waitId = `electron-wait-${randomBytes(8).toString('hex')}`
+    const script = await this.loadScript('embedded_browser_wait.js')
+    const input = {
+      waitId,
+      selector: request.selector ?? null,
+      text: request.text ?? null,
+      url: request.url ?? null,
+      timeoutMs,
+      options,
+    }
+    let waitState: Record<string, unknown> | undefined
+    const remaining = () => Math.max(0, deadline - performance.now())
+    const pause = () =>
+      delay(Math.min(pollMs, remaining()), undefined, { signal }).catch(error => {
+        if (signal.aborted) throw new Error('Browser operation cancelled')
+        throw error
+      })
+    const probe = async (serializedInput: string, readOnly = false) => {
+      if (signal.aborted) throw new Error('Browser operation cancelled')
+      const budget = remaining()
+      if (!budget) throw new Error(WAIT_DEADLINE_MESSAGE)
+      const result = await withTimeout(
+        this.browser.evaluate(
+          label,
+          script.replace('__WEWORK_WAIT_INPUT__', () => serializedInput),
+          readOnly ? { readOnly: true } : undefined
+        ),
+        budget,
+        WAIT_DEADLINE_MESSAGE,
+        signal
+      )
+      if (signal.aborted) throw new Error('Browser operation cancelled')
+      if (!remaining()) throw new Error(WAIT_DEADLINE_MESSAGE)
+      return result
+    }
     let lastResult: Record<string, unknown> = {
       ok: false,
       kind: 'browser.wait',
       backend: 'electron-webcontentsview-js',
       reason: 'not_started',
     }
-    while (Date.now() - startedAt <= timeoutMs) {
+    while (remaining()) {
+      if (signal.aborted) throw new Error('Browser operation cancelled')
       if (!this.browser.has(label)) {
-        await new Promise(resolve => setTimeout(resolve, pollMs))
+        waitState = undefined
+        await pause()
         continue
       }
-      const input = {
-        waitId,
-        selector: request.selector ?? null,
-        text: request.text ?? null,
-        url: request.url ?? null,
-        expression: request.expression ?? null,
-        timeoutMs,
-        options: request.options ?? null,
-      }
       let result: unknown
+      let readOnly = false
       try {
-        result = await this.evaluate(
-          label,
-          (await this.loadScript('embedded_browser_wait.js')).replace(
-            '__WEWORK_WAIT_INPUT__',
-            JSON.stringify(input)
+        if (typeof expression === 'string' && expression) {
+          if (!waitState) {
+            const prepared = await probe(JSON.stringify({ ...input, probeMode: 'prepare' }))
+            if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) {
+              throw new Error('Embedded browser wait preparation failed')
+            }
+            waitState = prepared as Record<string, unknown>
+          }
+          // Keep the expression and structured checks in one synchronous Chromium
+          // evaluation. Initialization is trusted code and never receives the expression.
+          readOnly = true
+          const guardedInput = JSON.stringify({ ...input, probeMode: 'guarded', waitState })
+          result = await probe(
+            `${guardedInput.slice(0, -1)},"evaluateExpression":() => (${expression})}`,
+            true
           )
-        )
+        } else {
+          result = await probe(JSON.stringify(input))
+        }
       } catch (error) {
-        if (!isRetryableWaitError(error, label)) throw error
-        await new Promise(resolve => setTimeout(resolve, pollMs))
+        if (signal.aborted) throw error
+        if (errorMessage(error) === WAIT_DEADLINE_MESSAGE) break
+        if (isRetryableWaitError(error, label)) {
+          waitState = undefined
+        } else if (readOnly && error instanceof BrowserExpressionError) {
+          if (error.kind === 'read_only_rejected') return readOnlyExpressionRejectedResult()
+          lastResult = { ...lastResult, ok: false, reason: 'expression_not_met' }
+        } else throw error
+        await pause()
         continue
       }
       if (result && typeof result === 'object' && !Array.isArray(result)) {
         lastResult = result as Record<string, unknown>
       }
       if (lastResult.ok === true) return lastResult
-      await new Promise(resolve => setTimeout(resolve, pollMs))
+      if (lastResult.reason === 'observation_unavailable') waitState = undefined
+      await pause()
     }
     return {
       ...lastResult,
       ok: false,
       reason: 'timeout',
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs: performance.now() - startedAt,
       error: {
         code: 'wait_timeout',
         message: 'Timed out waiting for embedded browser condition.',
@@ -539,15 +721,23 @@ export class EmbeddedBrowserBridge {
   }
 
   private async uploadFile(
+    baseLabel: string,
     label: string,
-    request: BrowserBridgeRequest
+    request: BrowserBridgeRequest,
+    signal: AbortSignal,
+    riskApproved: boolean,
+    approvedUploadTarget?: ApprovedUploadTarget | null,
+    fullControlGrant = false
   ): Promise<Record<string, unknown>> {
     const path = requiredString(request.path, 'path')
     if (!isAbsolute(path)) {
       throw new Error(`Embedded browser upload requires an absolute local file path: ${path}`)
     }
-    const fileStat = await stat(path).catch(() => null)
-    if (!fileStat?.isFile()) {
+    const resolvedPath = await realpath(path).catch(() => null)
+    const fileStat = resolvedPath
+      ? await stat(resolvedPath, { bigint: true }).catch(() => null)
+      : null
+    if (!resolvedPath || !fileStat?.isFile()) {
       throw new Error(`Embedded browser upload file does not exist or is not a file: ${path}`)
     }
     if (request.ref || request.inspectId !== undefined || request.index !== undefined) {
@@ -556,18 +746,135 @@ export class EmbeddedBrowserBridge {
       )
     }
     const selector = request.selector?.trim() || null
-    const result = await this.browser.uploadFiles(label, selector, [path])
-    return {
-      ok: true,
-      kind: 'browser.action',
-      action: 'uploadFile',
-      backend: 'electron-cdp-setFileInputFiles',
-      selector: result.selector,
-      fileCount: 1,
+    if (!this.browser.has(label)) throw new Error(`Embedded browser is unavailable: ${label}`)
+    if (!riskApproved) {
+      const domTarget = await this.browser.inspectUploadTarget(label, selector)
+      const url = domTarget.url
+      const pending = browserApprovalRequired(
+        request.action,
+        `Allow this page to access the local file ${resolvedPath}?`,
+        { path: resolvedPath, selector: domTarget.selector, url: url || null }
+      )
+      attachPendingApprovalTarget(pending, {
+        kind: 'uploadFile',
+        target: {
+          realPath: resolvedPath,
+          fileIdentity: uploadFileIdentity(fileStat),
+          size: fileStat.size,
+          domTarget,
+        },
+      })
+      return pending
+    }
+    if (signal.aborted) throw new Error('Browser operation cancelled')
+    if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+    if (!fullControlGrant && !approvedUploadTarget) {
+      return approvalTargetChangedResult(
+        request.action,
+        'The approved upload target could not be verified.'
+      )
+    }
+    if (approvedUploadTarget) {
+      if (
+        resolvedPath !== approvedUploadTarget.realPath ||
+        uploadFileIdentity(fileStat) !== approvedUploadTarget.fileIdentity
+      ) {
+        return approvalTargetChangedResult(
+          request.action,
+          'Browser upload target or local file changed before approval completed.'
+        )
+      }
+    }
+    let snapshot: ApprovedUploadSnapshot | undefined
+    let dispatched = false
+    try {
+      const result = approvedUploadTarget
+        ? await this.browser.uploadFiles(
+            label,
+            selector,
+            [approvedUploadTarget.realPath],
+            approvedUploadTarget.domTarget,
+            async () => {
+              this.assertApprovedDispatch(baseLabel, label, signal)
+              snapshot = await this.browser.stageApprovedUpload(approvedUploadTarget, signal)
+              this.assertApprovedDispatch(baseLabel, label, signal)
+              return [snapshot.path]
+            },
+            () => {
+              this.assertApprovedDispatch(baseLabel, label, signal)
+              // The command may reach Chromium even if its response is lost.
+              // Keep the private file until the browser manager stops once dispatched.
+              dispatched = true
+            }
+          )
+        : await this.browser.uploadFiles(label, selector, [path], undefined, async () => {
+            if (fullControlGrant && !(await this.fullControlEnabled())) {
+              throw Object.assign(new Error('Browser control settings changed before upload.'), {
+                code: 'approval_target_changed',
+              })
+            }
+            this.assertApprovedDispatch(baseLabel, label, signal)
+          })
+      return {
+        ok: true,
+        kind: 'browser.action',
+        action: 'uploadFile',
+        backend: 'electron-cdp-setFileInputFiles',
+        selector: result.selector,
+        fileCount: 1,
+      }
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'user_control') {
+        return agentControlPausedResult(request.action)
+      }
+      if ((error as { code?: unknown })?.code === 'approval_target_changed') {
+        return approvalTargetChangedResult(request.action, errorMessage(error))
+      }
+      if ((error as { code?: unknown })?.code === 'upload_snapshot_unavailable') {
+        return {
+          ok: false,
+          kind: 'browser.action',
+          action: request.action,
+          error: {
+            code: 'upload_snapshot_unavailable',
+            message: errorMessage(error),
+            recoverable: true,
+          },
+        }
+      }
+      throw error
+    } finally {
+      if (snapshot && !dispatched) {
+        await snapshot
+          .discard()
+          .catch(() =>
+            console.warn(
+              '[embedded-browser-upload] Failed to remove an unused approved upload snapshot.'
+            )
+          )
+      }
     }
   }
 
-  private async clearData(request: BrowserBridgeRequest): Promise<Record<string, unknown>> {
+  private assertApprovedDispatch(baseLabel: string, label: string, signal: AbortSignal): void {
+    if (signal.aborted) throw new Error('Browser operation cancelled')
+    if (this.browser.isAgentControlPaused(label)) {
+      throw Object.assign(new Error('User is controlling the embedded browser.'), {
+        code: 'user_control',
+      })
+    }
+    if (this.browser.activeLabel(baseLabel) !== label) {
+      throw Object.assign(new Error('Active browser tab changed before execution.'), {
+        code: 'approval_target_changed',
+      })
+    }
+  }
+
+  private async clearData(
+    label: string,
+    request: BrowserBridgeRequest,
+    riskApproved: boolean
+  ): Promise<Record<string, unknown>> {
     const optionKinds = request.options?.kinds
     const rawKinds = request.kinds ?? (Array.isArray(optionKinds) ? optionKinds : null)
     const kinds = rawKinds
@@ -579,6 +886,14 @@ export class EmbeddedBrowserBridge {
       )
     }
     const requestedKinds = kinds && kinds.length > 0 ? kinds : [...DEFAULT_CLEAR_DATA_KINDS]
+    if (!riskApproved) {
+      if (!this.browser.has(label)) throw new Error(`Embedded browser is unavailable: ${label}`)
+      return browserApprovalRequired(
+        request.action,
+        `Clear browser data: ${requestedKinds.join(', ')}?`,
+        { kinds: requestedKinds }
+      )
+    }
     await this.browser.clearData([...requestedKinds])
     return {
       ok: true,
@@ -688,15 +1003,15 @@ function requiredString(value: string | undefined, name: string): string {
   return value
 }
 
-function expressionScript(expression: string): string {
-  return `(() => {
-    try {
-      const value = (() => { return (${expression}) })()
-      return { ok: true, value }
-    } catch (error) {
-      return { ok: false, error: String(error?.stack || error?.message || error) }
-    }
-  })()`
+function readOnlyExpressionRejectedResult(): Record<string, unknown> {
+  return {
+    ok: false,
+    error: {
+      code: 'read_only_expression_rejected',
+      message: 'The browser expression could not be evaluated safely in read-only mode.',
+      recoverable: true,
+    },
+  }
 }
 
 function browserCapabilities(): Record<string, unknown> {
@@ -850,6 +1165,68 @@ function actionCursorPoint(
   }
 }
 
+interface ApprovedUploadTarget extends ApprovedUploadFile {
+  domTarget: BrowserUploadTargetSnapshot
+}
+
+type ApprovedBrowserTarget =
+  | { kind: 'uploadFile'; target: ApprovedUploadTarget }
+  | { kind: 'nativeClick'; target: BrowserNativeClickTargetSnapshot }
+
+const PENDING_APPROVAL_TARGET = Symbol('pendingApprovalTarget')
+
+function attachPendingApprovalTarget(
+  result: Record<string, unknown>,
+  target: ApprovedBrowserTarget
+): void {
+  Object.defineProperty(result, PENDING_APPROVAL_TARGET, {
+    value: target,
+    enumerable: false,
+    configurable: true,
+  })
+}
+
+function takePendingApprovalTarget(result: Record<string, unknown>): ApprovedBrowserTarget | null {
+  const value = (result as Record<symbol, ApprovedBrowserTarget | undefined>)[
+    PENDING_APPROVAL_TARGET
+  ]
+  if (value) delete (result as Record<symbol, unknown>)[PENDING_APPROVAL_TARGET]
+  return value ?? null
+}
+
+function approvalTargetChangedResult(action: string, message: string): Record<string, unknown> {
+  return {
+    ok: false,
+    kind: 'browser.action',
+    action,
+    error: {
+      code: 'approval_target_changed',
+      message,
+      recoverable: true,
+      suggestedNextAction: 'inspect',
+    },
+  }
+}
+
+function browserApprovalRequired(
+  action: string,
+  reason: string,
+  target: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ok: false,
+    kind: 'browser.action',
+    action,
+    approval: { risk: 'high', actionKind: action, reason, target },
+    error: {
+      code: 'approval_required',
+      message: 'Browser action requires user approval.',
+      recoverable: true,
+      suggestedNextAction: 'ask_user_to_confirm',
+    },
+  }
+}
+
 function agentControlPausedResult(action: string): Record<string, unknown> {
   return {
     ok: false,
@@ -923,15 +1300,27 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<voi
   throw new Error('Timed out waiting for embedded browser')
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  signal?: AbortSignal
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined
+  let abort: (() => void) | undefined
   return Promise.race([
     promise,
     new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      if (signal) {
+        abort = () => reject(new Error('Browser operation cancelled'))
+        signal.addEventListener('abort', abort, { once: true })
+        if (signal.aborted) abort()
+      }
     }),
   ]).finally(() => {
     if (timer) clearTimeout(timer)
+    if (abort) signal?.removeEventListener('abort', abort)
   })
 }
 

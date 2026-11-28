@@ -53,7 +53,8 @@ export async function verifyIssueQuestionReflow(
     [
       originalDescription,
       ...Array.from(
-        { length: 30 },
+        // Exercise reflow without spending the UI action budget on native paragraph entry.
+        { length: 10 },
         (_, index) =>
           `第 ${index + 1} 段：补充人工问题的背景，验证展开内容后仍按实际可见范围安排评论框。`
       ),

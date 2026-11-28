@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createStandInInstanceSource } from './standInInstanceSource'
+import type { StandInEntry } from './standInEntry'
+import type { StandInExecutorApi } from '@/api/standIn'
 
-/** An instance has one durable binding; failed cancellation never unlocks rebinding. */
+/** Resolve the account-owned primary assistant device and per-device stop/start state. */
 export function useStandInInstance(
   services: WorkbenchServices,
   userId: number,
@@ -12,26 +15,99 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  initialDeviceId?: string,
-  entryRequestKey?: number
+  {
+    initialDeviceId,
+    entryRequestKey,
+    requireSetupConfirmation = true,
+    entry,
+    entryApi,
+    account,
+    publishAccount,
+    readAccount,
+    newAccount,
+    legacyOnly = false,
+    accountNavigationOnly = false,
+  }: {
+    initialDeviceId?: string
+    entryRequestKey?: number
+    requireSetupConfirmation?: boolean
+    entry?: StandInEntry
+    legacyOnly?: boolean
+    accountNavigationOnly?: boolean
+    entryApi?: Pick<StandInExecutorApi, 'personalGet'>
+    account?: PersonalAssistantAccount
+    publishAccount?: (account: PersonalAssistantAccount) => void
+    readAccount?: () => PersonalAssistantAccount | undefined
+    newAccount?: boolean
+  } = {}
 ) {
   const api = services.standInApi
+  const accountMode = Boolean(account)
   const source = useMemo(
-    () => createStandInInstanceSource({ services, api, userId, backendUrl, initialDeviceId }),
-    [services, api, userId, backendUrl, initialDeviceId]
+    () =>
+      createStandInInstanceSource({
+        services,
+        api,
+        userId,
+        backendUrl,
+        requireSetupConfirmation,
+        initialDeviceId,
+        accountMode,
+        legacyOnly,
+        accountNavigationOnly,
+      }),
+    [
+      services,
+      api,
+      userId,
+      backendUrl,
+      requireSetupConfirmation,
+      initialDeviceId,
+      accountMode,
+      legacyOnly,
+      accountNavigationOnly,
+    ]
   )
   const subscribe = useCallback(
     (listener: () => void) =>
-      source.subscribe({ devices, connected, active, entryRequestKey }, listener),
-    [source, devices, connected, active, entryRequestKey]
+      source.subscribe(
+        {
+          account,
+          publishAccount,
+          readAccount,
+          devices,
+          connected,
+          active,
+          entryRequestKey,
+          entry,
+          entryApi,
+          newAccount,
+        },
+        listener
+      ),
+    [
+      source,
+      account,
+      publishAccount,
+      readAccount,
+      devices,
+      connected,
+      active,
+      entryRequestKey,
+      entry,
+      entryApi,
+      newAccount,
+    ]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
   return {
     ...snapshot,
+    entryError: snapshot.entryFailure?.entry === entry ? snapshot.entryFailure?.error : undefined,
     error: snapshot.error
       ? getStandInErrorMessage(snapshot.error.cause, snapshot.error.fallback)
       : null,
     errorCause: snapshot.error?.cause,
+    setup: source.setup,
     stop: source.stop,
     bind: source.bind,
     migrate: source.migrate,

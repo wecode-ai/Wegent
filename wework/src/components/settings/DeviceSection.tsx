@@ -346,6 +346,7 @@ function DeviceCard({
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
+  const remindOnUse = cloudRestarts?.remindOnUse
   const remoteTerminalClientFactory = useMemo(
     () =>
       cloudConnection.isConnected &&
@@ -406,6 +407,7 @@ function DeviceCard({
 
   const handleStartTerminal = useCallback(async () => {
     if (!isOnline || !terminalSessionEnabled) return
+    remindOnUse?.(device.device_id)
     setSessionLoading('terminal')
     setSessionError(null)
     try {
@@ -426,10 +428,19 @@ function DeviceCard({
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device, isOnline, remoteTerminalClientFactory, t, terminalSessionEnabled])
+  }, [
+    cloudConnection,
+    device,
+    isOnline,
+    remoteTerminalClientFactory,
+    t,
+    terminalSessionEnabled,
+    remindOnUse,
+  ])
 
   const handleStartIde = useCallback(async () => {
     if (!isOnline || !codeServerSessionEnabled) return
+    remindOnUse?.(device.device_id)
     setSessionLoading('code-server')
     setSessionError(null)
     try {
@@ -456,7 +467,7 @@ function DeviceCard({
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, codeServerSessionEnabled, device.device_id, isOnline, t])
+  }, [cloudConnection, codeServerSessionEnabled, device.device_id, isOnline, t, remindOnUse])
 
   const handleStartEdit = () => {
     setEditName(device.name)

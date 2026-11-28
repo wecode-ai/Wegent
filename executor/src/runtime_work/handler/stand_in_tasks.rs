@@ -10,6 +10,12 @@ pub(super) fn owns_task(link: &RuntimeTaskLink, user: i64) -> bool {
         && !link.ephemeral
 }
 
+pub(super) fn allows_ordinary_followup(link: &RuntimeTaskLink) -> bool {
+    link.status != "archived"
+        && link.interaction_status.is_none()
+        && !link.runtime_handle["origin"]["roleDelegation"].is_object()
+}
+
 pub(super) fn required<'a>(args: &'a Value, field: &str) -> Result<&'a str, AppIpcError> {
     args[field]
         .as_str()
@@ -17,31 +23,58 @@ pub(super) fn required<'a>(args: &'a Value, field: &str) -> Result<&'a str, AppI
         .ok_or_else(|| AppIpcError::new("bad_request", format!("{field} is required")))
 }
 
+pub(super) fn role_attempt_command(id: &str, attempt: u64) -> String {
+    if attempt == 0 {
+        format!("{id}:create")
+    } else {
+        format!("{id}:retry:{attempt}")
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_stand_in_task_dispatcher(&self) {
         let handler = self.clone();
-        stand_in_tasks::register(Arc::new(move |identity, name, args| {
+        stand_in_tasks::register(Arc::new(move |identity, name, args, caller_command| {
             let handler = handler.clone();
             Box::pin(async move {
                 handler
-                    .stand_in_task_operation(identity, &name, args)
+                    .stand_in_task_operation_from_command(
+                        identity,
+                        &name,
+                        args,
+                        caller_command.as_deref(),
+                    )
                     .await
                     .map_err(|error| format!("{}: {}", error.code, error.message))
             })
         }));
     }
 
+    #[cfg(test)]
     pub(super) async fn stand_in_task_operation(
         &self,
         identity: StandInMcpIdentity,
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        self.stand_in_task_operation_from_command(identity, name, args, None)
+            .await
+    }
+
+    async fn stand_in_task_operation_from_command(
+        &self,
+        identity: StandInMcpIdentity,
+        name: &str,
+        args: Value,
+        caller_command: Option<&str>,
+    ) -> Result<Value, AppIpcError> {
         if matches!(
             name,
             "list_delegate_roles" | "delegate_role_task" | "list_role_tasks"
         ) {
-            return self.role_delegation_operation(&identity, name, &args).await;
+            return self
+                .role_delegation_operation(&identity, name, &args, caller_command)
+                .await;
         }
         if matches!(
             name,
@@ -213,11 +246,7 @@ impl RuntimeWorkRpcHandler {
                     "Task does not belong to the current user",
                 )
             })?;
-        if name != "continue_task"
-            || link.status == "archived"
-            || link.interaction_status.is_some()
-            || link.runtime_handle["origin"]["roleDelegation"].is_object()
-        {
+        if name != "continue_task" || !allows_ordinary_followup(&link) {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "Task cannot be continued; user input and approvals require the user",
@@ -354,6 +383,33 @@ impl RuntimeWorkRpcHandler {
         initial_permissions: Option<StandInTaskPermissions>,
         owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
+        let attempt = delegation["attempt"].as_u64().unwrap_or(0);
+        let payload = self
+            .prepare_delegated_turn(args, id, config, delegation)
+            .await?;
+        if attempt > 0
+            && (args["followupRequestId"].is_string() || self.local_task_link(id).is_some())
+        {
+            return self
+                .send_prepared_role_attempt(args, payload, attempt)
+                .await;
+        }
+        Box::pin(self.create_task_with_initial_permissions(
+            payload,
+            super::tasks::TaskStartInput::Other,
+            initial_permissions,
+            owner_request,
+        ))
+        .await
+    }
+
+    pub(super) async fn prepare_delegated_turn(
+        &self,
+        args: &Value,
+        id: &str,
+        config: &Value,
+        delegation: Value,
+    ) -> Result<Value, AppIpcError> {
         let ask = delegation["askBeforeAct"] == true;
         let mut origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":delegation["userId"],"deviceId":self.device_id,"sourceTaskId":delegation["sourceTaskId"],"askBeforeAct":ask});
         if delegation["roleDelegation"].is_object() {
@@ -365,14 +421,38 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let attempt = delegation["attempt"].as_u64().unwrap_or(0);
-        let command = if attempt == 0 {
-            format!("{id}:create")
+        let command = role_attempt_command(id, attempt);
+        let input = json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,
+            "origin":origin,"commandId":command,"automaticStandIn":true});
+        let mut payload = if args["followupRequestId"].is_string() {
+            // The role's configured directory may have changed since creation.
+            // Prepare its model settings, then resume the saved task workspace.
+            let link = self
+                .local_task_link(id)
+                .ok_or_else(super::stand_in_role_delegation::denied)?;
+            let mut current_role = config.clone();
+            current_role
+                .as_object_mut()
+                .ok_or_else(super::stand_in_role_delegation::denied)?
+                .remove("workspace");
+            let mut payload = self
+                .prepare_stand_in_execution(input, &current_role)
+                .await?;
+            let request = &mut payload["executionRequest"];
+            for field in ["workspace_source", "standaloneChatWorkspace"] {
+                if let Some(saved) = link.runtime_handle["executionRequest"].get(field) {
+                    request[field] = saved.clone();
+                } else if let Some(object) = request.as_object_mut() {
+                    object.remove(field);
+                }
+            }
+            payload
         } else {
-            format!("{id}:retry:{attempt}")
+            self.prepare_stand_in_execution(input, config).await?
         };
-        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":command,"automaticStandIn":true}), config).await?;
         if delegation["roleDelegation"].is_object() {
             let request = &mut payload["executionRequest"];
+            request["task_id"] = json!(id);
             let delegation_instruction = if delegation["roleDelegation"]["team"] == true {
                 "The team lead coordinates the other members' work."
             } else {
@@ -385,18 +465,18 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         payload["executionRequest"]["standInDelegation"] = delegation;
-        if attempt > 0 && self.local_task_link(id).is_some() {
-            payload["queueIfBusy"] = json!(true);
-            let result = Box::pin(self.send_stand_in_role_retry(payload, attempt)).await?;
-            return super::stand_in_execution::accepted_stand_in_result(result);
-        }
-        Box::pin(self.create_task_with_initial_permissions(
-            payload,
-            false,
-            initial_permissions,
-            owner_request,
-        ))
-        .await
+        Ok(payload)
+    }
+
+    pub(super) async fn send_prepared_role_attempt(
+        &self,
+        intent: &Value,
+        mut payload: Value,
+        attempt: u64,
+    ) -> Result<Value, AppIpcError> {
+        payload["queueIfBusy"] = json!(true);
+        let result = Box::pin(self.send_stand_in_role_retry(intent, payload, attempt)).await?;
+        super::stand_in_execution::accepted_stand_in_result(result)
     }
 }
 
@@ -513,6 +593,48 @@ mod operation_tests {
                     let error = mutation.await.unwrap_err();
                     assert_eq!(error.code, "permission_denied");
                     assert_eq!(handler.local_task_links(true).len(), 1);
+                }
+
+                // A completed specialist can receive rework only while the owner's
+                // original request is still current at the durable admission point.
+                let branch = json!({"root":"request","roles":["@primary","review"],"ancestors":["primary"],"rootDevice":"mac"});
+                let initial = json!({"requestId":"first","sourceTaskId":"primary","sourceDevice":"mac","targetDevice":"mac",
+                    "roleDelegation":branch,"roleId":"review","title":"Work","message":"Initial work"});
+                let original = store.reserve_stand_in_role_request("specialist",7,"request",&initial,16).unwrap();
+                let mut completed = RuntimeTaskLink {
+                    local_task_id: "specialist".into(), thread_id: Some("original-thread".into()),
+                    status:"done".into(), completed_at:Some(1),
+                    runtime_handle: json!({"origin":{"type":"stand_in_task","userId":7,"deviceId":"mac",
+                        "sourceTaskId":"primary","standInId":"review","roleDelegation":branch},
+                        "executionRequest":{"user_id":7}}), ..Default::default()
+                };
+                completed.runtime_handle["standInResultReceipt"] = json!(
+                    super::super::stand_in_task_results::stand_in_result_command(&completed, 1, "done")
+                );
+                handler.upsert_local_task(completed);
+                for cancelled in [false, true] {
+                    handler.store.update_task("primary", |link| {
+                        link.runtime_handle["standInOwnerRequest"] = owner.clone();
+                        link.runtime_handle["executionRequest"]["standInRoleResultRoot"] = json!("request");
+                    });
+                    let queue = handler.turn_queue_operation.lock().await;
+                    let followup = handler.stand_in_task_operation(identity.clone(), "delegate_role_task", json!({
+                        "taskId":"specialist","requestId":"rework","roleId":"review","message":"Revise the draft"
+                    }));
+                    tokio::pin!(followup);
+                    let admission = futures_util::poll!(followup.as_mut());
+                    assert!(admission.is_pending(), "Expected to wait for admission, got {admission:?}");
+                    if cancelled {
+                        handler.cancel_stand_in_owner_request("primary", &owner).unwrap();
+                    } else {
+                        let mut superseding = owner.clone();
+                        superseding["revision"] = json!(2);
+                        handler.record_stand_in_owner_admission("primary", &superseding);
+                    }
+                    drop(queue);
+                    assert_eq!(followup.await.unwrap_err().code, "permission_denied");
+                    assert_eq!(store.stand_in_role_request("specialist",7).unwrap().unwrap(), original);
+                    assert_eq!(handler.local_task_link("specialist").unwrap().status, "done");
                 }
 
                 let unavailable_index = root.path().join("unavailable-index");

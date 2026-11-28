@@ -51,7 +51,7 @@ export interface StandInOnboardingConfiguration {
   executionDeviceId?: string
   onSelectDevice?(deviceId: string): void | Promise<void>
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
-  onReload(): void
+  onReload(): void | Promise<unknown>
 }
 
 /** Edits existing connections as drafts and enables the primary identity only on confirmation. */

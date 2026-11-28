@@ -1,4 +1,5 @@
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { useCallback } from 'react'
 import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
@@ -81,6 +82,7 @@ export function useDesktopPaneConversationActions({
     [runtimeWorkApi, t]
   )
   const { getInput } = paneSession
+  const remindOnUse = useWorkbenchCloudDeviceRestarts()?.remindOnUse
   const sendPaneInputWithContext = useCallback(
     async (value?: string, options?: PaneSubmitOptions) => {
       const sourcePaneKey = paneKey
@@ -104,12 +106,14 @@ export function useDesktopPaneConversationActions({
             cloudSubmission.onRuntimeTaskCreated(address)
             requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
           },
-          onRuntimeTaskReady: () => {
+          onRuntimeTaskReady: address => {
+            remindOnUse?.(address.deviceId)
             if (supervisorConfig) {
               setPendingSupervisorConfig(null)
             }
           },
         })
+        if (accepted && currentRuntimeTask) remindOnUse?.(currentRuntimeTask.deviceId)
         if (accepted === false) for (const discard of discardTransfers) discard()
         return accepted
       } catch (error) {
@@ -127,6 +131,7 @@ export function useDesktopPaneConversationActions({
       sendPaneInput,
       onRuntimeTaskCreated,
       setPendingSupervisorConfig,
+      remindOnUse,
     ]
   )
   const cloudConnection = useOptionalCloudConnection()

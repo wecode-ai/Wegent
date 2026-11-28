@@ -2366,7 +2366,7 @@ async function shutdown(): Promise<void> {
   popoutShortcut = null
   const appshotsService = appshots
   appshots = null
-  embeddedBrowser?.stop()
+  const browserManagerStop = traceShutdownStep('browser-manager', () => embeddedBrowser?.stop())
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
@@ -2377,6 +2377,7 @@ async function shutdown(): Promise<void> {
   const development = pluginDevelopment
   pluginDevelopment = null
   const stoppedServices = await Promise.allSettled([
+    browserManagerStop,
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),
@@ -2514,13 +2515,17 @@ async function configureDesktopRuntime(): Promise<void> {
       dispose: () => {},
     },
     input => cloudModelRuntime!.transport(input),
-    async targetUrl => {
-      const raw = (await rendererStorage!.read())[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
+    async (targetUrl, trace) => {
+      const entries = await trace.run('proxy-settings', () => rendererStorage!.read())
+      const raw = entries[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
       const config = storedLocalProxyConfig(raw ? JSON.parse(raw) : {})
       if (config.mode === 'custom') return normalizeLocalProxyUrl(config.proxyUrl) || null
       if (config.mode === 'direct') return null
-      return resolveSystemProxy(session.defaultSession, targetUrl)
-    }
+      return trace.run('system-proxy', () => resolveSystemProxy(session.defaultSession, targetUrl))
+    },
+    process.env.VITE_WEWORK_E2E === 'true'
+      ? event => console.debug('[native-model-request] ' + JSON.stringify(event))
+      : undefined
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),

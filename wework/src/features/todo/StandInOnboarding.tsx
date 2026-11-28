@@ -43,7 +43,7 @@ type StandInOnboardingProps = {
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
-  onOpenConversation(): void
+  onOpenConversation?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
   configuration: StandInOnboardingConfiguration
@@ -109,6 +109,26 @@ function StandInOnboardingContent({
         ? getStandInErrorMessage(snapshot.error)
         : null
   const [saving, setSaving] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [recoveryError, setRecoveryError] = useState<string>()
+  const settings = configuration.settings
+  const lifecycle =
+    settings?.executionDeviceId === deviceId && settings.userId === userId
+      ? settings.lifecycle?.status
+      : undefined
+  const recover = async () => {
+    if (!lifecycle || recovering) return
+    setRecovering(true)
+    setRecoveryError(undefined)
+    try {
+      await api.lifecycle(userId, deviceId, lifecycle === 'stopped' ? 'start' : 'stop')
+      await configuration.onReload()
+    } catch (cause) {
+      setRecoveryError(getStandInErrorMessage(cause))
+    } finally {
+      setRecovering(false)
+    }
+  }
   const [dismissed, setDismissed] = useState(false)
   const [previousActive, setPreviousActive] = useState(active)
   if (previousActive !== active) {
@@ -118,6 +138,7 @@ function StandInOnboardingContent({
   const checking = active && !bypass && !dismissed && !result && !error
   const open =
     active &&
+    !lifecycle &&
     (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
@@ -140,7 +161,7 @@ function StandInOnboardingContent({
       setDismissed(true)
       if (guideOpen) onGuideClose?.()
       else if (leaveWorkspace) onClose?.()
-      else onOpenConversation()
+      else onOpenConversation?.()
     }
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()
@@ -160,7 +181,7 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
-      if (openConversation) onOpenConversation()
+      if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
       onGuideClose?.()
       return true
@@ -193,6 +214,36 @@ function StandInOnboardingContent({
         aria-hidden={open || undefined}
         data-testid="stand-in-onboarding-content"
       >
+        {active && lifecycle && (
+          <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+            <p>
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.stopped'
+                  : 'standIn.instance.stop_pending'
+              )}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 md:min-h-8"
+              data-testid="stand-in-resume-device"
+              disabled={recovering}
+              onClick={() => void recover()}
+            >
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.resume_device'
+                  : 'standIn.instance.retry_stop'
+              )}
+            </Button>
+            {recoveryError && (
+              <p role="alert" className="text-error">
+                {recoveryError}
+              </p>
+            )}
+          </div>
+        )}
         {result || dismissed || bypass || !active ? children(resumeSetup || undefined) : null}
         {checking && !guideOpen ? (
           <p role="status" className="p-5 text-sm text-text-secondary">

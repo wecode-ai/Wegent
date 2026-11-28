@@ -3,6 +3,71 @@ use super::super::tests::{context, seed, EnvGuard};
 use super::*;
 
 #[test]
+fn repeated_event_reuses_guidance_receipt_after_the_conversation_is_idle() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::home(root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let mut link = seed(&handler, "caller");
+            link.runtime_handle["executionRequest"]["user_id"] = json!(7);
+            handler.store.upsert_task(link.clone());
+            let key = "a".repeat(64);
+            let event = json!({"id":"ci-terminal","topicId":"pr","at":chrono::Utc::now().to_rfc3339()});
+            let subscription_id = handler.subscription_id("caller", "repeat");
+            let pending = json!({
+                "subscription_key":"repeat","task_id":"caller","device_id":"control-test-device",
+                "session":session::binding(&link).unwrap(),"source":{"name":"Repository","enabledAfter":"2026-01-01T00:00:00Z"},
+                "status":"pending","continuation":"Inspect the CI result","events":[event],
+                "resource_event_keys":[key],"observation_id":"observation"
+            });
+            let mut original = pending.clone();
+            original["subscription_key"] = json!("original");
+            original["status"] = json!("delivered");
+            original["operation_id"] = json!("original-operation");
+            original["native_guidance"] = json!("accepted");
+            let original_id = handler.subscription_id("caller", "original");
+            handler.save_event_subscription(&original_id, &original).unwrap();
+            handler.save_event_subscription(&subscription_id, &pending).unwrap();
+            event_store::transact(&handler.event_subscription_path(), |state| {
+                state["observations"]["observation"] = json!({
+                    "source":pending["source"],"checkpoint":{},
+                    "sequence":1,"events":[{"key":key,"sequence":1,"event":event}]
+                });
+                Ok(())
+            }).unwrap();
+
+            assert!(!handler.is_busy_local_task("caller"));
+            handler.collect_conversation_subscription(&subscription_id, pending).await.unwrap();
+
+            let saved = event_store::read(
+                &handler.event_subscription_path(),
+                event_store::Scope::Row("operations", &subscription_id),
+                |state| Ok(state["operations"][&subscription_id].clone()),
+            ).unwrap();
+            let projected = public_subscription(&saved);
+            assert_eq!(projected["status"], "delivered");
+            assert_eq!(saved["reused_operation_id"], "original-operation");
+            let admission_operation = super::super::execution::continuation_operation_id(
+                "control-test-device", "caller", &format!("connection-event:{subscription_id}"),
+            );
+            assert_eq!(projected["operation_id"], admission_operation);
+            let receipt = handler.control_get_operation(
+                &context("caller"), &json!({"operation_id":admission_operation}),
+            ).await.unwrap();
+            assert_eq!(receipt["operation"]["delivery_status"], "accepted");
+            assert_eq!(receipt["operation"]["result"]["commandId"], "original-operation");
+            assert!(projected["error_code"].is_null());
+            assert!(handler.command_journal.lock().unwrap().is_empty());
+            assert!(handler.turn_scheduler.lock().unwrap().queued_turns.is_empty());
+        });
+}
+
+#[test]
 fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
     let _lock = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {

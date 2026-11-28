@@ -7,6 +7,7 @@ mod database_name;
 pub mod mysql_pool_server;
 
 pub mod mysql_rows;
+pub mod redis_lease;
 
 pub use database_name::unique_database_name;
 

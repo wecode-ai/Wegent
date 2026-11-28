@@ -101,6 +101,7 @@ export class FakeWebContents extends EventEmitter {
     this.getUserAgent.mockReturnValue(userAgent)
   })
   setZoomFactor = vi.fn()
+  getZoomFactor = vi.fn(() => 1)
   devToolsWebContents: object | null = {}
   private devToolsOpened = false
 

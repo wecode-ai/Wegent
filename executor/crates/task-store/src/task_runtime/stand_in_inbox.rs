@@ -15,9 +15,6 @@ fn stand_in_source_key(user: i64, source: &Value) -> String {
     )
 }
 
-#[path = "stand_in_dots_inbox.rs"]
-pub(super) mod dots_inbox;
-
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),
     Uncertain(Option<&'a str>),
@@ -335,9 +332,6 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
     )?;
     work["messageCount"] = json!(messages.len());
     work["latestMessage"] = messages.last().cloned().unwrap_or(Value::Null);
-    if work["source"]["delegated"] == true {
-        work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
-    }
     let status = ["sending", "needs_grouping", "pending", "failed"]
         .into_iter()
         .find(|status| {
@@ -346,14 +340,7 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
                 .any(|message| message["dispatchStatus"] == *status)
         })
         .unwrap_or("sent");
-    work["status"] = json!(if work["source"]["delegated"] == true
-        && !work["takenOverAt"].is_null()
-        && status != "sending"
-    {
-        "sent"
-    } else {
-        status
-    });
+    work["status"] = json!(status);
     work["updatedAt"] = json!(now());
     write_record(
         connection,
@@ -535,22 +522,13 @@ impl LocalTaskStore {
         let mut statement = connection.prepare(
             "SELECT metadata FROM loop_items WHERE resource_type='stand_in_source'
              AND json_extract(metadata,'$.userId')=?1
-             AND (json_extract(metadata,'$.error') IS NOT NULL
-                  OR json_extract(metadata,'$.delegationGap') IS NOT NULL)
+             AND json_extract(metadata,'$.error') IS NOT NULL
              ORDER BY updated_at DESC",
         )?;
         let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
         rows.map(|row| {
-            let mut state: Value = serde_json::from_str(&row?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            if state["error"].is_null() {
-                state["error"] = json!({
-                    "code":"dingtalk_delegation_gap",
-                    "message":"DingTalk delegation skipped a recovery window",
-                    "retryable":false
-                });
-            }
-            Ok(state)
+            serde_json::from_str(&row?)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
         })
         .collect()
     }
@@ -570,26 +548,8 @@ impl LocalTaskStore {
         let mut state = state.clone();
         state["userId"] = json!(user);
         state["source"] = source.clone();
-        let mut connection = self.connection()?;
-        if source["delegated"] != true {
-            return write_record(&connection, &key, "stand_in_source", &state);
-        }
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if state["delegationGap"].is_null() {
-            if let Some(current) =
-                read_record(&transaction, &key, "stand_in_source")?.filter(|current| {
-                    !current["delegationGap"].is_null()
-                        && ["enabledAfter", "generation", "subscriptionId"]
-                            .into_iter()
-                            .all(|field| current["source"][field] == source[field])
-                })
-            {
-                state["delegationGap"] = current["delegationGap"].clone();
-            }
-        }
-        write_record(&transaction, &key, "stand_in_source", &state)?;
-        transaction.commit()?;
-        Ok(())
+        let connection = self.connection()?;
+        write_record(&connection, &key, "stand_in_source", &state)
     }
 
     pub fn acknowledge_stand_in_source_error(
@@ -602,9 +562,7 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(mut current) = read_record(&transaction, &key, "stand_in_source")? {
             if let Some(state) = current.as_object_mut() {
-                if state.remove("error").map_or(true, |error| error.is_null()) {
-                    state.remove("delegationGap");
-                }
+                state.remove("error");
             }
             write_record(&transaction, &key, "stand_in_source", &current)?;
         }
@@ -703,6 +661,11 @@ impl LocalTaskStore {
         message: &Value,
         grouping: MessageGrouping<'_>,
     ) -> Result<Value, TaskRuntimeError> {
+        if source["delegated"] == true {
+            return Err(TaskRuntimeError::Invalid(
+                "DingTalk delegation has been removed".into(),
+            ));
+        }
         let (work_id, status, error) = match grouping {
             MessageGrouping::Known(id) => (id, "pending", None),
             MessageGrouping::Uncertain(error) => (None, "needs_grouping", error),
@@ -739,18 +702,6 @@ impl LocalTaskStore {
             connection.commit()?;
             return Ok(result);
         }
-        let delegated = role == "@primary" && source["delegated"] == true;
-        let quoted = if delegated
-            && message["quotedMessageId"].is_string()
-            && message["quotedMessageId"] != message["id"]
-        {
-            let quoted_key = immutable_message_key(user, role, source, &message["quotedMessageId"]);
-            read_record(&connection, &quoted_key, "stand_in_message")?
-                .filter(|row| row["conversationId"] == message["conversationId"])
-        } else {
-            None
-        };
-        let work_id = work_id.or_else(|| quoted.as_ref().and_then(|row| row["workId"].as_str()));
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
                 .filter(|work| {
@@ -769,13 +720,6 @@ impl LocalTaskStore {
         record["roleId"] = json!(role);
         record["workId"] = work["id"].clone();
         record["source"] = source.clone();
-        if delegated {
-            record["delegationChainId"] = quoted
-                .as_ref()
-                .map(dots_inbox::delegated_reply_chain)
-                .cloned()
-                .unwrap_or_else(|| json!(key));
-        }
         record["dispatchStatus"] = json!(status);
         record["dispatchFailureCount"] = json!(0);
         if status == "needs_grouping" {
@@ -892,11 +836,6 @@ impl LocalTaskStore {
                 message["originalWorkId"] = source["id"].clone();
             }
             message["workId"] = destination["id"].clone();
-            if source["source"]["delegated"] == true && !source["takenOverAt"].is_null() {
-                message["takenOverAt"] = source["takenOverAt"].clone();
-                dots_inbox::mark_delegation_taken_over(&mut message["delegationResult"]);
-                message["dispatchStatus"] = json!("sent");
-            }
             // Organization never authorizes replay of completed effects.
             let failed = message["dispatchStatus"] == "failed";
             let failures = Self::stand_in_dispatch_failure_count(message, failed);

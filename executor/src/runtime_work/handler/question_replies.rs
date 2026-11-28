@@ -224,7 +224,7 @@ impl RuntimeWorkRpcHandler {
         self.send_prepared_question_response(task, response, prepared)
     }
 
-    pub(super) async fn respond_to_child_mcp_approval(
+    pub(super) async fn respond_to_child_approval(
         &self,
         local_task_id: &str,
         response: &Value,
@@ -242,7 +242,7 @@ impl RuntimeWorkRpcHandler {
         }
         let accepted = self
             .codex_app_server
-            .answer_child_mcp_approval(request_id, response, |thread| {
+            .answer_child_approval(request_id, response, |thread| {
                 if !self.is_local_task_execution_accepting_notifications(
                     local_task_id,
                     turn.execution_id,
@@ -258,7 +258,7 @@ impl RuntimeWorkRpcHandler {
                     .then(|| crate::runtime_work::stand_in_requires_confirmation(&route.request))
             })
             .await
-            .map_err(|error| AppIpcError::new("mcp_approval_delivery_failed", error))?;
+            .map_err(|error| AppIpcError::new("child_approval_delivery_failed", error))?;
         Ok(accepted.map(|accepted| {
             if accepted {
                 json!({"success":true,"accepted":true,"deviceId":self.device_id,"taskId":local_task_id,"runtime":"codex"})

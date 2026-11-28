@@ -1,4 +1,4 @@
-import type { PointerEvent, PointerEventHandler } from 'react'
+import type { MouseEventHandler, PointerEvent, PointerEventHandler } from 'react'
 
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 
@@ -72,7 +72,7 @@ export interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onNewChat: () => void
-  onOpenStandIn?: () => void
+  onOpenStandIn?: MouseEventHandler<HTMLButtonElement>
   onStartStandaloneChat: () => void
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>

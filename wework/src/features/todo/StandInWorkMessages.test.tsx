@@ -11,7 +11,6 @@ const source = {
   kind: 'direct',
   id: 'peer',
   name: 'Test chat',
-  delegated: true,
   policy: { automatic: true, askBeforeAct: false },
 }
 
@@ -20,7 +19,7 @@ function work(refreshVersion: string): StandInInboxWork {
     id: 'work-1',
     taskId: 'task-1',
     roleId: '@primary',
-    title: 'Delegated work',
+    title: 'Connected work',
     source,
     status: 'sent',
     updatedAt: '2026-01-01T00:00:00Z',
@@ -30,20 +29,19 @@ function work(refreshVersion: string): StandInInboxWork {
   }
 }
 
-function message(status: 'submitting' | 'sent', reason: string): StandInInboxMessage {
+function message(text: string): StandInInboxMessage {
   return {
     id: 'message-1',
     recordId: 'record-1',
-    text: 'Visible message',
+    text,
     senderId: 'peer',
     at: '2026-01-01T00:00:00Z',
     source,
-    delegationResult: { action: 'reply', status, reason },
   }
 }
 
 it('refreshes an expanded detail when visible message state changes without count or time changes', async () => {
-  let response = { messages: [message('submitting', 'Old reply state')] }
+  let response = { messages: [message('Earlier source details')] }
   const workMessages = vi.fn<StandInExecutorApi['workMessages']>(async () => response)
   const api = { workMessages } as unknown as StandInExecutorApi
   const onExpandedChange = vi.fn()
@@ -66,13 +64,13 @@ it('refreshes an expanded detail when visible message state changes without coun
   }
 
   const { rerender } = render(<StandInWorkMessages {...props} work={firstWork} />)
-  await waitFor(() => expect(screen.getByText(/Old reply state/)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText(/Earlier source details/)).toBeInTheDocument())
 
-  response = { messages: [message('sent', 'Updated reply state')] }
+  response = { messages: [message('Updated source details')] }
   const nextWork = work('version-2')
   rerender(<StandInWorkMessages {...props} work={nextWork} />)
 
-  await waitFor(() => expect(screen.getByText(/Updated reply state/)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText(/Updated source details/)).toBeInTheDocument())
   expect(workMessages).toHaveBeenCalledTimes(2)
 
   workMessages.mockImplementationOnce(() => new Promise(() => {}))
@@ -83,6 +81,6 @@ it('refreshes an expanded detail when visible message state changes without coun
     />
   )
 
-  expect(screen.queryByText(/Updated reply state/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/Updated source details/)).not.toBeInTheDocument()
   expect(workMessages).toHaveBeenCalledTimes(3)
 })

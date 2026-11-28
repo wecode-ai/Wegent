@@ -1,9 +1,9 @@
 //! Account-owned personal assistant definitions and atomic first-time initialization.
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, MysqlError, MysqlResult, MysqlTransaction};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 const NAMESPACE: &str = "personal-assistant";
 const ACCOUNT_KIND: &str = "PersonalAssistantSettings";
 const DEFAULT_NAME: &str = "primary";
-const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Bot','Ghost') AND is_active=true";
+const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Team','Bot','Ghost') AND is_active=true";
 
 #[derive(FromMysqlRow)]
 struct Row {
@@ -42,6 +42,85 @@ struct Initialize {
 struct DefinitionChange {
     revision: String,
     desired: Initialize,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AccountChange {
+    Definitions(DefinitionChange),
+    StopIntent(StopIntentUpdate),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StopIntentUpdate {
+    stop_intent: StopIntentChange,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StopIntentChange {
+    device_id: String,
+    operation: StopIntentOperation,
+    request_id: String,
+    expected_request_id: Option<String>,
+    expected_version: Option<i64>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum StopIntentOperation {
+    Mark,
+    Clear,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StopIntentState {
+    request_id: String,
+    pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_version: Option<i64>,
+}
+
+type StopIntentStates = BTreeMap<String, StopIntentState>;
+
+impl StopIntentChange {
+    fn valid(&self) -> bool {
+        !self.device_id.trim().is_empty()
+            && self.device_id.len() <= 255
+            && valid_stop_request_id(&self.request_id)
+            && match self.operation {
+                StopIntentOperation::Mark => {
+                    self.expected_request_id
+                        .as_deref()
+                        .is_none_or(valid_stop_request_id)
+                        && self.expected_version.is_none_or(|version| version >= 0)
+                }
+                StopIntentOperation::Clear => {
+                    self.expected_request_id.is_none() && self.expected_version.is_none()
+                }
+            }
+    }
+}
+
+fn valid_stop_request_id(request_id: &str) -> bool {
+    !request_id.is_empty()
+        && request_id.len() <= 128
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn stop_intent_states(spec: &Value) -> MysqlResult<StopIntentStates> {
+    match spec.get("stopIntentStates") {
+        Some(value) => {
+            serde_json::from_value(value.clone()).map_err(|_| MysqlError::InvalidQuery {
+                reason: "Invalid personal assistant stop intent state".into(),
+            })
+        }
+        None => Ok(BTreeMap::new()),
+    }
 }
 
 impl Initialize {
@@ -94,7 +173,23 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
     let definitions = identities
         .iter()
         .map(|identity| {
-            let name = identity["botRef"]["name"]
+            let team_name = identity["teamRef"]["name"]
+                .as_str()
+                .ok_or(MysqlError::RowNotFound)?;
+            let team = resources
+                .get(&("Team", team_name))
+                .ok_or(MysqlError::RowNotFound)?;
+            let [member] = team["spec"]["members"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            else {
+                return Err(MysqlError::RowNotFound);
+            };
+            if team["spec"]["collaborationModel"] != "solo" {
+                return Err(MysqlError::RowNotFound);
+            }
+            let name = member["botRef"]["name"]
                 .as_str()
                 .ok_or(MysqlError::RowNotFound)?;
             let bot = resources
@@ -106,7 +201,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
             let ghost = resources
                 .get(&("Ghost", ghost_name))
                 .ok_or(MysqlError::RowNotFound)?;
-            Ok(json!({"roleId":identity["roleId"],"bot":bot,"ghost":ghost}))
+            Ok(json!({"roleId":identity["roleId"],"team":team,"bot":bot,"ghost":ghost}))
         })
         .collect::<MysqlResult<Vec<_>>>()?;
     let retired = spec["retiredRoleIds"]
@@ -114,9 +209,30 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
         .cloned()
         .unwrap_or_default();
     let revision = crate::hex_sha256(json!([definitions, retired]).to_string().as_bytes());
-    Ok(
-        json!({"assistant":{"defaultBotRef":spec["defaultBotRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}}),
-    )
+    let mut result = json!({"assistant":{"defaultTeamRef":spec["defaultTeamRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}});
+    let states = stop_intent_states(spec)?;
+    if !states.is_empty() {
+        let generations: BTreeMap<_, _> = states
+            .iter()
+            .map(|(device, state)| (device, &state.request_id))
+            .collect();
+        result["assistant"]["stopIntentGenerations"] = json!(generations);
+    }
+    let pending: Vec<_> = states
+        .into_iter()
+        .filter(|(_, state)| state.pending)
+        .map(|(device, state)| {
+            let mut intent = json!({"deviceId":device,"requestId":state.request_id});
+            if let Some(version) = state.expected_version {
+                intent["expectedVersion"] = json!(version);
+            }
+            intent
+        })
+        .collect();
+    if !pending.is_empty() {
+        result["assistant"]["stopIntents"] = json!(pending);
+    }
+    Ok(result)
 }
 
 fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
@@ -129,7 +245,7 @@ fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
     })
 }
 
-fn definition_documents(definition: Definition) -> (Value, Value, Value) {
+fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
     } else {
@@ -155,10 +271,19 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value) {
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
+    let team = resource(
+        "Team",
+        &name,
+        &definition.name,
+        json!({
+            "collaborationModel":"solo",
+            "members":[{"botRef":reference,"role":"leader"}],
+            "bind_mode":["task"]
+        }),
+    );
     (
-        json!({"roleId":definition.role_id,"botRef":reference}),
-        bot,
-        ghost,
+        json!({"roleId":definition.role_id,"teamRef":reference}),
+        [ghost, bot, team],
     )
 }
 
@@ -168,10 +293,10 @@ async fn create_definitions(
     request: Initialize,
 ) -> MysqlResult<()> {
     let mut identities = Vec::with_capacity(request.definitions.len());
-    let mut records = Vec::with_capacity(2 * request.definitions.len() + 1);
+    let mut records = Vec::with_capacity(3 * request.definitions.len() + 1);
     for definition in request.definitions {
-        let (identity, bot, ghost) = definition_documents(definition);
-        records.extend([ghost, bot]);
+        let (identity, documents) = definition_documents(definition);
+        records.extend(documents);
         identities.push(identity);
     }
     let account = resource(
@@ -179,7 +304,7 @@ async fn create_definitions(
         DEFAULT_NAME,
         "",
         json!({
-            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
+            "defaultTeamRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
             "identities":identities
         }),
     );
@@ -217,17 +342,34 @@ async fn insert_documents(
     Ok(())
 }
 
+async fn lock_account_owner(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<()> {
+    let _: (i64,) = tx
+        .fetch_optional(
+            "SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE",
+            (user,),
+        )
+        .await?
+        .ok_or(MysqlError::RowNotFound)?;
+    Ok(())
+}
+
 #[brz_http_server::get("/api/v1/personal-assistant")]
 async fn get(
     #[inject(state)] state: &AppState,
     #[auth] user: SessionUser,
 ) -> Result<Value, FastApiError> {
-    let rows = state
-        .mysql
-        .fetch_all(SELECT, (i64::from(user.id), NAMESPACE))
+    read_account(&state.mysql, i64::from(user.id))
         .await
-        .map_err(internal)?;
-    view(&rows).map_err(internal)
+        .map_err(internal)
+}
+
+async fn read_account(mysql: &brz_mysql::MysqlService, user: i64) -> MysqlResult<Value> {
+    // Device lifecycle decisions need current stop intents, including marks
+    // committed by another client before this request. Read from the writer.
+    let rows: Vec<Row> = mysql
+        .with_transaction(async |tx| tx.fetch_all(SELECT, (user, NAMESPACE)).await)
+        .await?;
+    view(&rows)
 }
 
 #[brz_http_server::post("/api/v1/personal-assistant")]
@@ -256,13 +398,7 @@ async fn initialize_for(
         .with_transaction(async |tx| {
             // Acquire the existing user row before the first consistent read. Concurrent
             // initializers see the winner's commit without locking an empty Kind index range.
-            let _: (i64,) = tx
-                .fetch_optional(
-                    "SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE",
-                    (user,),
-                )
-                .await?
-                .ok_or(MysqlError::RowNotFound)?;
+            lock_account_owner(tx, user).await?;
             let current = view(&tx.fetch_all(SELECT, (user, NAMESPACE)).await?)?;
             if !current["assistant"].is_null() {
                 return Ok(current);
@@ -274,9 +410,23 @@ async fn initialize_for(
 }
 
 #[brz_http_server::patch("/api/v1/personal-assistant")]
-async fn update_definition(
+async fn update(
     #[inject(state)] state: &AppState,
     #[auth] user: SessionUser,
+    body: AccountChange,
+) -> Result<Value, FastApiError> {
+    let user = i64::from(user.id);
+    match body {
+        AccountChange::Definitions(change) => update_definition(state, user, change).await,
+        AccountChange::StopIntent(change) => {
+            update_stop_intent(state, user, change.stop_intent).await
+        }
+    }
+}
+
+async fn update_definition(
+    state: &AppState,
+    user: i64,
     body: DefinitionChange,
 ) -> Result<Value, FastApiError> {
     if !body.desired.valid() {
@@ -285,7 +435,7 @@ async fn update_definition(
             "Invalid assistant instructions",
         ));
     }
-    let outcome = replace_definitions(&state.mysql, i64::from(user.id), body)
+    let outcome = replace_definitions(&state.mysql, user, body)
         .await
         .map_err(internal)?;
     outcome.ok_or_else(|| {
@@ -296,14 +446,147 @@ async fn update_definition(
     })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum StopIntentOutcome {
+    Updated(Value),
+    DeviceNotFound,
+    Conflict,
+    AssistantNotFound,
+}
+
+async fn update_stop_intent(
+    state: &AppState,
+    user: i64,
+    body: StopIntentChange,
+) -> Result<Value, FastApiError> {
+    if !body.valid() {
+        return Err(FastApiError::detail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid assistant stop intent",
+        ));
+    }
+    match set_stop_intent(&state.mysql, user, body)
+        .await
+        .map_err(internal)?
+    {
+        StopIntentOutcome::Updated(view) => Ok(view),
+        StopIntentOutcome::DeviceNotFound => Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Device not found or not accessible",
+        )),
+        StopIntentOutcome::AssistantNotFound => Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Personal assistant is not initialized",
+        )),
+        StopIntentOutcome::Conflict => Err(FastApiError::detail(
+            StatusCode::CONFLICT,
+            "Assistant stop intent changed. Reload and try again.",
+        )),
+    }
+}
+
+fn apply_stop_intent(
+    states: &mut StopIntentStates,
+    device_id: String,
+    change: StopIntentChange,
+) -> Result<bool, ()> {
+    let current = states.get_mut(&device_id);
+    match (change.operation, current) {
+        // The current request is idempotent even after it was cleared. Keep
+        // its tombstone as the expected generation for a fresh stop request.
+        (StopIntentOperation::Mark, Some(state)) if state.request_id == change.request_id => {
+            if state.expected_version == change.expected_version {
+                Ok(false)
+            } else {
+                Err(())
+            }
+        }
+        (StopIntentOperation::Mark, current) => {
+            if current.as_ref().map(|state| state.request_id.as_str())
+                != change.expected_request_id.as_deref()
+            {
+                return Err(());
+            }
+            if let Some(state) = current.filter(|state| state.pending) {
+                // An explicit new confirmation can replace an unresolved generation
+                // only with a newer observed profile, never with an unknown or older one.
+                if change.expected_version.is_none()
+                    || state.expected_version == change.expected_version
+                {
+                    return Ok(false);
+                }
+                if state.expected_version > change.expected_version {
+                    return Err(());
+                }
+            }
+            states.insert(
+                device_id,
+                StopIntentState {
+                    request_id: change.request_id,
+                    pending: true,
+                    expected_version: change.expected_version,
+                },
+            );
+            Ok(true)
+        }
+        (StopIntentOperation::Clear, Some(state)) if state.request_id != change.request_id => {
+            Err(())
+        }
+        (StopIntentOperation::Clear, Some(state)) => {
+            Ok(std::mem::replace(&mut state.pending, false))
+        }
+        (StopIntentOperation::Clear, None) => Ok(false),
+    }
+}
+
+async fn set_stop_intent(
+    mysql: &brz_mysql::MysqlService,
+    user: i64,
+    body: StopIntentChange,
+) -> MysqlResult<StopIntentOutcome> {
+    mysql
+        .with_transaction(async |tx| {
+            // Serialize with account edits and device registration/deletion using
+            // the same existing account owner row lock.
+            lock_account_owner(tx, user).await?;
+            let Some(device) = crate::device_identity::resolve_device_for_binding_on(
+                &mut &mut *tx,
+                user,
+                &body.device_id,
+            )
+            .await?
+            else {
+                return Ok(StopIntentOutcome::DeviceNotFound);
+            };
+            let device_id = crate::device_identity::record_route_id(&device);
+            let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+            let Some(account) = rows
+                .iter_mut()
+                .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
+            else {
+                return Ok(StopIntentOutcome::AssistantNotFound);
+            };
+            let mut states = stop_intent_states(&account.document.0["spec"])?;
+            match apply_stop_intent(&mut states, device_id, body) {
+                Err(()) => return Ok(StopIntentOutcome::Conflict),
+                Ok(true) => {
+                    account.document.0["spec"]["stopIntentStates"] = json!(states);
+                    update_document(tx, user, &account.document.0).await?;
+                }
+                Ok(false) => {}
+            }
+            Ok(StopIntentOutcome::Updated(view(&rows)?))
+        })
+        .await
+}
+
 async fn replace_definitions(
     mysql: &brz_mysql::MysqlService,
     user: i64,
     body: DefinitionChange,
 ) -> MysqlResult<Option<Value>> {
     mysql.with_transaction(async |tx| {
-        let _: (i64,) = tx.fetch_optional("SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE", (user,))
-            .await?.ok_or(MysqlError::RowNotFound)?;
+        lock_account_owner(tx, user).await?;
         let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
         let current = view(&rows)?;
         if current["assistant"]["revision"] != body.revision {
@@ -320,14 +603,19 @@ async fn replace_definitions(
         for desired in body.desired.definitions {
             retired.remove(&desired.role_id);
             if let Some(entry) = previous.remove(desired.role_id.as_str()) {
+                let mut team = entry["team"].clone();
                 let mut bot = entry["bot"].clone();
                 let mut ghost = entry["ghost"].clone();
                 if let Some(device) = desired.execution_device_id {
                     bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
                 }
-                bot["metadata"]["displayName"] = json!(desired.name);
+                team["metadata"]["displayName"] = json!(desired.name);
+                bot["metadata"]["displayName"] = team["metadata"]["displayName"].clone();
                 ghost["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
                 ghost["spec"]["systemPrompt"] = json!(desired.prompt);
+                if team != entry["team"] {
+                    update_document(tx, user, &team).await?;
+                }
                 if bot != entry["bot"] {
                     update_document(tx, user, &bot).await?;
                 }
@@ -336,18 +624,18 @@ async fn replace_definitions(
                 }
                 identities.push(json!({
                     "roleId":desired.role_id,
-                    "botRef":{"name":bot["metadata"]["name"],"namespace":NAMESPACE}
+                    "teamRef":{"name":team["metadata"]["name"],"namespace":NAMESPACE}
                 }));
             } else {
-                let (identity, bot, ghost) = definition_documents(desired);
+                let (identity, documents) = definition_documents(desired);
                 identities.push(identity);
-                additions.extend([ghost, bot]);
+                additions.extend(documents);
             }
         }
         for entry in previous.into_values() {
             let role_id = entry["roleId"].as_str().ok_or(MysqlError::RowNotFound)?;
             retired.insert(role_id.to_string());
-            for resource in ["bot", "ghost"] {
+            for resource in ["team", "bot", "ghost"] {
                 let document = &entry[resource];
                 let (kind, name) = document_key(document)?;
                 tx.execute(
@@ -390,68 +678,7 @@ async fn update_document(
 }
 
 #[cfg(test)]
-pub(crate) async fn verify_concurrent_initialization(
-    mysql: &brz_mysql::MysqlService,
-) -> anyhow::Result<()> {
-    let user: i64 = 912045;
-    mysql.execute(
-        "INSERT INTO users (id,user_name,password_hash,role,auth_source,preferences,is_active) VALUES (?,'personal-assistant-test','fixture','user','local','{}',true)",
-        (user,),
-    ).await?;
-    let request = |prompt: &str| Initialize {
-        definitions: vec![
-            Definition {
-                execution_device_id: None,
-                role_id: "@primary".into(),
-                name: "Assistant".into(),
-                prompt: prompt.into(),
-            },
-            Definition {
-                execution_device_id: None,
-                role_id: "support".into(),
-                name: "Support".into(),
-                prompt: "Help".into(),
-            },
-        ],
-    };
-    let (first, second) = tokio::try_join!(
-        initialize_for(mysql, user, request("first")),
-        initialize_for(mysql, user, request("second")),
-    )?;
-    assert_eq!(first, second);
-    assert_eq!(
-        first["assistant"]["definitions"].as_array().unwrap().len(),
-        2
-    );
-    let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(rows.len(), 5);
-    assert_eq!(view(&rows)?, first);
-    let revision = first["assistant"]["revision"].as_str().unwrap();
-    let changes = || {
-        let mut desired = request("updated on the second device");
-        desired.definitions[0].execution_device_id = Some("device-2".into());
-        desired.definitions[1].role_id = "operations".into();
-        DefinitionChange {
-            revision: revision.to_owned(),
-            desired,
-        }
-    };
-    let updated = replace_definitions(mysql, user, changes()).await?.unwrap();
-    assert_eq!(
-        updated["assistant"]["definitions"][0]["bot"]["spec"]["execution_policy"],
-        json!({"mode":"fixed","environment_id":"device-2"})
-    );
-    assert_eq!(updated["assistant"]["retiredRoleIds"], json!(["support"]));
-    assert_eq!(
-        updated["assistant"]["definitions"][1]["roleId"],
-        "operations"
-    );
-    assert_eq!(
-        updated["assistant"]["definitions"][0]["ghost"]["spec"]["systemPrompt"],
-        "updated on the second device"
-    );
-    assert!(replace_definitions(mysql, user, changes()).await?.is_none());
-    let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(view(&rows)?, updated);
-    Ok(())
-}
+#[path = "stand_in_account_tests.rs"]
+mod tests;
+#[cfg(test)]
+pub(crate) use tests::verify_concurrent_initialization;

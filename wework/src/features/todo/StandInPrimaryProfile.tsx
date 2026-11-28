@@ -5,9 +5,9 @@ import {
   primaryWithConnectionMode,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
@@ -46,30 +46,7 @@ type NormalizedPrimary = StandInIdentity & {
   connections: NonNullable<StandInIdentity['connections']>
 }
 
-/** Edit the primary identity and its connections on the explicitly selected Executor. */
-export function StandInPrimaryProfile({
-  settings: incomingSettings,
-  executionDeviceId = incomingSettings.executionDeviceId,
-  saving,
-  loading = false,
-  error,
-  onSave,
-  onClose,
-  ref,
-  api,
-  localDeviceId,
-  projects,
-  services,
-  devices,
-  onSelectDevice,
-  deviceReadOnly = false,
-  initialCalendar = false,
-  initialConnections = false,
-  onCalendarViewChange,
-  onReload,
-  shortcuts,
-  footerLeading,
-}: {
+interface StandInPrimaryProfileProps {
   settings: PersonalStandInSettings
   executionDeviceId?: string
   saving: boolean
@@ -89,15 +66,45 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
-  initialConnections?: boolean | MessageCenterSource
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
-}) {
+}
+
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
+export function StandInPrimaryProfile(props: StandInPrimaryProfileProps) {
+  return (
+    <StandInPrimaryProfileEditor
+      key={JSON.stringify([props.settings.userId, props.settings.executionDeviceId])}
+      {...props}
+    />
+  )
+}
+
+function StandInPrimaryProfileEditor({
+  settings: incomingSettings,
+  executionDeviceId = incomingSettings.executionDeviceId,
+  saving,
+  loading = false,
+  error,
+  onSave,
+  onClose,
+  ref,
+  api,
+  localDeviceId,
+  projects,
+  services,
+  devices,
+  onSelectDevice,
+  deviceReadOnly = false,
+  initialCalendar = false,
+  onCalendarViewChange,
+  onReload,
+  shortcuts,
+  footerLeading,
+}: StandInPrimaryProfileProps) {
   const { t } = useTranslation('common')
-  const initialSource =
-    initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const settings = incomingSettings
@@ -111,7 +118,6 @@ export function StandInPrimaryProfile({
     const separatePrompt = usesSeparatePrompt(primary)
     return {
       ...primary,
-      delegation: primary.delegation,
       dingTalkConnectionMode: primary.dingTalkConnectionMode,
       collaboration: primary.collaboration ?? defaultCollaboration,
       calendar: primary.calendar,
@@ -131,7 +137,7 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar || initialConnections ? 'connections' : 'main')
+  >(initialCalendar ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -166,21 +172,13 @@ export function StandInPrimaryProfile({
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false)
   const [tagOwner, setTagOwner] = useState(() => ({
     api,
-    userId: settings.userId,
-    deviceId: settings.executionDeviceId,
     store: createTagDraft(),
   }))
-  if (
-    tagOwner.api !== api ||
-    tagOwner.userId !== settings.userId ||
-    tagOwner.deviceId !== settings.executionDeviceId
-  ) {
+  if (tagOwner.api !== api) {
     setDraft(original)
     setBaseline(original)
     setTagOwner({
       api,
-      userId: settings.userId,
-      deviceId: settings.executionDeviceId,
       store: createTagDraft(),
     })
   }
@@ -236,14 +234,16 @@ export function StandInPrimaryProfile({
     ...draft,
   }
   const navigation = useStandInPanelNavigation(profileDirty, blocked, () => setDiscard(true))
+  const requestProfileLeave = useStableEvent(navigation.requestLeave)
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
-    if (connectionRef.current)
-      connectionRef.current.requestLeave(discarded =>
-        discarded ? action() : navigation.requestLeave(action)
-      )
-    else navigation.requestLeave(action)
+    if (connectionRef.current) connectionRef.current.requestLeave(() => requestProfileLeave(action))
+    else requestProfileLeave(action)
   }
+  const reload = useStableEvent(() => {
+    setDraft(original)
+    onReload?.()
+  })
   const close = () => requestLeave(onClose)
   const backToSettings = () => {
     const back = () => {
@@ -387,7 +387,6 @@ export function StandInPrimaryProfile({
               calendar: original.calendar,
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
-            initialSource={initialSource}
             onScheduleDirtyChange={setScheduleDirty}
             onScheduleEditorOpenChange={setScheduleEditorOpen}
             tagDraft={tagDraft}
@@ -543,7 +542,7 @@ export function StandInPrimaryProfile({
                     ? {
                         testId: 'stand-in-primary-settings-retry',
                         disabled: blocked,
-                        onClick: onReload,
+                        onClick: () => requestLeave(reload),
                       }
                     : undefined
                 }

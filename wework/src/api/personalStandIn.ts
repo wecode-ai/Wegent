@@ -7,22 +7,6 @@ import type {
 
 export const STAND_IN_DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 
-export type StandInDelegationTemplate = 'document' | 'schedule' | 'process'
-
-export interface StandInDingTalkDelegation {
-  version: number
-  authorized?: boolean
-  paused: boolean
-  profile?: string
-  accountId?: string
-  accountName?: string
-  organizationId?: string
-  organizationName?: string
-  accountInvalidated?: boolean
-  templates: Record<StandInDelegationTemplate, boolean>
-  action?: 'prepare' | 'enable' | 'pause' | 'resume'
-}
-
 export interface StandInProjectRef {
   id: string
   store: 'local' | 'cloud'
@@ -86,7 +70,6 @@ export interface StandInIdentity extends Partial<
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
-  delegation?: StandInDingTalkDelegation
   dingTalkConnectionMode?: 'confirmed'
   taskPermissions?: StandInTaskPermissions
   calendar?: { policy: StandInHandlingPolicy }

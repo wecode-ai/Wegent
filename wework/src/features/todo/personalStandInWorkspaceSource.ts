@@ -1,5 +1,5 @@
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import type { StandInBindingTarget, StandInInstanceBinding } from '@/api/standIn'
+import type { StandInBindingTarget } from '@/api/standIn'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { reportStandInError } from '@/lib/stand-in-error-message'
@@ -11,37 +11,27 @@ interface RoleLocation {
 }
 interface WorkspaceObservation {
   api: SharedWorkspaceApi | null
-  bindingScope?: string
+  accountScope?: string
   target?: StandInBindingTarget | null
-  bindingStatus?: StandInInstanceBinding['status']
-  ownerAvailable: boolean
+  entry?: { key: string; location?: RoleLocation }
   active: boolean
   embedded: boolean
-  contentRoute: string
-  entryRequestKey?: number
   requestLeave(action: () => void): void
 }
 interface WorkspaceSnapshot {
   roleLocation?: RoleLocation
+  entryKey?: string
   selectionScope?: string
   projects: CollaborationProject[]
   projectsScope?: string
   projectsApi: SharedWorkspaceApi | null
   loadingProjects: boolean
-  error: { kind: 'projects'; cause: unknown } | { kind: 'stop_before_rebind' } | null
+  error: { kind: 'projects'; cause: unknown } | null
 }
 
 /** Owns the account workspace's role navigation and independently loaded project directory. */
-export function createPersonalStandInWorkspaceSource(
-  contentRoute: string,
-  entryRequestKey?: number
-) {
-  const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
+export function createPersonalStandInWorkspaceSource() {
   let snapshot: WorkspaceSnapshot = {
-    roleLocation:
-      query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
-        ? { deviceId: query.get('deviceId')!, roleId: query.get('profileId')!, settings: true }
-        : undefined,
     projects: [],
     projectsApi: null,
     loadingProjects: false,
@@ -49,7 +39,7 @@ export function createPersonalStandInWorkspaceSource(
   }
   const listeners = new Set<() => void>()
   let observation: WorkspaceObservation | undefined
-  let previousEntry = JSON.stringify([contentRoute, entryRequestKey])
+  let previousEntry: string | undefined
   let readRevision = 0
   let selectionRevision = 0
   const publish = (patch: Partial<WorkspaceSnapshot>) => {
@@ -61,23 +51,15 @@ export function createPersonalStandInWorkspaceSource(
     const revision = ++readRevision
     if (
       owner &&
-      (snapshot.projectsScope !== owner.bindingScope || snapshot.projectsApi !== owner.api)
+      (snapshot.projectsScope !== owner.accountScope || snapshot.projectsApi !== owner.api)
     )
       publish({
-        projectsScope: owner.bindingScope,
+        projectsScope: owner.accountScope,
         projectsApi: owner.api,
         projects: [],
         error: null,
       })
-    if (
-      !owner ||
-      owner.embedded ||
-      !owner.active ||
-      !owner.api ||
-      !owner.target ||
-      !owner.ownerAvailable ||
-      owner.bindingStatus !== 'active'
-    ) {
+    if (!owner || owner.embedded || !owner.active || !owner.api || !owner.target) {
       if (snapshot.loadingProjects) publish({ loadingProjects: false })
       return
     }
@@ -97,18 +79,15 @@ export function createPersonalStandInWorkspaceSource(
   }
   const consumeEntry = () => {
     const owner = observation!
-    const deviceId = owner.target?.deviceId
-    const entry = JSON.stringify([owner.contentRoute, owner.entryRequestKey])
-    if (previousEntry === entry || !deviceId) return
-    previousEntry = entry
-    const params = new URLSearchParams(owner.contentRoute.split('?')[1] ?? '')
-    const roleId = params.get('profileId') ?? undefined
-    const next = roleId && roleId !== '@primary' ? (params.get('deviceId') ?? deviceId) : deviceId
+    const entry = owner.entry
+    if (previousEntry === entry?.key || !entry) return
+    previousEntry = entry.key
     const revision = selectionRevision
     owner.requestLeave(() => {
       if (!listeners.size || selectionRevision !== revision) return
       publish({
-        roleLocation: { deviceId: next, roleId, settings: !!params.get('settingsRequest') },
+        entryKey: entry.key,
+        roleLocation: entry.location,
       })
     })
   }
@@ -118,11 +97,11 @@ export function createPersonalStandInWorkspaceSource(
       const previous = observation
       observation = owner
       listeners.add(listener)
-      if (owner.bindingScope && snapshot.selectionScope !== owner.bindingScope) {
+      if (owner.accountScope && snapshot.selectionScope !== owner.accountScope) {
         const changed = !!snapshot.selectionScope
         selectionRevision++
         publish({
-          selectionScope: owner.bindingScope,
+          selectionScope: owner.accountScope,
           ...(changed ? { roleLocation: undefined } : {}),
         })
       }
@@ -130,12 +109,10 @@ export function createPersonalStandInWorkspaceSource(
       if (
         !previous ||
         previous.api !== owner.api ||
-        previous.bindingScope !== owner.bindingScope ||
+        previous.accountScope !== owner.accountScope ||
         previous.active !== owner.active ||
         previous.embedded !== owner.embedded ||
-        previous.target !== owner.target ||
-        previous.bindingStatus !== owner.bindingStatus ||
-        previous.ownerAvailable !== owner.ownerAvailable
+        previous.target !== owner.target
       )
         void loadProjects()
       if (
@@ -162,10 +139,6 @@ export function createPersonalStandInWorkspaceSource(
     },
     selectLocation(deviceId: string, roleId?: string, settings?: boolean) {
       if (!observation || !listeners.size) return
-      if ((!roleId || roleId === '@primary') && deviceId !== observation.target?.deviceId) {
-        publish({ error: { kind: 'stop_before_rebind' } })
-        return
-      }
       publish({ roleLocation: { deviceId, roleId, settings } })
     },
     reloadProjects: () => {

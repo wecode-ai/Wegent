@@ -5,6 +5,10 @@ import {
   modelHarnessUpstream,
 } from './model-interface-runtime.js'
 import type { ModelConfigurationStore } from './model-configuration-store.js'
+import {
+  ModelRuntimeTrace,
+  type RecordModelRuntimeDiagnostic,
+} from './model-runtime-diagnostics.js'
 
 export interface ModelRuntimeTransport {
   request(method: string, params: Record<string, unknown>, deviceId?: string): Promise<unknown>
@@ -19,7 +23,11 @@ export class ModelRuntimeRequest {
     private readonly store: ModelConfigurationStore,
     private readonly local: ModelRuntimeTransport,
     private readonly remote: (input: Record<string, unknown>) => Promise<ModelRuntimeTransport>,
-    private readonly resolveProxy: (url: string) => Promise<string | null>
+    private readonly resolveProxy: (
+      url: string,
+      trace: ModelRuntimeTrace
+    ) => Promise<string | null>,
+    private readonly recordDiagnostic?: RecordModelRuntimeDiagnostic
   ) {}
 
   async request(input: Record<string, unknown>): Promise<unknown> {
@@ -29,46 +37,49 @@ export class ModelRuntimeRequest {
     if (!params || typeof params !== 'object' || Array.isArray(params))
       throw new Error('Native model parameters are required')
     if (!hasNativeModelReference(params)) throw new Error('A native model reference is required')
-    // Validate remote ownership and the configured destination before reading any model secret.
-    const transport = input.target ? await this.remote(input) : this.local
-    const models = modelInterfaceRunnerModels((await this.store.runtime()).models)
-    const prepared = (await this.materialize(params, models, !input.target)) as Record<
-      string,
-      unknown
-    >
-    const secrets = credentialValues(prepared)
-    try {
-      return publicRuntimeResponse(
-        await transport.request(
-          method,
-          prepared,
-          typeof deviceId === 'string' ? deviceId : undefined
-        )
+    const trace = new ModelRuntimeTrace(method, this.recordDiagnostic)
+    return trace.run('request', async () => {
+      // Validate remote ownership and the configured destination before reading any model secret.
+      const transport = await trace.run('transport-selection', () =>
+        input.target ? this.remote(input) : this.local
       )
-    } catch (error) {
-      throw privateRuntimeError(error, secrets)
-    }
+      const snapshot = await trace.run('store', () => this.store.runtime())
+      const models = modelInterfaceRunnerModels(snapshot.models)
+      const prepared = (await trace.run('materialize', () =>
+        this.materialize(params, models, !input.target, trace)
+      )) as Record<string, unknown>
+      const secrets = credentialValues(prepared)
+      try {
+        const response = await trace.run('dispatch', () =>
+          transport.request(method, prepared, typeof deviceId === 'string' ? deviceId : undefined)
+        )
+        return await trace.run('response', () => publicRuntimeResponse(response))
+      } catch (error) {
+        throw privateRuntimeError(error, secrets)
+      }
+    })
   }
 
   private async materialize(
     value: unknown,
     models: NativeModels,
     local: boolean,
+    trace: ModelRuntimeTrace,
     key = ''
   ): Promise<unknown> {
     if (!value || typeof value !== 'object') return value
     if (Array.isArray(value))
-      return Promise.all(value.map(item => this.materialize(item, models, local)))
+      return Promise.all(value.map(item => this.materialize(item, models, local, trace)))
     const record = value as Record<string, unknown>
     if (record.wework_model_kind === 'model-interface') {
-      const config = await this.resolveModel(record, models, local)
+      const config = await this.resolveModel(record, models, local, trace)
       return key === 'upstream' ? modelHarnessUpstream(config) : config
     }
     return Object.fromEntries(
       await Promise.all(
         Object.entries(record).map(async ([name, item]) => [
           name,
-          await this.materialize(item, models, local, name),
+          await this.materialize(item, models, local, trace, name),
         ])
       )
     )
@@ -77,7 +88,8 @@ export class ModelRuntimeRequest {
   private async resolveModel(
     reference: Record<string, unknown>,
     models: NativeModels,
-    local: boolean
+    local: boolean,
+    trace: ModelRuntimeTrace
   ): Promise<Record<string, unknown>> {
     const model = models.find(
       entry =>
@@ -89,11 +101,15 @@ export class ModelRuntimeRequest {
     for (const option of ['reasoning', 'service_tier'])
       if (reference[option] != null) config[option] = reference[option]
     if (local) {
-      const proxyUrl = await this.resolveProxy(String(config.responses_url))
+      const proxyUrl = await trace.run('proxy', () =>
+        this.resolveProxy(String(config.responses_url), trace)
+      )
       if (proxyUrl) config.proxy = { url: proxyUrl }
       if (config.vision_sidecar && typeof config.vision_sidecar === 'object') {
         const sidecar = { ...(config.vision_sidecar as Record<string, unknown>) }
-        const sidecarProxy = await this.resolveProxy(String(sidecar.request_url))
+        const sidecarProxy = await trace.run('vision-proxy', () =>
+          this.resolveProxy(String(sidecar.request_url), trace)
+        )
         if (sidecarProxy) sidecar.proxy = { url: sidecarProxy }
         config.vision_sidecar = sidecar
       }

@@ -721,9 +721,15 @@ impl CodexAppServerClient {
 
     pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
         let mut state = self.state.lock().await;
-        let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
-            None => 0,
+        let pending_methods = match state.process.as_ref() {
+            Some(process) => process
+                .pending
+                .lock()
+                .await
+                .values()
+                .map(|request| request.method.clone())
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
         };
         // A retained app owns its MCP connection between individual RPCs.
         let mut active_threads = state.active_threads_snapshot();
@@ -732,8 +738,15 @@ impl CodexAppServerClient {
         }
         let active_task_count =
             active_threads.values().sum::<usize>() + state.preparing_turns.count();
-        if active_task_count > 0 || pending_request_count > 0 {
-            return Err((active_task_count, pending_request_count));
+        if active_task_count > 0 || !pending_methods.is_empty() {
+            log_executor_event(
+                "codex idle restart deferred",
+                &[
+                    ("active_task_count", active_task_count.to_string()),
+                    ("pending_methods", pending_methods.join(",")),
+                ],
+            );
+            return Err((active_task_count, pending_methods.len()));
         }
         stop_codex_app_server_process(&mut state, None).await;
         Ok(())
@@ -1651,7 +1664,7 @@ struct PendingCodexResponse {
     native_request: Option<CodexNativeRequest>,
 }
 
-struct PendingMcpElicitation {
+struct PendingServerInteraction {
     request: Value,
     _settled: oneshot::Sender<()>,
 }
@@ -1666,7 +1679,7 @@ struct CodexNotificationHub {
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
     mcp_recovery: Arc<mcp_recovery::McpRecovery>,
-    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, PendingMcpElicitation>>>,
+    pending_server_interactions: Arc<StdMutex<HashMap<String, PendingServerInteraction>>>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1692,7 +1705,7 @@ impl CodexNotificationHub {
             threads: Arc::new(StdMutex::new(HashMap::new())),
             native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
             mcp_recovery: Arc::new(mcp_recovery::McpRecovery::default()),
-            pending_mcp_elicitations: Arc::default(),
+            pending_server_interactions: Arc::default(),
             thread_activity_changed,
         }
     }
@@ -1879,12 +1892,15 @@ impl CodexAppServerHandle {
         self.notifications.thread_activity_changed.notify_waiters();
     }
 
-    fn track_mcp_elicitation(&self, message: &Value) {
+    fn track_server_interaction(&self, message: &Value) {
         if message["method"] == "serverRequest/resolved" {
-            self.take_mcp_elicitation(&message["params"]["requestId"]);
+            self.take_server_interaction(&message["params"]["requestId"]);
             return;
         }
-        if message["method"] != "mcpServer/elicitation/request" {
+        let native_approval = message["method"]
+            .as_str()
+            .is_some_and(is_codex_approval_request_method);
+        if !native_approval && message["method"] != "mcpServer/elicitation/request" {
             return;
         }
         let Some(request_id) = json_rpc_request_id(message) else {
@@ -1892,10 +1908,14 @@ impl CodexAppServerHandle {
         };
         let (settled, wait_for_settlement) = oneshot::channel();
         {
-            let mut pending = self.notifications.pending_mcp_elicitations.lock().unwrap();
+            let mut pending = self
+                .notifications
+                .pending_server_interactions
+                .lock()
+                .unwrap();
             match pending.entry(request_id.to_string()) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(PendingMcpElicitation {
+                    entry.insert(PendingServerInteraction {
                         request: message.clone(),
                         _settled: settled,
                     })
@@ -1911,41 +1931,53 @@ impl CodexAppServerHandle {
                 _ = wait_for_settlement => return,
                 _ = tokio::time::sleep_until(deadline) => {}
             }
+            let result = if native_approval {
+                codex_approval_result(&message, &Value::Null).expect("known approval method")
+            } else {
+                json!({"action": "cancel"})
+            };
             match transport
-                .answer_mcp_elicitation(&request_id, json!({"action": "cancel"}))
+                .answer_server_interaction(&request_id, result)
                 .await
             {
                 Ok(true) => {
-                    elicitation::log_event("codex native MCP elicitation expired", &message);
-                    transport
-                        .notifications
-                        .send_runtime(elicitation::settled(&message, "expired", None).into())
-                        .await;
+                    let event = if native_approval {
+                        "codex native approval expired"
+                    } else {
+                        "codex native MCP elicitation expired"
+                    };
+                    elicitation::log_event(event, &message);
+                    let settled = elicitation::settled(&message, "expired", None);
+                    if native_approval {
+                        transport.notifications.send(settled).await;
+                    } else {
+                        transport.notifications.send_runtime(settled.into()).await;
+                    }
                 }
                 Ok(false) => {}
                 Err(error) => log_executor_event(
-                    "codex native MCP elicitation cancellation failed",
+                    "codex server interaction expiration failed",
                     &[("request_id", request_id.to_string()), ("error", error)],
                 ),
             }
         });
     }
 
-    fn take_mcp_elicitation(&self, request_id: &Value) -> bool {
+    fn take_server_interaction(&self, request_id: &Value) -> bool {
         self.notifications
-            .pending_mcp_elicitations
+            .pending_server_interactions
             .lock()
             .unwrap()
             .remove(&request_id.to_string())
             .is_some()
     }
 
-    async fn answer_mcp_elicitation(
+    async fn answer_server_interaction(
         &self,
         request_id: &Value,
         result: Value,
     ) -> Result<bool, String> {
-        if !self.take_mcp_elicitation(request_id) {
+        if !self.take_server_interaction(request_id) {
             return Ok(false);
         }
         self.write_message(json!({"id": request_id, "result": result}))
@@ -2195,7 +2227,7 @@ async fn read_persistent_codex_app_server_stdout(
         log_codex_mcp_startup_status(&message, notifications.process_generation);
 
         let message = external_work::project_review_notification(message);
-        transport.track_mcp_elicitation(&message);
+        transport.track_server_interaction(&message);
         notifications.send(message).await;
     }
     notifications.thread_activity_changed.notify_waiters();
@@ -2254,7 +2286,7 @@ fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
 
 async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
     notifications
-        .pending_mcp_elicitations
+        .pending_server_interactions
         .lock()
         .unwrap()
         .clear();
@@ -3735,9 +3767,12 @@ async fn read_shared_turn_notifications(
             } else {
                 "accept"
             };
-            client
-                .send_response(id, json!({"decision": decision}))
-                .await?;
+            let transport = client.existing_process().await?;
+            if transport.notifications.process_generation == message.process_generation() {
+                transport
+                    .answer_server_interaction(&id, json!({"decision": decision}))
+                    .await?;
+            }
             continue;
         }
         if prepare_runtime_notification(
@@ -4072,7 +4107,7 @@ fn is_codex_approval_request_method(method: &str) -> bool {
 
 fn spawn_shared_approval_response(
     client: &CodexAppServerClient,
-    message: &Value,
+    message: &CodexNotification,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
     notifications: Option<mpsc::WeakUnboundedSender<CodexNotification>>,
@@ -4090,6 +4125,10 @@ fn spawn_shared_approval_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
+            let transport = client.existing_process().await?;
+            if transport.notifications.process_generation != message.process_generation() {
+                return Ok(());
+            }
             let (response, status) = if let (Some(receiver), Some(correlation_key)) =
                 (request_user_input_answers, correlation_key)
             {
@@ -4100,19 +4139,26 @@ fn spawn_shared_approval_response(
                 .await
                 {
                     Ok(response) => (response?.unwrap_or_else(|| json!({})), "answered"),
-                    Err(_) => (json!({}), "expired"),
+                    // The transport owns wire expiry for all threads.
+                    Err(_) => return Ok(()),
                 }
             } else {
                 (json!({}), "cancelled")
             };
             let result = codex_approval_result(&message, &response)?;
+            if !transport
+                .answer_server_interaction(&request_id, result)
+                .await?
+            {
+                return Ok(());
+            }
             let settled: CodexNotification =
                 elicitation::settled(&message, status, Some(&response)).into();
-            client.publish_runtime_notification(settled.clone()).await?;
+            transport.notifications.send_runtime(settled.clone()).await;
             if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
                 let _ = sender.send(settled);
             }
-            client.send_response(request_id, result).await
+            Ok(())
         }
         .await;
         if let Err(error) = result {
@@ -4338,7 +4384,7 @@ fn spawn_shared_mcp_server_elicitation_response(
                     return Ok(());
                 }
                 if transport
-                    .answer_mcp_elicitation(&request_id, result.result)
+                    .answer_server_interaction(&request_id, result.result)
                     .await?
                     && visible
                 {
@@ -4735,7 +4781,7 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
-mod child_mcp_approval;
+mod child_approval;
 #[path = "codex/elicitation.rs"]
 mod elicitation;
 #[path = "codex/url_elicitation.rs"]
@@ -6081,6 +6127,13 @@ fn cdp_browser_mcp_config_overrides(
         auth_env_name.to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
+    // Native approval is resolved from the run's task permission. The mutable
+    // Browser Full Control setting is checked at execution time by the host.
+    let default_approval_mode = if codex_has_full_access(request) {
+        "approve"
+    } else {
+        "writes"
+    };
     overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.required=false"),
@@ -6101,7 +6154,7 @@ fn cdp_browser_mcp_config_overrides(
         ),
         format!(
             "{key}.default_tools_approval_mode={}",
-            toml_value("approve")
+            toml_value(default_approval_mode)
         ),
     ]);
 
