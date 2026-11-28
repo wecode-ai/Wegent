@@ -204,6 +204,12 @@ localStorage.setItem("wework:debug-runtime", "1");
 
 AI 会先说明会检查哪些信息，再确认你要 **提交 Bug** 还是 **尝试修复**。提交 Bug 可以直接根据本机证据准备报告。尝试修复时，即使电脑上没有源码，AI 也会自行拉取 Wegent，在独立工作树复现、修改和验证。向 Wegent 提交 Issue 或 PR 时，AI 会先展示待提交的内容。原始诊断留在本机。
 
+#### 当前实例的性能与运行诊断
+
+本机 Codex 排障对话可以使用 `wework_diagnostics` MCP。它连接这条对话所在设备的运行中 Wework 实例。先告诉 AI 哪个操作会触发故障，再按它提示复现。AI 可录制当前工作台的 Console、异常调用栈、CPU profile 和 Chromium trace，或导出前端和 Electron 主进程的 JS 堆快照。
+
+AI 也可读取当前实例的 Electron、前端启动和 Executor transport 日志，macOS 上可采集选定组件的原生线程栈和内存区域摘要。CPU profile 可作为火焰图输入。录制文件和堆快照写入本机 Wework 数据目录。堆快照可能包含当前应用数据，采集时可能暂停界面。
+
 ### 反馈提交失败
 
 提交反馈时，原生日志会按问题编号记录以下事件：

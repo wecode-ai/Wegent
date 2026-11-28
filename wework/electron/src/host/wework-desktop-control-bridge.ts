@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebContents } from 'electron'
 import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
+import { dispatchDiagnosticsMcp } from './diagnostics-mcp.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { VerificationDevtools } from './verification-devtools.js'
 
@@ -55,6 +56,7 @@ export interface WeworkDesktopControlBridgeOptions {
     allowSystemFallback: boolean,
     prepare: boolean
   ) => Promise<unknown>
+  diagnostics?: (input: Record<string, unknown>) => Promise<unknown>
   devtools?: VerificationDevtools
 }
 
@@ -64,21 +66,10 @@ export interface SmartAppControlService {
   packProject(projectRoot: string, outputPath: string): Promise<unknown>
 }
 
-interface RuntimeRecord {
-  schemaVersion: 1
-  instanceId: string
-  instanceKind: WeworkDesktopControlBridgeOptions['instanceKind']
-  displayName: string
-  projectRoot: string | null
-  pid: number
-  address: string
-  token: string
-  startedAtUnixMs: number
-}
-
 export class WeworkDesktopControlBridge {
   private server: Server | null = null
   private runtimePath: string | null = null
+  private diagnosticsPath: string | null = null
   private pythonEnvironment: NodeJS.ProcessEnv = {}
   private lifecycleGeneration = 0
   private readonly scripts = new Map<string, string>()
@@ -90,8 +81,9 @@ export class WeworkDesktopControlBridge {
     const generation = this.lifecycleGeneration
     const token = randomBytes(32).toString('base64url')
     const pythonToken = this.options.ensurePython ? randomBytes(32).toString('base64url') : null
+    const diagnosticsToken = this.options.diagnostics ? randomBytes(32).toString('base64url') : null
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response, token, pythonToken)
+      void this.handleRequest(request, response, token, pythonToken, diagnosticsToken)
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -129,21 +121,41 @@ export class WeworkDesktopControlBridge {
       server.close()
       throw error
     }
+    const diagnosticsPath = this.diagnosticsRecordPath()
+    if (diagnosticsPath && diagnosticsToken) {
+      await writeRuntimeRecord(diagnosticsPath, {
+        instanceId: this.options.instanceId,
+        url: `http://127.0.0.1:${address.port}/diagnostics`,
+        token: diagnosticsToken,
+      }).catch(() => {
+        console.warn('[desktop-control] Could not publish the local diagnostics endpoint')
+      })
+    }
     if (generation !== this.lifecycleGeneration) {
       await Promise.all([
         rm(runtimePath, { force: true }),
+        diagnosticsPath ? rm(diagnosticsPath, { force: true }).catch(() => {}) : Promise.resolve(),
         new Promise<void>(resolve => server.close(() => resolve())),
       ])
       return
     }
     this.server = server
     this.runtimePath = runtimePath
+    this.diagnosticsPath = diagnosticsPath
     this.pythonEnvironment = pythonToken
       ? {
           WEWORK_PYTHON_RUNTIME_URL: `http://127.0.0.1:${address.port}/runtime/python/ensure`,
           WEWORK_PYTHON_RUNTIME_TOKEN: pythonToken,
         }
       : {}
+  }
+
+  diagnosticsRecordPath(): string | null {
+    if (!this.options.diagnostics) return null
+    return join(
+      this.options.registryDirectory,
+      `${safeInstanceFilename(this.options.instanceId)}.mcp`
+    )
   }
 
   environment(): NodeJS.ProcessEnv {
@@ -157,11 +169,14 @@ export class WeworkDesktopControlBridge {
     const runtimePath = this.runtimePath
     this.server = null
     this.runtimePath = null
+    const diagnosticsPath = this.diagnosticsPath
+    this.diagnosticsPath = null
     this.pythonEnvironment = {}
     // Pending runtime downloads must not keep application shutdown waiting on HTTP clients.
     server?.closeAllConnections()
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
+      diagnosticsPath ? rm(diagnosticsPath, { force: true }) : Promise.resolve(),
       server ? new Promise<void>(resolve => server.close(() => resolve())) : Promise.resolve(),
     ])
   }
@@ -170,7 +185,8 @@ export class WeworkDesktopControlBridge {
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
     token: string,
-    pythonToken: string | null
+    pythonToken: string | null,
+    diagnosticsToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
     if (request.method === 'POST' && request.url === '/runtime/python/downloads') {
@@ -235,6 +251,28 @@ export class WeworkDesktopControlBridge {
       request.resume()
       try {
         writeResponse(response, 200, { ok: true, data: await pythonOperation() })
+      } catch (error) {
+        writeResponse(response, 200, { ok: false, error: errorMessage(error) })
+      }
+      return
+    }
+    if (request.url === '/diagnostics') {
+      if (!diagnosticsToken || request.headers.authorization !== `Bearer ${diagnosticsToken}`) {
+        writeResponse(response, 401, {
+          ok: false,
+          error: 'Unauthorized Wework diagnostics request',
+        })
+        return
+      }
+      if (request.method !== 'POST') {
+        writeResponse(response, 405, { ok: false, error: 'Diagnostics requires POST' })
+        return
+      }
+      try {
+        const input = await readJsonBody(request)
+        const result = await dispatchDiagnosticsMcp(input, this.options.diagnostics!)
+        if (result) writeResponse(response, 200, result)
+        else response.writeHead(202).end()
       } catch (error) {
         writeResponse(response, 200, { ok: false, error: errorMessage(error) })
       }
@@ -414,17 +452,24 @@ function safeInstanceFilename(instanceId: string): string {
   return instanceId.replace(/[^a-zA-Z0-9._-]+/g, '-')
 }
 
-async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {
+async function writeRuntimeRecord(
+  path: string,
+  record: { instanceId: string } & Record<string, unknown>
+): Promise<void> {
   const directory = dirname(path)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   await chmod(directory, 0o700)
   const temporary = join(
     directory,
-    `.${safeInstanceFilename(record.instanceId)}.${process.pid}.tmp`
+    `.${safeInstanceFilename(record.instanceId)}.${randomBytes(8).toString('hex')}.tmp`
   )
   await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
-  await chmod(temporary, 0o600)
-  await rename(temporary, path)
+  try {
+    await chmod(temporary, 0o600)
+    await rename(temporary, path)
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {})
+  }
 }
 
 async function readJsonBody(

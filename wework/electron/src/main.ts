@@ -99,6 +99,8 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { LiveProcessDiagnostics } from './host/live-process-diagnostics.js'
+import { LiveRendererDiagnostics } from './host/live-renderer-diagnostics.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { completeE2ERuntimeControl } from './host/e2e-runtime-request.js'
 import {
@@ -2562,8 +2564,44 @@ async function configureDesktopRuntime(): Promise<void> {
     console.warn('[browser] Browser bridge is unavailable', error)
     logStartupStep('embedded-browser-bridge', 'failed')
   }
+  const instanceId = desktopControlInstanceId()
+  const diagnosticsRoot = join(app.getPath('userData'), 'diagnostics')
+  const rendererDiagnostics = new LiveRendererDiagnostics(
+    () => mainWindow?.webContents ?? null,
+    diagnosticsRoot
+  )
+  const processDiagnostics = new LiveProcessDiagnostics(
+    diagnosticsRoot,
+    app.getPath('logs'),
+    () => ({
+      renderer: mainWindow?.webContents.getOSProcessId(),
+      executor: desktopRuntime?.diagnostics().executorPid,
+    })
+  )
   desktopControlBridge = new WeworkDesktopControlBridge({
-    instanceId: desktopControlInstanceId(),
+    instanceId,
+    diagnostics: async input => {
+      if (input.action === 'status') {
+        return {
+          instanceId,
+          version: app.getVersion(),
+          platform: process.platform,
+          arch: process.arch,
+          mainPid: process.pid,
+          rendererPid: mainWindow?.webContents.getOSProcessId() ?? null,
+          executorPid: desktopRuntime?.diagnostics().executorPid ?? null,
+          electronProcesses: app.getAppMetrics().map(({ pid, type, cpu, memory }) => ({
+            pid,
+            type,
+            cpuPercent: cpu.percentCPUUsage,
+            workingSetKiB: memory.workingSetSize,
+          })),
+        }
+      }
+      return input.target === 'renderer' && (input.action === 'record' || input.action === 'heap')
+        ? rendererDiagnostics.dispatch(input)
+        : processDiagnostics.dispatch(input)
+    },
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
     displayName:
       process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim() ||
@@ -2595,6 +2633,8 @@ async function configureDesktopRuntime(): Promise<void> {
       ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
       : {}),
   })
+  const diagnosticsRecordPath = desktopControlBridge.diagnosticsRecordPath()
+  if (diagnosticsRecordPath) environment.WEWORK_DIAGNOSTICS_MCP_FILE = diagnosticsRecordPath
   logStartupStep('desktop-control-bridge', 'started')
   if (pythonRuntimeEnabled) {
     // Executors inherit the Python capability only after its listener is ready.

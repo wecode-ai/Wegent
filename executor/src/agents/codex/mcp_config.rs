@@ -61,6 +61,7 @@ pub(super) fn configure_task_mcp(
     let (overrides, environment) = cdp_browser_mcp_config_overrides(request)?;
     launch.config_overrides.extend(overrides);
     launch.env.extend(environment);
+    configure_diagnostics_mcp(request, launch);
     launch.mcp_unavailable |=
         runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)
@@ -79,6 +80,48 @@ pub(super) fn configure_task_mcp(
     }
     super::stand_in_approval::configure_identity_review(request, launch);
     Ok(())
+}
+
+fn configure_diagnostics_mcp(request: &ExecutionRequest, launch: &mut CodexLaunchConfig) {
+    if launch.manager.is_some()
+        || crate::workbench_control::ControlContext::from_request(request).is_none()
+    {
+        return;
+    }
+    let Some((address, _)) = diagnostics_mcp_endpoint() else {
+        return;
+    };
+    let key = toml_key_path(&["mcp_servers", "wework_diagnostics"]);
+    launch.config_overrides.extend([
+        format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
+        format!("{key}.url={}", toml_value(&address)),
+        format!("{key}.tool_timeout_sec=120"),
+        format!(
+            "{key}.env_http_headers.Authorization={}",
+            toml_value(DIAGNOSTICS_MCP_AUTH_ENV)
+        ),
+        format!("{key}.default_tools_approval_mode={}", toml_value("writes")),
+    ]);
+}
+
+pub(super) const DIAGNOSTICS_MCP_AUTH_ENV: &str = "WEGENT_CODEX_DIAGNOSTICS_MCP_AUTHORIZATION";
+
+pub(super) fn diagnostics_mcp_endpoint() -> Option<(String, String)> {
+    let path = env::var_os("WEWORK_DIAGNOSTICS_MCP_FILE")?;
+    let bytes = std::fs::read(path).ok()?;
+    let record: Value = serde_json::from_slice(&bytes).ok()?;
+    let address = record["url"].as_str()?;
+    let token = record["token"].as_str()?;
+    let url = reqwest::Url::parse(address).ok()?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.path() != "/diagnostics"
+        || token.is_empty()
+    {
+        return None;
+    }
+    Some((address.to_owned(), token.to_owned()))
 }
 
 impl CodexAppServerClient {

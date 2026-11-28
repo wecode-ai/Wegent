@@ -5129,6 +5129,8 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
         toml_json_value(&json!([
             "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
             "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
+            "WEGENT_CODEX_DIAGNOSTICS_MCP_AUTHORIZATION",
+            "WEWORK_DIAGNOSTICS_MCP_FILE",
             "WEWORK_COMPUTER_USE_BRIDGE_URL",
             "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
         ]))
@@ -6028,6 +6030,12 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         environment.insert(
             "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
             format!("Bearer {}", endpoint.token),
+        );
+    }
+    if let Some((_, token)) = mcp_config::diagnostics_mcp_endpoint() {
+        environment.insert(
+            mcp_config::DIAGNOSTICS_MCP_AUTH_ENV.to_owned(),
+            format!("Bearer {token}"),
         );
     }
     // Auxiliary RPCs and turns must compare the same effective CLI directories.
