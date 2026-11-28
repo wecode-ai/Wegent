@@ -5,6 +5,7 @@ import { getProjectChatScopeKey } from './workbenchProviderHelpers'
 // Keep memoized callbacks in independent scopes so they cannot retain prior provider renders.
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { navigateTo } from '@/lib/navigation'
+import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import type {
   LocalDeviceSkill,
@@ -35,8 +36,8 @@ export function useListLocalSkills({
   localPluginApi: LocalCodexPluginApi
 }) {
   return useCallback(
-    async (forceReload = false) => {
-      const cwds = localSkillsWorkspacePath ? [localSkillsWorkspacePath] : []
+    async (forceReload = false, includeWorkspace = true) => {
+      const cwds = includeWorkspace && localSkillsWorkspacePath ? [localSkillsWorkspacePath] : []
       const cacheKey = cwds.length > 0 ? cwds.join('\u0000') : 'default'
 
       const cached = localSkillsCacheRef.current.get(cacheKey)
@@ -67,7 +68,10 @@ export function useStartNewSkillChat({
   workspaceTabId,
 }: {
   availableSkills: UnifiedSkill[]
-  listLocalSkills: (forceReload?: boolean) => Promise<LocalDeviceSkill[]>
+  listLocalSkills: (
+    forceReload?: boolean,
+    includeWorkspace?: boolean
+  ) => Promise<LocalDeviceSkill[]>
   state: WorkbenchState
   setSelectedSkillsForScope: (targetScopeKey: string, nextSkills: SkillRef[]) => void
   setDraftInputForScope: (scopeKey: string, value: string) => void
@@ -79,28 +83,39 @@ export function useStartNewSkillChat({
   return useCallback(
     async (
       skillNames: string[],
-      options: { allowLocalSkills?: boolean } = {}
+      options: { allowLocalSkills?: boolean; localDeviceOnly?: boolean; initialText?: string } = {}
     ): Promise<boolean> => {
+      const localDeviceId = options.localDeviceOnly
+        ? getLocalRuntimeStateDeviceId(state.devices)
+        : null
+      if (options.localDeviceOnly && !localDeviceId) return false
+
       const requestedNames = skillNames.map(name => name.trim()).filter(Boolean)
       if (requestedNames.length === 0) {
         return false
       }
 
       const requestedUnifiedSkills = requestedNames.map(name =>
-        availableSkills.find(
-          skill =>
-            skill.is_active && (skill.name === name || `${skill.namespace}:${skill.name}` === name)
-        )
+        options.localDeviceOnly
+          ? undefined
+          : availableSkills.find(
+              skill =>
+                skill.is_active &&
+                (skill.name === name || `${skill.namespace}:${skill.name}` === name)
+            )
       )
       const unresolvedNames = requestedNames.filter((_, index) => !requestedUnifiedSkills[index])
       const localSkills =
         options.allowLocalSkills !== false && unresolvedNames.length > 0
-          ? await listLocalSkills(true)
+          ? await listLocalSkills(true, !options.localDeviceOnly)
           : []
       const requestedLocalSkills = unresolvedNames.map(name =>
         localSkills.find(
           skill =>
-            skill.name === name || (!skill.name.includes(':') && name.endsWith(`:${skill.name}`))
+            skill.name === name ||
+            (!options.localDeviceOnly &&
+              !skill.name.includes(':') &&
+              name.endsWith(`:${skill.name}`))
         )
       )
       if (requestedLocalSkills.some(skill => !skill)) return false
@@ -134,17 +149,14 @@ export function useStartNewSkillChat({
             namespaceSeparator > 0 ? requestedName.slice(0, namespaceSeparator) : skill.name
           return localSkillReference(skill, mentionName)
         })
-        const input = `${references.join(' ')} `
-        setDraftInputForScope(nextScopeKey, input)
+        setDraftInputForScope(nextScopeKey, `${references.join(' ')} ${options.initialText ?? ''}`)
       }
       writeLastProjectId(ownershipKey, null)
       dispatch({
         type: 'project_cleared',
-        standaloneDeviceId: getRememberedStandaloneDeviceId(
-          user,
-          state.devices,
-          state.standaloneDeviceId
-        ),
+        standaloneDeviceId: options.localDeviceOnly
+          ? localDeviceId
+          : getRememberedStandaloneDeviceId(user, state.devices, state.standaloneDeviceId),
         standaloneWorkspacePath: null,
         startFreshChat: true,
       })

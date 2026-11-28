@@ -8,6 +8,7 @@ export interface FeedbackDialogRequest {
   taskId?: string | null
   getTaskContext: () => Promise<Record<string, unknown>>
   feedbackApi?: FeedbackApi
+  startRepairChat?: (note: string) => Promise<boolean>
 }
 
 export type FeedbackDialogContextProvider = () => FeedbackDialogRequest
