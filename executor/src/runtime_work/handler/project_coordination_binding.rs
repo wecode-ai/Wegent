@@ -2,6 +2,63 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn adopt_local_personal_team(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let owner = super::runtime_owner::runtime_user(&payload)?;
+        if self.backend_connection_snapshot()?.is_some() {
+            self.verify_local_stand_in_owner(owner)?;
+        } else if owner != 0 {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "An authenticated account is required",
+            ));
+        }
+        let project = super::stand_in_tasks::required(&payload, "projectId")?;
+        let mapping = serde_json::from_value(payload["memberAgentIds"].clone())
+            .map_err(|_| AppIpcError::new("bad_request", "Invalid project Agent mapping"))?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        store
+            .adopt_personal_project_team(
+                owner,
+                &self.device_id,
+                project,
+                &payload["definition"],
+                &mapping,
+            )
+            .map_err(super::stand_in::settings_error)?;
+        Ok(json!({}))
+    }
+
+    pub(super) async fn local_issue_coordination(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let actor = super::runtime_owner::runtime_user(&payload)?;
+        if self.backend_connection_snapshot()?.is_some() {
+            self.verify_runtime_user(&payload).await?;
+        } else if actor != 0 {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "An authenticated account is required",
+            ));
+        }
+        let project = super::stand_in_tasks::required(&payload, "projectId")?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        store
+            .human_issue_coordination(
+                method.trim_start_matches("runtime.issue_coordination."),
+                actor,
+                project,
+                &payload["input"],
+            )
+            .map_err(super::stand_in::settings_error)
+    }
+
     pub(super) async fn project_coordination_binding(
         &self,
         method: &str,
@@ -96,6 +153,50 @@ mod tests {
             .unwrap();
         assert_eq!(stopped["binding"]["enabled"], false);
         assert!(handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_personal_team_adoption_checks_rpc_owner_and_saves_without_cloud() {
+        let home = tempfile::tempdir().unwrap();
+        let device = "addressed-device";
+        let mut handler = RuntimeWorkRpcHandler::new(device, "unused");
+        handler.task_store_path = Arc::new(home.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Offline project"})).unwrap())
+            .unwrap();
+        let actor = store
+            .create_chat_agent(
+                &project.id,
+                serde_json::from_value(json!({"name":"QA"})).unwrap(),
+            )
+            .unwrap();
+        store.materialize_implicit_primary(0, device).unwrap();
+        let mut settings = store.personal_stand_in(0, device).unwrap();
+        let team = json!({"id":"245bcb0d-5eb1-47fb-8c1f-1969622d012d","name":"QA","leadId":"@primary","members":{"@primary":"check"}});
+        settings["teams"] = json!([team]);
+        store.save_personal_stand_in(0, device, settings).unwrap();
+        let method = "runtime.project_coordinator.adopt_personal_team";
+        let mut payload = json!({"userId":7,"projectId":project.id,"definition":team,"memberAgentIds":{"@primary":actor.id}});
+        assert_eq!(
+            handler
+                .dispatch_method(method, payload.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        payload["userId"] = json!(0);
+        handler.dispatch_method(method, payload).await.unwrap();
+        let saved = store.get_project(&project.id).unwrap();
+        assert_eq!(
+            saved.metadata["collaboration_groups"][0]["leader"]["id"],
+            actor.id
+        );
+        assert_eq!(
+            saved.metadata["collaboration_groups"][0]["personal_team_managed"],
+            true
+        );
     }
 
     #[tokio::test]

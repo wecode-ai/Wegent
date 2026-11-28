@@ -13,8 +13,22 @@ import { spawnSync } from 'node:child_process'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
+import {
+  sharedCapability,
+  botMcpReceipt,
+  coordinateAuditPath,
+  verifyCoordinateAudit,
+  sharedBotGrants,
+  sharedCodexProbe,
+} from '../../utils/standalone-bot-capabilities'
+import {
+  deleteBotCapabilityFixtures,
+  createGroupBotCapability,
+  groupBotProbe,
+  verifyGroupBotProbe,
+} from '../../utils/group-bot-capabilities'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
-import { ApiClient, createApiClient } from '../../utils/api-client'
+import { createApiClient } from '../../utils/api-client'
 import { startLocalCodexDevice } from '../../utils/artifact-device-fixture'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 import {
@@ -77,6 +91,7 @@ type RuntimeCheckResponse = {
 }
 
 type CapturedModelRequest = {
+  headers: Record<string, string>
   url: string
   body: unknown
 }
@@ -137,7 +152,6 @@ function canAcquireHomeLock(lock: string): boolean {
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
 
 test.describe('Agent conversation regression', () => {
-  let apiClient: ApiClient
   let token = ''
   let chatShellTeam: CreatedTeam
   let inheritedClaudeTeam: CreatedTeam
@@ -156,7 +170,7 @@ test.describe('Agent conversation regression', () => {
 
   test.beforeAll(async ({ request }) => {
     await test.step('Prepare isolated database dependencies', prepareIsolatedDatabaseState)
-    apiClient = createApiClient(request)
+    const apiClient = createApiClient(request)
     const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
     token = loginResponse.data?.access_token || ''
     expect(token, 'Admin login should return an access token').toBeTruthy()
@@ -906,6 +920,450 @@ test.describe('Agent conversation regression', () => {
     )
   }
 
+  test('standalone Codex Coordinate delegates to its configured worker Bot', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const name = `e2e-coordinate-${Date.now()}`
+    const prompt = `Delegate the review for ${name}`
+    const workerInstruction = `Review documents using the policy ${name}`
+    const assignment = `Inspect the document for ${name}`
+    const childResult = `Reviewed by worker ${name}`
+    const result = `Review complete ${name}`
+    const sharedGrants = await sharedBotGrants(
+      await resolveSkillRef(request, sharedCapability.skill),
+      CODEX_MODEL_SERVER_URL + coordinateAuditPath(name)
+    )
+    const cleanup: string[] = []
+    try {
+      const bots = []
+      for (const role of ['leader', 'worker'] as const) {
+        const botName = `${name}-${role}`
+        const response = await request.post(`${API_BASE_URL}/api/bots`, {
+          headers: authHeaders(),
+          data: {
+            name: botName,
+            shell_name: CODEX_SHELL_NAME,
+            agent_config: { bind_model: CODEX_MODEL_NAME, bind_model_type: 'user' },
+            system_prompt: role === 'worker' ? workerInstruction : 'Delegate the document review.',
+            ...sharedGrants,
+            namespace: 'default',
+            is_active: true,
+          },
+        })
+        expect(response.ok(), await response.text()).toBe(true)
+        cleanup.unshift(`bots/${botName}`)
+        bots.push({ bot_id: Number((await response.json()).id), role, bot_prompt: '' })
+      }
+      const created = await request.post(`${API_BASE_URL}/api/teams`, {
+        headers: authHeaders(),
+        data: {
+          name,
+          bots,
+          workflow: { mode: 'coordinate', leader_bot_id: bots[0].bot_id },
+          bind_mode: ['chat'],
+          namespace: 'default',
+          is_active: true,
+          requires_workspace: false,
+        },
+      })
+      expect(created.ok(), await created.text()).toBe(true)
+      cleanup.unshift(`teams/${name}`)
+      const teamId = Number((await created.json()).id)
+      const role = `${name}-worker-${bots[1].bot_id}`
+      await configureToolScenario(request, prompt, [
+        ...sharedCodexProbe(),
+        {
+          toolCalls: [
+            {
+              toolName: 'spawn_agent',
+              arguments: {
+                task_name: 'review',
+                agent_type: role,
+                message: assignment,
+                fork_turns: 'none',
+              },
+            },
+          ],
+        },
+        { toolCalls: [{ toolName: 'wait_agent', arguments: { timeout_ms: 10000 } }] },
+        { responseContent: result },
+      ])
+      await configureToolScenario(
+        request,
+        workerInstruction,
+        [...sharedCodexProbe(), { responseContent: childResult }],
+        {
+          'x-openai-subagent': 'collab_spawn',
+        }
+      )
+      await openTaskPage(page, '/chat', teamId, 'chat')
+      const input = page.getByTestId('message-input')
+      await expect(input).toHaveAttribute('data-team-id', String(teamId))
+      await expect(input).toHaveAttribute('contenteditable', 'true')
+      await input.fill(prompt)
+      await testInfo.attach('coordinate-codex-entry', {
+        body: await page.screenshot(),
+        contentType: 'image/png',
+      })
+      await page.getByTestId('send-button').click()
+      const taskId = await waitForTaskId(page)
+      createdTaskIds.add(taskId)
+      await expect(page.getByTestId('messages-container')).toContainText(result, {
+        timeout: RESPONSE_TIMEOUT_MS,
+      })
+      await waitForBackendTerminal(request, taskId)
+      const captures = await loadCapturedModelRequests(request)
+      const worker = captures.findIndex(
+        capture =>
+          isOpenAIResponsesRequest(capture) &&
+          capture.headers['x-openai-subagent'] === 'collab_spawn' &&
+          JSON.stringify(capture.body).includes(assignment) &&
+          JSON.stringify(capture.body).includes(workerInstruction)
+      )
+      expect(worker).toBeGreaterThanOrEqual(0)
+      const childRequests = captures.filter(
+        capture =>
+          capture.headers['x-openai-subagent'] === 'collab_spawn' &&
+          JSON.stringify(capture.body).includes(assignment)
+      )
+      for (const marker of [sharedCapability.heading, sharedCapability.result])
+        expect(
+          childRequests.some(capture => toolOutputContains(capture.body, marker)),
+          marker
+        ).toBe(true)
+      const leader = captures
+        .slice(0, worker)
+        .filter(
+          c =>
+            isOpenAIResponsesRequest(c) &&
+            !c.headers['x-openai-subagent'] &&
+            JSON.stringify(c.body).includes(prompt)
+        )
+      expect(leader.some(c => toolOutputContains(c.body, sharedCapability.heading))).toBe(true)
+      const leaderReceipt = botMcpReceipt(
+        leader.map(c => c.body),
+        sharedCapability.result
+      )
+      const workerReceipt = botMcpReceipt(
+        childRequests.map(c => c.body),
+        sharedCapability.result
+      )
+      expect(workerReceipt).not.toBe(leaderReceipt)
+      await testInfo.attach('coordinate-bot-capabilities', {
+        body: JSON.stringify({
+          teamId,
+          taskId,
+          leaderBotId: bots[0].bot_id,
+          leaderReceipt,
+          workerReceipt,
+          calls: await verifyCoordinateAudit(
+            request,
+            MOCK_MODEL_SERVER_URL + coordinateAuditPath(name),
+            leaderReceipt,
+            workerReceipt
+          ),
+          workerBotId: bots[1].bot_id,
+          nativeRole: role,
+          skillHeading: sharedCapability.heading,
+          mcpResult: sharedCapability.result,
+        }),
+        contentType: 'application/json',
+      })
+      expect(
+        captures
+          .slice(worker + 1)
+          .some(
+            capture =>
+              isOpenAIResponsesRequest(capture) &&
+              !capture.headers['x-openai-subagent'] &&
+              JSON.stringify(capture.body).includes(prompt) &&
+              JSON.stringify(capture.body).includes(childResult)
+          )
+      ).toBe(true)
+      const detail = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(detail.ok()).toBe(true)
+      const task = await detail.json()
+      expect(task.device_id).toBeFalsy()
+      expect(task.subtasks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            team_id: teamId,
+            role: 'ASSISTANT',
+            status: 'COMPLETED',
+            executor_name: expect.stringMatching(/^wegent-task-/),
+          }),
+        ])
+      )
+      await testInfo.attach('coordinate-codex-delivery', {
+        body: await page.screenshot(),
+        contentType: 'image/png',
+      })
+    } finally {
+      for (const path of cleanup) {
+        const removed = await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/${path}`, {
+          headers: authHeaders(),
+        })
+        expect([200, 204, 404]).toContain(removed.status())
+      }
+    }
+  })
+
+  for (const runtime of ['ClaudeCode', 'Codex'] as const) {
+    test(`standalone ${runtime} Pipeline applies each Bot skill and MCP grant`, async ({
+      page,
+      request,
+    }, testInfo) => {
+      const apiClient = createApiClient(request, API_BASE_URL, token)
+      const name = makeContextToken('capability').toLowerCase().replaceAll('_', '-')
+      const codex = runtime === 'Codex'
+      const cleanup: string[] = []
+      const auditPath = '/mcp-control/probe-calls/' + name
+      const skillCleanup: number[] = []
+      const bots: {
+        bot_id: number
+        role: string
+        bot_prompt: string
+        requireConfirmation: boolean
+        contextPassing: string
+      }[] = []
+      const prompts = ['leader', 'worker'].map(role => name + '-' + role + '-instruction')
+      try {
+        const grants = [
+          await createGroupBotCapability(apiClient, 'leader', name, skillCleanup),
+          await createGroupBotCapability(apiClient, 'worker', name, skillCleanup),
+        ]
+        for (const [i, grant] of grants.entries()) {
+          grant.config.mcp_servers[grant.serverId].args.push(
+            (codex ? CODEX_MODEL_SERVER_URL : CLAUDE_MODEL_SERVER_URL) + auditPath
+          )
+          const bot = name + '-' + i
+          const created = await request.post(API_BASE_URL + '/api/bots', {
+            headers: authHeaders(),
+            data: {
+              name: bot,
+              shell_name: codex ? CODEX_SHELL_NAME : CLAUDE_SHELL_NAME,
+              agent_config: {
+                bind_model: codex ? CODEX_MODEL_NAME : CLAUDE_MODEL_NAME,
+                bind_model_type: 'user',
+              },
+              system_prompt: prompts[i],
+              namespace: 'default',
+              is_active: true,
+              inherit_base_capabilities: false,
+              ...grant.config,
+            },
+          })
+          expect(created.ok(), await created.text()).toBe(true)
+          cleanup.unshift('bots/' + bot)
+          bots.push({
+            bot_id: Number((await created.json()).id),
+            role: i === 0 ? 'leader' : 'worker',
+            bot_prompt: prompts[i],
+            requireConfirmation: false,
+            contextPassing: 'none',
+          })
+          await configureToolScenario(request, prompts[i], [
+            ...groupBotProbe(runtime, grant, grants[1 - i]),
+            { responseContent: name + '-done-' + i },
+          ])
+        }
+        const team = await request.post(API_BASE_URL + '/api/teams', {
+          headers: authHeaders(),
+          data: {
+            name,
+            bots,
+            workflow: { mode: 'pipeline', leader_bot_id: bots[0].bot_id },
+            bind_mode: ['chat'],
+            namespace: 'default',
+            is_active: true,
+            requires_workspace: false,
+          },
+        })
+        expect(team.ok(), await team.text()).toBe(true)
+        cleanup.unshift('teams/' + name)
+        const teamId = Number((await team.json()).id)
+        await openTaskPage(page, '/chat', teamId, 'chat')
+        await testInfo.attach('pipeline-capability-entry', {
+          body: await page.screenshot(),
+          contentType: 'image/png',
+        })
+        await sendMessage(page, name)
+        const taskId = await waitForTaskId(page)
+        createdTaskIds.add(taskId)
+        await expect(page.getByTestId('messages-container')).toContainText(name + '-done-1', {
+          timeout: RESPONSE_TIMEOUT_MS,
+        })
+        await waitForBackendTerminal(request, taskId)
+        const captures = await loadCapturedModelRequests(request)
+        const evidence = grants.map((grant, i) => {
+          const turns = captures
+            .filter(c => JSON.stringify(c.body).includes(prompts[i]))
+            .map(c => c.body as Record<string, unknown>)
+          return { botId: bots[i].bot_id, ...verifyGroupBotProbe(turns, grant, grants[1 - i]) }
+        })
+        expect(evidence[0].receipt).not.toBe(evidence[1].receipt)
+        const response = await request.get(API_BASE_URL + '/api/tasks/' + taskId, {
+          headers: authHeaders(),
+        })
+        expect(response.ok()).toBe(true)
+        const detail = await response.json()
+        expect(detail.device_id).toBeFalsy()
+        const executors = detail.subtasks.filter((s: { role: string }) => s.role === 'ASSISTANT')
+        expect(executors).toHaveLength(2)
+        expect(executors.map((s: { bot_ids: number[] }) => s.bot_ids)).toEqual(
+          bots.map(bot => [bot.bot_id])
+        )
+        for (const subtask of executors)
+          expect(subtask).toMatchObject({
+            team_id: teamId,
+            status: 'COMPLETED',
+            executor_name: expect.stringMatching(/^wegent-task-/),
+          })
+        await testInfo.attach('pipeline-capability-delivery', {
+          body: await page.screenshot(),
+          contentType: 'image/png',
+        })
+        await testInfo.attach('pipeline-bot-capabilities', {
+          body: JSON.stringify({
+            teamId,
+            taskId,
+            runtime,
+            evidence,
+            subtasks: executors.map((s: { id: number; executor_name: string }) => ({
+              id: s.id,
+              executor: s.executor_name,
+            })),
+          }),
+          contentType: 'application/json',
+        })
+        const observe = async () => {
+          const response = await request.get(MOCK_MODEL_SERVER_URL + auditPath)
+          expect(response.ok()).toBe(true)
+          return response.json()
+        }
+        const allowed = await observe()
+        expect(allowed).toEqual(
+          evidence.map((item, i) => ({ tool: grants[i].tool, receipt: item.receipt }))
+        )
+        const solo = await request.put(API_BASE_URL + '/api/teams/' + teamId, {
+          headers: authHeaders(),
+          data: { bots: [bots[0]], workflow: { mode: 'solo', leader_bot_id: bots[0].bot_id } },
+        })
+        expect(solo.ok(), await solo.text()).toBe(true)
+        const soloPrompt = name + '-verify-solo-capability'
+        await configureToolScenario(request, soloPrompt, [
+          ...groupBotProbe(runtime, grants[0], grants[1]),
+          { responseContent: soloPrompt + '-delivered' },
+        ])
+        await openTaskPage(page, '/chat', teamId, 'chat')
+        await sendMessage(page, soloPrompt)
+        const soloTask = await waitForTaskId(page)
+        createdTaskIds.add(soloTask)
+        await expect(page.getByTestId('messages-container')).toContainText(
+          soloPrompt + '-delivered',
+          { timeout: RESPONSE_TIMEOUT_MS }
+        )
+        await waitForBackendTerminal(request, soloTask)
+        const soloResponse = await request.get(API_BASE_URL + '/api/tasks/' + soloTask, {
+          headers: authHeaders(),
+        })
+        expect(soloResponse.ok()).toBe(true)
+        const soloDetail = await soloResponse.json()
+        expect(soloDetail.device_id).toBeFalsy()
+        expect(soloDetail.subtasks.filter((s: { role: string }) => s.role === 'ASSISTANT')).toEqual(
+          [
+            expect.objectContaining({
+              team_id: teamId,
+              bot_ids: [bots[0].bot_id],
+              status: 'COMPLETED',
+              executor_name: expect.stringMatching(/^wegent-task-/),
+            }),
+          ]
+        )
+        const soloEvidence = verifyGroupBotProbe(
+          (await loadCapturedModelRequests(request))
+            .filter(c => JSON.stringify(c.body).includes(soloPrompt))
+            .map(c => c.body as Record<string, unknown>),
+          grants[0],
+          grants[1]
+        )
+        await testInfo.attach('solo-bot-capabilities', {
+          body: JSON.stringify({
+            teamId,
+            taskId: soloTask,
+            botId: bots[0].bot_id,
+            ...soloEvidence,
+          }),
+          contentType: 'application/json',
+        })
+        await testInfo.attach('solo-capability-delivery', {
+          body: await page.screenshot(),
+          contentType: 'image/png',
+        })
+        const beforeRefusal = await observe()
+        expect(beforeRefusal).toEqual([
+          ...allowed,
+          { tool: grants[0].tool, receipt: soloEvidence.receipt },
+        ])
+        const changed = await request.put(API_BASE_URL + '/api/teams/' + teamId, {
+          headers: authHeaders(),
+          data: { bots, workflow: { mode: 'coordinate', leader_bot_id: bots[0].bot_id } },
+        })
+        expect(changed.ok(), await changed.text()).toBe(true)
+        await openTaskPage(page, '/chat', teamId, 'chat')
+        const refusedPrompt = name + '-unequal-coordinate-grants'
+        await sendMessage(page, refusedPrompt)
+        const refusedTask = await waitForTaskId(page)
+        expect(refusedTask).not.toBe(taskId)
+        createdTaskIds.add(refusedTask)
+        const reason = runtime + ' native subagents cannot isolate distinct Bot tool grants'
+        await expect
+          .poll(
+            async () => {
+              const response = await request.get(API_BASE_URL + '/api/tasks/' + refusedTask, {
+                headers: authHeaders(),
+              })
+              expect(response.ok()).toBe(true)
+              const task = await response.json()
+              return {
+                status: task.status,
+                rejected: JSON.stringify(task.subtasks).includes(reason),
+              }
+            },
+            {
+              timeout: RESPONSE_TIMEOUT_MS,
+              message: 'Coordinate must reject distinct grants before model execution',
+            }
+          )
+          .toEqual({ status: 'FAILED', rejected: true })
+        expect(
+          (await loadCapturedModelRequests(request)).some(c =>
+            JSON.stringify(c.body).includes(refusedPrompt)
+          )
+        ).toBe(false)
+        const afterRefusal = await observe()
+        expect(afterRefusal).toEqual(beforeRefusal)
+        await testInfo.attach('coordinate-unequal-grants-refusal', {
+          body: JSON.stringify({
+            teamId,
+            taskId: refusedTask,
+            bots,
+            reason,
+            callsBefore: beforeRefusal,
+            callsAfter: afterRefusal,
+          }),
+          contentType: 'application/json',
+        })
+      } finally {
+        await deleteBotCapabilityFixtures(apiClient, cleanup, skillCleanup)
+        expect((await request.delete(MOCK_MODEL_SERVER_URL + auditPath)).ok()).toBe(true)
+      }
+    })
+  }
+
   test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
     const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
     const successMarker = 'CODEX_SKILL_MCP_EFFECTIVE'
@@ -953,6 +1411,48 @@ test.describe('Agent conversation regression', () => {
     expect(
       captures.some(capture => JSON.stringify(capture.body).includes('CODEX_SKILL_DEPLOYED'))
     ).toBe(true)
+  })
+
+  test('ordinary device task exposes its own Wework continuation link', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await waitForWeworkDeviceOnline(request)
+    const prompt = makeContextToken('open_in_wework')
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    await page.goto('/devices', { waitUntil: 'domcontentloaded' })
+    await page.getByTestId(`start-device-chat-${DEVICE_ID}`).click()
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+    await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await waitForBackendTerminal(request, taskId)
+    await expect(page).toHaveURL(
+      url => url.pathname === '/devices/chat' && url.searchParams.get('taskId') === String(taskId)
+    )
+    const open = page.getByTestId('continue-platform-task-in-wework')
+    await expect(open).toBeVisible()
+    const owner = await getCurrentUser(request)
+    const config = await request.get(new URL('/runtime-config', page.url()).href)
+    expect(config.ok()).toBe(true)
+    const { publicApiUrl, apiUrl } = await config.json()
+    const backend = new URL(publicApiUrl || apiUrl || '/api', page.url())
+    const href = new URL((await open.getAttribute('href'))!)
+    expect(href.protocol).toBe('wework:')
+    expect(href.host).toBe('platform-tasks')
+    const segments = href.pathname.slice(1).split('/')
+    expect(segments.slice(1)).toEqual([String(owner.id), String(taskId)])
+    const target = new URL(decodeURIComponent(segments[0]))
+    expect(target.origin).toBe(backend.origin)
+    expect(target.pathname).toMatch(/\/api$/)
+    await open.scrollIntoViewIfNeeded()
+    await expect(open).toBeInViewport()
+    await testInfo.attach('ordinary-device-task-continuation', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    })
   })
 
   test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
@@ -2496,12 +2996,13 @@ test.describe('Agent conversation regression', () => {
   async function configureToolScenario(
     request: APIRequestContext,
     matchText: string,
-    steps: PhaseRegressionStep[]
+    steps: PhaseRegressionStep[],
+    matchHeaders?: Record<string, string>
   ): Promise<void> {
     toolScenarioMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {
       ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
-      data: { matchText, steps },
+      data: { matchText, steps, matchHeaders },
     })
     expect(response.status()).toBe(200)
   }
@@ -2990,6 +3491,7 @@ test.describe('Agent conversation regression', () => {
     commands: string[] = []
   ): Promise<void> {
     type DeviceTask = {
+      team: { id: number }
       status: string
       device_id: string
       subtasks: Array<{
@@ -3039,7 +3541,7 @@ test.describe('Agent conversation regression', () => {
       headers: authHeaders(),
       data: {
         taskId,
-        teamId: deviceTeam.id,
+        teamId: before.team.id,
         deviceId: before.device_id,
         message: prompt,
         taskType: 'task',

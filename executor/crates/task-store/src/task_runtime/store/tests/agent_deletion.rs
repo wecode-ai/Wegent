@@ -116,3 +116,37 @@ fn stale_group_draft_cannot_reference_an_agent_deleted_after_the_project_was_rea
         project.metadata["collaboration_groups"]
     );
 }
+
+#[test]
+fn project_binding_reuses_source_and_removal_preserves_definition() {
+    let (_directory, store, project) = chat_agent_store();
+    let mut input = default_chat_agent_input();
+    input.name = "source".into();
+    input.created_by_user_id = Some(project.created_by_user_id);
+    let source = store
+        .create_chat_agent(DEFAULT_WORK_ITEM_PROJECT_ID, input)
+        .unwrap();
+    let binding = store
+        .bind_chat_agent(&project.id, &source.team_ref)
+        .unwrap();
+    assert_eq!(binding.team_ref, source.id);
+    assert_eq!(binding.source_project_id, DEFAULT_WORK_ITEM_PROJECT_ID);
+    store
+        .bind_chat_agent(&project.id, &source.team_ref)
+        .unwrap();
+    assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 1);
+    assert!(store
+        .delete_chat_agent(DEFAULT_WORK_ITEM_PROJECT_ID, &source.id, source.version)
+        .is_err());
+    store
+        .delete_chat_agent(&project.id, &source.id, source.version)
+        .unwrap();
+    assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
+    assert!(store
+        .list_chat_agents(DEFAULT_WORK_ITEM_PROJECT_ID)
+        .unwrap()
+        .iter()
+        .any(|agent| agent.id == source.id));
+    let foreign = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+    assert!(store.bind_chat_agent(&project.id, &foreign.id).is_err());
+}

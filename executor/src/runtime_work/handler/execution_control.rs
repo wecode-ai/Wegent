@@ -35,7 +35,7 @@ fn request_execution_stop(control: &mut ActiveLocalExecution) {
     let _ = cancel.send(());
 }
 
-fn settle_local_execution_link(
+pub(super) fn settle_local_execution_link(
     link: &mut RuntimeTaskLink,
     thread_id: Option<String>,
     status: &str,
@@ -57,7 +57,7 @@ fn settle_local_execution_link(
     );
     apply_local_execution_state(link, false, None);
     if link.thread_id.is_some() {
-        clear_runtime_handle_messages(&mut link.runtime_handle);
+        clear_runtime_handle_messages(link);
     }
 }
 
@@ -97,7 +97,7 @@ fn complete_local_execution_link(
     }
     apply_local_execution_state(link, status == "running", None);
     if link.thread_id.is_some() {
-        clear_runtime_handle_messages(&mut link.runtime_handle);
+        clear_runtime_handle_messages(link);
     }
 }
 
@@ -132,20 +132,64 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
+    /// Allocate the generation and cancellation channel before calling the Shell binding.
+    /// The same guard commits the journal and wakes the queue for every delivery protocol.
+    pub(super) fn launch_shell_turn(&self, shell: PreparedShell<'_>) {
+        let PreparedShell {
+            session,
+            journal_session,
+            command: command_id,
+            platform: platform_task,
+            run: prepare,
+        } = shell;
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (stopped_tx, stopped_rx) = oneshot::channel();
+        let platform_task = platform_task.map(|task| (journal_session.clone(), task));
+        let generation =
+            self.register_execution(session.to_owned(), cancel_tx, stopped_rx, platform_task);
+        let guard = Arc::new(ScheduledTurnGuard::new(
+            self.clone(),
+            journal_session,
+            generation,
+            command_id,
+        ));
+        let run = prepare(generation, cancel_rx, guard.clone());
+        tokio::spawn(async move {
+            let _stopped = StoppedTurnGuard::new(stopped_tx);
+            run.await;
+            drop(guard);
+        });
+    }
+
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,
         cancel: oneshot::Sender<()>,
         stopped: oneshot::Receiver<()>,
     ) -> u64 {
+        self.register_execution(local_task_id, cancel, stopped, None)
+    }
+
+    fn register_execution(
+        &self,
+        local_task_id: String,
+        cancel: oneshot::Sender<()>,
+        stopped: oneshot::Receiver<()>,
+        platform_task: Option<(
+            String,
+            Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>,
+        )>,
+    ) -> u64 {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let control = ActiveLocalExecution {
+            platform_task,
             execution_id,
             request: None,
             stop_requested: false,
             stop_acknowledged: false,
             cancel,
             stopped,
+            claude_approvals: HashMap::new(),
             codex_turn: None,
         };
         if let Some(previous) = self
@@ -216,6 +260,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn request_active_turn_stop(&self, local_task_id: &str) -> bool {
+        self.request_turn_stop(local_task_id, None)
+    }
+
+    pub(super) fn request_execution_generation_stop(
+        &self,
+        local_task_id: &str,
+        generation: u64,
+    ) -> bool {
+        self.request_turn_stop(local_task_id, Some(generation))
+    }
+
+    fn request_turn_stop(&self, local_task_id: &str, generation: Option<u64>) -> bool {
         let mut active = self
             .active_local_executions
             .lock()
@@ -223,6 +279,9 @@ impl RuntimeWorkRpcHandler {
         let Some(control) = active.get_mut(local_task_id) else {
             return false;
         };
+        if generation.is_some_and(|id| id != control.execution_id) {
+            return false;
+        }
         request_execution_stop(control);
         true
     }

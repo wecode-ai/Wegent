@@ -57,6 +57,16 @@ const DEFAULT_CLAUDE_SETTINGS_ENV: &[&str] = &[
     "ENABLE_TOOL_SEARCH",
 ];
 
+pub(crate) fn stream_prompt(spec: CommandSpec, prompt: &str) -> CommandSpec {
+    let query = json!({
+        "type":"user","session_id":"","message":{"role":"user","content":prompt},
+        "parent_tool_use_id":null
+    });
+    spec.arg("--input-format")
+        .arg("stream-json")
+        .stdin(format!("{query}\n"))
+}
+
 pub fn build_claude_command(
     request: &ExecutionRequest,
     binary: &str,
@@ -75,20 +85,10 @@ pub fn build_claude_command(
             .stdin(format!("{query}\n"));
     } else {
         let prompt = claude_prompt_text(request);
-        spec = spec.arg("--input-format").arg("stream-json").stdin(format!(
-            "{}\n",
-            json!({
-                "type": "user",
-                "session_id": "",
-                "message": {
-                    "role": "user",
-                    "content": prompt
-                },
-                "parent_tool_use_id": null
-            })
-        ));
+        spec = stream_prompt(spec, &prompt);
     }
 
+    let approval = request.extra.get("claude_tool_approval") == Some(&Value::Bool(true));
     let mut spec = spec
         .arg("--output-format")
         .arg("stream-json")
@@ -97,7 +97,14 @@ pub fn build_claude_command(
         .arg("--disallowedTools")
         .arg("EnterWorktree")
         .arg("--permission-mode")
-        .arg(claude_permission_mode(request));
+        .arg(if approval {
+            "default"
+        } else {
+            claude_permission_mode(request)
+        });
+    if approval {
+        spec = spec.arg("--permission-prompt-tool").arg("stdio");
+    }
 
     if let Some(system_prompt) = execution_system_prompt(request, launch) {
         spec = spec.arg("--append-system-prompt").arg(system_prompt);

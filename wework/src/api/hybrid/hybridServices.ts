@@ -1146,6 +1146,11 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    async openPlatformTask(deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId) {
+      const api = await runtimeApiForDevice(deviceId)
+      if (!api.openPlatformTask) throw new Error('Platform task continuation is unavailable')
+      return api.openPlatformTask(deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId)
+    },
     async getRuntimeTask(address, options) {
       if (address.projectSession) return null
       const api = await runtimeApiForDevice(address.deviceId)
@@ -2158,15 +2163,24 @@ export function createHybridWorkbenchServices(
         if (registered) return registered
         return api.deviceIdentity(deviceId)
       },
-      async personalGet(userId, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
+      async personalGet(userId, deviceId, options) {
+        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId, options)
       },
-      async personalSave(userId, settings, deviceId, transferRoleId) {
+      async personalSave(
+        userId,
+        settings,
+        deviceId,
+        transferRoleId,
+        definitionChange,
+        portableTeam
+      ) {
         return (await standInApiForDevice(deviceId)).personalSave(
           userId,
           settings,
           deviceId,
-          transferRoleId
+          transferRoleId,
+          definitionChange,
+          portableTeam
         )
       },
       async saveDelegationRoute(userId, deviceId, version, roleId, route) {

@@ -2311,6 +2311,18 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
+    openPlatformTask(
+      deviceId: string,
+      platformTaskId: number,
+      expectedApiBaseUrl: string,
+      expectedUserId: number
+    ) {
+      const request = { deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId }
+      return requestWithLocalDevice<{ taskId: string }, typeof request>(
+        'runtime.tasks.open_platform_task',
+        request
+      )
+    },
     async getRuntimeTask(
       address: RuntimeTaskAddress,
       options?: { signal?: AbortSignal }
@@ -2492,6 +2504,13 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (data.action === 'pipeline:confirm') {
+        return request(
+          'runtime.tasks.send',
+          { taskId: data.address.taskId, action: data.action, expectedStage: data.expectedStage },
+          localDeviceId
+        )
+      }
       const inputResponse = data.requestUserInputResponse ?? data.request_user_input_response
       if (inputResponse) {
         // A reply resolves an existing turn and uses that turn's execution context.
@@ -3962,6 +3981,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         candidate => candidate.id === assigneeId
       )
       if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
+      if (group.leader.kind === 'human') return { runnerSelection }
       const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
       const memberRuntimeProfiles = await Promise.all(
         Array.from(new Set(references.map(member => member.id))).map(async memberId => {

@@ -22,7 +22,30 @@ struct Group {
 }
 type Id = (i64,);
 
+pub fn coordination_key(domain: &str, parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write;
+    // Match Python json.dumps(..., separators=(",", ":"), ensure_ascii=True).
+    let mut key = format!("{domain}\0");
+    for unit in json!(parts).to_string().encode_utf16() {
+        if unit < 127 {
+            key.push(char::from(unit as u8));
+        } else {
+            write!(key, "\\u{unit:04x}").expect("String write");
+        }
+    }
+    format!("{:x}", Sha256::digest(key.as_bytes()))
+}
+
 pub fn current_dispatch(assigned: &Value, context: &Value) -> bool {
+    if context["dispatch_protocol_version"] == 2 {
+        if !current_dispatch_id(assigned).is_some_and(|id| context["dispatch_id"] == id) {
+            return false;
+        }
+        if context["dispatch_role"] == "member" && context["collaboration_group"].is_null() {
+            return true;
+        }
+    }
     let snapshot = &context["collaboration_group"];
     let assignment_key = assigned["collaboration_group_assignment_key"]
         .as_str()
@@ -41,6 +64,15 @@ pub fn current_dispatch(assigned: &Value, context: &Value) -> bool {
         && group_id == authority::integer(&context["collaboration_group_id"])
         && assignment_key.is_some()
         && assignment_key == dispatch_key
+}
+
+pub fn current_dispatch_id(metadata: &Value) -> Option<String> {
+    let group = member_id(&metadata["collaboration_group"]);
+    let key = metadata["collaboration_group_assignment_key"].as_str()?;
+    if group.is_empty() || key.is_empty() {
+        return None;
+    }
+    Some(format!("collaboration-group:{group}:{key}"))
 }
 
 async fn authorized_definition(
@@ -70,6 +102,15 @@ async fn authorized_definition_on(
         let grant:Option<Id>=query.fetch_optional("SELECT id FROM resource_members WHERE resource_type='CollaborationGroup' AND resource_id=? AND entity_type='workspace' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer') LIMIT 1",(group.id,workspace.to_string())).await?;
         if grant.is_none() || group.namespace != format!("workspaces/{workspace}") {
             bail!("Collaboration group resource authorization is revoked")
+        }
+    }
+    if group.json.0["status"]["state"] == "binding_required" {
+        bail!("Personal team project bindings require review");
+    }
+    if let Some(bindings) = group.json.0.pointer("/metadata/personalTeamSource/agents") {
+        let stale: Option<i64> = query.fetch_optional("SELECT 1 FROM JSON_TABLE(?, '$.*' COLUMNS(agent_id VARCHAR(64) PATH '$.id',team_id BIGINT PATH '$.teamId')) b LEFT JOIN loop_items a ON a.id=BINARY b.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=? AND a.status='active' AND (a.deleted_at IS NULL OR a.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) WHERE a.id IS NULL OR b.team_id IS NULL OR NOT (CAST(b.team_id AS BINARY) <=> CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.runtime'))='wegent' THEN JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.wegent_team_id')) ELSE JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.teamRef')) END) LIMIT 1",(Json(bindings),project_id)).await?;
+        if stale.is_some() {
+            bail!("Personal team project Agent binding changed");
         }
     }
     let spec = &group.json.0["spec"];
@@ -234,6 +275,14 @@ pub async fn apply_assignment_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dispatch_identity_matches_python_unicode_json() {
+        assert_eq!(
+            coordination_key("issue_coordination", &["23", "任务😀", "dispatch:99"]),
+            "4cf2946a1754927edfd5e141658e3268daa608901b6614b147cd7c7173508aac"
+        );
+    }
 
     #[test]
     fn group_reply_requires_the_current_group_and_assignment() {

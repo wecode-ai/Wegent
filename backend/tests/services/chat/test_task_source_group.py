@@ -75,7 +75,9 @@ def _selects(db: Session) -> Generator[list[str], None, None]:
 
 
 def _create_task(db: Session, user: User, **kwargs: object) -> TaskResource:
-    team = SimpleNamespace(user_id=user.id, name="quickstart", namespace="default")
+    team = SimpleNamespace(
+        json={"spec": {}}, user_id=user.id, name="quickstart", namespace="default"
+    )
     with patch(
         "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
         return_value=[],

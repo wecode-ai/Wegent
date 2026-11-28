@@ -67,6 +67,7 @@ export interface StandInIdentity extends Partial<
   Pick<WorkspaceStandInSettings, 'model' | 'modelOptions' | 'workspace'>
 > {
   enabled: boolean
+  teamRef?: string | null
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
@@ -89,6 +90,7 @@ export function primaryWithConnectionMode<T extends StandInIdentity>(
 }
 
 export interface StandInRole extends WorkspaceStandInSettings {
+  teamRef?: string | null
   id: string
   selfLearningEnabled?: boolean
   name: string
@@ -192,6 +194,16 @@ export type StandInConversationScope =
   | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
 
 export interface PersonalStandInSettings {
+  referencedTeamPrompt?: string
+  teamCopyVersion?: number
+  teamImportVersion?: number
+  portableTeam?: {
+    system_prompt?: string
+    name: string
+    collaboration_model: string
+    bot: Record<string, unknown>[]
+  }
+  bindableTeams?: { id: string; name: string }[]
   cloudDefinitionRevision?: string
   userId: number
   executionDeviceId: string

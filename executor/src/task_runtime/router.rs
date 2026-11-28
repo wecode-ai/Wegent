@@ -857,6 +857,23 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
+    pub fn list_chat_agents_with_archived(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
+        self.local_store
+            .list_chat_agents_with_archived(project_id, include_archived)
+    }
+
+    pub fn bind_chat_agent(
+        &self,
+        project_id: &str,
+        team_ref: &str,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        self.local_store.bind_chat_agent(project_id, team_ref)
+    }
+
     pub fn create_chat_agent(
         &self,
         project_id: &str,
@@ -1010,9 +1027,10 @@ impl TaskRuntime {
         &self,
         manager_runtime_task_id: &str,
         plan: &serde_json::Value,
+        notify: impl FnOnce(&serde_json::Value),
     ) -> Result<serde_json::Value, TaskRuntimeError> {
         self.local_store
-            .submit_collaboration_round(manager_runtime_task_id, plan)
+            .submit_collaboration_round_with_notification(manager_runtime_task_id, plan, notify)
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {

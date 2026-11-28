@@ -99,6 +99,8 @@ def run_account_command(
     account_id: Optional[str] = None,
 ) -> str:
     """Return business stdout, never credentials or native provider errors."""
+    if os.environ.get("WEGENT_PLUGIN_AUTH_MODE") == "project":
+        raise AuthError("plugin_auth_device_not_granted")
     try:
         url = os.environ.get("WEGENT_PLUGIN_AUTH_BROKER", "")
         token = os.environ.get("WEGENT_PLUGIN_AUTH_BROKER_TOKEN", "")
@@ -172,9 +174,10 @@ def delegate_cloud_command(
     account_id: Optional[str] = None,
 ) -> Optional[int]:
     """Call before local auth access. None means this is an ordinary local run."""
-    if _NATIVE_EXECUTION.get():
-        return None
-    if os.environ.get("WEGENT_PLUGIN_AUTH_MODE") != "cloud" and account_id is None:
+    mode = os.environ.get("WEGENT_PLUGIN_AUTH_MODE")
+    if mode != "project" and (
+        _NATIVE_EXECUTION.get() or (mode != "cloud" and account_id is None)
+    ):
         return None
     try:
         sys.stdout.write(

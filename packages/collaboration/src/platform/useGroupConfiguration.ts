@@ -334,8 +334,9 @@ export function useGroupConfiguration({
   // references in the group rules instead of seeing bare member ids. People
   // keep their real user name; the picker label ("我") is presentation only.
   const persistedMemberName = (kind: 'human' | 'agent', id: string, storedName = ''): string => {
+    if (storedName) return storedName
     if (kind === 'human') {
-      return members.find(member => String(member.user_id) === id)?.user_name || storedName
+      return members.find(member => String(member.user_id) === id)?.user_name || ''
     }
     const candidate = candidates.find(entry => entry.kind === kind && entry.id === id)
     return candidate?.name || storedName
@@ -447,10 +448,7 @@ export function useGroupConfiguration({
 
   const restoreGroupDraft = useCallback((group: CollaborationGroup) => {
     const leaderIdentity = group.leader.kind + ':' + group.leader.id
-    const members = group.members.map(member => ({
-      ...member,
-      responsibility: member.kind + ':' + member.id === leaderIdentity ? '' : member.responsibility,
-    }))
+    const members = group.members
     const stages = group.stages.map(stage => ({
       ...stage,
       assignee:

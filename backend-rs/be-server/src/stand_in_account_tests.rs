@@ -50,7 +50,34 @@ pub(crate) async fn verify_concurrent_initialization(
         assistant["definitions"][0]["team"]["metadata"]["name"]
     );
     assert_eq!(view(&rows)?, first);
-    let revision = first["assistant"]["revision"].as_str().unwrap();
+    // Recreate the pre-Team account shape and race two upgrades on its owner row.
+    mysql
+        .execute(
+            "DELETE FROM kinds WHERE user_id=? AND kind='Team' AND namespace=?",
+            (user, NAMESPACE),
+        )
+        .await?;
+    mysql.execute("UPDATE kinds SET json=JSON_REMOVE(JSON_SET(json,'$.spec.identities[0].botRef',JSON_EXTRACT(json,'$.spec.identities[0].teamRef'),'$.spec.identities[1].botRef',JSON_EXTRACT(json,'$.spec.identities[1].teamRef')),'$.spec.identities[0].teamRef','$.spec.identities[1].teamRef','$.spec.defaultTeamRef') WHERE user_id=? AND namespace=? AND kind='PersonalAssistantSettings'", (user,NAMESPACE)).await?;
+    let (migrated, concurrent) = tokio::try_join!(
+        initialize_for(mysql, user, request("unused")),
+        initialize_for(mysql, user, request("unused"))
+    )?;
+    assert_eq!(migrated, first);
+    assert_eq!(concurrent, first);
+    let mut advanced = migrated["assistant"]["definitions"][0]["team"].clone();
+    advanced["spec"]["collaborationModel"] = json!("pipeline");
+    let mut reviewer =
+        migrated["assistant"]["definitions"][1]["team"]["spec"]["members"][0].clone();
+    reviewer["requireConfirmation"] = json!(true);
+    advanced["spec"]["members"]
+        .as_array_mut()
+        .unwrap()
+        .push(reviewer);
+    mysql
+        .with_transaction(async |tx| update_document(tx, user, &advanced).await)
+        .await?;
+    let snapshot = view(&mysql.fetch_all(SELECT, (user, NAMESPACE)).await?)?;
+    let revision = snapshot["assistant"]["revision"].as_str().unwrap();
     let foreign = user + 1;
     mysql.execute(
         "INSERT INTO users (id,user_name,password_hash,role,auth_source,preferences,is_active) VALUES (?,'personal-assistant-foreign','fixture','user','local','{}',true)",
@@ -136,6 +163,14 @@ pub(crate) async fn verify_concurrent_initialization(
     );
     assert_eq!(updated["assistant"]["retiredRoleIds"], json!(["support"]));
     assert_eq!(
+        updated["assistant"]["definitions"][0]["team"]["spec"],
+        advanced["spec"]
+    );
+    assert_eq!(
+        updated["assistant"]["definitions"][0]["members"][1]["ghost"]["spec"]["systemPrompt"],
+        "Help"
+    );
+    assert_eq!(
         updated["assistant"]["definitions"][1]["roleId"],
         "operations"
     );
@@ -217,11 +252,11 @@ pub(crate) async fn verify_concurrent_initialization(
         final_account["assistant"]["revision"],
         updated["assistant"]["revision"]
     );
-    verify_legacy_account_is_not_migrated(mysql, user + 2).await?;
+    verify_legacy_stop_intent_migrates_account(mysql, user + 2).await?;
     Ok(())
 }
 
-async fn verify_legacy_account_is_not_migrated(
+async fn verify_legacy_stop_intent_migrates_account(
     mysql: &brz_mysql::MysqlService,
     user: i64,
 ) -> anyhow::Result<()> {
@@ -257,50 +292,37 @@ async fn verify_legacy_account_is_not_migrated(
         .with_transaction(async |tx| insert_documents(tx, user, original.clone()).await)
         .await?;
 
-    // The Team-backed account contract does not upgrade legacy cloud Bot records.
-    assert!(matches!(
-        read_account(mysql, user).await,
-        Err(MysqlError::RowNotFound)
-    ));
-    assert!(matches!(
-        initialize_for(mysql, user, request()).await,
-        Err(MysqlError::RowNotFound)
-    ));
-    assert!(matches!(
+    let pending = stop_intent_view(
+        set_stop_intent(
+            mysql,
+            user,
+            stop_change("legacy-runtime", StopIntentOperation::Mark, "pending", None),
+        )
+        .await?,
+    );
+    assert_eq!(
+        pending["assistant"]["stopIntents"],
+        json!([{"deviceId":"legacy-device","requestId":"pending"}])
+    );
+    assert_eq!(read_account(mysql, user).await?, pending);
+    assert_eq!(initialize_for(mysql, user, request()).await?, pending);
+    assert_eq!(pending["assistant"]["defaultTeamRef"], bot_ref);
+    let definition = &pending["assistant"]["definitions"][0];
+    assert_eq!(definition["bot"], original[1]);
+    assert_eq!(definition["ghost"], original[0]);
+    assert_eq!(definition["team"]["spec"]["members"][0]["botRef"], bot_ref);
+    assert!(
         replace_definitions(
             mysql,
             user,
             DefinitionChange {
                 revision: "legacy".into(),
-                desired: request(),
+                desired: request()
             }
         )
-        .await,
-        Err(MysqlError::RowNotFound)
-    ));
-    assert!(matches!(
-        set_stop_intent(
-            mysql,
-            user,
-            stop_change("legacy-runtime", StopIntentOperation::Mark, "pending", None)
-        )
-        .await,
-        Err(MysqlError::RowNotFound)
-    ));
-
-    let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(rows.len(), original.len());
-    for document in original {
-        let (kind, name) = document_key(&document)?;
-        assert_eq!(
-            rows.iter()
-                .find(|row| row.kind == kind && row.name == name)
-                .unwrap()
-                .document
-                .0,
-            document
-        );
-    }
+        .await?
+        .is_none()
+    );
     Ok(())
 }
 

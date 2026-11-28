@@ -316,6 +316,12 @@ class LoopItemService:
             team = context.teams.get(item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        if can_view_detail and metadata.get("collaboration_group_assignment_key"):
+            from app.services.issue_coordination import coordination_view
+
+            values["coordination"] = coordination_view(
+                db, item, user_id, permissions.execute
+            )
         values["badges"] = issue_badges(metadata) if can_view_detail else []
         participants = metadata.get("resource_participants")
         values["resource_participants"] = (

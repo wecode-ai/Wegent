@@ -120,18 +120,47 @@ where
 {
     mysql
         .fetch_optional(
-            "SELECT users.id AS users_id, users.user_name AS users_user_name, \
+            format!("SELECT {USER_COLUMNS} FROM users WHERE users.id = ? LIMIT 1"),
+            (user_id,),
+        )
+        .await
+}
+
+const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_name, \
              users.password_hash AS users_password_hash, users.email AS users_email, \
              users.git_info AS users_git_info, users.is_active AS users_is_active, \
              users.`role` AS users_role, users.auth_source AS users_auth_source, \
              users.preferences AS users_preferences, users.created_at AS users_created_at, \
-             users.updated_at AS users_updated_at \
-             FROM users \
-             WHERE users.id = ? \
-             LIMIT 1",
-            (user_id,),
+             users.updated_at AS users_updated_at";
+
+/// Check the signed managed Task against its persisted scope in the same user lookup.
+pub async fn personal_connector_user<M: Mysql>(
+    mysql: &M,
+    tasks_table: &'static str,
+    user_id: i64,
+    task_id: i64,
+) -> MysqlResult<Option<UserRow>> {
+    if task_id <= 0 {
+        return find_user_by_id(mysql, user_id).await;
+    }
+    let row: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(
+            format!(
+                "SELECT JSON_EXTRACT(t.json, '$.metadata.labels') AS task_labels, {USER_COLUMNS} \
+         FROM users LEFT JOIN {tasks_table} t ON t.id=? AND t.user_id=? AND t.kind='Task' \
+         WHERE users.id=? LIMIT 1"
+            ),
+            (task_id, user_id, user_id),
         )
-        .await
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let labels: Option<Json<serde_json::Value>> = row.get_at(0)?;
+    if labels.is_some_and(|labels| wegent_protocol::project_group_task_labels(&labels.0)) {
+        return Ok(None);
+    }
+    UserRow::from_mysql_row(row).map(Some)
 }
 
 /// List all active `ConnectorApp` kinds rows ordered by name then id,

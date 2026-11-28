@@ -18,6 +18,7 @@ use super::store::atomic_write_file;
 static CHANGED: OnceLock<Mutex<HashMap<PathBuf, Weak<Notify>>>> = OnceLock::new();
 
 pub(crate) const TASK_METHODS: &[&str] = &[
+    "runtime.tasks.open_platform_task",
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",

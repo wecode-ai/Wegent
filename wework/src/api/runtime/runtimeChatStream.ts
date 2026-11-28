@@ -160,6 +160,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           subscription.eventCount,
           subscription.textDeltaCount
         )
+      const measureTurn =
+        import.meta.env.VITE_WEWORK_E2E === 'true' && event.event === 'runtime.turn.updated'
+      const startedAt = measureTurn ? performance.now() : 0
       try {
         measureRuntimeStreamEvent(event.event, () => {
           emitResponseApiEvent(
@@ -175,6 +178,20 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           subscriptionId,
           errorName: error instanceof Error ? error.name : 'UnknownError',
         })
+      } finally {
+        if (measureTurn) {
+          const durationMs = performance.now() - startedAt
+          if (durationMs >= 16) {
+            logRuntimeTaskCreateStage('runtime-slow-turn-handler', {
+              sequence: event.sequence,
+              subscriptionId,
+              durationMs,
+              handlers: Object.keys(subscription.handlers).filter(
+                key => typeof subscription.handlers[key as keyof ChatStreamHandlers] === 'function'
+              ),
+            })
+          }
+        }
       }
     }
   }

@@ -50,6 +50,7 @@ export interface RecordedTaskToolCall {
 }
 
 export interface ToolScenarioStep {
+  preamble?: import('./mock-responses-phase').PhaseChangingMessage
   toolCalls?: Array<{
     toolName: string
     arguments: Record<string, unknown>

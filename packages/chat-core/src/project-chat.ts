@@ -282,14 +282,16 @@ export function createProjectChatClient(
                 row.projectId === projectId &&
                 (row.taskId ?? undefined) === taskId,
             )
-            console.debug('[Project chat source] Exact message read', {
+            console.debug('[Project chat source] Exact message read', JSON.stringify({
               messageId: message.messageId,
               matched: Boolean(resolved),
               superseded,
               traceMatches: resolved?.traceRef === message.traceRef,
               traceState: resolved?.traceState,
               hasRuntimeAddress: Boolean(resolved?.runtimeAddress),
-            })
+              hasWorkflowTitle: Boolean(resolved?.metadata.workflow_task_title),
+              liveSequence: latestMessages.get(message.messageId)?.metadata.runtime_event_sequence,
+            }))
             if (superseded) return
             const latest = latestMessages.get(message.messageId)
             if (resolved && latest && latest.traceRef === message.traceRef) {

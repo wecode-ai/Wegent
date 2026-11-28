@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import readline from 'node:readline'
 
 const serverName = process.argv[2]
@@ -75,7 +76,7 @@ const input = readline.createInterface({
   crlfDelay: Infinity,
 })
 
-input.on('line', line => {
+input.on('line', async line => {
   if (!line.trim()) return
   let request
   try {
@@ -101,7 +102,26 @@ input.on('line', line => {
   }
   if (request.method === 'tools/call') {
     const result = callTool(request.params?.name, request.params?.arguments ?? {})
+    const receipt =
+      result && process.argv[3] === 'receipts' ? 'MCP_RECEIPT:' + randomUUID() : undefined
+    if (process.argv[4]) {
+      try {
+        const response = await fetch(process.argv[4], {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: request.params.name, receipt }),
+        })
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+      } catch (error) {
+        respondError(request.id, -32603, 'MCP observation failed: ' + error.message)
+        return
+      }
+    }
     if (result) {
+      if (receipt) {
+        result.content.push({ type: 'text', text: receipt })
+        if (result.structuredContent) result.structuredContent.receipt = receipt
+      }
       respond(request.id, result)
     } else {
       respondError(request.id, -32601, `Unknown tool: ${request.params?.name}`)

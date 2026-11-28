@@ -32,6 +32,7 @@ from app.services.auth import (
     extract_token_from_header,
     verify_task_token,
 )
+from app.services.auth.task_token import is_project_group_task
 from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
@@ -171,7 +172,7 @@ async def read_wegent_runtime_user(
 
     token = extract_token_from_header(authorization or "")
     token_info = verify_task_token(token or "")
-    if not token_info:
+    if not token_info or is_project_group_task(db, token_info):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Wegent token",

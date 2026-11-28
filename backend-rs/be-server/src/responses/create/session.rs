@@ -74,6 +74,7 @@ pub struct SetupChatSessionInput<'a> {
     /// request session at `openapi_responses.py:522-547`'s position, before
     /// team and model resolution. `None` creates a new Task.
     pub continuation: Option<continuation::Continuation>,
+    pub pipeline: bool,
     /// Subscription-only DB window. None preserves ordinary chat preparation.
     pub history_window: Option<i64>,
     pub team_id: i64,
@@ -236,11 +237,13 @@ pub async fn setup_chat_session(
         task_id,
         ..input.crd
     };
-    let task_crd = build_task_crd(&crd_input);
-    let mut task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
+    let mut task_json = build_task_crd(&crd_input);
+    if input.pipeline {
+        task_json["spec"]["currentStage"] = serde_json::json!(0);
+    }
     let has_model_options = apply_model_option_labels(&mut task_json, input);
     let payload = if input.additional_skills.is_empty() && !has_model_options {
-        python_json_value(&task_crd)
+        python_json_value(&task_json)
     } else {
         let labels = &mut task_json["metadata"]["labels"];
         if !input.additional_skills.is_empty() {

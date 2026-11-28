@@ -126,6 +126,11 @@ export function formatRendererThreadTiming(trace, rendererPids) {
       ts > evidenceEnd
     )
       return []
+    // Keep only packaged renderer bundle coordinates so hot callbacks can be located.
+    const location = name === 'FunctionCall' ? args?.data : null
+    const bundle = location?.url?.match(
+      /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/(?:wework\/app\/)?assets\/([\w.-]+\.js)$/
+    )
     return [
       {
         name,
@@ -134,6 +139,13 @@ export function formatRendererThreadTiming(trace, rendererPids) {
         tid,
         ts,
         dur,
+        ...(bundle &&
+          Number.isSafeInteger(location.lineNumber) &&
+          Number.isSafeInteger(location.columnNumber) && {
+            bundle: bundle[1],
+            line: location.lineNumber,
+            column: location.columnNumber,
+          }),
         // Thread time is optional. Wall time cannot substitute for CPU time.
         ...(Number.isFinite(tdur) && { tdur }),
         ...(Number.isFinite(tts) && { tts }),

@@ -210,7 +210,7 @@ function updateDefinitionInputs(
   change: Parameters<StandInExecutorApi['personalSave']>[4]
 ) {
   const definitions = definitionInputs(account)
-  if (!change) {
+  if (!change || change.roleId === '@primary') {
     const primary = definitions.get('@primary')
     if (primary && settings.primary) primary.prompt = settings.primary.prompt
   } else if (change.kind === 'delete') {
@@ -316,7 +316,7 @@ export function personalAssistantDeviceSettings(
         return syncDefinitions(account, saved, definitions)
       },
       async personalGet(userId, deviceId, options) {
-        const settings = await executor.personalGet(userId, deviceId)
+        const settings = await executor.personalGet(userId, deviceId, options)
         let account = readAccount()
         const unresolved = unresolvedDefinitionRevision
         if (unresolved !== undefined && !options?.deviceSettingsOnly) {
@@ -352,11 +352,25 @@ export function personalAssistantDeviceSettings(
               bindingDevice
             )
       },
-      async personalSave(userId, settings, deviceId, transferRoleId, definitionChange) {
+      async personalSave(
+        userId,
+        settings,
+        deviceId,
+        transferRoleId,
+        definitionChange,
+        portableTeam
+      ) {
         const { cloudDefinitionRevision, ...deviceSettings } = settings
         const account = readAccount()
         if (!account || (transferRoleId && !definitionChange)) {
-          return executor.personalSave(userId, deviceSettings, deviceId, transferRoleId)
+          return executor.personalSave(
+            userId,
+            deviceSettings,
+            deviceId,
+            transferRoleId,
+            definitionChange,
+            portableTeam
+          )
         }
         if (
           cloudDefinitionRevision !== account.revision ||
@@ -399,7 +413,7 @@ export function personalAssistantDeviceSettings(
           .filter(role => !projected.has(role.id))
           .filter(role => role.id !== definitionChange?.roleId)
         const primary =
-          definitionChange ||
+          (definitionChange && definitionChange.roleId !== '@primary') ||
           (!device.primary && dequal(settings.primary, projectedSettings.primary))
             ? device.primary
             : deviceSettings.primary
@@ -412,7 +426,9 @@ export function personalAssistantDeviceSettings(
             roles: [...localRoles, ...hiddenRoles],
           },
           deviceId,
-          transferRoleId
+          transferRoleId,
+          definitionChange,
+          portableTeam
         )
         return syncDefinitions(
           account,

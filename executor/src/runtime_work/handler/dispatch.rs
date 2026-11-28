@@ -88,6 +88,16 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.project_coordinator_conversation(payload).await },
                 )
             }
+            "runtime.project_coordinator.adopt_personal_team" => {
+                boxed_rpc(move || async move { self.adopt_local_personal_team(payload).await })
+            }
+            "runtime.issue_coordination.get"
+            | "runtime.issue_coordination.submit"
+            | "runtime.issue_coordination.decide" => {
+                boxed_rpc(
+                    move || async move { self.local_issue_coordination(method, payload).await },
+                )
+            }
             "runtime.project_coordinator.binding.get"
             | "runtime.project_coordinator.binding.save" => boxed_rpc(move || async move {
                 self.project_coordination_binding(method, payload).await
@@ -318,6 +328,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.transcript.acknowledge" => {
                 boxed_rpc(move || async move { self.acknowledge_transcript_turn(payload) })
+            }
+            "runtime.tasks.open_platform_task" => {
+                boxed_rpc(move || async move { self.open_platform_task(payload).await })
             }
             "runtime.tasks.create" => {
                 boxed_rpc(move || async move { self.create_task(payload).await })

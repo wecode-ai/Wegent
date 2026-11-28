@@ -2131,6 +2131,8 @@ jobs:
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
           E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || needs.build-executor-e2e-runtime.outputs.image }}
           E2E_DEVICE_ID: e2e-claudecode-device
+          E2E_COMPACTION_DEVICE_ID: e2e-claudecode-compaction-device
+          E2E_DEVICE_BACKEND_URL: http://localhost:8000
           E2E_EXECUTOR_RECOVERY_URL: http://localhost:8191
           CI: true
         run: |
@@ -2172,6 +2174,8 @@ jobs:
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env DATABASE_URL \
             --env E2E_DEVICE_ID \
+            --env E2E_COMPACTION_DEVICE_ID \
+            --env E2E_DEVICE_BACKEND_URL \
             --env E2E_EXECUTOR_RECOVERY_URL \
             --env E2E_EXECUTOR_RECOVERY_GATEWAY_LOG="$container_workspace/logs/backend/rust/info.log" \
             --env GITHUB_RUN_ID \

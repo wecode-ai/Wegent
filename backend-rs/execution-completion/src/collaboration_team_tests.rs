@@ -19,7 +19,7 @@ use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTrans
 use serde_json::{Value, json};
 
 use super::sql;
-use super::strategy_team;
+use super::{PipelineStage, pipeline_status, strategy_team};
 
 /// Records the statements the strategy resolution prepares. The fake answers
 /// every row read with SQL NULL-free success but no row, so the helper's own
@@ -190,4 +190,22 @@ async fn a_team_ref_without_an_owner_reads_no_team() {
 
     assert!(team.is_none());
     assert!(transaction.statements.is_empty());
+}
+
+#[test]
+fn revoked_team_cannot_advance_or_turn_a_nonfinal_receipt_into_success() {
+    for stage in [
+        PipelineStage::Advance(1),
+        PipelineStage::Confirm,
+        PipelineStage::Invalid,
+    ] {
+        let decision = pipeline_status(stage, false);
+        assert_eq!(decision.status, "FAILED");
+        assert!(!decision.auto_advance);
+    }
+    assert_eq!(
+        pipeline_status(PipelineStage::Complete, false).status,
+        "COMPLETED"
+    );
+    assert!(pipeline_status(PipelineStage::Advance(1), true).auto_advance);
 }

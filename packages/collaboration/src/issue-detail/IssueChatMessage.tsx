@@ -1,3 +1,4 @@
+import { usePlatformTaskContinuation } from "../platform-task-continuation";
 import {
   CollapsibleRoot,
   CollapsibleTrigger,
@@ -235,6 +236,7 @@ export function IssueChatMessage({
   showInlineExecutionStatus = false,
   agentRole,
   eventOnly = false,
+  platformTaskBindings,
   taskAiState,
   executionStatus,
   executionDeviceName,
@@ -261,6 +263,7 @@ export function IssueChatMessage({
   showInlineExecutionStatus?: boolean;
   agentRole?: "manager" | "member";
   eventOnly?: boolean;
+  platformTaskBindings?: ReadonlyMap<number, { task_user_id: number; device_id: string }>;
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
   executionStatus?: string;
@@ -321,6 +324,12 @@ export function IssueChatMessage({
       ? message.status === "completed"
       : displayStatus === "succeeded";
   const backendExecution = isAgent ? backendTaskExecution(message) : null;
+  const binding = platformTaskBindings?.get(Number(backendExecution?.taskId));
+  const continuationUrl = usePlatformTaskContinuation(
+    backendExecution?.taskId,
+    binding?.task_user_id,
+    binding?.device_id,
+  );
   const openBackendExecution = backendExecution
     ? () => {
         onOpenUrl(backendExecution.executionUrl);
@@ -548,6 +557,15 @@ export function IssueChatMessage({
               })}
             </span>
           </span>
+          {continuationUrl ? (
+            <a
+              href={continuationUrl}
+              data-testid={`cloud-task-activity-continue-in-wework-${message.messageId}`}
+              className="inline-flex shrink-0 items-center text-blue-600 hover:underline"
+            >
+              {t("activity.task_activity_continue_in_wework")}
+            </a>
+          ) : null}
           <ControlButton
             variant="unstyled"
             type="button"

@@ -98,6 +98,9 @@ pub(super) fn space_context_grant(
         });
     Ok(Some(SpaceContextGrant {
         version: 1,
+        manager_turn_id: role
+            .filter(|role| *role == SpaceContextRole::Manager)
+            .and_then(|_| (!request.subtask_id.is_empty()).then(|| request.subtask_id.clone())),
         task_id: request.task_id.clone(),
         space_id: Some(space_id),
         item_id,

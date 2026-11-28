@@ -895,16 +895,25 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
-        let agent = {
-            let has_reasoning = super::creation::normalized_model_options(&config["modelOptions"])
-                .get("reasoning")
-                .is_some_and(Value::is_string);
-            (config["model"].is_object() || has_reasoning).then(|| json!({
-                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"].as_str().unwrap_or("codex"),
-                "execution_policy":{"mode":"fixed","environment_id":self.device_id},
-                "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
-            }))
-        };
+        let user = config["userId"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("bad_request", "Stand-in owner is missing"))?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let reference = config["teamRef"].as_str().ok_or_else(|| {
+            AppIpcError::new(
+                "stand_in_team_missing",
+                "Stand-in has no saved Team binding",
+            )
+        })?;
+        let mut agent = store
+            .personal_execution_team(user, reference)
+            .map_err(settings_error)?;
+        if agent["execution_policy"].is_object() || agent["model_policy"].is_object() {
+            agent = self.normalize_stand_in_agent(agent).await?;
+        } else {
+            agent["execution_policy"] = json!({"mode":"fixed","environment_id":self.device_id});
+            agent["model_policy"] = json!({"mode":"user_select"});
+        }
         super::dispatch::boxed_rpc(|| {
             self.prepare_stand_in_execution_with_agent(payload, config, agent)
         })
@@ -915,8 +924,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         mut payload: Value,
         config: &Value,
-        agent: Option<Value>,
+        agent: Value,
     ) -> Result<Value, AppIpcError> {
+        payload["runtime"] = agent["runtime"].clone();
         let mut options = config
             .get("modelOptions")
             .map(super::creation::normalized_model_options)
@@ -929,7 +939,11 @@ impl RuntimeWorkRpcHandler {
         {
             *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
         }
-        if let Some(agent) = agent {
+        if config["model"].is_object()
+            || options.contains_key("reasoning")
+            || agent["model_policy"]["mode"] == "fixed"
+            || payload["origin"]["type"] == "project_coordinator"
+        {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
                 &mut payload,
@@ -969,16 +983,13 @@ impl RuntimeWorkRpcHandler {
             }
             self.materialize_runner_cloud_models(&mut payload).await?;
         } else {
-            let mut request = ExecutionRequest {
-                prompt: payload["message"].clone(),
-                bot: json!([{"name":"Stand-in","shell_type":"Codex"}]),
-                new_session: true,
-                ..Default::default()
-            };
-            request
-                .extra
-                .insert("origin".into(), payload["origin"].clone());
-            payload["executionRequest"] = json!(request);
+            super::stand_in_agent::copy_stand_in_team(&mut payload, &agent)?;
+            crate::task_runtime::runner_routing::resolve_pending(
+                &mut payload,
+                None,
+                &self.device_id,
+            )
+            .map_err(settings_error)?;
         }
         if !options.is_empty() {
             let target = payload
@@ -1001,8 +1012,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in execution request"))?;
         super::creation::apply_creation_options(&mut request, &payload)?;
         payload["executionRequest"] = json!(request);
-        // Stand-ins and direct Wework profiles do not execute as Backend Teams.
-        payload["executionRequest"]["team_id"] = json!(0);
+        payload["executionRequest"]["team_ref"] = agent["id"].clone();
+        if let Some(mode) = agent["collaboration_model"].as_str() {
+            payload["executionRequest"]["collaboration_model"] = json!(mode);
+        }
         payload["executionRequest"]["user_id"] = config["userId"].clone();
         if matches!(
             payload["origin"]["type"].as_str(),
@@ -1014,13 +1027,7 @@ impl RuntimeWorkRpcHandler {
                 });
             }
         }
-        if config["handlingPolicy"]["askBeforeAct"] == true {
-            if payload["runtime"] == "claude_code" {
-                return Err(AppIpcError::new(
-                    "confirmation_runtime_unsupported",
-                    "Choose Codex for execution-before-confirmation controls",
-                ));
-            }
+        if config["handlingPolicy"]["askBeforeAct"] == true && payload["runtime"] != "claude_code" {
             payload["executionRequest"]["runtime_permission_profile"] = json!(":read-only");
         }
         if config

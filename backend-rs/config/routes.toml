@@ -451,6 +451,9 @@ path = "/api/tasks/:task_id/skills"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/wework-continuation"
 # The archived listing remains Python-owned; the detail template must not
 # interpret its literal path segment as a numeric task ID.
 [[exclude]]
@@ -1256,6 +1259,10 @@ path = "/api/plugins/native-auth/exchange"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/loop-items"
+
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/cloud-projects/:project_id/personal-team-bindings/:source_id"
 
 # Assistant sharing uses explicit recipient grants.
 [[routes]]

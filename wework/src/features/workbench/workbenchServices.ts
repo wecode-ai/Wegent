@@ -93,6 +93,24 @@ export interface LocalProjectMigrationSnapshot {
   migration_fingerprint: string | null
 }
 export type LocalProjectSpaceApi = DeliveryApi & {
+  adoptPersonalTeam?(
+    userId: number,
+    projectId: string,
+    input: import('@wegent/collaboration').PersonalTeamAdoptionInput
+  ): Promise<void>
+  issueCoordination?: {
+    get(
+      userId: number,
+      projectId: string,
+      loopItemId: string
+    ): Promise<import('@wegent/collaboration').IssueCoordination | null>
+    write(
+      action: 'submit' | 'decide',
+      userId: number,
+      projectId: string,
+      input: Record<string, unknown>
+    ): Promise<void>
+  }
   readProjectMigrationSnapshot?(projectId: string): Promise<LocalProjectMigrationSnapshot>
   archiveMigratedProject?(
     projectId: string,
@@ -232,6 +250,12 @@ export interface WorkbenchServices {
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> &
     Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi> & {
+      openPlatformTask?: (
+        deviceId: string,
+        platformTaskId: number,
+        expectedApiBaseUrl: string,
+        expectedUserId: number
+      ) => Promise<{ taskId: string }>
       getRuntimeTask?: ExecutorClient['runtime']['getRuntimeTask']
     }
   /** Backend-free execution ports for locally owned projects in a connected workbench. */

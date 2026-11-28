@@ -596,6 +596,7 @@ export function AppRoutes({
           ? {
               tabs: workspaceTabs,
               connection: cloudConnection,
+              openPlatformTask: services.runtimeWorkApi?.openPlatformTask,
               experiment: collaborationExperience,
               t,
             }

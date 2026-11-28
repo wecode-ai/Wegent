@@ -178,16 +178,13 @@ pub async fn load_task_detail(
         get_workspace_by_ref(state, task.user_id, name, namespace).await?;
     }
     let team_ref = spec.and_then(|spec| spec.team_ref.as_ref());
+    let kinds = KindStore::<_, brz_redis::RedisService>::sql(&state.mysql);
     let mut resolved_team_id: Option<i64> = None;
     if let Some(team_ref) = team_ref
         && !team_ref.name().is_empty()
     {
         let name = team_ref.name();
         let namespace = team_ref.namespace();
-        let kinds = KindStore {
-            mysql: &state.mysql,
-            redis: state.cache.kinds_cache(),
-        };
         // `resolve_task_ref_team`: an explicit `teamRef.user_id` (even 0)
         // queries the `kinds` table directly; a null/missing one runs
         // `kindReader.get_by_name_and_namespace`'s Team branch, i.e. the
@@ -197,12 +194,12 @@ pub async fn load_task_detail(
         // `get_task_detail` re-reads the document by id below. The chain's
         // viewer is the task owner, because `get_task_by_id` calls
         // `convert_to_task_dict(task, db, task.user_id)`.
-        let team_access = crate::task_skills::kinds::KindCacheStore {
-            mysql: &state.mysql,
-            redis: state.cache.kinds_cache(),
-            erp: Some(state.erp.as_ref()),
-            resolvers: Some(&state.entity_resolvers),
-        };
+        let team_access = crate::task_skills::kinds::KindCacheStore::new(
+            &state.mysql,
+            state.cache.kinds_cache(),
+            state.erp.as_ref(),
+            &state.entity_resolvers,
+        );
         resolved_team_id = match team_ref.user_id.as_ref().filter(|owner| !owner.is_null()) {
             Some(owner) => kinds
                 .get_team_by_owner(owner.json_integer().unwrap_or(0), namespace, name)
@@ -229,10 +226,6 @@ pub async fn load_task_detail(
     // member bot with the resolved Team row's own owner (`team.user_id`) and
     // group-resource test (`team.namespace`), never with the task CRD's
     // teamRef, whose `user_id` is only the lookup owner.
-    let kinds = KindStore {
-        mysql: &state.mysql,
-        redis: state.cache.kinds_cache(),
-    };
     let team_record = match resolved_team_id {
         Some(team_id) => kinds.get_by_id("Team", team_id).await.map_err(kind_error)?,
         None => None,
@@ -447,12 +440,7 @@ mod tests {
         const TASK_OWNER: i64 = 2309;
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let team_access: crate::task_skills::kinds::KindCacheStore<'_, _, brz_redis::RedisService> =
-            crate::task_skills::kinds::KindCacheStore {
-                mysql: &mysql,
-                redis: None,
-                erp: None,
-                resolvers: None,
-            };
+            crate::task_skills::kinds::KindCacheStore::sql(&mysql);
         let team_id = team_access
             .get_team_id_by_name_and_namespace(TASK_OWNER, "default", "wegent-chat")
             .await

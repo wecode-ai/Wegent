@@ -161,7 +161,7 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       <button
         data-project-id={projectId}
         data-testid="hosted-local-agent-create"
-        onClick={() => void onCreated()}
+        onClick={() => void onCreated("local-agent")}
         type="button"
       >
         创建本地智能体

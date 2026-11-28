@@ -142,6 +142,7 @@ def _refresh_runtime_profiles(
     db: Session, dispatch: LoopItemExecution
 ) -> dict[str, Any]:
     """Recompile the original dispatch's model credentials for the next turn."""
+    from app.services.auth import create_task_token
     from app.services.collaboration_revocation import execution_authorized
 
     if (
@@ -164,31 +165,66 @@ def _refresh_runtime_profiles(
             503, "Collaboration Runtime profiles are unavailable"
         ) from exc
     manager = payload["managerRuntimeRequest"]
+    request = manager["executionRequest"]
     return {
-        "manager_model_config": manager["executionRequest"].get("model_config") or {},
+        "manager_callback_token": create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=request["user_id"],
+            user_name=request["user_name"],
+            project_group_execution=True,
+            device_manager_execution_id=dispatch.id,
+        ),
+        "manager_model_config": request.get("model_config") or {},
         "manager_model_selection": manager.get("modelSelection"),
         "member_runtime_profiles": payload["memberRuntimeProfiles"],
     }
 
 
+def assignment_state(db: Session, project_id: int, item_id: str, entry: dict) -> str:
+    if entry.get("assignee_type") == "human":
+        state = collaboration_human_assignment_status(
+            db,
+            project_id=project_id,
+            issue_id=item_id,
+            human_assignment_id=str(entry.get("human_assignment_id") or ""),
+            include_result=False,
+        )["status"]
+    elif entry.get("execution_id"):
+        admitted = db.get(LoopItemExecution, entry["execution_id"])
+        if (
+            admitted is None
+            or admitted.cloud_project_id != str(project_id)
+            or admitted.loop_item_id != item_id
+        ):
+            return "unavailable"
+        current = (
+            db.query(LoopItemExecution)
+            .filter_by(
+                execution_scope=admitted.execution_scope,
+                cloud_project_id=str(project_id),
+                loop_item_id=item_id,
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        state = current.status if current is not None else None
+    else:
+        state = entry.get("status")
+    return state or "unavailable"
+
+
+def terminal_assignment(status: str) -> bool:
+    return status in {"completed", "failed", "cancelled"}
+
+
 def _round_finished(
     db: Session, project_id: int, item_id: str, assignments: list[dict]
 ) -> bool:
-    if not assignments:
-        return False
-    for entry in assignments:
-        if entry.get("assignee_type") == "human":
-            state = collaboration_human_assignment_status(
-                db,
-                project_id=project_id,
-                issue_id=item_id,
-                human_assignment_id=str(entry.get("human_assignment_id") or ""),
-            )["status"]
-        else:
-            state = entry.get("status")
-        if state not in {"completed", "failed", "cancelled"}:
-            return False
-    return True
+    return bool(assignments) and all(
+        terminal_assignment(assignment_state(db, project_id, item_id, entry))
+        for entry in assignments
+    )
 
 
 def _new_manager_activity(

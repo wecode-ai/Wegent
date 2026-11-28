@@ -23,6 +23,7 @@ fn response_created_event_matches_callback_envelope_contract() {
             executor_name: Some("executor-1".to_owned()),
             executor_namespace: Some("default".to_owned()),
             validation_id: None,
+            execution_attempt_id: None,
             data: json!({
                 "type": "response.created",
                 "shell_type": "ClaudeCode",

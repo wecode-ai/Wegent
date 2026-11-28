@@ -1239,13 +1239,26 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
 
 
 @pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])
+@pytest.mark.parametrize("inference_only", [False, True])
 def test_llm_responses_proxy_endpoint_streams_from_provider(
     test_client,
     test_token,
     monkeypatch,
     endpoint,
+    inference_only,
+    test_user,
 ):
+    from app.core.security import create_access_token
     from app.services import llm_proxy_service
+
+    if inference_only:
+        test_token = create_access_token(
+            {"sub": test_user.user_name, "scope": "model:inference", "model_kind_id": 7}
+        )
+        connections = test_client.get(
+            "/api/plugin-connections", headers=_auth_headers(test_token)
+        )
+        assert connections.status_code == 401
 
     async def stream():
         yield b"data: ok\n\n"
@@ -1275,6 +1288,7 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     call_args = proxy_mock.await_args
     assert call_args.args[0].headers["authorization"] == f"Bearer {test_token}"
     assert call_args.args[2].id > 0
+    assert call_args.kwargs["model_kind_id"] == (7 if inference_only else None)
 
 
 @pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])

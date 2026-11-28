@@ -1,7 +1,29 @@
 //! Portable, non-secret execution requirements used by the local queue.
 use super::TaskRuntimeError;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+pub fn bot_instructions(base: &str, bot: &Value) -> String {
+    [
+        Some(base),
+        bot["system_prompt"].as_str(),
+        bot["prompt"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|text| !text.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+pub fn lead_instructions(base: &str, mode: Option<&str>, bots: &Value) -> String {
+    if mode == Some("pipeline") {
+        // The stage compiler adds only the currently executing member's instructions.
+        base.to_owned()
+    } else {
+        bot_instructions(base, &bots[0])
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
@@ -196,6 +218,63 @@ pub(crate) fn validate_automation(
     Ok(())
 }
 
+fn materialize_execution_request(
+    payload: &mut Value,
+    device: &str,
+) -> Result<(), TaskRuntimeError> {
+    if payload.get("executionRequest").is_none() && payload.get("execution_request").is_none() {
+        // Automation compiles its native request on the environment, without a desktop session.
+        let request = crate::protocol::ExecutionRequest {
+            task_id: payload["taskId"].as_str().unwrap_or_default().to_owned(),
+            subtask_id: uuid::Uuid::new_v4().to_string(),
+            bot: payload["bot"].clone(),
+            model_config: payload
+                .get("modelConfig")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            system_prompt: payload["projectInstructions"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            prompt: payload["message"].clone(),
+            new_session: true,
+            device_id: Some(device.to_owned()),
+            extra: serde_json::Map::from_iter([
+                ("origin".into(), payload["origin"].clone()),
+                ("team_ref".into(), payload["teamRef"].clone()),
+                // Local Team members can retain numeric Bot IDs from their source Team.
+                ("team_id".into(), json!(0)),
+                (
+                    "collaboration_model".into(),
+                    payload["collaboration_model"].clone(),
+                ),
+                (
+                    "additional_skills".into(),
+                    payload["additionalSkills"].clone(),
+                ),
+                (
+                    "project_plugin_ids".into(),
+                    json!(payload["projectPlugins"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|plugin| plugin["id"].as_str())
+                        .collect::<Vec<_>>()),
+                ),
+                ("preload_skills".into(), payload["additionalSkills"].clone()),
+                (
+                    "user_selected_skills".into(),
+                    payload["additionalSkills"].clone(),
+                ),
+            ]),
+            ..Default::default()
+        };
+        payload["executionRequest"] =
+            serde_json::to_value(request).map_err(|_| invalid("Cannot compile runner request"))?;
+    }
+    Ok(())
+}
+
 pub fn resolve_pending(
     payload: &mut Value,
     catalog: Option<&Value>,
@@ -204,6 +283,13 @@ pub fn resolve_pending(
     use serde_json::json;
     if payload.get("runnerRouting").is_none() {
         let Some(config) = payload.get("runnerPolicy") else {
+            if payload["teamRef"].is_string()
+                && payload["bot"]
+                    .as_array()
+                    .is_some_and(|bots| !bots.is_empty())
+            {
+                return materialize_execution_request(payload, device);
+            }
             return Ok(());
         };
         let selection = payload.get("runnerSelection").unwrap_or(&Value::Null);
@@ -310,46 +396,7 @@ pub fn resolve_pending(
     payload["modelConfig"] = model_config.clone();
     payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
     payload["runnerRouting"]["version"] = json!(1);
-    if payload.get("executionRequest").is_none() && payload.get("execution_request").is_none() {
-        // Automation compiles its native request on the environment, without a desktop session.
-        let request = crate::protocol::ExecutionRequest {
-            task_id: payload["taskId"].as_str().unwrap_or_default().to_owned(),
-            subtask_id: uuid::Uuid::new_v4().to_string(),
-            bot: payload["bot"].clone(),
-            model_config: model_config.clone(),
-            system_prompt: payload["projectInstructions"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-            prompt: payload["message"].clone(),
-            new_session: true,
-            device_id: Some(device.to_owned()),
-            extra: serde_json::Map::from_iter([
-                ("origin".into(), payload["origin"].clone()),
-                (
-                    "additional_skills".into(),
-                    payload["additionalSkills"].clone(),
-                ),
-                (
-                    "project_plugin_ids".into(),
-                    json!(payload["projectPlugins"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|plugin| plugin["id"].as_str())
-                        .collect::<Vec<_>>()),
-                ),
-                ("preload_skills".into(), payload["additionalSkills"].clone()),
-                (
-                    "user_selected_skills".into(),
-                    payload["additionalSkills"].clone(),
-                ),
-            ]),
-            ..Default::default()
-        };
-        payload["executionRequest"] =
-            serde_json::to_value(request).map_err(|_| invalid("Cannot compile runner request"))?;
-    }
+    materialize_execution_request(payload, device)?;
     for key in ["executionRequest", "execution_request"] {
         if let Some(request) = payload.get_mut(key).filter(|v| v.is_object()) {
             request["model_config"] = model_config.clone();
@@ -459,6 +506,16 @@ mod tests {
         let mut pooled = payload;
         pooled["runnerRouting"]["execution_policy"] = json!({"mode":"project_pool"});
         assert!(resolve_pending(&mut pooled, Some(&catalog), "runner-a").is_err());
+    }
+
+    #[test]
+    fn local_team_with_numeric_bot_uses_managed_native_home() {
+        let mut payload = json!({"teamRef":"local-team","bot":[{"id":42,"shell_type":"Codex"}]});
+        resolve_pending(&mut payload, None, "runner-a").unwrap();
+        let request = &payload["executionRequest"];
+        assert_eq!(request["team_id"], 0);
+        assert_eq!(request["team_ref"], "local-team");
+        assert_eq!(request["bot"][0]["id"], 42);
     }
 
     #[test]

@@ -33,7 +33,11 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
-from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.adapters.pipeline_stage import (
+    initialize_pipeline,
+    pipeline_stage_service,
+    validate_pipeline_team,
+)
 from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
@@ -223,6 +227,7 @@ class TaskOperationsMixin:
                 detail=f"Team '{team_name}' not found, it may be deleted or not shared",
             )
 
+        validate_pipeline_team(existing_task, team)
         task_stores.task_store.update_json(
             db,
             task=existing_task,
@@ -278,7 +283,7 @@ class TaskOperationsMixin:
                 title += "..."
 
         if task_id is None:
-            return self._create_new_task_with_allocated_pair(
+            task, team = self._create_new_task_with_allocated_pair(
                 db=db,
                 obj_in=obj_in,
                 user=user,
@@ -287,15 +292,18 @@ class TaskOperationsMixin:
                 namespace=namespace,
             )
 
-        return self._create_new_task_with_preallocated_id(
-            db=db,
-            obj_in=obj_in,
-            user=user,
-            team=team,
-            task_id=task_id,
-            title=title,
-            namespace=namespace,
-        )
+        else:
+            task, team = self._create_new_task_with_preallocated_id(
+                db=db,
+                obj_in=obj_in,
+                user=user,
+                team=team,
+                task_id=task_id,
+                title=title,
+                namespace=namespace,
+            )
+        initialize_pipeline(task, team)
+        return task, team
 
     def _create_new_task_with_allocated_pair(
         self,

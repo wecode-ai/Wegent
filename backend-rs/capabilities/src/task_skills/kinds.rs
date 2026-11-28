@@ -7,11 +7,8 @@
 //! (`GET /api/tasks/{task_id}/skills`, `GET /api/tasks/{task_id}` and
 //! `GET /api/tasks/{task_id}/pipeline-stage-info`).
 //!
-//! A deployment whose `SERVICE_EXTENSION` configures a Redis client replaces
-//! every reader this branch composes with its cached counterpart
-//! (`CachedKindReader`, `CachedSharedTeamReader`, `CachedGroupReader`,
-//! `CachedGroupMemberReader`), so each step probes its cache document first
-//! and only a miss reaches the SQL reader.
+//! Kind identity reads use SQL in production. Shared-team lists, groups and
+//! group memberships use their own Redis documents when a client is available.
 use crate::json_compat::python_json_value;
 use crate::kind_store::{KindRecord, KindStore};
 use crate::read_error::{ApiError, database_query_failed};
@@ -98,12 +95,12 @@ async fn cached_entry<R: Redis>(redis: Option<&R>, key: &str) -> CachedEntry {
 /// (no memberships), matching an unavailable employee directory.
 static NOOP_ERP: crate::erp_provider::NoopErpProvider = crate::erp_provider::NoopErpProvider;
 
-/// Team resolution through the deployment's reader contract: the cached
-/// readers whenever the store has a Redis client, the public SQL readers
-/// otherwise.
+/// Team resolution with independently scoped Kind and membership reads.
 pub struct KindCacheStore<'a, M: Mysql, R: Redis = brz_redis::RedisService> {
     pub mysql: &'a M,
     pub redis: Option<&'a R>,
+    /// Whether Kind writes in this deployment invalidate the shared row and name cache.
+    pub use_kind_cache: bool,
     /// ERP employee directory for the native group-role pass of
     /// `TeamShareService.check_permission`.
     pub erp: Option<&'a dyn crate::erp_provider::ErpProvider<R>>,
@@ -112,7 +109,33 @@ pub struct KindCacheStore<'a, M: Mysql, R: Redis = brz_redis::RedisService> {
     pub resolvers: Option<&'a crate::permissions::EntityResolvers<R>>,
 }
 
-impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
+impl<'a, M: Mysql, R: Redis> KindCacheStore<'a, M, R> {
+    /// Resolve through SQL without additional access providers.
+    pub fn sql(mysql: &'a M) -> Self {
+        Self {
+            mysql,
+            redis: None,
+            use_kind_cache: false,
+            erp: None,
+            resolvers: None,
+        }
+    }
+
+    /// Kind writers do not guarantee cache invalidation. Other readers still use Redis.
+    pub fn new(
+        mysql: &'a M,
+        redis: Option<&'a R>,
+        erp: &'a dyn crate::erp_provider::ErpProvider<R>,
+        resolvers: &'a crate::permissions::EntityResolvers<R>,
+    ) -> Self {
+        Self {
+            redis,
+            erp: Some(erp),
+            resolvers: Some(resolvers),
+            ..Self::sql(mysql)
+        }
+    }
+
     /// `batch_load_kinds_by_refs` (`app.services.kind_ref_resolver`): the
     /// default-namespace refs load personal rows first, then the still
     /// missing ones fall back to public rows; group refs load by namespace.
@@ -162,13 +185,6 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
     /// `_get_team` for the `default` namespace: personal -> shared teams ->
     /// share-permission candidates -> public. Non-default namespaces use
     /// the group-team branch.
-    ///
-    /// The personal and public steps go through the deployment's cached
-    /// reader (`CachedKindReader.get_personal` / `get_public`): the
-    /// `kind:v2` index and data documents decide the outcome, and only a
-    /// cache miss queries the `kinds` table. The shared-team list and the
-    /// share-permission candidates stay on their SQL readers, exactly like
-    /// the source.
     pub async fn resolve_team(
         &self,
         user_id: i64,
@@ -179,7 +195,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             return self.group_team(user_id, namespace, name).await;
         }
 
-        let kinds = self.cached_kinds();
+        let kinds = self.kind_store();
 
         // 1. The user's own Team.
         if user_id != 0 {
@@ -239,7 +255,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             return self.group_team_on(sql, user_id, namespace, name).await;
         }
 
-        let kinds = self.cached_kinds();
+        let kinds = self.kind_store();
 
         // 1. The user's own Team.
         if user_id != 0 {
@@ -309,7 +325,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
         namespace: &str,
         name: &str,
     ) -> MysqlResult<Option<KindRow>> {
-        self.cached_kinds()
+        self.kind_store()
             .get_by_name_and_namespace(user_id, kind, namespace, name)
             .await
             .map_err(kind_read_failed)
@@ -327,19 +343,18 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
         namespace: &str,
         name: &str,
     ) -> MysqlResult<Option<KindRow>> {
-        self.cached_kinds()
+        self.kind_store()
             .get_by_name_and_namespace_on(sql, user_id, kind, namespace, name)
             .await
             .map_err(kind_read_failed)
             .map(|record| record.map(kind_row))
     }
 
-    /// The cached kind reader over the same clients: `None` keeps every read
-    /// on the direct SQL path, exactly like the extension's `wrap`.
-    fn cached_kinds(&self) -> KindStore<'_, M, R> {
+    /// Return the Kind reader used throughout this resolution.
+    pub fn kind_store(&self) -> KindStore<'_, M, R> {
         KindStore {
             mysql: self.mysql,
-            redis: self.redis,
+            redis: self.redis.filter(|_| self.use_kind_cache),
         }
     }
 
@@ -570,7 +585,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRow>, brz_mysql::MysqlError> {
-        let Some(team) = self.cached_kinds().get_group_team(namespace, name).await? else {
+        let Some(team) = self.kind_store().get_group_team(namespace, name).await? else {
             return Ok(None);
         };
         // A public namespace grants access.
@@ -611,7 +626,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
         name: &str,
     ) -> Result<Option<KindRow>, brz_mysql::MysqlError> {
         let Some(team) = self
-            .cached_kinds()
+            .kind_store()
             .get_group_team_on(sql, namespace, name)
             .await?
         else {

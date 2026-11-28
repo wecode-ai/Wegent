@@ -154,6 +154,16 @@ pub(crate) fn get_item_from(
 
 pub(super) fn map_loop_item(connection: &Connection, row: &Row<'_>) -> rusqlite::Result<LoopItem> {
     let mut item = map_loop_item_fields(row)?;
+    if item.resource_type == "chat_agent" && item.metadata.get("bot").is_none() {
+        binding_rows::save_solo_bot(
+            &mut item.metadata,
+            &item.id,
+            item.name
+                .as_deref()
+                .or(item.title.as_deref())
+                .unwrap_or("AI"),
+        );
+    }
     item.metadata = crate::task_runtime::runner_history::metadata(
         connection,
         &item.id,
@@ -239,7 +249,7 @@ pub(super) fn latest_execution(
         .query_row(
             "SELECT e.id, e.status, e.observed_state, e.sync_state, a.name, a.title, a.metadata, e.completed_at
              FROM loop_item_executions e
-             LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
+             LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND (a.cloud_project_id=e.cloud_project_id OR EXISTS (SELECT 1 FROM loop_items b WHERE b.resource_type='project_team_binding' AND b.id='project-team:' || json_array(e.cloud_project_id,a.id)))
              WHERE e.loop_item_id = ?1
              ORDER BY e.id DESC
              LIMIT 1",
@@ -264,7 +274,7 @@ pub(super) fn latest_executions_for_items(
     let mut statement = connection.prepare(&format!(
         "SELECT e.id,e.status,e.observed_state,e.sync_state,a.name,a.title,a.metadata,e.completed_at,e.loop_item_id
          FROM loop_item_executions e
-         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
+         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND (a.cloud_project_id=e.cloud_project_id OR EXISTS (SELECT 1 FROM loop_items b WHERE b.resource_type='project_team_binding' AND b.id='project-team:' || json_array(e.cloud_project_id,a.id)))
          WHERE e.loop_item_id IN ({placeholders}) ORDER BY e.id DESC"
     ))?;
     let rows = statement.query_map(params_from_iter(item_ids), |row| {
@@ -286,7 +296,7 @@ pub(super) fn latest_executions_for_project(
         "SELECT e.id, e.status, e.observed_state, e.sync_state, a.name, a.title, a.metadata, e.completed_at, e.loop_item_id
          FROM loop_item_executions e
          JOIN loop_items t ON t.id = e.loop_item_id
-         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
+         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND (a.cloud_project_id=e.cloud_project_id OR EXISTS (SELECT 1 FROM loop_items b WHERE b.resource_type='project_team_binding' AND b.id='project-team:' || json_array(e.cloud_project_id,a.id)))
          WHERE t.cloud_project_id = ?1 AND t.resource_type = 'task'
          ORDER BY e.id DESC",
     )?;

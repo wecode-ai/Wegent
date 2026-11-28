@@ -1,6 +1,10 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+pub(super) fn project_agent_runtime(metadata: &Value) -> &str {
+    metadata["runtime"].as_str().unwrap_or("codex")
+}
+
 pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
     let metadata = row.metadata;
     let name = row.title.or(row.name).unwrap_or_else(|| "AI".to_owned());
@@ -12,6 +16,8 @@ pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .to_owned()
     };
     ChatAgent {
+        team_ref: row.id.clone(),
+        source_project_id: row.cloud_project_id.clone().unwrap_or_default(),
         execution_policy: metadata
             .get("execution_policy")
             .filter(|value| !value.is_null())
@@ -25,7 +31,7 @@ pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
         display_name: text("display_name", &name),
         namespace: text("namespace", "default"),
         name,
-        runtime: text("runtime", "codex"),
+        runtime: project_agent_runtime(&metadata).to_owned(),
         model: metadata
             .get("model")
             .and_then(Value::as_str)
@@ -122,7 +128,15 @@ pub(super) fn insert_comment(
     create: &LocalCommentCreate,
     status: &str,
 ) -> Result<LocalComment, TaskRuntimeError> {
-    let message_id = Uuid::new_v4().to_string();
+    insert_comment_with_id(connection, create, status, Uuid::new_v4().to_string())
+}
+
+pub(super) fn insert_comment_with_id(
+    connection: &Connection,
+    create: &LocalCommentCreate,
+    status: &str,
+    message_id: String,
+) -> Result<LocalComment, TaskRuntimeError> {
     let now = now();
     let (reply_to_message_id, thread_root_message_id) =
         if let Some(reply_to) = &create.reply_to_message_id {
@@ -347,7 +361,8 @@ pub(super) fn enrich_comment_actor(
                 "SELECT created_by_user_id, \
                     NULLIF(JSON_EXTRACT(metadata,'$.visibility'),'null') \
                  FROM loop_items \
-                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
+                 WHERE id=?1 AND resource_type='chat_agent' AND (cloud_project_id=?2 OR EXISTS (
+                    SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?2,?1)))",
                 params![comment.sender_id, comment.project_id],
                 |row| {
                     Ok((
@@ -438,15 +453,21 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
     let status: String = row.get(7)?;
     let observed_state: String = row.get(30)?;
     let sync_state: String = row.get(31)?;
-    let agent_metadata = row
+    let mut agent_metadata = row
         .get::<_, Option<String>>(43)?
         .and_then(|value| serde_json::from_str::<Value>(&value).ok())
         .unwrap_or(Value::Null);
+    let agent_id: String = row.get(3)?;
+    let agent_name = execution_agent_name(&agent_metadata, row.get(41)?, row.get(42)?)
+        .unwrap_or_else(|| "AI".to_owned());
+    if agent_metadata.get("bot").is_none() {
+        binding_rows::save_solo_bot(&mut agent_metadata, &agent_id, &agent_name);
+    }
     Ok(LocalExecution {
         id: row.get(0)?,
         loop_item_id: row.get(1)?,
         cloud_project_id: row.get(2)?,
-        agent_id: row.get(3)?,
+        agent_id,
         assigner_user_id: row.get(4)?,
         execution_environment: row.get(5)?,
         execution_device_id: row.get(6)?,
@@ -488,18 +509,11 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         task_title: row.get::<_, Option<String>>(38)?.unwrap_or_default(),
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
-        agent_name: execution_agent_name(&agent_metadata, row.get(41)?, row.get(42)?)
-            .unwrap_or_else(|| "AI".to_owned()),
-        agent_system_prompt: row
-            .get::<_, Option<String>>(43)?
-            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
-            .and_then(|metadata| {
-                metadata
-                    .get("system_prompt")?
-                    .as_str()
-                    .map(ToOwned::to_owned)
-            })
-            .unwrap_or_default(),
+        agent_name,
+        agent_system_prompt: agent_metadata["system_prompt"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
         agent_model: agent_metadata
             .get("model")
             .and_then(Value::as_str)
@@ -517,16 +531,14 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        agent_runtime: agent_metadata
-            .get("runtime")
-            .and_then(Value::as_str)
-            .unwrap_or("codex")
-            .to_owned(),
+        agent_runtime: project_agent_runtime(&agent_metadata).to_owned(),
         agent_additional_skills: agent_metadata
             .get("additional_skills")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
+        agent_bots: agent_metadata["bot"].clone(),
+        agent_collaboration_model: agent_metadata["collaboration_model"].clone(),
         agent_mcp_servers: agent_metadata
             .get("mcp_servers")
             .filter(|value| value.is_object())

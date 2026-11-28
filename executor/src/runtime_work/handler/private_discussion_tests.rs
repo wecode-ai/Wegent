@@ -107,6 +107,7 @@ fn admit(handler: &RuntimeWorkRpcHandler, request: &ExecutionRequest) {
 
 fn turn(request: ExecutionRequest) -> SpawnTurnRequest {
     SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: TASK.into(),
         runtime: "codex".into(),
@@ -232,6 +233,37 @@ fn queued_private_followup_does_not_suppress_the_active_public_turn() {
     assert!(!super::super::util::is_private_discussion(
         &runtime_event_request_from_link(&handler.local_task_link(TASK).unwrap())
     ));
+}
+
+#[test]
+fn claimed_pipeline_projects_completion_only_after_the_final_bot() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, project, issue) = fixture(root.path());
+    let public = request(&handler, false);
+    admit(&handler, &public);
+    handler.store.update_task(TASK, |link| {
+        link.runtime_handle["personalPipeline"] = json!({
+            "claimId":23,"stage":0,"members":[{"id":"writer"},{"id":"reviewer"}],"phase":"active"
+        });
+    });
+    for (stage, turn, generation, expected) in [
+        (0, "draft", 13, "in_progress"),
+        (1, "review", 14, "in_review"),
+    ] {
+        handler.store.update_task(TASK, |link| {
+            link.runtime_handle["personalPipeline"]["stage"] = json!(stage)
+        });
+        handler.apply_native_lifecycle(TASK, &public, &boundary("turn/started", turn, generation));
+        handler.apply_native_lifecycle(
+            TASK,
+            &public,
+            &boundary("turn/completed", turn, generation),
+        );
+        assert_eq!(
+            store.get_task(&project, &issue).unwrap().status.as_deref(),
+            Some(expected)
+        );
+    }
 }
 
 #[test]

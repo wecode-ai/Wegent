@@ -1,3 +1,4 @@
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import type { TFunction } from 'i18next'
@@ -40,6 +41,7 @@ function openAuxiliaryRoute(tabs: WorkspaceTabsContextValue, title: string, cont
 
 export interface WeworkSchemeInput {
   tabs: WorkspaceTabsContextValue
+  openPlatformTask?: NonNullable<WorkbenchServices['runtimeWorkApi']>['openPlatformTask']
   connection: CloudConnectionContextValue | null
   experiment: AppPreferenceFeatureState
   t: TFunction<'common'>
@@ -151,11 +153,66 @@ export function createWeworkSchemeService() {
     }
     const cloud = input.connection
     if (
-      (destination.kind === 'personal-issue' ||
+      (destination.kind === 'platform-task' ||
+        destination.kind === 'personal-issue' ||
         (destination.kind === 'board' && destination.projectStore !== 'local')) &&
       (!cloud?.isConnected || !cloud.token)
     ) {
       return deferForCloud(url, deferInRenderer, cloud)
+    }
+    if (destination.kind === 'platform-task') {
+      if (!cloud?.token) return false
+      const client = createHttpClient({
+        baseUrl: cloud.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl,
+        getToken: () => cloud.token,
+        redirectOnUnauthorized: false,
+      })
+      const isCurrent = () =>
+        input &&
+        revision === generation &&
+        order === navigationOrder &&
+        cloud.user?.id === input.connection?.user?.id &&
+        cloud.apiBaseUrl === input.connection?.apiBaseUrl &&
+        input.connection?.isConnected
+      try {
+        if (
+          cloud.apiBaseUrl?.replace(/\/+$/, '') !== destination.apiBaseUrl ||
+          cloud.user?.id !== destination.userId
+        ) {
+          throw new Error(input.t('workbench.task_activity_connection_mismatch'))
+        }
+        const openTask = input.openPlatformTask
+        if (!openTask) throw new Error(input.t('workbench.task_activity_continue_failed'))
+        const task = await client.get<{ device_id?: string; user?: { id: number }; id: number }>(
+          `/tasks/${destination.taskId}`
+        )
+        if (!isCurrent()) return true
+        if (
+          !task.device_id ||
+          task.user?.id !== destination.userId ||
+          task.id !== destination.taskId
+        ) {
+          throw new Error(input.t('workbench.task_activity_connection_mismatch'))
+        }
+        const { taskId } = await openTask(
+          task.device_id,
+          task.id,
+          destination.apiBaseUrl,
+          destination.userId
+        )
+        if (!isCurrent()) return true
+        if (!taskId?.trim()) throw new Error(input.t('workbench.task_activity_continue_failed'))
+        destination = { kind: 'task', deviceId: task.device_id, taskId }
+      } catch (error) {
+        if (isCurrent()) {
+          await invokeDesktopHost('dialog.message', {
+            type: 'error',
+            message: input.t('workbench.task_activity_continue_failed'),
+            detail: error instanceof Error ? error.message : String(error),
+          })
+        }
+        return true
+      }
     }
     if (destination.kind === 'personal-issue' && cloud) {
       const client = createHttpClient({

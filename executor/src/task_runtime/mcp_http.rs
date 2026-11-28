@@ -538,19 +538,28 @@ async fn handle_mcp_for_surface(
             .collaboration_dispatcher
             .lock()
             .ok()
-            .and_then(|dispatcher| dispatcher.clone()),
+            .and_then(|v| v.clone()),
     );
-    context.set_event_sender(
-        state
-            .event_sender
-            .lock()
-            .ok()
-            .and_then(|sender| sender.clone()),
-    );
+    context.set_event_sender(state.event_sender.lock().ok().and_then(|v| v.clone()));
     match handle_request_with_context(&state.runtime, &request, &context).await {
         Some(response) => json_rpc_response(response, &session_id),
         None => StatusCode::ACCEPTED.into_response(),
     }
+}
+
+pub(crate) fn bind_runtime_services(context: &mut SpaceMcpRequestContext) {
+    context.set_cloud_collaboration_dispatcher(
+        collaboration_dispatcher_registry()
+            .lock()
+            .ok()
+            .and_then(|dispatcher| dispatcher.clone()),
+    );
+    context.set_event_sender(
+        event_sender_registry()
+            .lock()
+            .ok()
+            .and_then(|sender| sender.clone()),
+    );
 }
 
 async fn delete_mcp_session(

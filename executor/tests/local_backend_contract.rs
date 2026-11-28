@@ -181,8 +181,8 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
+    let client = client.with_running_task_ids(|| vec!["10".to_owned(), "20".to_owned()]);
     client.set_runtime_transfer_port(Some(23456));
-    client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
     client.emit_liveness_heartbeat().await.unwrap();
@@ -837,7 +837,7 @@ async fn registration_pulls_without_publishing_scheduler_capacity() {
     assert_eq!(calls[1].event, "runtime.tasks.pull");
     assert_eq!(
         calls[1].payload,
-        json!({"runner_catalog": {"runtimes": ["codex"], "models": []}})
+        json!({"runner_catalog": {"runtimes": ["codex"], "models": []}, "dispatch_protocol_version": 2})
     );
     let heartbeats = transport.wait_for_emit_count("device:heartbeat", 1).await;
     assert!(heartbeats[0].payload.get("runtime_capacity").is_none());

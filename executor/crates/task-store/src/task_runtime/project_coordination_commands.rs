@@ -121,7 +121,7 @@ fn require_binding_on(
     if group["leader"]["kind"] != "agent" {
         return Err(invalid("Project coordination requires an AI leader"));
     }
-    runner_dispatch::group_agents(connection, project_id, &group)?;
+    collaboration_agent(connection, project_id, text(&group["leader"], "id")?)?;
     Ok((project, group))
 }
 
@@ -130,6 +130,37 @@ pub(super) fn execution_actor_on(
     project: &str,
     payload: &Value,
 ) -> Result<i64, TaskRuntimeError> {
+    if let Some(scope) = payload.get("human_coordination_member") {
+        let issue = get_item_from(connection, text(scope, "issue")?, "task")?
+            .filter(|i| {
+                i.cloud_project_id.as_deref() == Some(project)
+                    && i.metadata["human_coordination_dispatch"] == payload["dispatch_id"]
+            })
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let current:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_items WHERE id=?1 AND resource_type='issue_coordination' AND loop_item_id=?2 AND json_extract(metadata,'$.last_round')=?3 AND json_extract(metadata,'$.decision') IS NULL)",params![payload["dispatch_id"].as_str(),issue.id,payload["coordination_round_id"].as_str()],|r|r.get(0))?;
+        if !current || issue.status.as_deref() == Some("completed") {
+            return Err(invalid("Human manager round has ended"));
+        }
+        let project = get_item_from(connection, project, "project")?
+            .filter(|p| p.status.as_deref() == Some("active"))
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let snapshot = &issue.metadata["collaboration_group"];
+        let live = collaboration_group(&project, text(snapshot, "id")?)?;
+        if live["leader"]["kind"] != "human"
+            || live["leader"]["id"] != snapshot["leader"]["id"]
+            || !live["members"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|m| m["kind"] == "agent" && m["id"] == scope["member"])
+        {
+            return Err(invalid("Human coordination authority was revoked"));
+        }
+        collaboration_agent(connection, &project.id, text(scope, "member")?)?;
+        return text(&live["leader"], "id")?
+            .parse()
+            .map_err(|_| invalid("Invalid human leader"));
+    }
     let Some(scope) = payload.get("project_coordination") else {
         return Ok(0);
     };
@@ -149,9 +180,22 @@ pub(super) fn execution_actor_on(
     }
     let assigned_group = &issue.metadata["collaboration_group"];
     let snapshot = payload.get("collaboration_group").unwrap_or(&group);
-    let assigned_agent = runner_dispatch::group_agents(connection, project, snapshot)?
-        .iter()
-        .any(|agent| issue.assignee_agent_id.as_deref() == Some(&agent.id));
+    let assigned_agent = if let Some(id) = issue.assignee_agent_id.as_deref() {
+        let agent = collaboration_agent(connection, project, id)?;
+        let bound_team = agent.metadata["wegent_team_id"]
+            .as_i64()
+            .map(|id| id.to_string());
+        std::iter::once(&snapshot["leader"])
+            .chain(snapshot["members"].as_array().into_iter().flatten())
+            .any(|member| {
+                member["kind"] == "agent"
+                    && member["id"]
+                        .as_str()
+                        .is_some_and(|id| id == agent.id || Some(id) == bound_team.as_deref())
+            })
+    } else {
+        false
+    };
     let assigned_human = std::iter::once(&snapshot["leader"])
         .chain(snapshot["members"].as_array().into_iter().flatten())
         .any(|member| {
@@ -196,7 +240,22 @@ pub(super) fn authorize_execution_on(
                 return Err(invalid("The project coordination execution was stopped"));
             }
         }
-        execution_actor_on(connection, &execution.cloud_project_id, payload)?;
+        let actor = execution_actor_on(connection, &execution.cloud_project_id, payload)?;
+        if let Some(scope) = payload.get("human_coordination_member") {
+            if scope["issue"] != execution.loop_item_id
+                || actor != execution.assigner_user_id
+                || collaboration_agent(
+                    connection,
+                    &execution.cloud_project_id,
+                    text(scope, "member")?,
+                )?
+                .id != execution.agent_id
+            {
+                return Err(invalid(
+                    "Human coordination assignment no longer matches the execution",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -345,7 +404,7 @@ impl LocalTaskStore {
     ) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
         let revoked = {
             let connection = self.connection()?;
-            let mut statement = connection.prepare("SELECT id FROM loop_item_executions WHERE status IN ('pending_approval','waiting_runtime','queued','claimed','running','cancel_requested') AND json_type(execution_payload,'$.project_coordination') IS NOT NULL")?;
+            let mut statement = connection.prepare("SELECT id FROM loop_item_executions WHERE status IN ('pending_approval','waiting_runtime','queued','claimed','running','cancel_requested') AND (json_type(execution_payload,'$.project_coordination') IS NOT NULL OR json_type(execution_payload,'$.human_coordination_member') IS NOT NULL)")?;
             let ids = statement
                 .query_map([], |row| row.get::<_, i64>(0))?
                 .collect::<Result<Vec<_>, _>>()?;

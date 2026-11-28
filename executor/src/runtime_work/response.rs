@@ -54,6 +54,15 @@ fn default_supervisor_interval_seconds() -> u64 {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ExecutionBackend {
+    #[serde(default)]
+    pub task_id: Option<String>,
+    pub url: String,
+    pub owner: i64,
+    pub device: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
     pub snapshot_revision: Option<String>,
@@ -83,6 +92,8 @@ pub(crate) struct RuntimeTaskLink {
     pub execution_state: Option<super::lifecycle::NativeExecutionState>,
     #[serde(skip)]
     pub gateway_binding: Option<crate::agents::model_gateway::GatewayBinding>,
+    #[serde(skip)]
+    pub execution_backend: Option<ExecutionBackend>,
     pub parent: Option<Value>,
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
@@ -142,6 +153,7 @@ impl RuntimeTaskLink {
             runtime_handle: json!({ "runtime": runtime }),
             execution_state: None,
             gateway_binding: None,
+            execution_backend: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -191,6 +203,7 @@ impl RuntimeTaskLink {
             runtime_handle,
             execution_state: None,
             gateway_binding: None,
+            execution_backend: None,
             parent: Some(parent),
             ephemeral: false,
             runtime_project_key: None,
@@ -324,6 +337,9 @@ impl RuntimeTaskLink {
             execution_state: local_link
                 .as_ref()
                 .and_then(|link| link.execution_state.clone()),
+            execution_backend: local_link
+                .as_ref()
+                .and_then(|link| link.execution_backend.clone()),
             gateway_binding: local_link
                 .as_ref()
                 .and_then(|link| link.gateway_binding.clone()),
@@ -357,6 +373,12 @@ impl RuntimeTaskLink {
         }
     }
 
+    pub(crate) fn has_platform_history(&self) -> bool {
+        self.execution_backend
+            .as_ref()
+            .is_some_and(|binding| binding.task_id.is_some())
+    }
+
     pub fn list_summary(&self) -> Self {
         Self {
             snapshot_revision: self.snapshot_revision.clone(),
@@ -382,6 +404,7 @@ impl RuntimeTaskLink {
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             execution_state: self.execution_state.clone(),
             gateway_binding: self.gateway_binding.clone(),
+            execution_backend: self.execution_backend.clone(),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
@@ -514,6 +537,7 @@ impl Default for RuntimeTaskLink {
             runtime_handle: json!({}),
             execution_state: None,
             gateway_binding: None,
+            execution_backend: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -914,6 +938,18 @@ pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<Str
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(state) = runtime_handle.get("personalPipeline") {
+        let count = state["members"]
+            .as_array()
+            .map(|members| members.len() as u64)
+            .or_else(|| state["count"].as_u64());
+        summary.insert(
+            "personalPipeline".into(),
+            json!({
+                "root":state["root"], "stage":state["stage"], "phase":state["phase"], "count":count
+            }),
+        );
+    }
     if let Some(presentations) = runtime_handle["userMessagePresentations"].as_array() {
         summary.remove("latestUserMessageSource");
         if let Some(turn) = runtime_handle["lastTurnId"].as_str() {
@@ -950,6 +986,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
         "message"
             | "cloudTranscript"
             | "collaborationMemberRuntimeProfiles"
+            | "personalPipeline"
             | "messages"
             | "userMessagePresentations"
             | "cachedMessage"

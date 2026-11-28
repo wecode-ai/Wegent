@@ -40,24 +40,162 @@ const MAX_MARKDOWN_BYTES: usize = 2 * 1024 * 1024;
 struct StatusQuery {
     loop_item_id: String,
     human_assignment_ids: Vec<String>,
+    round: Option<Round>,
+}
+
+#[derive(Debug, PartialEq, serde::Deserialize)]
+struct Round {
+    dispatch_id: String,
+    round_id: String,
+    #[serde(default)]
+    execution_ids: Vec<i64>,
+}
+
+fn invalid_round() -> FastApiError {
+    FastApiError::detail(
+        brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+        "Invalid collaboration round",
+    )
+}
+
+async fn round_items(
+    state: &ProjectState,
+    project: &str,
+    issue: &str,
+    round: &Round,
+    humans: &[String],
+) -> Result<Vec<Value>, FastApiError> {
+    let id = crate::project_group_access::coordination_key(
+        "manager_assignment",
+        &[project, issue, &round.dispatch_id, &round.round_id],
+    );
+    let (Json(metadata),): (Json<Value>,) = state.mysql.fetch_optional(
+        "SELECT metadata FROM project_chat_messages WHERE message_id=? AND project_id=? AND task_id=?",
+        (id, project, issue)
+    ).await.map_err(internal_error)?.ok_or_else(|| FastApiError::not_found("Round not found"))?;
+    let assignments = metadata["dispatch_assignments"]
+        .as_array()
+        .ok_or_else(invalid_round)?;
+    if !humans.iter().all(|id| {
+        assignments
+            .iter()
+            .any(|a| a["human_assignment_id"].as_str() == Some(id.as_str()))
+    }) {
+        return Err(invalid_round());
+    }
+    let mut items = Vec::with_capacity(round.execution_ids.len());
+    for id in &round.execution_ids {
+        let assignment = assignments
+            .iter()
+            .find(|a| a["execution_id"].as_i64() == Some(*id))
+            .ok_or_else(invalid_round)?;
+        let assignment_id = assignment["assignment_id"]
+            .as_str()
+            .ok_or_else(invalid_round)?;
+        let (status, Json(outcome)): (String, Json<Value>) = state.mysql.fetch_optional(
+            "SELECT e.status, JSON_OBJECT('result',COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.assignment_result')), ''),'error',COALESCE(e.error_message,'')) FROM loop_item_executions first_attempt JOIN loop_item_executions e ON e.execution_scope=first_attempt.execution_scope WHERE first_attempt.id=? AND e.cloud_project_id=? AND e.loop_item_id=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.dispatch_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.coordination_round_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.assignment_id'))=? ORDER BY e.id DESC LIMIT 1",
+            (*id, project, issue, round.dispatch_id.as_str(), round.round_id.as_str(), assignment_id)
+        ).await.map_err(internal_error)?.ok_or_else(|| FastApiError::not_found("Assignment not found"))?;
+        items.push(json!({"assignee_type":"agent","assignment_id":assignment_id,"execution_id":id,"status":status,"result":outcome["result"],"error":outcome["error"]}));
+    }
+    Ok(items)
+}
+
+/// Read the work referenced by the accepted batch. Issue details only need status,
+/// so they never fetch the delivery markdown or expose a member's private result.
+pub(crate) async fn assignment_progress<M: Mysql>(
+    mysql: &M,
+    project: &str,
+    issue: &str,
+    batch: &str,
+) -> MysqlResult<(bool, Vec<Value>)> {
+    batch_progress(mysql, project, issue, batch, false).await
+}
+
+/// Collect terminal assignment evidence for the authorized manager's next turn.
+pub async fn manager_round_outcomes<M: Mysql>(
+    mysql: &M,
+    project: &str,
+    issue: &str,
+    batch: &str,
+) -> MysqlResult<(bool, Vec<Value>)> {
+    batch_progress(mysql, project, issue, batch, true).await
+}
+
+async fn batch_progress<M: Mysql>(
+    mysql: &M,
+    project: &str,
+    issue: &str,
+    batch: &str,
+    include_evidence: bool,
+) -> MysqlResult<(bool, Vec<Value>)> {
+    let row: Option<(Json<Value>,)> = mysql.fetch_optional(
+        "SELECT metadata FROM project_chat_messages WHERE message_id=? AND project_id=? AND task_id=?",
+        (batch, project, issue),
+    ).await?;
+    let Some((Json(metadata),)) = row else {
+        return Ok((true, Vec::new()));
+    };
+    let mut progress = Vec::new();
+    let mut waiting = false;
+    let mut bindings = None;
+    for entry in metadata["dispatch_assignments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let assignee = entry
+            .get("assignee_id")
+            .or_else(|| entry.get("human_user_id"));
+        let mut item = json!({
+            "assignmentId":entry["assignment_id"], "assigneeType":entry["assignee_type"],
+            "assigneeId":assignee.map(|id| id.as_str().map(str::to_owned).unwrap_or_else(|| id.to_string())).unwrap_or_default()
+        });
+        let status = if let Some(id) = entry["execution_id"].as_i64() {
+            item["executionId"] = json!(id);
+            mysql.fetch_optional::<_, _, (String, Json<Value>)>(
+                "SELECT e.status,JSON_OBJECT('result',IF(?,JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.assignment_result')),NULL),'error',IF(?,e.error_message,NULL)) FROM loop_item_executions original JOIN loop_item_executions e ON e.execution_scope=original.execution_scope AND e.cloud_project_id=original.cloud_project_id AND e.loop_item_id=original.loop_item_id WHERE original.id=? AND original.cloud_project_id=? AND original.loop_item_id=? ORDER BY e.id DESC LIMIT 1",
+                (include_evidence, include_evidence, id, project, issue)
+            ).await?.map(|(status, Json(evidence))| {
+                if include_evidence {
+                    item["result"] = evidence["result"].clone();
+                    item["error"] = evidence["error"].clone();
+                }
+                status
+            }).unwrap_or_else(|| "unavailable".into())
+        } else if let Some(id) = entry["human_assignment_id"].as_str() {
+            item["humanAssignmentId"] = json!(id);
+            if bindings.is_none() {
+                bindings = Some(execution_bindings(mysql, project, issue).await?);
+            }
+            let (binding, delivery) =
+                human_work(mysql, bindings.as_deref().unwrap_or_default(), issue, id).await?;
+            if include_evidence && let Some(delivery) = &delivery {
+                item["deliveryId"] = json!(delivery.id);
+            }
+            human_status(binding, delivery.as_ref()).to_owned()
+        } else {
+            entry["status"].as_str().unwrap_or("unavailable").to_owned()
+        };
+        waiting |= !matches!(status.as_str(), "completed" | "failed" | "cancelled");
+        item["status"] = json!(status);
+        progress.push(item);
+    }
+    Ok((waiting || progress.is_empty(), progress))
 }
 
 /// `collaboration_human_assignment_status`: one round assignment's outcome.
 async fn assignment_status(
     state: &ProjectState,
-    project_id: i64,
+    bindings: &[BindingRow],
     issue_id: &str,
     human_assignment_id: &str,
 ) -> Result<Value, FastApiError> {
-    let bindings = execution_bindings(&state.mysql, project_id, issue_id)
+    let (binding, delivery) = human_work(&state.mysql, bindings, issue_id, human_assignment_id)
         .await
         .map_err(internal_error)?;
-    let assignment_bindings: Vec<&BindingRow> = bindings
-        .iter()
-        .filter(|binding| binding.human_assignment_id() == Some(human_assignment_id))
-        .collect();
     let work_id = format!("human_assignment:{human_assignment_id}");
-    let Some(first) = assignment_bindings.first() else {
+    let Some(binding) = binding else {
         return Ok(json!({
             "assignee_type": "human",
             "work_id": work_id,
@@ -67,21 +205,6 @@ async fn assignment_status(
             "error": "",
         }));
     };
-    let binding_ids: Vec<&str> = assignment_bindings
-        .iter()
-        .map(|binding| binding.id.as_str())
-        .collect();
-    let delivery = latest_delivery(&state.mysql, issue_id, &binding_ids)
-        .await
-        .map_err(internal_error)?;
-    let binding = delivery
-        .as_ref()
-        .and_then(|delivery| {
-            assignment_bindings
-                .iter()
-                .find(|binding| binding.id == delivery.source_task_binding_id)
-        })
-        .unwrap_or(first);
     let result = match &delivery {
         Some(delivery) => read_markdown(state, &delivery.markdown_object_key).await?,
         None => String::new(),
@@ -90,7 +213,7 @@ async fn assignment_status(
         "assignee_type": "human",
         "work_id": work_id,
         "human_assignment_id": human_assignment_id,
-        "status": if delivery.is_some() { "completed" } else { "running" },
+        "status": human_status(Some(binding), delivery.as_ref()),
         "human_user_id": binding.task_user_id,
         "runtime_device_id": binding.device_id,
         "runtime_task_id": binding.task_id,
@@ -98,6 +221,39 @@ async fn assignment_status(
         "result": result,
         "error": "",
     }))
+}
+
+fn human_status(binding: Option<&BindingRow>, delivery: Option<&DeliveryRow>) -> &'static str {
+    if delivery.is_some() {
+        "completed"
+    } else if binding.is_some() {
+        "running"
+    } else {
+        "queued"
+    }
+}
+
+async fn human_work<'a, M: Mysql>(
+    mysql: &M,
+    bindings: &'a [BindingRow],
+    issue: &str,
+    assignment: &str,
+) -> MysqlResult<(Option<&'a BindingRow>, Option<DeliveryRow>)> {
+    let matching = || {
+        bindings
+            .iter()
+            .filter(|row| row.human_assignment_id() == Some(assignment))
+    };
+    let Some(first) = matching().next() else {
+        return Ok((None, None));
+    };
+    let ids: Vec<_> = matching().map(|row| row.id.as_str()).collect();
+    let delivery = latest_delivery(mysql, issue, &ids).await?;
+    let binding = delivery
+        .as_ref()
+        .and_then(|value| matching().find(|row| row.id == value.source_task_binding_id))
+        .unwrap_or(first);
+    Ok((Some(binding), delivery))
 }
 
 /// `delivery_service.read_markdown`: fetch the delivery markdown object with
@@ -121,7 +277,7 @@ struct BindingRow {
     #[mysql(rename = "loop_items_task_user_id")]
     task_user_id: i32,
     #[mysql(rename = "loop_items_device_id")]
-    device_id: String,
+    device_id: Option<String>,
     #[mysql(rename = "loop_items_task_id")]
     task_id: String,
     #[mysql(rename = "loop_items_metadata")]
@@ -155,7 +311,7 @@ struct DeliveryRow {
 /// loop_item_id, loop_datetime_is_unset(unlinked_at)).order_by(linked_at.desc())`.
 async fn execution_bindings<M: Mysql>(
     mysql: &M,
-    project_id: i64,
+    project_id: &str,
     issue_id: &str,
 ) -> MysqlResult<Vec<BindingRow>> {
     let sql = format!(
@@ -247,6 +403,14 @@ fn parse_status_query(raw: &[u8]) -> Result<StatusQuery, FastApiError> {
         )])));
     };
 
+    let round: Option<Round> = if object.contains_key("dispatch_id")
+        || object.contains_key("round_id")
+        || object.contains_key("execution_ids")
+    {
+        Some(serde_json::from_value(value.clone()).map_err(|_| invalid_round())?)
+    } else {
+        None
+    };
     let mut errors = Vec::new();
     let loop_item_id = match field(object, "loopItemId", "loop_item_id") {
         None => {
@@ -320,7 +484,7 @@ fn parse_status_query(raw: &[u8]) -> Result<StatusQuery, FastApiError> {
                     )),
                 }
             }
-            if items.is_empty() {
+            if items.is_empty() && round.as_ref().is_none_or(|r| r.execution_ids.is_empty()) {
                 errors.push(validation_entry(
                     "too_short",
                     json!(["body", "human_assignment_ids"]),
@@ -366,7 +530,16 @@ fn parse_status_query(raw: &[u8]) -> Result<StatusQuery, FastApiError> {
     if !errors.is_empty() {
         return Err(FastApiError::validation(Value::Array(errors)));
     }
+    if let Some(round) = &round
+        && (round.dispatch_id.is_empty()
+            || round.round_id.is_empty()
+            || round.execution_ids.len() + human_assignment_ids.as_ref().map_or(0, Vec::len) > 20
+            || round.execution_ids.iter().any(|id| *id <= 0))
+    {
+        return Err(invalid_round());
+    }
     Ok(StatusQuery {
+        round,
         loop_item_id: loop_item_id.expect("validated"),
         human_assignment_ids: human_assignment_ids.expect("validated"),
     })
@@ -409,16 +582,45 @@ async fn execution_statuses(
         return Err(FastApiError::forbidden("Insufficient permission"));
     }
 
-    let mut items = Vec::with_capacity(values.human_assignment_ids.len());
+    let mut items = if let Some(round) = &values.round {
+        let project = crate::project_store::get(&state.mysql, "project", project_id)
+            .await
+            .map_err(internal_error)?
+            .ok_or_else(cloud_project_not_found)?;
+        let issue = crate::project_store::get(&state.mysql, "task", &values.loop_item_id)
+            .await
+            .map_err(internal_error)?
+            .ok_or_else(|| FastApiError::not_found("Issue not found"))?;
+        crate::project_authority::require_issue_with_priority(
+            &state.mysql,
+            &project,
+            &issue,
+            i64::from(user_id),
+            priority,
+        )
+        .await
+        .map_err(|_| FastApiError::forbidden("Issue access denied"))?;
+        round_items(
+            state,
+            project_id,
+            &issue.id,
+            round,
+            &values.human_assignment_ids,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let bindings = if values.human_assignment_ids.is_empty() {
+        Vec::new()
+    } else {
+        execution_bindings(&state.mysql, project_id, &values.loop_item_id)
+            .await
+            .map_err(internal_error)?
+    };
     for human_assignment_id in &values.human_assignment_ids {
         items.push(
-            assignment_status(
-                state,
-                project_number,
-                &values.loop_item_id,
-                human_assignment_id,
-            )
-            .await?,
+            assignment_status(state, &bindings, &values.loop_item_id, human_assignment_id).await?,
         );
     }
     Ok(json!({"items": items}))
@@ -440,6 +642,7 @@ mod tests {
         assert_eq!(
             camel,
             StatusQuery {
+                round: None,
                 loop_item_id: "PRJ-1".to_string(),
                 human_assignment_ids: vec!["a".to_string(), "b".to_string()],
             }
@@ -447,6 +650,15 @@ mod tests {
         let snake = parse_status_query(br#"{"loop_item_id":"PRJ-1","human_assignment_ids":["a"]}"#)
             .unwrap();
         assert_eq!(snake.human_assignment_ids, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn ai_only_round_requires_scoped_receipts() {
+        let mut request = json!({"loop_item_id":"issue","dispatch_id":"dispatch","round_id":"r","human_assignment_ids":[],"execution_ids":[42]});
+        let parsed = parse_status_query(request.to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.round.unwrap().execution_ids, [42]);
+        request["round_id"] = Value::Null;
+        assert!(parse_status_query(request.to_string().as_bytes()).is_err());
     }
 
     #[test]
@@ -484,7 +696,7 @@ mod tests {
     #[tokio::test]
     async fn execution_bindings_match_the_recorded_query() {
         let mysql = KindQueryCapture::default();
-        let rows = execution_bindings(&mysql, 5648598744554847056, "PRJD26304-10")
+        let rows = execution_bindings(&mysql, "5648598744554847056", "PRJD26304-10")
             .await
             .expect("binding query is captured");
         assert!(rows.is_empty());

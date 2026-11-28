@@ -24,6 +24,7 @@ impl LocalTaskStore {
                 device,
                 settings,
                 super::personal_stand_in::StandInSaveOptions {
+                    workspace_owner: false,
                     backend: Some(backend),
                 },
             )?;

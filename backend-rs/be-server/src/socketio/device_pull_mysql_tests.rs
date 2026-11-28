@@ -14,12 +14,30 @@ pub(crate) async fn verify_candidate_selection(mysql: MysqlService) {
         runtime_instance_id: "runtime",
         environment: "local",
         runner_catalog: None,
+        dispatch_protocol_version: 2,
     };
     assert_eq!(
         pull_execution(&app, &command).await.unwrap(),
         json!({"success": true, "task": null, "workspace_cleanup_intents": []}),
     );
     seed_candidates(&mysql).await;
+    mysql
+        .execute(
+            "UPDATE loop_items SET title='Parent Issue' WHERE id='issue-4'",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute(
+            "UPDATE loop_item_executions SET execution_payload=? WHERE id=4",
+            (
+                json!({"origin_context":{"workflow_task_title":"Collect runtime evidence"}})
+                    .to_string(),
+            ),
+        )
+        .await
+        .unwrap();
     let runner = resolve_owned_device_alias(&mysql, 7, "runner")
         .await
         .unwrap()
@@ -134,6 +152,11 @@ pub(crate) async fn verify_candidate_selection(mysql: MysqlService) {
     let reserved = unconfirmed_claim(&app, &command).await.unwrap().unwrap();
     assert_eq!(reserved.id, candidate.id);
     assert_eq!(reserved.runtime_task_id, prepared.runtime_task_id);
+    let (title,): (String,) = mysql.fetch_one(
+        "SELECT task_title FROM loop_items WHERE resource_type='execution' AND loop_item_id='issue-4' AND task_id=?",
+        (reserved.runtime_task_id.as_str(),),
+    ).await.unwrap();
+    assert_eq!(title, "Collect runtime evidence");
     verify_cleanup_intents(&app).await;
 }
 

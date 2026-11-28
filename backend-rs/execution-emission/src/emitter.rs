@@ -577,13 +577,15 @@ pub async fn emit_terminal_frames_once<R: Redis>(
     result: &Value,
     (task_status, progress): (&str, Option<i64>),
     contexts: Option<&Value>,
+    attempt: Option<&str>,
 ) -> RedisResult<()> {
     let room = format!("task:{}", event.task_id);
     let publish = async |name: &str, room: &str, step: &str, payload: Value| {
-        let key = wegent_execution_runtime::delivery::notification_key(
+        let key = wegent_execution_runtime::delivery::attempt_notification_key(
             event.task_id,
             event.subtask_id,
             step,
+            attempt,
         );
         super::socketio::publish_terminal_emit(redis, &key, name, room, payload).await
     };

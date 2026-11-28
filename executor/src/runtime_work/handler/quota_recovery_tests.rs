@@ -40,6 +40,7 @@ impl Drop for ProviderHold {
 
 fn queued_wait(task: &str, deadline: i64) -> SpawnTurnRequest {
     let mut turn = SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: task.into(),
         runtime: "codex".into(),

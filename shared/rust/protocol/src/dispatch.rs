@@ -171,6 +171,8 @@ pub const MODEL_CONFIG_KEY_ORDER: &[&str] = &[
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct ExecutionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Value>,
     pub task_id: i64,
     pub subtask_id: i64,
     pub subtask_next_id: Option<i64>,
@@ -258,6 +260,8 @@ pub struct ExecutionRequest {
     // part of this struct's wire shape, so chat-shell/SSE request bodies are
     // unchanged; only `device_execution_payload` renders them.
     #[serde(skip)]
+    pub device_execution_attempt_id: Option<String>,
+    #[serde(skip)]
     pub device_project_id: i64,
     #[serde(skip)]
     pub device_task_mode: String,
@@ -278,6 +282,7 @@ pub struct ExecutionRequest {
 impl Default for ExecutionRequest {
     fn default() -> Self {
         Self {
+            origin: None,
             task_id: 0,
             subtask_id: 0,
             subtask_next_id: None,
@@ -356,6 +361,7 @@ impl Default for ExecutionRequest {
             is_group_chat: false,
             history_limit: None,
             stateless: false,
+            device_execution_attempt_id: None,
             device_project_id: 0,
             device_task_mode: String::new(),
             device_timezone: DEVICE_TIMEZONE.to_string(),
@@ -529,6 +535,12 @@ pub fn device_execution_payload(request: &ExecutionRequest, device_id: &str) -> 
         };
         payload.insert(key.to_string(), value);
     }
+    if let Some(attempt) = &request.device_execution_attempt_id {
+        payload.insert(
+            "execution_attempt_id".into(),
+            Value::String(attempt.clone()),
+        );
+    }
     Value::Object(payload)
 }
 
@@ -583,6 +595,9 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
     };
 
     let mut metadata = Map::new();
+    if let Some(origin) = &request.origin {
+        metadata.insert("origin".into(), origin.clone());
+    }
     metadata.insert("task_id".into(), serde_json::json!(request.task_id));
     metadata.insert("subtask_id".into(), serde_json::json!(request.subtask_id));
     metadata.insert("user".into(), request.user.clone());

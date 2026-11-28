@@ -751,10 +751,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         collaboration_group_snapshot_for_dispatch(item=issue, execution=execution)
         == group
     )
-    assert (
-        execution.runtime_selection["group_runner_requirements"][agent.id]["model"]
-        == MODEL
-    )
+    assert execution.runtime_selection["runner_routing"]["model"] == MODEL
     claimed = loop_item_execution_service.claim_next_for_device(
         test_db,
         execution_device_id=runner.name,

@@ -98,18 +98,42 @@ pub(super) async fn compile_request(
     let continuing = context["comment_continue_task_id"]
         .as_str()
         .is_some_and(|id| !id.is_empty());
-    let mut payload =
-        compile_wire(app, command, actor, &context, request, prepared, continuing).await?;
+    let manager_execution_id = if group_dispatch {
+        Some(row.id)
+    } else if continuing && context["dispatch_role"] == "manager" {
+        Some(
+            authority::integer(&context["collaboration_dispatch_execution_id"])
+                .context("The collaboration manager dispatch is unavailable")?,
+        )
+    } else {
+        None
+    };
+    let mut payload = compile_wire(
+        app,
+        command,
+        actor,
+        &context,
+        request,
+        prepared,
+        if group_dispatch
+            || wegent_project_coordination::project_execution::is_group_execution(&context)
+        {
+            ExecutionIdentity::Group {
+                manager_execution_id,
+            }
+        } else {
+            ExecutionIdentity::Personal
+        },
+    )
+    .await?;
     if group_dispatch {
-        let members = member_profiles(app, command, row, prepared, &selection, &context).await?;
+        let members = dispatch_profiles(app, command, row, prepared, &selection, &context).await?;
         return Ok(json!({
-            "dispatchKind": "collaboration_group", "dispatchTaskId": prepared.runtime_task_id,
+            "dispatchProtocolVersion":context["dispatch_protocol_version"].as_i64().unwrap_or(1), "dispatchKind": "collaboration_group", "dispatchTaskId": prepared.runtime_task_id,
             "managerRuntimeRequest": payload, "memberRuntimeProfiles": members
         }));
     }
-    if continuing && context["dispatch_role"] == "manager" {
-        let dispatch_id = authority::integer(&context["collaboration_dispatch_execution_id"])
-            .context("The collaboration manager dispatch is unavailable")?;
+    if let Some(dispatch_id) = manager_execution_id {
         let dispatch: QueueExecutionRow = app
             .mysql
             .fetch_optional(
@@ -128,14 +152,19 @@ pub(super) async fn compile_request(
                 && crate::background_jobs::robot::authority::authorized(app, &original).await?,
             "The collaboration manager dispatch is unavailable"
         );
-        let members = member_profiles(app, command, row, prepared, &selection, &context).await?;
+        let members = dispatch_profiles(app, command, row, prepared, &selection, &context).await?;
         payload["runtimeHandle"] = json!({
-            "collaborationDispatchTaskId": dispatch.runtime_task_id,
+            "dispatchProtocolVersion":context["dispatch_protocol_version"].as_i64().unwrap_or(1), "collaborationDispatchTaskId": dispatch.runtime_task_id,
             "collaborationManagerContext": context["execution_prompt"],
             "collaborationMemberRuntimeProfiles": members
         });
     }
     Ok(payload)
+}
+
+enum ExecutionIdentity {
+    Personal,
+    Group { manager_execution_id: Option<i64> },
 }
 
 async fn compile_wire(
@@ -145,8 +174,11 @@ async fn compile_wire(
     context: &Value,
     mut request: Value,
     prepared: &ClaimPreparation,
-    continuing: bool,
+    identity: ExecutionIdentity,
 ) -> Result<Value> {
+    let continuing = context["comment_continue_task_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty());
     for device in [
         request["deviceId"].as_str(),
         request["workspaceSourceTask"]["deviceId"].as_str(),
@@ -178,6 +210,12 @@ async fn compile_wire(
     } else {
         message.to_owned()
     };
+    let (project_group_execution, manager_execution_id) = match identity {
+        ExecutionIdentity::Personal => (false, None),
+        ExecutionIdentity::Group {
+            manager_execution_id,
+        } => (true, manager_execution_id),
+    };
     let mut execution_request = runtime_rpc::direct_execution(
         app,
         &user,
@@ -185,8 +223,13 @@ async fn compile_wire(
         command.runtime_device_id,
         &prompt,
         request.get("modelSelection"),
+        manager_execution_id,
+        project_group_execution,
     )
     .await?;
+    if project_group_execution {
+        execution_request["task_data"] = json!({"project_group_execution":true});
+    }
     if let Some(trigger) = context["comment_trigger_message_id"]
         .as_str()
         .filter(|id| !id.trim().is_empty())
@@ -246,7 +289,7 @@ fn claude_application_prompt(message: &str, context: &Value) -> String {
     )
 }
 
-async fn member_profiles(
+async fn dispatch_profiles(
     app: &AppState,
     command: &super::device_pull::PullCommand<'_>,
     row: &QueueExecutionRow,
@@ -254,6 +297,9 @@ async fn member_profiles(
     selection: &Value,
     context: &Value,
 ) -> Result<Vec<Value>> {
+    if context["dispatch_protocol_version"] == 2 {
+        return Ok(Vec::new());
+    }
     let group = &context["collaboration_group"];
     ensure!(
         group.is_object(),
@@ -367,7 +413,9 @@ async fn member_profiles(
             &member_context,
             request,
             &template,
-            false,
+            ExecutionIdentity::Group {
+                manager_execution_id: None,
+            },
         )
         .await?;
         let name = [&agent.title, &agent.name]

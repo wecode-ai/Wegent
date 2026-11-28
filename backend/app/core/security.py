@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
-from app.core.session_token import is_user_session_payload
+from app.core.session_token import MODEL_INFERENCE_SCOPE, is_user_session_payload
 from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
@@ -82,7 +82,19 @@ def extract_authorization_token(authorization: Optional[str]) -> str:
 def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
-    """Get current authenticated user"""
+    user, _ = _authenticated_user(token, db, allow_inference=False)
+    return user
+
+
+def get_model_inference_user(
+    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+) -> tuple[User, int | None]:
+    return _authenticated_user(token, db, allow_inference=True)
+
+
+def _authenticated_user(
+    token: str, db: Session, *, allow_inference: bool
+) -> tuple[User, int | None]:
     with _get_tracer().start_as_current_span("auth.get_current_user") as span:
         # Set auth method attributes
         if is_telemetry_enabled():
@@ -93,7 +105,7 @@ def get_current_user(
 
         try:
             # Verify token
-            token_data = verify_token(token)
+            token_data = verify_token(token, allow_inference=allow_inference)
             username = token_data.get("username")
 
             if is_telemetry_enabled():
@@ -134,7 +146,7 @@ def get_current_user(
                 span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                 _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-            return user
+            return user, token_data.get("model_kind_id")
         except HTTPException:
             raise
         except Exception as e:
@@ -261,7 +273,7 @@ def authenticate_user(
         return user
 
 
-def verify_token(token: str) -> Dict[str, Any]:
+def verify_token(token: str, *, allow_inference: bool = False) -> Dict[str, Any]:
     """
     Verify token
 
@@ -284,13 +296,24 @@ def verify_token(token: str) -> Dict[str, Any]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        if not is_user_session_payload(payload):
+        inference = (
+            allow_inference
+            and payload.get("scope") == MODEL_INFERENCE_SCOPE
+            and payload.get("token_use") is None
+        )
+        if not inference and not is_user_session_payload(payload):
             raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
         token_data = TokenData(username=username)
-        return {"username": token_data.username}
+        verified = {"username": token_data.username}
+        if inference:
+            binding = payload.get("model_kind_id")
+            if type(binding) is not int or binding <= 0:
+                raise credentials_exception
+            verified["model_kind_id"] = binding
+        return verified
     except JWTError:
         raise credentials_exception
 
@@ -1080,6 +1103,12 @@ def get_current_user_jwt_apikey_tasktoken(
                 # Get user from database using user_id from task token
                 user = db.query(User).filter(User.id == token_info.user_id).first()
                 if user and user.is_active:
+                    request.state.device_manager_execution_id = (
+                        token_info.device_manager_execution_id
+                    )
+                    request.state.execution_task_identity = token_info
+                    request.state.execution_task_id = token_info.task_id
+                    request.state.execution_subtask_id = token_info.subtask_id
                     if is_telemetry_enabled():
                         span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                         span.set_attribute(SpanAttributes.USER_ID, str(user.id))
@@ -1114,6 +1143,22 @@ def get_current_user_jwt_apikey_tasktoken(
             detail="Missing authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def get_personal_resource_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> User:
+    """Only a personal execution can exercise the user's own resource grants."""
+    from app.services.auth.task_token import is_project_group_task
+
+    token = getattr(request.state, "execution_task_identity", None)
+    if token is not None and is_project_group_task(db, token):
+        raise HTTPException(
+            status_code=403, detail="Personal resource access is unavailable"
+        )
+    return user
 
 
 def get_current_user_optional(

@@ -251,7 +251,36 @@ def prepare_execution_session(
             api_key_name=api_key_name,
         )
 
+    task = None
+    subtask_user_id = user.id
+
+    if task_id:
+        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
     team_crd = _load_team_crd(team)
+    if task is not None and team_crd is not None:
+        from app.services.adapters.pipeline_stage import (
+            resolve_pipeline_stage_bot,
+            validate_pipeline_team,
+        )
+
+        try:
+            validate_pipeline_team(task, team)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if team_crd.spec.collaborationModel == "pipeline":
+            _, bot = resolve_pipeline_stage_bot(db, task, team, team_crd)
+            bot_ids_override = [bot.id]
+
     if team_crd is not None and not team_crd.spec.members:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -284,21 +313,7 @@ def prepare_execution_session(
             detail="No valid bots found in team",
         )
 
-    task = None
-    subtask_user_id = user.id
-
-    if task_id:
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
-        if task.client_origin != resolved_task_params.client_origin:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
+    if task is not None:
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if ensure_task_device_id(task, device_id=resolved_task_params.device_id):

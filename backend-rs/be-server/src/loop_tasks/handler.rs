@@ -63,7 +63,7 @@ pub(crate) struct BindingResponse {
     cloud_project_id: String,
     loop_item_id: Option<String>,
     task_user_id: i32,
-    device_id: String,
+    device_id: Option<String>,
     task_id: String,
     task_title: Option<String>,
     backend_task_id: Option<i64>,
@@ -143,7 +143,7 @@ mod tests {
             cloud_project_id: Some("2753648597973755964".to_string()),
             loop_item_id: Some("WEWORK2D8526-6".to_string()),
             task_user_id: 2230,
-            device_id: "electron-32a59c25-c738-4261-9eee-f80b14e24aa4".to_string(),
+            device_id: Some("electron-32a59c25-c738-4261-9eee-f80b14e24aa4".to_string()),
             task_id: "runtime-719076255".to_string(),
             task_title: Some("通用 MCP OAuth Server 支持".to_string()),
             backend_task_id: Some(0),
@@ -161,6 +161,8 @@ mod tests {
         for (stored, expected) in [(None, None), (Some(0), None), (Some(42), Some(42))] {
             let mut row = binding(serde_json::json!({}));
             row.backend_task_id = stored;
+            row.device_id = None;
+            assert_eq!(binding_response(&row)["device_id"], serde_json::Value::Null);
 
             assert_eq!(
                 binding_response(&row)["backend_task_id"],

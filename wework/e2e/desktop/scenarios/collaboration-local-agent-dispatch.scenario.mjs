@@ -180,10 +180,10 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     scoped('[data-testid="cloud-todo-detail-assignee"]'),
     { value: 'data-value' }
   )
-  assert.notEqual(
+  assert.equal(
     target,
     `agent:${agentId}`,
-    'Assignment must persist a project binding distinct from the workspace source'
+    'Assignment must bind the workspace Team by its stable identity'
   )
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
   const project = (await rpc('projects.list', {})).find(candidate => candidate.name === PROJECT)

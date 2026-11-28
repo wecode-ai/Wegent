@@ -302,6 +302,7 @@ fn response_fixture() -> LoopItemResponse {
         status_history: Vec::new(),
         approval: None,
         human_task_binding: None,
+        coordination: None,
         queued_at: None,
         execution_note: None,
         execution_error: None,

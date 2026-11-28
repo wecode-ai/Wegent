@@ -102,9 +102,12 @@ pub(super) async fn recover_stalled_shared_turn(
         ],
     );
     if restarted {
-        return Err(format!(
-            "codex app-server turn made no model or tool progress for {timeout_seconds}s; the shared app-server was restarted"
-        ));
+        let mut message =
+            format!("codex app-server turn made no model or tool progress for {timeout_seconds}s");
+        if client.state.lock().await.private_turn.is_none() {
+            message.push_str("; the shared app-server was restarted");
+        }
+        return Err(message);
     }
     Ok(())
 }

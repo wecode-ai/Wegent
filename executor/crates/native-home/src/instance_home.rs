@@ -43,7 +43,7 @@ impl TaskSkillsDirectory {
 /// Shell-only requests retain the application's managed native Home.
 pub fn request_home(request: &ExecutionRequest) -> Option<PathBuf> {
     // Direct Wework profiles carry runtime Bot IDs but do not own a backend Team.
-    if request.extra.get("team_id") == Some(&json!(0)) {
+    if request.extra.get("team_id") == Some(&json!(0)) && !personal_team(request) {
         return None;
     }
     let bot = match &request.bot {
@@ -51,7 +51,8 @@ pub fn request_home(request: &ExecutionRequest) -> Option<PathBuf> {
         Value::Object(_) => &request.bot,
         _ => return None,
     };
-    if bot.get("id").and_then(positive_id).is_none()
+    if !personal_team(request)
+        && bot.get("id").and_then(positive_id).is_none()
         && request.extra.get("team_id").and_then(positive_id).is_none()
     {
         return None;
@@ -82,8 +83,30 @@ fn path_component(value: &str) -> Result<&str, String> {
     Ok(value)
 }
 
+pub fn personal_team(request: &ExecutionRequest) -> bool {
+    request.extra.get("team_id") == Some(&json!(0))
+        && request
+            .extra
+            .get("team_ref")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("stand-in-team-"))
+        && request.bot[0]["native_capability_scope"] == "bot"
+}
+
 fn named_home_at(root: &Path, request: &ExecutionRequest) -> Result<PathBuf, String> {
-    let home = home_with_user(root, request, current_user_component(request)?)?;
+    let home = if personal_team(request) {
+        let owner = request_user_id(request).ok_or("Personal Team owner is missing")?;
+        let team = request
+            .extra
+            .get("team_ref")
+            .and_then(Value::as_str)
+            .ok_or("Personal Team identity is missing")?;
+        root.join("personal-teams")
+            .join(owner)
+            .join(path_component(team)?)
+    } else {
+        home_with_user(root, request, current_user_component(request)?)?
+    };
     if request
         .extra
         .get("collaboration_model")
@@ -97,7 +120,15 @@ fn named_home_at(root: &Path, request: &ExecutionRequest) -> Result<PathBuf, Str
             .unwrap_or(&request.bot);
         let id = bot
             .get("id")
-            .and_then(positive_id)
+            .and_then(|value| {
+                positive_id(value).or_else(|| {
+                    personal_team(request)
+                        .then(|| value.as_str())
+                        .flatten()
+                        .and_then(|id| path_component(id).ok())
+                        .map(str::to_owned)
+                })
+            })
             .ok_or("Pipeline Bot identity is missing")?;
         return Ok(home.join("bots").join(id));
     }
@@ -256,6 +287,11 @@ fn backend_identity(value: &str) -> Result<String, String> {
 
 fn request_identity(request: &ExecutionRequest) -> Result<Value, String> {
     let mut identity = legacy_identity(request)?;
+    if personal_team(request) {
+        named_home_at(Path::new(""), request)?;
+        identity["team_ref"] = request.extra["team_ref"].clone();
+        return Ok(identity);
+    }
     current_user_component(request)?;
     namespace_component(
         request

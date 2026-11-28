@@ -30,7 +30,7 @@ pub async fn build<M: Mysql>(
         .connect_timeout(Duration::from_millis(400))
         .read_timeout(Duration::from_secs(5))
         .build()?;
-    let connect_redis = || async {
+    let connect_redis = async {
         let redis_config = crate::config::RedisConfig::from_urls(
             &config.redis_url,
             config.redis_slave_url.as_deref(),
@@ -47,17 +47,10 @@ pub async fn build<M: Mysql>(
             RedisService::noshard_with_options(master, [slave], redis_options).await?,
         )
     };
-    let redis = match connect_redis().await {
+    let redis = match connect_redis.await {
         Ok(redis) => Some(redis),
         Err(error) => {
             tracing::warn!(%error, "failed to connect Redis service; continuing without Redis-backed caches");
-            None
-        }
-    };
-    let kinds_redis = match connect_redis().await {
-        Ok(redis) => Some(redis),
-        Err(error) => {
-            tracing::warn!(%error, "failed to connect kinds Redis service; continuing without the kinds cache");
             None
         }
     };
@@ -68,7 +61,6 @@ pub async fn build<M: Mysql>(
         task_store,
         http,
         redis,
-        kinds_redis,
         erp,
         entity_resolvers,
         crate::remote_workspace_status::app_state::VideoRefresh {

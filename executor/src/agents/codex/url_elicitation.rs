@@ -177,56 +177,44 @@ mod tests {
 
     #[tokio::test]
     async fn stand_in_routed_answers_cannot_grant_persistent_mcp_approval() {
-        for dedicated in [false, true] {
-            for (answer, action) in [
-                ("Allow", "accept"),
-                ("Allow for this session", "decline"),
-                ("Allow and don't ask me again", "decline"),
-                ("Decline", "decline"),
-            ] {
-                let mut message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": {
-                    "mode": "form", "serverName": "wework_stand_in",
-                    "requestedSchema": {"type": "object", "properties": {}},
-                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"]}
-                }});
-                super::super::restrict_stand_in_approval(&mut message);
-                let (sender, mut receiver) = mpsc::channel(1);
-                sender
-                    .send(json!({"requestId": 0, "answers": {
-                        "__mcp_approval": {"answers": [answer]}
-                    }}))
-                    .await
-                    .unwrap();
-                let outcome = if dedicated {
-                    super::super::receive_mcp_server_elicitation_response(
-                        &message,
-                        Some(&mut receiver),
-                        false,
-                    )
-                    .await
-                    .unwrap()
+        for (answer, action) in [
+            ("Allow", "accept"),
+            ("Allow for this session", "decline"),
+            ("Allow and don't ask me again", "decline"),
+            ("Decline", "decline"),
+        ] {
+            let mut message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": {
+                "mode": "form", "serverName": "wework_stand_in",
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"]}
+            }});
+            super::super::restrict_stand_in_approval(&mut message);
+            let (sender, receiver) = mpsc::channel(1);
+            sender
+                .send(json!({"requestId": 0, "answers": {
+                    "__mcp_approval": {"answers": [answer]}
+                }}))
+                .await
+                .unwrap();
+            let outcome = shared_response(
+                &message,
+                Some(InteractionAnswerRouter::new(receiver)),
+                "0".to_owned(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(outcome.result["action"], action);
+            assert!(outcome.result["_meta"]["persist"].is_null());
+            assert_eq!(
+                outcome.response.unwrap()["answers"]["__mcp_approval"]["answers"],
+                json!([if answer == "Allow" {
+                    "Allow"
                 } else {
-                    shared_response(
-                        &message,
-                        Some(InteractionAnswerRouter::new(receiver)),
-                        "0".to_owned(),
-                        false,
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap()
-                };
-                assert_eq!(outcome.result["action"], action);
-                assert!(outcome.result["_meta"]["persist"].is_null());
-                assert_eq!(
-                    outcome.response.unwrap()["answers"]["__mcp_approval"]["answers"],
-                    json!([if answer == "Allow" {
-                        "Allow"
-                    } else {
-                        "Decline"
-                    }]),
-                );
-            }
+                    "Decline"
+                }]),
+            );
         }
     }
 
@@ -288,75 +276,62 @@ mod tests {
             "mode": "url", "threadId": "thread-1", "turnId": "turn-1",
             "url": "https://example.com/authorize", "elicitationId": "authorize-1"
         }});
-        for dedicated in [false, true] {
-            for (message, answers, action, status) in [
-                (
-                    &form,
-                    json!({"action": {"answers": ["Preview"]}}),
-                    "accept",
-                    "answered",
-                ),
-                (&form, json!({}), "cancel", "cancelled"),
-                (
-                    &url,
-                    json!({"__mcp_url": {"answers": ["accept"]}}),
-                    "accept",
-                    "answered",
-                ),
-                (
-                    &url,
-                    json!({"__mcp_url": {"answers": ["cancel"]}}),
-                    "cancel",
-                    "cancelled",
-                ),
-                (
-                    &url,
-                    json!({"__mcp_url": {"answers": ["decline"]}}),
-                    "decline",
-                    "cancelled",
-                ),
-            ] {
-                let response = json!({
-                    "requestId": "0", "interactionScope": "turn-1", "answers": answers
-                });
-                let (sender, mut receiver) = mpsc::channel(1);
-                sender.send(response.clone()).await.unwrap();
-                let outcome = if dedicated {
-                    super::super::receive_mcp_server_elicitation_response(
-                        message,
-                        Some(&mut receiver),
-                        false,
-                    )
-                    .await
-                    .unwrap()
-                } else {
-                    shared_response(
-                        message,
-                        Some(InteractionAnswerRouter::new(receiver)),
-                        "0".to_owned(),
-                        false,
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap()
-                };
-                assert_eq!(outcome.result["action"], action);
-                assert_eq!(outcome.response.as_ref(), Some(&response));
-                if message["params"]["mode"] == "form" && action == "accept" {
-                    assert_eq!(outcome.result["content"]["action"], "preview");
-                }
-                let settled =
-                    elicitation::settled(message, outcome.status, outcome.response.as_ref());
-                let payload =
-                    mcp_server_elicitation_request_user_input_params(&settled["params"]).unwrap();
-                assert_eq!(payload["interactionStatus"], status);
-                assert_eq!(
-                    payload["response"],
-                    json!({
-                        "requestId": 0, "interactionScope": "turn-1", "answers": answers
-                    })
-                );
+        for (message, answers, action, status) in [
+            (
+                &form,
+                json!({"action": {"answers": ["Preview"]}}),
+                "accept",
+                "answered",
+            ),
+            (&form, json!({}), "cancel", "cancelled"),
+            (
+                &url,
+                json!({"__mcp_url": {"answers": ["accept"]}}),
+                "accept",
+                "answered",
+            ),
+            (
+                &url,
+                json!({"__mcp_url": {"answers": ["cancel"]}}),
+                "cancel",
+                "cancelled",
+            ),
+            (
+                &url,
+                json!({"__mcp_url": {"answers": ["decline"]}}),
+                "decline",
+                "cancelled",
+            ),
+        ] {
+            let response = json!({
+                "requestId": "0", "interactionScope": "turn-1", "answers": answers
+            });
+            let (sender, receiver) = mpsc::channel(1);
+            sender.send(response.clone()).await.unwrap();
+            let outcome = shared_response(
+                message,
+                Some(InteractionAnswerRouter::new(receiver)),
+                "0".to_owned(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(outcome.result["action"], action);
+            assert_eq!(outcome.response.as_ref(), Some(&response));
+            if message["params"]["mode"] == "form" && action == "accept" {
+                assert_eq!(outcome.result["content"]["action"], "preview");
             }
+            let settled = elicitation::settled(message, outcome.status, outcome.response.as_ref());
+            let payload =
+                mcp_server_elicitation_request_user_input_params(&settled["params"]).unwrap();
+            assert_eq!(payload["interactionStatus"], status);
+            assert_eq!(
+                payload["response"],
+                json!({
+                    "requestId": 0, "interactionScope": "turn-1", "answers": answers
+                })
+            );
         }
     }
 }

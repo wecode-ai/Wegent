@@ -158,6 +158,20 @@ fn internal(error: MysqlError) -> FastApiError {
     FastApiError::internal()
 }
 
+pub(crate) async fn owns_role_team(
+    tx: &mut impl MysqlTransaction,
+    owner: i32,
+    role: &str,
+    team_id: i64,
+) -> MysqlResult<bool> {
+    let identity:Option<i64> = tx.fetch_optional(
+        "SELECT 1 FROM kinds account JOIN JSON_TABLE(account.json,'$.spec.identities[*]' COLUMNS(role_id VARCHAR(64) PATH '$.roleId',name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.teamRef.name',namespace VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.teamRef.namespace')) identity_ref
+         JOIN kinds team ON team.user_id=account.user_id AND team.kind='Team' AND team.namespace=account.namespace AND team.namespace=identity_ref.namespace AND team.name=identity_ref.name AND team.is_active=TRUE
+         WHERE account.kind=? AND account.name=? AND account.namespace=? AND account.user_id=? AND account.is_active=TRUE AND BINARY identity_ref.role_id=? AND team.id=? LIMIT 1",
+        (ACCOUNT_KIND,DEFAULT_NAME,NAMESPACE,owner,role,team_id)).await?;
+    Ok(identity.is_some())
+}
+
 fn view(rows: &[Row]) -> MysqlResult<Value> {
     let resources: HashMap<_, _> = rows
         .iter()
@@ -173,35 +187,22 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
     let definitions = identities
         .iter()
         .map(|identity| {
-            let team_name = identity["teamRef"]["name"]
-                .as_str()
-                .ok_or(MysqlError::RowNotFound)?;
-            let team = resources
-                .get(&("Team", team_name))
-                .ok_or(MysqlError::RowNotFound)?;
-            let [member] = team["spec"]["members"]
-                .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-            else {
-                return Err(MysqlError::RowNotFound);
+            let resolve = |kind, reference: &Value| {
+                if reference["namespace"] != NAMESPACE { return Err(MysqlError::RowNotFound); }
+                resources.get(&(kind, reference["name"].as_str().ok_or(MysqlError::RowNotFound)?))
+                    .copied().ok_or(MysqlError::RowNotFound)
             };
-            if team["spec"]["collaborationModel"] != "solo" {
-                return Err(MysqlError::RowNotFound);
+            let team = resolve("Team", &identity["teamRef"])?;
+            let mut members = Vec::new();
+            for member in team["spec"]["members"].as_array().ok_or(MysqlError::RowNotFound)? {
+                let bot = resolve("Bot", &member["botRef"])?;
+                let ghost = resolve("Ghost", &bot["spec"]["ghostRef"])?;
+                members.push(json!({"member":member,"bot":bot,"ghost":ghost}));
             }
-            let name = member["botRef"]["name"]
-                .as_str()
-                .ok_or(MysqlError::RowNotFound)?;
-            let bot = resources
-                .get(&("Bot", name))
-                .ok_or(MysqlError::RowNotFound)?;
-            let ghost_name = bot["spec"]["ghostRef"]["name"]
-                .as_str()
-                .ok_or(MysqlError::RowNotFound)?;
-            let ghost = resources
-                .get(&("Ghost", ghost_name))
-                .ok_or(MysqlError::RowNotFound)?;
-            Ok(json!({"roleId":identity["roleId"],"team":team,"bot":bot,"ghost":ghost}))
+            let primary = members.iter().find(|entry| entry["member"]["role"] == "leader").or_else(|| members.first()).ok_or(MysqlError::RowNotFound)?;
+            let bot = &primary["bot"];
+            let ghost = &primary["ghost"];
+            Ok(json!({"roleId":identity["roleId"],"bot":bot,"ghost":ghost,"team":team,"members":members}))
         })
         .collect::<MysqlResult<Vec<_>>>()?;
     let retired = spec["retiredRoleIds"]
@@ -245,6 +246,15 @@ fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
     })
 }
 
+fn solo_team(bot: &Value, reference: &Value) -> Value {
+    resource(
+        "Team",
+        reference["name"].as_str().unwrap(),
+        bot["metadata"]["displayName"].as_str().unwrap_or_default(),
+        json!({"collaborationModel":"solo","members":[{"botRef":reference,"role":"leader"}],"bind_mode":["task"]}),
+    )
+}
+
 fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
@@ -271,16 +281,7 @@ fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
-    let team = resource(
-        "Team",
-        &name,
-        &definition.name,
-        json!({
-            "collaborationModel":"solo",
-            "members":[{"botRef":reference,"role":"leader"}],
-            "bind_mode":["task"]
-        }),
-    );
+    let team = solo_team(&bot, &reference);
     (
         json!({"roleId":definition.role_id,"teamRef":reference}),
         [ghost, bot, team],
@@ -369,6 +370,14 @@ async fn read_account(mysql: &brz_mysql::MysqlService, user: i64) -> MysqlResult
     let rows: Vec<Row> = mysql
         .with_transaction(async |tx| tx.fetch_all(SELECT, (user, NAMESPACE)).await)
         .await?;
+    if needs_migration(&rows) {
+        return mysql
+            .with_transaction(async |tx| {
+                lock_account_owner(tx, user).await?;
+                view(&account_rows(tx, user).await?)
+            })
+            .await;
+    }
     view(&rows)
 }
 
@@ -389,6 +398,60 @@ async fn initialize(
         .map_err(internal)
 }
 
+fn needs_migration(rows: &[Row]) -> bool {
+    rows.iter()
+        .filter(|row| row.kind == ACCOUNT_KIND)
+        .any(|row| {
+            row.document.0["spec"].get("defaultTeamRef").is_none()
+                || row.document.0["spec"]["identities"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id.get("teamRef").is_none()))
+        })
+}
+
+async fn account_rows(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<Vec<Row>> {
+    let rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+    if !needs_migration(&rows) {
+        return Ok(rows);
+    }
+    let mut account = rows
+        .iter()
+        .find(|r| r.kind == ACCOUNT_KIND && r.name == DEFAULT_NAME)
+        .ok_or(MysqlError::RowNotFound)?
+        .document
+        .0
+        .clone();
+    let bots: HashMap<_, _> = rows
+        .iter()
+        .filter(|r| r.kind == "Bot")
+        .map(|r| (r.name.as_str(), &r.document.0))
+        .collect();
+    let mut teams = Vec::new();
+    for id in account["spec"]["identities"]
+        .as_array_mut()
+        .ok_or(MysqlError::RowNotFound)?
+    {
+        if id.get("teamRef").is_some() {
+            continue;
+        }
+        let reference = id["botRef"].clone();
+        if reference["namespace"] != NAMESPACE {
+            return Err(MysqlError::RowNotFound);
+        }
+        let bot = bots
+            .get(reference["name"].as_str().ok_or(MysqlError::RowNotFound)?)
+            .ok_or(MysqlError::RowNotFound)?;
+        teams.push(solo_team(bot, &reference));
+        id["teamRef"] = reference;
+    }
+    account["spec"]["defaultTeamRef"] = json!({"name":DEFAULT_NAME,"namespace":NAMESPACE});
+    if !teams.is_empty() {
+        insert_documents(tx, user, teams).await?;
+    }
+    update_document(tx, user, &account).await?;
+    tx.fetch_all(SELECT, (user, NAMESPACE)).await
+}
+
 async fn initialize_for(
     mysql: &brz_mysql::MysqlService,
     user: i64,
@@ -399,7 +462,7 @@ async fn initialize_for(
             // Acquire the existing user row before the first consistent read. Concurrent
             // initializers see the winner's commit without locking an empty Kind index range.
             lock_account_owner(tx, user).await?;
-            let current = view(&tx.fetch_all(SELECT, (user, NAMESPACE)).await?)?;
+            let current = view(&account_rows(tx, user).await?)?;
             if !current["assistant"].is_null() {
                 return Ok(current);
             }
@@ -559,7 +622,7 @@ async fn set_stop_intent(
                 return Ok(StopIntentOutcome::DeviceNotFound);
             };
             let device_id = crate::device_identity::record_route_id(&device);
-            let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+            let mut rows = account_rows(tx, user).await?;
             let Some(account) = rows
                 .iter_mut()
                 .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
@@ -586,8 +649,8 @@ async fn replace_definitions(
     body: DefinitionChange,
 ) -> MysqlResult<Option<Value>> {
     mysql.with_transaction(async |tx| {
-        lock_account_owner(tx, user).await?;
-        let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+        lock_account_owner(tx,user).await?;
+        let mut rows = account_rows(tx,user).await?;
         let current = view(&rows)?;
         if current["assistant"]["revision"] != body.revision {
             return Ok(None);
@@ -632,10 +695,15 @@ async fn replace_definitions(
                 additions.extend(documents);
             }
         }
+        let retired_teams: HashSet<_> = previous.values().filter_map(|entry|entry["team"]["metadata"]["name"].as_str()).collect();
+        let retained_bots: HashSet<_> = rows.iter().filter(|row| row.kind=="Team" && !retired_teams.contains(row.name.as_str()))
+            .flat_map(|row|row.document.0["spec"]["members"].as_array().into_iter().flatten())
+            .filter_map(|member|member["botRef"]["name"].as_str()).collect();
         for entry in previous.into_values() {
             let role_id = entry["roleId"].as_str().ok_or(MysqlError::RowNotFound)?;
             retired.insert(role_id.to_string());
-            for resource in ["team", "bot", "ghost"] {
+            for resource in ["bot", "ghost", "team"] {
+                if resource != "team" && retained_bots.contains(entry["bot"]["metadata"]["name"].as_str().unwrap_or_default()) {continue;}
                 let document = &entry[resource];
                 let (kind, name) = document_key(document)?;
                 tx.execute(

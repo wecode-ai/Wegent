@@ -149,6 +149,7 @@ def prepare_assignment(
     else:
         selected_environment = str(environment or "local")
     runtime_selection = {
+        "team_ref": persisted_config.get("wegent_team_id") or config.get("teamRef"),
         "runtime_source": runtime_source,
         "runtime_profile_id": runtime_profile.id if runtime_profile else None,
         "runtime_profile_version": (
@@ -171,7 +172,9 @@ def prepare_assignment(
             issue_id=loop_item_id,
             user_id=assigner_user_id,
             selection=effective_context.get("runner_selection"),
-            automatic=bool(effective_context.get("run_id")),
+            automatic=bool(
+                effective_context.get("automatic", effective_context.get("run_id"))
+            ),
             session_environment_id=session_environment_id,
             # The assignment stores the model selection; it must keep working
             # after an admin hides that model from new selections.
@@ -193,10 +196,20 @@ def prepare_assignment(
         workspace_binding_required=workspace_binding_required,
         workspace_binding=effective_context.get("workspace_binding"),
     )
+    executor_kind = "project_robot"
+    if (
+        effective_context.get("dispatch_kind") == "collaboration_group"
+        and effective_context.get("dispatch_role") == "manager"
+        and not effective_context.get("comment_continue_task_id")
+    ):
+        executor_kind = "collaboration_group_dispatch"
+        runtime_selection["executor_kind"] = executor_kind
+        # Dispatch can be claimed by an authorized device in the configured environment.
+        waiting_runtime = False
     return dict(
         loop_item_id=loop_item_id,
         cloud_project_id=cloud_project_id,
-        executor_type="project_robot",
+        executor_type=executor_kind,
         owner_user_id=owner_user_id,
         agent_id=agent.id,
         team_id=team_id,

@@ -92,6 +92,22 @@ export function IssueActivityPanel({
   onOpenAttachment?(id: string, filename: string): void
   onOpenExecution?(target: RuntimeExecutionTarget): void
 }) {
+  const platformTaskBindings = useMemo(
+    () => {
+      const bindings = new Map<number, SharedIssueDetailTaskBinding>()
+      for (const binding of taskBindings) {
+        if (
+          binding.backend_task_id &&
+          binding.loop_item_id === issue.id &&
+          binding.cloud_project_id === issue.cloud_project_id
+        ) {
+          bindings.set(binding.backend_task_id, binding)
+        }
+      }
+      return bindings
+    },
+    [taskBindings, issue.id, issue.cloud_project_id]
+  )
   const latestComments = useRef(comments)
   latestComments.current = comments
   const chat = useIssueProjectChat(api.activity, issue.cloud_project_id, issue.id, issue.version)
@@ -296,6 +312,7 @@ export function IssueActivityPanel({
                     remove={api.attachments ? id => api.attachments!.remove(id) : undefined}
                     translate={translate}
                     executions={executions}
+                    platformTaskBindings={platformTaskBindings}
                     singleExecutionForMessage={message =>
                       isSingleActivityExecution(addressedMessages, message)
                     }

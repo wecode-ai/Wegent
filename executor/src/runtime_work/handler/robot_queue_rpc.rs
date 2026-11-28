@@ -477,8 +477,17 @@ impl RuntimeWorkRpcHandler {
                 "queued" | "pending" => Some("queued"),
                 "failed" | "error" => Some("failed"),
                 "cancelled" | "canceled" | "interrupted" => Some("cancelled"),
-                "done" | "completed" | "succeeded" => Some("succeeded"),
-                _ if link.completed_at.is_some() => Some("succeeded"),
+                _ if matches!(link.status.as_str(), "done" | "completed" | "succeeded")
+                    || link.completed_at.is_some() =>
+                {
+                    Some(
+                        if personal_pipeline::project_pipeline_has_next_stage(link) {
+                            "running"
+                        } else {
+                            "succeeded"
+                        },
+                    )
+                }
                 _ => None,
             }
         }

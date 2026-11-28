@@ -156,6 +156,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
         .filter(|value| value.is_object())
         .cloned()
     {
+        // A continued conversation keeps its immutable origin but starts with a new queue claim.
+        if origin["projectStore"] == "local" {
+            if let Some(id) = origin["executionId"].as_i64() {
+                request
+                    .extra
+                    .insert("localExecutionClaimId".into(), json!(id));
+            }
+        }
         request.extra.insert("origin".to_owned(), origin);
     }
     if let Some(model_selection) = payload
@@ -237,7 +245,11 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
-        .or_else(|| payload.get("collaboration_model"))
+        .or_else(|| {
+            payload
+                .get("collaboration_model")
+                .filter(|mode| *mode != "solo")
+        })
         .or_else(|| {
             payload
                 .get("modelOptions")
@@ -358,6 +370,19 @@ pub(crate) fn runtime_origin(runtime_handle: &Value) -> Option<&Value> {
 }
 
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if runtime_handle.pointer("/executionRequest/task_data/project_group_execution")
+        == Some(&Value::Bool(true))
+        || runtime_origin(runtime_handle).is_some_and(ExecutionRequest::project_group_origin)
+    {
+        // A generic personal send does not grant its login or model session to this group.
+        if !request.project_group_execution() {
+            request.auth_token = None;
+            request.runtime_auth_token = None;
+            request.skill_identity_token = None;
+            request.model_config = json!({});
+        }
+        request.retain_project_group_scope();
+    }
     if let Some(delegation) = runtime_handle.pointer("/executionRequest/standInDelegation") {
         request
             .extra
@@ -1208,7 +1233,7 @@ mod tests {
 
         apply_runtime_payload_metadata(
             &mut request,
-            &json!({"modelOptions": {"collaborationMode": "coordinate"}}),
+            &json!({"collaboration_model": "solo", "modelOptions": {"collaborationMode": "coordinate"}}),
         );
 
         assert_eq!(

@@ -601,8 +601,15 @@ impl RuntimeWorkRpcHandler {
                 return Ok(response);
             }
         }
+        let platform_history = !direct_thread_override
+            && local_link
+                .as_ref()
+                .is_some_and(RuntimeTaskLink::has_platform_history);
         if navigation_only {
-            if let Some(link) = local_link.as_ref().filter(|link| link.ephemeral) {
+            if let Some(link) = local_link
+                .as_ref()
+                .filter(|link| link.ephemeral || platform_history)
+            {
                 let mut messages = cached_temporary_transcript_messages(link);
                 append_unique_transcript_messages(
                     &mut messages,
@@ -696,6 +703,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         if local_execution_running
+            && !platform_history
             && !refresh
             && !direct_thread_override
             && before_cursor.is_none()
@@ -757,13 +765,14 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = local_link.as_ref().filter(|link| {
             link.ephemeral
+                || platform_history
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
                 || (!bounded_native_page
                     && !direct_thread_override
                     && provider_transcript_is_unmaterialized(link))
         }) {
-            let mut messages = if link.ephemeral {
+            let mut messages = if link.ephemeral || platform_history {
                 let mut messages = cached_temporary_transcript_messages(link);
                 append_unique_transcript_messages(
                     &mut messages,
@@ -773,6 +782,9 @@ impl RuntimeWorkRpcHandler {
             } else {
                 cached_runtime_transcript_messages(link)
             };
+            if !direct_thread_override && is_claude_runtime(&link.runtime) {
+                messages.extend(self.pending_claude_approval_message(&local_task_id));
+            }
             let page_messages = messages.clone();
             attach_user_message_presentations_for_page(
                 &mut messages,

@@ -16,7 +16,7 @@ use super::super::{
     model_config::{
         build_agent_config, inline_agent_config_ready, process_model_config_placeholders,
     },
-    resolution::{resolve_bot, resolve_model_for_bot_with_override, resolve_model_name},
+    resolution::{resolve_bot, resolve_model_for_bot_with_override},
 };
 use super::{BuildExecutionRequestInput, dependency, model_resolution_error, resolve_shell_type};
 use crate::RequestServices;
@@ -26,7 +26,7 @@ use wegent_llm_proxy::CredentialRequest;
 
 /// Publish each compiled server once. Executor merges duplicate definitions by
 /// name and can otherwise carry headers across different endpoints.
-pub(super) fn keep_compiled_mcp_servers(request: &mut ExecutionRequest) {
+pub(crate) fn finalize_bot_grants(request: &mut ExecutionRequest) {
     let Some((leader, members)) = request
         .bot
         .as_array_mut()
@@ -34,26 +34,31 @@ pub(super) fn keep_compiled_mcp_servers(request: &mut ExecutionRequest) {
     else {
         return;
     };
-    let Some(servers) = leader["mcp_servers"].as_array_mut() else {
-        return;
-    };
-    // Skill MCPs are appended after Ghost MCPs, including late preloads.
-    let mut names = HashSet::new();
-    servers.reverse();
-    servers.retain(|server| {
-        server["name"]
-            .as_str()
-            .is_none_or(|name| names.insert(name.to_owned()))
-    });
-    servers.reverse();
+    leader["native_capability_scope"] = Value::String("bot".into());
     for member in members {
-        member["mcp_servers"] = Value::Array(Vec::new());
+        deduplicate_bot_servers(member);
     }
+    let names = deduplicate_bot_servers(leader);
     request.mcp_servers.retain(|server| {
         server["name"]
             .as_str()
             .is_none_or(|name| !names.contains(name))
     });
+}
+
+fn deduplicate_bot_servers(bot: &mut Value) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if let Some(servers) = bot["mcp_servers"].as_array_mut() {
+        // Skill MCPs follow Ghost MCPs and take precedence within this Bot.
+        servers.reverse();
+        servers.retain(|server| {
+            server["name"]
+                .as_str()
+                .is_none_or(|name| names.insert(name.to_owned()))
+        });
+        servers.reverse();
+    }
+    names
 }
 
 pub(super) async fn members(
@@ -63,12 +68,12 @@ pub(super) async fn members(
     leader_shell: &str,
 ) -> Result<Vec<Value>, FastApiError> {
     let mut configs = Vec::new();
-    let cache = KindCacheStore {
-        mysql: state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp),
-        resolvers: Some(state.entity_resolvers),
-    };
+    let cache = KindCacheStore::new(
+        state.mysql,
+        state.redis.as_ref(),
+        state.erp,
+        state.entity_resolvers,
+    );
     for member in input.team.json.0["spec"]["members"]
         .as_array()
         .into_iter()
@@ -189,7 +194,7 @@ async fn member_model(
     let override_name = labels["modelId"].as_str();
     let empty_config = Value::Object(Map::new());
     let raw = spec.get("agent_config").unwrap_or(&empty_config);
-    let resolved = match resolve_model_name(spec, force_override, override_name)
+    let resolved = match super::resolve_model_name(spec, force_override, override_name)
         .filter(|_| !inline_agent_config_ready(raw, force_override, override_name))
     {
         Some(name) => resolve_model_for_bot_with_override(

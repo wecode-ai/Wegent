@@ -467,12 +467,12 @@ async fn is_deep_research_protocol(
     ) else {
         return Ok(false);
     };
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let Some(bot) = cache
         .get_by_name_and_namespace_row(team.user_id, "Bot", namespace, name)
         .await?
@@ -1173,9 +1173,7 @@ pub async fn handle(
                 let Some(member) = members.get(next) else {
                     return Ok(Completion::Rollback(Err(error_ack("Pipeline stage is unavailable"))));
                 };
-                let mut selected = team.json.0.clone();
-                selected["spec"]["members"] = json!([member]);
-                stage_team = Some(selected);
+                stage_team = resolution::turn_team(&team.json.0,next);
                 if confirming_pipeline {
                     new_session = member["botRef"] != members[stage]["botRef"];
                     payload.message = payload.message.trim().to_owned();
@@ -1201,7 +1199,7 @@ pub async fn handle(
             } else if confirming_pipeline {
                 return Ok(Completion::Rollback(Err(error_ack("Stage confirmation is only available for pipeline teams"))));
             }
-            let bot_team = stage_team.as_ref().unwrap_or(&team.json.0);
+            let bot_team = stage_team.as_deref().unwrap_or(&team.json.0);
 
             // Follow-ups on a deep-research task are rejected before any
             // lookup of the interactive-form state.
@@ -1299,12 +1297,15 @@ pub async fn handle(
 
             // `get_bot_ids_from_team`: one cached reader lookup per team
             // member.
-            let cache = crate::task_skills::kinds::KindCacheStore {
-                mysql: &state.mysql,
-                redis: state.redis.as_ref(),
-                erp: Some(state.erp.as_ref()),
-                resolvers: Some(&state.entity_resolvers),
-            };
+            let cache = crate::task_skills::kinds::KindCacheStore::new(&state.mysql, state.redis.as_ref(), state.erp.as_ref(), &state.entity_resolvers);
+            if pipeline {
+                crate::responses::create::request::authorize_pipeline(state,user_id,&team,payload.task_id.map(|id|(id,&scope.task_json))).await?;
+            }
+            if pipeline && payload.task_id.is_none()
+                && let Err(error) = crate::background_jobs::project::agents::readiness(state, &team, user_id, payload.force_override_bot_model.as_deref()).await
+            {
+                return Ok(Completion::Rollback(Err(error_ack(&error.to_string()))));
+            }
             let bots = match resolution::resolve_team_bots(&cache, team.user_id, bot_team).await
             {
                 Ok(bots) => bots,
@@ -1380,7 +1381,8 @@ pub async fn handle(
                 // binds on the task lookups.
                 owner_user_id: user_id as i32,
                 continuation,
-                history_window: None,
+                pipeline,
+            history_window: None,
                 team_id: team.id,
                 bot_ids: &bots.bot_ids,
                 create_assistant: should_trigger_ai,
@@ -1558,6 +1560,7 @@ pub async fn handle(
             let created_git_repository =
                 (setup.workspace_id != 0 && git_workspace).then(|| input.repository.to_json());
             let turn = ChatTurn {
+
                 task_id: setup.task_id,
                 is_subscription: scope.is_subscription,
                 user_subtask_id: setup.user_subtask_id,
@@ -2378,12 +2381,7 @@ mod tests {
     async fn the_first_available_bot_reads_members_in_order() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let cache: crate::task_skills::kinds::KindCacheStore<'_, _> =
-            crate::task_skills::kinds::KindCacheStore {
-                mysql: &mysql,
-                redis: None,
-                erp: None,
-                resolvers: None,
-            };
+            crate::task_skills::kinds::KindCacheStore::sql(&mysql);
         let team = json!({
             "spec": {"members": [
                 {"botRef": {"name": "first", "namespace": "ns-b"}},
@@ -2406,12 +2404,7 @@ mod tests {
     async fn a_team_without_members_resolves_no_bot() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let cache: crate::task_skills::kinds::KindCacheStore<'_, _> =
-            crate::task_skills::kinds::KindCacheStore {
-                mysql: &mysql,
-                redis: None,
-                erp: None,
-                resolvers: None,
-            };
+            crate::task_skills::kinds::KindCacheStore::sql(&mysql);
         let resolved = resolve_first_available_bot(&cache, 6501, &json!({"spec": {"members": []}}))
             .await
             .expect("no member means no read");

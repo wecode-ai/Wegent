@@ -433,3 +433,49 @@ it('accepts updated agent props without restarting member or group reads', async
   expect(api.projects.listCollaborationGroups).toHaveBeenCalledOnce()
   expect(api.members.list).toHaveBeenCalledOnce()
 })
+
+it.each([1, 2])(
+  'resolves a legacy creator receipt only for one new Agent (%i added)',
+  async (count) => {
+    const api = apiFor()
+    let acknowledge: () => Promise<void>
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () =>
+      root!.render(
+        <ProjectCollaborationGroups
+          api={api}
+          projectId="project"
+          agents={[agent]}
+          members={[]}
+          canManage
+          locale="en"
+          location="local"
+          agentConfiguration={{
+            renderLocalAgentCreator: ({ onCreated }) => {
+              acknowledge = onCreated
+              return null
+            },
+          }}
+        />,
+      ),
+    )
+    const added = Array.from({ length: count }, (_, index) => ({
+      id: 'new-' + index,
+      name: 'Reviewer',
+    }))
+    const accept = vi.fn(async () => {})
+    view.props!.agentActions!.renderCreator!({
+      onCreated: accept,
+      onClose: () => {},
+    })
+    vi.mocked(api.agents.list).mockResolvedValue([agent, ...added])
+    await act(async () => {
+      if (count === 1) await acknowledge()
+      else await expect(acknowledge()).rejects.toThrow()
+    })
+    if (count === 1) expect(accept).toHaveBeenCalledWith(added[0])
+    else expect(accept).not.toHaveBeenCalled()
+  },
+)

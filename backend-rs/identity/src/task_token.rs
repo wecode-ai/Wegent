@@ -57,6 +57,7 @@ pub struct TaskTokenIdentity {
     pub user_name: String,
     /// `token_info.expire_at` (`payload["exp"]`, `0` when absent).
     pub expire_at: i64,
+    pub project_group_execution: bool,
 }
 
 /// The token claim set.
@@ -73,6 +74,10 @@ struct TaskTokenClaims {
     user_id: i64,
     user_name: String,
     exp: Option<i64>,
+    #[serde(default)]
+    project_group_execution: bool,
+    device_manager_execution_id: Option<i64>,
+    dispatch_id: Option<String>,
 }
 
 /// `extract_token_from_header`: the credential of a two-token
@@ -102,7 +107,21 @@ pub fn verify(config: &AuthConfig, authorization: Option<&str>) -> Option<TaskTo
         subtask_id: claims.subtask_id,
         user_name: claims.user_name,
         expire_at: claims.exp.unwrap_or(0),
+        project_group_execution: claims.project_group_execution
+            || claims.device_manager_execution_id.is_some()
+            || claims
+                .dispatch_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("collaboration-group:")),
     })
+}
+
+/// Personal connection grants belong to the caller only in a personal execution.
+pub fn verify_personal_connector(
+    config: &AuthConfig,
+    authorization: Option<&str>,
+) -> Option<TaskTokenIdentity> {
+    verify(config, authorization).filter(|identity| !identity.project_group_execution)
 }
 
 /// Decode a task token with the active key, then each legacy key.
@@ -202,6 +221,26 @@ mod tests {
         assert_eq!(identity.subtask_id, 9001);
         assert_eq!(identity.user_name, "example-user");
         assert_eq!(identity.expire_at, 1893456000);
+    }
+
+    #[test]
+    fn project_group_tokens_keep_task_authority_without_personal_connector_access() {
+        for (claim, value) in [
+            ("project_group_execution", serde_json::json!(true)),
+            ("device_manager_execution_id", serde_json::json!(42)),
+            (
+                "dispatch_id",
+                serde_json::json!("collaboration-group:42:assignment"),
+            ),
+        ] {
+            let mut claims = task_claims();
+            claims[claim] = value;
+            let header = format!("Bearer {}", token_for(claims));
+            assert!(verify(&config(), Some(&header)).is_some());
+            assert!(verify_personal_connector(&config(), Some(&header)).is_none());
+        }
+        let personal = format!("Bearer {}", token_for(task_claims()));
+        assert!(verify_personal_connector(&config(), Some(&personal)).is_some());
     }
 
     #[test]

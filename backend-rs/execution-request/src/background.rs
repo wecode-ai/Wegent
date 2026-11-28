@@ -3,11 +3,9 @@ use super::{
     dispatch::ExecutionRequest,
     request::{self, BuildExecutionRequestInput},
     resolution,
-    skills::{BotSkills, append_coding_mcp, is_coding_shell},
 };
 use crate::RequestServices;
 use serde_json::Value;
-use std::collections::BTreeSet;
 use wegent_http_compat::FastApiError;
 
 pub(super) async fn build(
@@ -16,17 +14,8 @@ pub(super) async fn build(
     is_subscription: bool,
     preload_skills: &[Value],
 ) -> Result<ExecutionRequest, FastApiError> {
-    let mut request = request::build_request(
-        state,
-        input,
-        is_subscription,
-        preload_skills,
-        // The leader's resolved Skill set grows with the member merges below, so
-        // `finalize` compiles its coding MCP servers from the merged set.
-        false,
-        None,
-    )
-    .await?;
+    let mut request =
+        request::build_request(state, input, is_subscription, preload_skills, None).await?;
     let mut configs = request.bot.as_array().cloned().unwrap_or_default();
     let leader_id = configs.first().and_then(|bot| bot["id"].as_i64());
     for member in additional_members(&request.collaboration_model, &input.team.json.0) {
@@ -53,26 +42,21 @@ pub(super) async fn build(
             team_member_prompt: member["prompt"].as_str(),
             ..*input
         };
-        let compiled = request::build_request(
-            state,
-            &member_input,
-            is_subscription,
-            preload_skills,
-            // Only the leader is a coding executor in the source's merge; a
-            // member's Servers reach it through `merge_leader_capabilities`.
-            false,
-            None,
-        )
-        .await?;
+        let compiled =
+            request::build_request(state, &member_input, is_subscription, preload_skills, None)
+                .await?;
         if let Some(config) = compiled.bot.as_array().and_then(|bots| bots.first()) {
             configs.push(config.clone());
         }
-        if request.collaboration_model == "coordinate" && coding(configs.first()) {
-            merge_skills(&mut request, &compiled);
-        }
     }
-    finalize(&mut request, &mut configs);
     request.bot = Value::Array(configs);
+    if request.collaboration_model == "coordinate"
+        && request.bot[0]["shell_type"]
+            .as_str()
+            .is_some_and(crate::skills::is_coding_shell)
+    {
+        request::coordinate::finalize_bot_grants(&mut request);
+    }
     Ok(request)
 }
 
@@ -86,105 +70,10 @@ fn additional_members<'a>(mode: &str, team: &'a Value) -> Vec<&'a Value> {
         .flatten()
         .collect()
 }
-fn coding(bot: Option<&Value>) -> bool {
-    bot.and_then(|bot| bot["shell_type"].as_str())
-        .is_some_and(is_coding_shell)
-}
-fn merge_skills(request: &mut ExecutionRequest, member: &ExecutionRequest) {
-    for skill in &member.skill_configs {
-        if !request
-            .skill_configs
-            .iter()
-            .any(|existing| existing["name"] == skill["name"])
-        {
-            request.skill_configs.push(skill.clone());
-            if let Some(name) = skill.get("name") {
-                request.skill_names.push(name.clone());
-            }
-        }
-    }
-    if let (Some(target), Some(source)) = (
-        request.skill_refs.as_object_mut(),
-        member.skill_refs.as_object(),
-    ) {
-        for (name, reference) in source {
-            target
-                .entry(name.clone())
-                .or_insert_with(|| reference.clone());
-        }
-    }
-}
-fn finalize(request: &mut ExecutionRequest, configs: &mut [Value]) {
-    if configs.is_empty() {
-        return;
-    }
-    let is_coding = coding(configs.first());
-    if is_coding && request.collaboration_model == "coordinate" {
-        merge_leader_capabilities(configs);
-    }
-    for config in configs.iter_mut() {
-        let names = config["skills"].as_array().cloned().unwrap_or_default();
-        for name in names.iter().filter_map(Value::as_str) {
-            if let Some(reference) = request.skill_refs.get(name) {
-                config["skill_refs"][name] = reference.clone();
-            }
-        }
-    }
-    if is_coding {
-        let leader = &mut configs[0];
-        let shell = leader["shell_type"].as_str().unwrap_or("").to_owned();
-        let mut servers = leader["mcp_servers"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        append_coding_mcp(
-            &mut servers,
-            &BotSkills {
-                skills: request.skill_configs.clone(),
-                ..Default::default()
-            },
-            &shell,
-        );
-        leader["mcp_servers"] = Value::Array(servers);
-    }
-}
-pub(super) fn merge_leader_capabilities(configs: &mut [Value]) {
-    let mut servers = configs[0]["mcp_servers"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let mut skills = configs[0]["skills"].as_array().cloned().unwrap_or_default();
-    let mut server_names: BTreeSet<_> = servers
-        .iter()
-        .filter_map(|entry| entry["name"].as_str().map(str::to_owned))
-        .collect();
-    let mut skill_names: BTreeSet<_> = skills
-        .iter()
-        .filter_map(|entry| entry.as_str().map(str::to_owned))
-        .collect();
-    for config in &configs[1..] {
-        for server in config["mcp_servers"].as_array().into_iter().flatten() {
-            if let Some(name) = server["name"].as_str().filter(|name| !name.is_empty())
-                && server_names.insert(name.into())
-            {
-                servers.push(server.clone());
-            }
-        }
-        for skill in config["skills"].as_array().into_iter().flatten() {
-            if let Some(name) = skill.as_str()
-                && skill_names.insert(name.into())
-            {
-                skills.push(skill.clone());
-            }
-        }
-    }
-    configs[0]["mcp_servers"] = Value::Array(servers);
-    configs[0]["skills"] = Value::Array(skills);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skills::{BotSkills, append_coding_mcp, is_coding_shell};
     use serde_json::json;
     #[test]
     fn reviewed_team_keeps_writer_and_reviewer_while_pipeline_stays_on_current_bot() {
@@ -196,57 +85,6 @@ mod tests {
         assert_eq!(members[2]["role"], "reviewer");
         assert!(additional_members("pipeline", &team).is_empty());
     }
-    #[test]
-    fn coding_coordinator_receives_member_capabilities_without_overriding_leader_identity() {
-        let mut request = ExecutionRequest {
-            collaboration_model: "coordinate".into(),
-            skill_configs: vec![
-                json!({"name":"writer-skill","mcpServers":{"tool":{"type":"streamable-http","url":"https://skill.invalid"}}}),
-            ],
-            skill_refs: json!({"writer-skill":{"skill_id":8}}),
-            ..Default::default()
-        };
-        let mut configs = vec![
-            json!({"id":1,"name":"leader","shell_type":"ClaudeCode","skills":[],"skill_refs":{},"mcp_servers":[{"name":"shared","type":"http","url":"https://leader.invalid"}]}),
-            json!({"id":2,"name":"writer","role":"writer","skills":["writer-skill"],"skill_refs":{},"mcp_servers":[{"name":"shared","url":"https://member.invalid"},{"name":"member","type":"stdio","command":"tool"}]}),
-            json!({"id":3,"name":"reviewer","role":"reviewer","skills":[],"skill_refs":{},"mcp_servers":[]}),
-        ];
-        finalize(&mut request, &mut configs);
-        assert_eq!(configs.len(), 3);
-        assert_eq!(configs[0]["id"], 1);
-        assert_eq!(configs[0]["skills"], json!(["writer-skill"]));
-        assert_eq!(configs[1]["skill_refs"]["writer-skill"]["skill_id"], 8);
-        assert_eq!(
-            configs[0]["mcp_servers"][0]["url"],
-            "https://leader.invalid"
-        );
-        assert!(
-            configs[0]["mcp_servers"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["name"] == "writer-skill_tool" && entry["type"] == "http")
-        );
-        // Source order after `_merge_coordinate_capabilities_into_leader` and
-        // `_prepare_mcp_for_coding_executor`: the leader's own servers, then the
-        // members' servers (a shared name is kept once), then the compiled
-        // Skill servers of the merged Skill set. Compiling a Bot before its
-        // final Skill set is known would place `writer-skill_tool` before the
-        // member servers and leave the leader without it.
-        let names: Vec<&str> = configs[0]["mcp_servers"]
-            .as_array()
-            .expect("array")
-            .iter()
-            .filter_map(|entry| entry["name"].as_str())
-            .collect();
-        assert_eq!(names, ["shared", "member", "writer-skill_tool"]);
-        assert_eq!(
-            configs[0]["mcp_servers"][0]["url"],
-            json!("https://leader.invalid"),
-            "the member's same-named server must not replace the leader's"
-        );
-    }
-
     /// Only ClaudeCode and Codex run `_prepare_mcp_for_coding_executor`; the
     /// Chat shell keeps the Ghost servers untouched.
     #[test]

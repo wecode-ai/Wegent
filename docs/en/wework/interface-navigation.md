@@ -16,6 +16,8 @@ paths also open previews. See [Mobile file previews](./mobile-file-preview.md) f
 
 Mobile project and conversation management: **Wework ▾ → New project / Archived conversations**; project row **… → Pin, Rename, Archive all chats, Remove**; conversation row **swipe left → Archive** and **long-press → Pin, Rename, Copy ID, Archive**. Removing a project preserves files and conversations. Permanent deletion requires confirmation in Archived conversations. See [Wework Mobile](./mobile.md).
 
+For desktop continuation from a web device task or an Issue activity task card, see [Continue a device task in Wework](./tasks.md#platform-task-continuation).
+
 ## Know the interface
 
 | Area                | Location                               | Purpose                                                                                                       |

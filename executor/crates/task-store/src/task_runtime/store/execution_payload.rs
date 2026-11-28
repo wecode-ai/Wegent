@@ -85,13 +85,33 @@ pub(super) fn update_agent_comment(
     Ok(())
 }
 
+/// The saved single-Bot topology is distinct from the native single-agent policy.
+fn agent_team_mode(mode: &Value) -> Value {
+    if mode == "single" {
+        json!("solo")
+    } else {
+        mode.clone()
+    }
+}
+
 pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
-    let stored = execution
+    runtime_payload_with_team(execution, None)
+}
+
+pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option<&Value>) -> Value {
+    let mut stored = execution
         .execution_payload
         .as_ref()
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    // The local queue snapshots Team topology alongside its Bot list. Native
+    // policy supplied in runtimePayload takes precedence when it is present.
+    if stored.contains_key("teamRef") && stored.get("bot").is_some_and(Value::is_array) {
+        if let Some(mode) = stored.get_mut("collaboration_model") {
+            *mode = agent_team_mode(mode);
+        }
+    }
     let mut payload = stored
         .get("runtimePayload")
         .or_else(|| stored.get("runtime_payload"))
@@ -122,6 +142,7 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
     let mut origin = json!({
         "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
         "projectStore": "local",
+        "executionId": execution.id,
         "cloudProjectId": execution.cloud_project_id,
         "loopItemId": execution.loop_item_id,
         "workflowNodeId": stored.get("workflow_node_id"),
@@ -134,6 +155,13 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         },
         "run_id": stored.get("automation_run_id"),
     });
+    if dispatch_id.is_some()
+        && stored
+            .get("collaboration_group")
+            .is_some_and(Value::is_object)
+    {
+        origin["dispatch_kind"] = json!("collaboration_group");
+    }
     if let Some(context) = stored.get("project_coordination") {
         origin["project_coordination"] = context.clone();
         origin["userId"] = json!(execution.assigner_user_id);
@@ -180,12 +208,12 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
     }
     payload_object.insert("origin".to_owned(), origin.clone());
 
-    if let Some(member_profiles) = stored
+    let member_profiles = stored
         .get("memberRuntimeProfiles")
         .or_else(|| stored.get("member_runtime_profiles"))
         .filter(|value| value.is_array())
-        .cloned()
-    {
+        .cloned();
+    if dispatch_role.as_ref().is_some_and(|role| role == "manager") || member_profiles.is_some() {
         let runtime_handle = payload_object
             .entry("runtimeHandle")
             .or_insert_with(|| json!({}));
@@ -195,10 +223,9 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         let runtime_handle = runtime_handle
             .as_object_mut()
             .expect("Runtime handle was normalized");
-        runtime_handle.insert(
-            "collaborationMemberRuntimeProfiles".to_owned(),
-            member_profiles,
-        );
+        if let Some(profiles) = member_profiles {
+            runtime_handle.insert("collaborationMemberRuntimeProfiles".into(), profiles);
+        }
         if let Some(manager_context) = stored.get("collaboration_manager_context").cloned() {
             runtime_handle.insert("collaborationManagerContext".to_owned(), manager_context);
         }
@@ -212,14 +239,49 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
     } else {
         "execution_request"
     };
+    if let Some(team) = team {
+        // Keep project routing, model, grants, and the manager/member dispatch instructions.
+        let prompt = crate::task_runtime::runner_routing::lead_instructions(
+            team["system_prompt"].as_str().unwrap_or_default(),
+            team["collaboration_model"].as_str(),
+            &team["bot"],
+        );
+        let instructions = match dispatch_role.as_ref().and_then(Value::as_str) {
+            Some("manager") => collaboration::manager_system_prompt(&prompt),
+            Some("member") => crate::task_runtime::collaboration_member_system_prompt(&prompt),
+            _ => prompt,
+        };
+        let projection = [
+            ("teamRef", "team_ref", json!(execution.agent_id)),
+            ("bot", "bot", team["bot"].clone()),
+            (
+                "collaboration_model",
+                "collaboration_model",
+                agent_team_mode(&team["collaboration_model"]),
+            ),
+            ("projectInstructions", "system_prompt", json!(instructions)),
+        ];
+        for (field, request_field, value) in projection {
+            if let Some(request) = payload_object
+                .get_mut(execution_request_key)
+                .and_then(Value::as_object_mut)
+            {
+                request.insert(request_field.into(), value.clone());
+            }
+            payload_object.insert(field.into(), value);
+        }
+    }
     if let Some(request) = payload_object
         .get_mut(execution_request_key)
         .and_then(Value::as_object_mut)
     {
+        if origin["dispatch_kind"] == "collaboration_group" {
+            request.insert("origin".into(), origin.clone());
+        }
         request.insert("task_id".to_owned(), json!(runtime_task_id));
         request.insert(
             "subtask_id".to_owned(),
-            json!(uuid::Uuid::new_v4().to_string()),
+            json!(format!("local-execution-{}", execution.id)),
         );
         request.insert("task_title".to_owned(), json!(title));
         request.insert(
@@ -227,13 +289,16 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
-        if let Some(instructions) = stored
-            .get("projectInstructions")
-            .filter(|_| stored.get("dispatch_role").and_then(Value::as_str) == Some("manager"))
-        {
+        if let Some(instructions) = stored.get("projectInstructions").filter(|_| {
+            team.is_none() && stored.get("dispatch_role").and_then(Value::as_str) == Some("manager")
+        }) {
             request.insert("system_prompt".to_owned(), instructions.clone());
         }
-        if stored.contains_key("project_coordination") {
+        // The command journal scopes replays to the submitter. Project capabilities and
+        // receipts remain scoped to the virtual Agent on this execution's claim.
+        let project_command = stored.contains_key("project_coordination")
+            || origin["dispatch_kind"] == "collaboration_group";
+        if project_command {
             request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
         request.insert(
@@ -255,7 +320,7 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
             .as_object_mut()
             .expect("Execution extra was normalized");
         extra.insert("origin".to_owned(), origin);
-        if stored.contains_key("project_coordination") {
+        if project_command {
             extra.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
         extra.insert(
@@ -272,6 +337,15 @@ pub(super) fn apply_execution_agent_profile(
     execution: &LocalExecution,
 ) {
     payload
+        .entry("bot")
+        .or_insert_with(|| execution.agent_bots.clone());
+    payload
+        .entry("teamRef")
+        .or_insert_with(|| json!(execution.agent_id));
+    payload
+        .entry("collaboration_model")
+        .or_insert_with(|| agent_team_mode(&execution.agent_collaboration_model));
+    payload
         .entry("runtime")
         .or_insert_with(|| json!(execution.agent_runtime));
     payload
@@ -286,16 +360,4 @@ pub(super) fn apply_execution_agent_profile(
     payload
         .entry("projectPlugins")
         .or_insert_with(|| json!(execution.agent_plugins));
-    payload.entry("bot").or_insert_with(|| {
-        json!([{
-            "id": execution.agent_id,
-            "name": execution.agent_name,
-            "shell_type": if execution.agent_runtime == "claude_code" {
-                "ClaudeCode"
-            } else {
-                "Codex"
-            },
-            "mcp_servers": execution.agent_mcp_servers,
-        }])
-    });
 }

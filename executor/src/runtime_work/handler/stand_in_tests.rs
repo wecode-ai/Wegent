@@ -142,7 +142,7 @@ async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagg
         ..Default::default()
     })));
     let configs = [
-        json!({"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
+        json!({"teamRef":super::super::tests::saved_role_team(&handler,"general"),"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
         json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"tags":["review"],"enabledAfter":"2026-11-12T10:02:00Z"}),
     ];
     let issue = json!({"id":"issue","assignee_user_id":7,"tags":["review"],"human_task_binding":{
@@ -491,7 +491,7 @@ async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_projec
         ..RuntimeTaskLink::default()
     });
     let payload = json!({"id":"default","projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
-    let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z","workspace":{"projectKey":"unregistered-project"}});
+    let config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z","workspace":{"projectKey":"unregistered-project"}});
     let mut automatic = handler.clone();
     automatic.store = RuntimeWorkStore::new(root.path().join("automatic-index.json"));
     for status in [
@@ -630,16 +630,39 @@ fn tag_rules_include_every_eligible_role_without_suppressing_untagged_roles() {
 #[test]
 fn selected_agent_uses_existing_runner_compiler_and_keeps_capabilities() {
     let model = json!({"runtime":"codex","provider":"native","model_id":"model"});
-    let agent = json!({"id":"reviewer","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
+    let agent = json!({"id":"review-team","bot":[{"id":"reviewer","shell_type":"Codex","system_prompt":"Lead the review"},{"id":"editor","shell_type":"Codex","system_prompt":"Edit the draft"}],"collaboration_model":"pipeline","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
     let catalog = json!({"runtimes":["codex"],"models":[{"runtime":"codex","provider":"native","model_id":"model","local_model_id":"model","is_default":true}]});
     let mut payload =
         json!({"taskId":"task","message":"Handle this task","origin":{"initiatedBy":"stand_in"}});
     apply_stand_in_agent(&mut payload, &agent, &catalog, "mac", None).unwrap();
+    let mut coordinate = agent.clone();
+    coordinate["collaboration_model"] = json!("coordinate");
+    let mut coordinated = json!({});
+    apply_stand_in_agent(&mut coordinated, &coordinate, &catalog, "mac", None).unwrap();
+    assert_eq!(
+        coordinated["executionRequest"]["system_prompt"],
+        "Review carefully\n\nLead the review"
+    );
+    let mut broken = agent.clone();
+    broken.as_object_mut().unwrap().remove("bot");
+    let mut rejected = json!({});
+    assert_eq!(
+        apply_stand_in_agent(&mut rejected, &broken, &catalog, "mac", None)
+            .unwrap_err()
+            .code,
+        "stand_in_team_missing"
+    );
+    assert!(rejected.get("executionRequest").is_none());
     assert_eq!(
         payload["executionRequest"]["system_prompt"],
         "Review carefully"
     );
-    assert_eq!(payload["executionRequest"]["bot"][0]["id"], "reviewer");
+    assert_eq!(payload["executionRequest"]["bot"], agent["bot"]);
+    assert_eq!(payload["executionRequest"]["team_ref"], "review-team");
+    assert_eq!(
+        payload["executionRequest"]["collaboration_model"],
+        "pipeline"
+    );
     assert_eq!(
         payload["executionRequest"]["preload_skills"],
         json!(["review"])
@@ -835,7 +858,7 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
         authenticated_user_id: Some(7),
         ..Default::default()
     })));
-    let mut config = json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
+    let mut config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
     let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
     for status in ["failed", "archived"] {
         handler.upsert_local_task(RuntimeTaskLink {
@@ -879,7 +902,7 @@ async fn archived_local_stand_in_requires_real_preparation_before_reporting_succ
         runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"local","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
-    let mut config = json!({"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
+    let mut config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"human"});
     handler
@@ -1044,9 +1067,12 @@ async fn default_personal_task_needs_no_project_environment() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "mac").unwrap();
+    let team_ref = store.personal_stand_in(7, "mac").unwrap()["primary"]["teamRef"].clone();
     let payload = handler
         .prepare_stand_in_task(
-            &json!({"id":"default","projectStore":"local","projectId":"not-configured","userId":7}),
+            &json!({"id":"default","projectStore":"local","projectId":"not-configured","userId":7,"teamRef":team_ref}),
             &json!({"id":"issue","title":"Task"}),
             &json!({"humanAssignmentId":"human"}),
         )
@@ -1084,10 +1110,10 @@ async fn project_work_does_not_copy_private_preferences_into_the_source_prompt()
         let mut personal = store.personal_stand_in(7, "mac").unwrap();
         personal["primary"] =
             json!({"enabled":true,"prompt":"Coordinate","preferences":preference});
-        store.save_personal_stand_in(7, "mac", personal).unwrap();
+        let saved = store.save_personal_stand_in(7, "mac", personal).unwrap();
         let payload = handler
             .prepare_stand_in_task(
-                &json!({"id":"default","projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference"}),
+                &json!({"id":"default","projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference","teamRef":saved["primary"]["teamRef"]}),
                 &json!({"id":"issue","title":"Task"}),
                 &json!({"humanAssignmentId":"human"}),
             )
@@ -1122,12 +1148,22 @@ fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
 
 #[tokio::test]
 async fn independent_stand_in_does_not_resolve_old_agents_or_require_a_backend() {
-    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     for reference in [
         json!({"agentResourceId":11}),
         json!({"agentId":"deleted","agentProject":{"id":"old","store":"cloud"}}),
     ] {
-        let mut config = reference;
+        let mut old = store.personal_stand_in(7, "mac").unwrap();
+        old["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+        old["primary"]
+            .as_object_mut()
+            .unwrap()
+            .extend(reference.as_object().unwrap().clone());
+        let saved = store.save_personal_stand_in(7, "mac", old).unwrap();
+        let mut config = saved["primary"].clone();
         config["userId"] = json!(7);
         let prepared = handler
             .prepare_stand_in_execution(
@@ -1136,7 +1172,7 @@ async fn independent_stand_in_does_not_resolve_old_agents_or_require_a_backend()
             )
             .await
             .unwrap();
-        assert_eq!(prepared["executionRequest"]["team_id"], 0);
+        assert_eq!(prepared["executionRequest"]["team_ref"], config["teamRef"]);
         assert_eq!(prepared["executionRequest"]["user_id"], 7);
         assert_eq!(
             prepared["executionRequest"]["bot"][0]["shell_type"],
@@ -1225,6 +1261,20 @@ async fn stand_in_role_transfer_excludes_permissions_on_first_save_and_retransfe
         )
         .await
         .unwrap();
+    let denied = handler
+        .dispatch_method(
+            save,
+            json!({
+                "userId":7,"settings":saved,"ownedTeam":{"roleId":"moving","botGrants":[]}
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(denied.code, "permission_denied");
+    assert_eq!(
+        store.personal_stand_in(7, "mac").unwrap()["version"],
+        saved["version"]
+    );
     assert!(saved["roles"][1].get("taskPermissions").is_none());
     assert_eq!(saved["roles"][1]["name"], "Moving assistant");
     saved["roles"][1]["taskPermissions"] = workspace_write.clone();

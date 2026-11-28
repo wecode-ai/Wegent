@@ -6,17 +6,28 @@ interface ResourceRef {
   namespace: string
 }
 
+interface AssistantTeamMember {
+  botRef: ResourceRef
+  role?: string
+  requireConfirmation?: boolean
+}
+
 export interface PersonalAssistantDefinition {
   roleId: string
   team?: {
     metadata: ResourceRef & { displayName?: string }
-    spec: { collaborationModel: 'solo'; members: [{ botRef: ResourceRef; role: 'leader' }] }
+    spec: { collaborationModel: string; members: AssistantTeamMember[] }
   }
   bot: {
     spec?: { execution_policy?: { mode: string; environment_id?: string } }
     metadata: ResourceRef & { displayName?: string }
   }
   ghost: { spec: { systemPrompt: string } }
+  members?: Array<{
+    member: AssistantTeamMember
+    bot: PersonalAssistantDefinition['bot']
+    ghost: PersonalAssistantDefinition['ghost']
+  }>
 }
 
 export type PersonalAssistantAccount = {

@@ -66,7 +66,12 @@ export async function saveStandInRoleDevice(
       }
     )
   }
-  const current = await api.personalGet(userId, sourceDevice)
+  const carryTeam = previous && previous.teamRef === role.teamRef
+  const current = await api.personalGet(
+    userId,
+    sourceDevice,
+    carryTeam ? { exportTeamRoleId: role.id } : undefined
+  )
   if (current.version !== source.version || !dequal(current.roles, source.roles)) {
     throw Object.assign(new Error('The source profile changed'), { code: 'version_conflict' })
   }
@@ -78,6 +83,28 @@ export async function saveStandInRoleDevice(
     ].filter(device => device !== targetDevice),
   }
   delete transferred.taskPermissions
+  const copying = input.definitionChange?.copyTeam
+  if (copying && !current.portableTeam) {
+    throw Object.assign(new Error('The source Executor cannot export the referenced Team'), {
+      code: 'stand_in_team_import_unsupported',
+    })
+  }
+  // Import already creates this assistant's own Team on the destination.
+  const portableTeam =
+    copying && current.portableTeam
+      ? {
+          ...current.portableTeam,
+          name: role.name,
+          ...((input.definitionChange?.copyTeamPrompt ?? previous?.prompt !== role.prompt)
+            ? { system_prompt: role.prompt }
+            : {}),
+        }
+      : current.portableTeam
+  if (portableTeam) {
+    if (previous?.teamRef?.startsWith('LA-') && typeof portableTeam.system_prompt === 'string')
+      transferred.prompt = portableTeam.system_prompt
+    transferred.teamRef = null
+  }
   await checkTargetConnectionProviders(api, targetDevice, role.connections)
   const staged = await api.personalSave(
     userId,
@@ -89,7 +116,9 @@ export async function saveStandInRoleDevice(
       ],
     },
     targetDevice,
-    role.id
+    role.id,
+    undefined,
+    portableTeam
   )
   // Webhook subscriptions are addressed to one Executor. Transfer ownership only
   // after redirecting the source, using the generation checked by the cloud.
@@ -135,7 +164,7 @@ export async function saveStandInRoleDevice(
       },
       targetDevice,
       role.id,
-      input.definitionChange
+      copying ? { kind: 'update', roleId: role.id } : input.definitionChange
     )
     return result.roles.find(row => row.id === role.id)!
   } catch (cause) {

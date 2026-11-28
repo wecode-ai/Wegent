@@ -369,6 +369,7 @@ describe('createLocalAppServices', () => {
       version: 1,
       assigneeType: 'group',
       assigneeId: 'human-group-1',
+      runnerSelection: { recovery_from_environment_id: 'local-device' },
     })
 
     expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toEqual([
@@ -494,22 +495,13 @@ describe('createLocalAppServices', () => {
           : []),
       ],
     })
-    expect(updates[2]).toMatchObject({
+    expect(updates[2]).toEqual({
+      version: 1,
       assignee_group_id: 'human-group-1',
       execution_payload: {
-        dispatchKind: 'collaboration_group',
-        dispatchTaskId: 'LOCAL-1',
-        memberRuntimeProfiles: [
-          expect.objectContaining({
-            memberIds: ['worker'],
-            agentId: 'worker',
-          }),
-        ],
+        runnerSelection: { recovery_from_environment_id: 'local-device' },
       },
     })
-    expect(
-      (updates[2].execution_payload as Record<string, unknown>).managerRuntimeRequest
-    ).toBeUndefined()
   })
 
   test('resolves a hidden cloud assignment model for its execution fields', async () => {

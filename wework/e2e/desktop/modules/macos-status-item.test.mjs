@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { inspectRunningApp, readInspectorEndpoint } from './inspect-before-start.mjs'
 import { assertMacosStatusItem, hostedStatusItem } from './macos-status-item.mjs'
@@ -43,13 +44,14 @@ test(
     mark('entry')
     app.setPath('userData', ${JSON.stringify(join(root, 'user-data'))})
     app.once('will-finish-launching', () => mark('will-finish-launching'))
-    mark('ready-handler-registered')
-    app.whenReady().then(() => {
+    globalThis.nativeTrayReady = app.whenReady().then(() => {
       mark('ready')
       globalThis.nativeTray = new Tray(nativeImage.createFromPath(${JSON.stringify(icon)}).resize({width:18,height:18}), ${JSON.stringify(guid)})
       mark('tray-created')
-      setImmediate(() => console.log('native-tray-ready'))
+      return true
     })
+    mark('ready-handler-registered')
+    console.log('ready-handler-registered')
   `
     )
     const env = { ...process.env }
@@ -63,12 +65,18 @@ test(
     console.log('Native tray probe started:', { pid: child.pid, time: Date.now() })
     let stderr = ''
     child.stderr.on('data', chunk => (stderr = (stderr + chunk).slice(-8192)))
-    const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
+    const output = createInterface({ input: child.stdout })
+    const registered = once(output, 'line', { signal: AbortSignal.timeout(10_000) }).catch(
+      cause => {
+        throw new Error('Electron did not register the native tray ready handler', { cause })
+      }
+    )
     try {
-      const [endpoint, [output]] = await Promise.all([readInspectorEndpoint(child), ready])
-      assert.equal(output.toString().trim(), 'native-tray-ready')
-      console.log('Native tray probe ready:', await readFile(trace, 'utf8'))
+      const [endpoint, [phase]] = await Promise.all([readInspectorEndpoint(child), registered])
+      assert.equal(phase, 'ready-handler-registered')
       const port = new URL(endpoint).port
+      assert.equal(await inspectRunningApp(port, child.pid, 'globalThis.nativeTrayReady'), true)
+      console.log('Native tray probe ready:', await readFile(trace, 'utf8'))
       const read = value => inspectRunningApp(port, child.pid, nativeTrayStateScript(value))
       await assertMacosStatusItem(
         {
@@ -99,10 +107,15 @@ test(
         exitCode: child.exitCode,
         signalCode: child.signalCode,
         stderr,
+        statusItem: await readFile(
+          join(root, 'macos-status-item-probe-failure.json'),
+          'utf8'
+        ).catch(error => error.code),
         startup: await readFile(trace, 'utf8').catch(error => error.code),
       })
       throw error
     } finally {
+      output.close()
       child.kill('SIGKILL')
       await exited
       await rm(root, { recursive: true, force: true })

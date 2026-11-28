@@ -416,9 +416,63 @@ fn runtime_task_uses_ephemeral_codex_thread(link: &RuntimeTaskLink) -> bool {
     request.uses_ephemeral_codex_thread()
 }
 
-/// Fill omitted native Home identity from the conversation's persisted request.
-fn restore_request_home_identity(request: &mut ExecutionRequest, link: &RuntimeTaskLink) {
+/// Restore the sanitized Team definition on an ordinary owner reply.
+fn restore_personal_conversation_team(
+    request: &mut ExecutionRequest,
+    link: &RuntimeTaskLink,
+) -> Option<ExecutionRequest> {
+    if link.runtime_handle["origin"]["type"] != "stand_in_identity"
+        || request
+            .extra
+            .get("team_ref")
+            .and_then(Value::as_str)
+            .is_some()
+    {
+        return None;
+    }
     let saved = runtime_event_request_from_link(link);
+    saved.extra.get("team_ref").and_then(Value::as_str)?;
+    // Grants are rebound at dispatch. Pipeline state owns the full roster;
+    // its last persisted native turn only represents one participant.
+    request.bot = saved.bot.clone();
+    request.system_prompt = saved.system_prompt.clone();
+    for key in ["team_ref", "user_id", "team_id", "collaboration_model"] {
+        if let Some(value) = saved.extra.get(key) {
+            request.extra.insert(key.into(), value.clone());
+        }
+    }
+    restore_pipeline_definition(request, link, &saved);
+    Some(saved)
+}
+
+fn restore_pipeline_definition(
+    request: &mut ExecutionRequest,
+    link: &RuntimeTaskLink,
+    saved: &ExecutionRequest,
+) {
+    if let (Some(reference), Some(members)) = (
+        saved.extra.get("team_ref"),
+        link.runtime_handle["personalPipeline"]["members"].as_array(),
+    ) {
+        request.extra.insert("team_ref".into(), reference.clone());
+        request
+            .extra
+            .insert("collaboration_model".into(), json!("pipeline"));
+        request.bot = json!(members);
+        if let Some(instructions) = link.runtime_handle["personalPipeline"]["instructions"].as_str()
+        {
+            request.system_prompt = instructions.to_owned();
+        }
+    }
+}
+
+/// Fill omitted native Home identity when replaying a saved turn.
+fn restore_request_home_identity(request: &mut ExecutionRequest, link: &RuntimeTaskLink) {
+    let saved = restore_personal_conversation_team(request, link).unwrap_or_else(|| {
+        let saved = runtime_event_request_from_link(link);
+        restore_pipeline_definition(request, link, &saved);
+        saved
+    });
     if crate::agents::instance_home::request_home(&saved).is_none() {
         return;
     }
@@ -529,6 +583,14 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
     persisted.auth_token = None;
     persisted.runtime_auth_token = None;
     persisted.skill_identity_token = None;
+    if persisted
+        .extra
+        .get("team_ref")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with("stand-in-team-"))
+    {
+        personal_pipeline::strip_personal_bot_mcp(&mut persisted.bot);
+    }
     redact_execution_profile_secrets(&mut persisted.bot);
     redact_execution_profile_secrets(&mut persisted.model_config);
     for server in &mut persisted.mcp_servers {
@@ -547,6 +609,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "issue_comment_trigger_id"
                 | "collaborationMode"
                 | "collaboration_mode"
+                | "team_ref"
                 | "collaboration_model"
                 | "conversationContext"
                 | "modelSelection"
@@ -577,6 +640,9 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "user_selected_skills"
         )
     });
+    if request.project_group_execution() {
+        persisted.retain_project_group_scope();
+    }
     for value in persisted.extra.values_mut() {
         redact_execution_profile_secrets(value);
     }
@@ -621,6 +687,30 @@ mod stand_in_request_snapshot_tests {
             assert_eq!(request.extra["collaborationMode"], mode);
             assert_eq!(request.extra["collaboration_model"], "single");
         }
+    }
+
+    #[test]
+    fn project_group_scope_survives_resume_without_persisting_personal_task_data() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "task_data".into(),
+            json!({"project_group_execution":true,"user_mcps":{"private":"secret"}}),
+        );
+        let mut handle = json!({});
+        store_runtime_execution_request(&mut handle, &request);
+        let mut resumed = ExecutionRequest {
+            auth_token: Some("personal".into()),
+            model_config: json!({"api_key":"personal"}),
+            ..Default::default()
+        };
+        restore_origin(&mut resumed, &handle);
+        assert!(resumed.auth_token.is_none());
+        assert!(resumed.model_config["api_key"].is_null());
+        assert!(resumed.project_group_execution());
+        assert_eq!(
+            handle["executionRequest"]["task_data"],
+            json!({"project_group_execution":true})
+        );
     }
 
     #[test]

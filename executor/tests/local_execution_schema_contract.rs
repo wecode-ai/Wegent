@@ -38,10 +38,21 @@ fn version_seven_store(missing_payload: bool) -> (TempDir, String, String, Strin
         .unwrap();
     drop(store);
     let connection = Connection::open(path).unwrap();
+    connection.execute(
+        "UPDATE loop_items SET metadata=json_remove(metadata,'$.bot','$.collaboration_model') WHERE id=?1",
+        [&agent.id],
+    ).unwrap();
     if missing_payload {
         // Upgrades to v7 omitted this column when the execution table already existed.
         connection
-            .execute_batch("ALTER TABLE loop_item_executions DROP COLUMN execution_payload;")
+            .execute_batch("DROP INDEX ix_coordination_assignment_attempt; ALTER TABLE loop_item_executions DROP COLUMN execution_payload;")
+            .unwrap();
+    } else {
+        connection
+            .execute(
+                "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
+                rusqlite::params![json!({"message":"original"}).to_string(), execution.id],
+            )
             .unwrap();
     }
     connection
@@ -80,11 +91,21 @@ fn upgrades_v7_execution_table_missing_payload_without_losing_issues_or_runs() {
 
     let payload = json!({"message": "after upgrade"});
     let created = store
-        .enqueue_execution(&project_id, &task_id, &agent_id, payload.clone(), None)
+        .enqueue_execution(&project_id, &task_id, &agent_id, payload, None)
         .unwrap();
     assert_eq!(
         store.local_execution_payload(created.id).unwrap(),
-        Some(payload)
+        Some(json!({
+            "message": "after upgrade",
+            "teamRef": agent_id,
+            "collaboration_model": "single",
+            "bot": [{
+                "id": agent_id,
+                "name": "Local agent",
+                "shell_type": "Codex",
+                "mcp_servers": {}
+            }]
+        }))
     );
     drop(store);
 
@@ -106,6 +127,14 @@ fn upgrades_v7_execution_table_missing_payload_without_losing_issues_or_runs() {
         Some("Existing issue")
     );
     let connection = Connection::open(path).unwrap();
+    let projected_without_backfill: bool = connection
+        .query_row(
+            "SELECT json_type(metadata,'$.bot') IS NULL FROM loop_items WHERE id=?1",
+            [&agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(projected_without_backfill);
     let upgrades: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 11",
@@ -133,7 +162,7 @@ fn upgrades_v7_with_existing_payload_without_overwriting_it() {
 }
 
 #[test]
-fn reopening_v11_restores_missing_runtime_query_indexes() {
+fn reopening_current_store_restores_missing_runtime_query_indexes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tasks.sqlite");
     drop(LocalTaskStore::open(&path).unwrap());
@@ -141,7 +170,8 @@ fn reopening_v11_restores_missing_runtime_query_indexes() {
     connection
         .execute_batch(
             "DROP INDEX ix_loop_items_bound_runtime_task;
-             DROP INDEX ix_loop_items_unfinished_arrangement_user;",
+             DROP INDEX ix_loop_items_unfinished_arrangement_user;
+             DROP INDEX ix_coordination_assignment_attempt;",
         )
         .unwrap();
 
@@ -149,12 +179,12 @@ fn reopening_v11_restores_missing_runtime_query_indexes() {
     let restored: i64 = connection
         .query_row(
             "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN
-             ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user')",
+             ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user', 'ix_coordination_assignment_attempt')",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(restored, 2);
+    assert_eq!(restored, 3);
 }
 
 #[test]

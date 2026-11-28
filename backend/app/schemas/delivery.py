@@ -183,6 +183,7 @@ class LoopItemResponse(BaseModel):
     status: str
     assignee_user_id: int | None
     assignee_group_id: str | None = None
+    coordination: dict[str, Any] | None = None
     assignee_group_name: str | None = None
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
@@ -574,7 +575,7 @@ class LoopItemTaskBindingResponse(BaseModel):
     cloud_project_id: SnowflakeId
     loop_item_id: str | None
     task_user_id: int
-    device_id: str
+    device_id: str | None
     task_id: str
     task_title: str | None
     backend_task_id: int | None

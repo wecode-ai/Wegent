@@ -308,9 +308,9 @@ pub(super) fn runtime_query_indexes_are_current(
     connection: &Connection,
 ) -> Result<bool, rusqlite::Error> {
     connection.query_row(
-        "SELECT count(*) = 4 FROM sqlite_master WHERE type = 'index'
+        "SELECT count(*) = 5 FROM sqlite_master WHERE type = 'index'
          AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user',
-                      'ix_stand_in_role_request_root', 'ix_stand_in_role_request_parent')",
+                      'ix_coordination_assignment_attempt', 'ix_stand_in_role_request_root', 'ix_stand_in_role_request_parent')",
         [],
         |row| row.get(0),
     )
@@ -326,6 +326,10 @@ fn ensure_runtime_query_indexes(connection: &Connection) -> Result<(), rusqlite:
             WHERE resource_type='stand_in_action' AND json_valid(metadata)
               AND json_extract(metadata,'$.kind')='run_arrangement'
               AND json_extract(metadata,'$.status') IN ('pending','sending');
+         CREATE INDEX IF NOT EXISTS ix_coordination_assignment_attempt
+            ON loop_item_executions(loop_item_id,json_extract(execution_payload,'$.dispatch_id'),
+               json_extract(execution_payload,'$.coordination_round_id'),json_extract(execution_payload,'$.assignment_id'))
+            WHERE json_valid(execution_payload) AND json_extract(execution_payload,'$.dispatch_id') IS NOT NULL;
          CREATE INDEX IF NOT EXISTS ix_stand_in_role_request_root
             ON loop_items(json_extract(metadata,'$.userId'),json_extract(metadata,'$.root'))
             WHERE resource_type='stand_in_role_request' AND json_valid(metadata);

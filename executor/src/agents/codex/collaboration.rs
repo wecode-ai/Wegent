@@ -1,9 +1,9 @@
 //! Issue delegation is thread-owned, never a shared app-server startup policy.
 use super::*;
 
-fn is_issue_work(request: &ExecutionRequest) -> bool {
+fn issue_origin(request: &ExecutionRequest) -> Option<&Value> {
     // Local queue assignments without a group dispatch use project_automation.
-    request.extra.get("origin").is_some_and(|origin| {
+    request.extra.get("origin").filter(|origin| {
         matches!(
             origin["type"].as_str(),
             Some("issue_dispatch" | "board_task" | "board_comment" | "project_automation")
@@ -12,11 +12,10 @@ fn is_issue_work(request: &ExecutionRequest) -> bool {
 }
 
 pub(super) fn is_project_collaboration_agent(request: &ExecutionRequest) -> bool {
-    is_issue_work(request)
-        && request.extra.get("origin").is_some_and(|origin| {
-            matches!(origin["dispatchRole"].as_str(), Some("manager" | "member"))
-                && origin["initiatedBy"] != "stand_in"
-        })
+    issue_origin(request).is_some_and(|origin| {
+        matches!(origin["dispatchRole"].as_str(), Some("manager" | "member"))
+            && origin["initiatedBy"] != "stand_in"
+    })
 }
 
 pub(super) fn apply_thread_config(params: &mut Map<String, Value>, request: &ExecutionRequest) {
@@ -40,9 +39,7 @@ pub(super) fn thread_config(request: &ExecutionRequest) -> Map<String, Value> {
             json!(false),
         );
     }
-    if !is_issue_work(request)
-        || codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single"))
-    {
+    if issue_origin(request).is_none() || codex_single_mode(request) {
         return config;
     }
     let policy = concat!(

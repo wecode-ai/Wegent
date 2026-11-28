@@ -75,11 +75,12 @@ impl LocalTaskStore {
             ));
         }
         let previous_personal = personal.clone();
-        let before = personal["roles"]
-            .as_array()
-            .unwrap()
+        let roles = personal["roles"].as_array().unwrap();
+        let index = roles
             .iter()
-            .find(|role| role["id"] == id);
+            .position(|role| role["id"] == id)
+            .unwrap_or(roles.len());
+        let before = roles.get(index);
         let version = before
             .and_then(|role| role["version"].as_i64())
             .unwrap_or(0);
@@ -135,11 +136,16 @@ impl LocalTaskStore {
         value.as_object_mut().unwrap().remove("projectId");
         value.as_object_mut().unwrap().remove("projectStore");
         super::personal_stand_in::stamp_project_enabled(&mut value, before.unwrap_or(&Value::Null));
+        if value.get("teamRef").is_none() {
+            if let Some(reference) = before.and_then(|role| role.get("teamRef")) {
+                value["teamRef"] = reference.clone();
+            }
+        }
         let roles = personal["roles"].as_array_mut().unwrap();
-        if let Some(index) = roles.iter().position(|role| role["id"] == id) {
-            roles[index] = value.clone();
+        if index == roles.len() {
+            roles.push(value);
         } else {
-            roles.push(value.clone());
+            roles[index] = value;
         }
         personal["userId"] = json!(user_id);
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
@@ -149,7 +155,12 @@ impl LocalTaskStore {
             &previous_personal,
             &personal,
         )?;
-        write_personal(&connection, &personal)?;
+        let personal = write_personal(&connection, &personal)?;
+        super::personal_team_project::refresh_changed_sources(
+            &connection,
+            &previous_personal,
+            &personal,
+        )?;
         super::stand_in_telemetry::configuration_changes(
             &connection,
             user_id,
@@ -157,7 +168,12 @@ impl LocalTaskStore {
             &personal,
         );
         connection.commit()?;
-        Ok(project_role(&value, user_id, project_id, &kind))
+        Ok(project_role(
+            &personal["roles"][index],
+            user_id,
+            project_id,
+            &kind,
+        ))
     }
 }
 

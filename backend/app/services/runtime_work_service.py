@@ -4473,7 +4473,9 @@ def _build_direct_wework_runtime_execution_request(
     model_config = dict(request.runtime_model_config or runtime_model_config or {})
     first_bot = request.bot[0] if request.bot else {}
     origin = request.origin if isinstance(request.origin, dict) else {}
+    group_execution = _project_group_execution(request)
     auth_token = create_task_token(
+        project_group_execution=group_execution,
         task_id=0,
         subtask_id=0,
         user_id=user.id,
@@ -4525,11 +4527,16 @@ def _build_direct_wework_runtime_execution_request(
         attachments=[],
         auth_token=auth_token,
         backend_url=settings.BACKEND_INTERNAL_URL,
-        skill_identity_token=create_skill_identity_token(
-            user_id=user.id,
-            user_name=user.user_name,
-            runtime_type="executor",
-            runtime_name=f"wework-runtime-{task_id}",
+        task_data={"project_group_execution": True} if group_execution else None,
+        skill_identity_token=(
+            None
+            if group_execution
+            else create_skill_identity_token(
+                user_id=user.id,
+                user_name=user.user_name,
+                runtime_type="executor",
+                runtime_name=f"wework-runtime-{task_id}",
+            )
         ),
         runtime_permission_profile=":danger-full-access",
     )
@@ -4704,6 +4711,14 @@ def _request_execution_workspace(
     return workspace if isinstance(workspace, dict) else {}
 
 
+def _project_group_execution(request: RuntimeTaskCreateRequest) -> bool:
+    origin = request.origin or {}
+    parent = str(origin.get("collaboration_dispatch_execution_id") or "")
+    return origin.get("dispatch_kind") == "collaboration_group" or (
+        parent.isascii() and parent.isdecimal() and int(parent) > 0
+    )
+
+
 def _runtime_model_override(
     db: Session,
     user_id: int,
@@ -4716,6 +4731,7 @@ def _runtime_model_override(
         model_id=request.model_id,
         model_type=request.model_type,
         model_options=request.model_options,
+        project_group_execution=_project_group_execution(request),
     )
 
 
@@ -4727,6 +4743,7 @@ def _runtime_model_override_values(
     model_id: Optional[str],
     model_type: Optional[str],
     model_options: dict[str, Any],
+    project_group_execution: bool = False,
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     """Resolve one model selection without coupling it to a request container."""
 
@@ -4764,6 +4781,7 @@ def _runtime_model_override_values(
             model_type=model_type,
             namespace=namespace,
             resource_user_id=resource_user_id,
+            project_group_execution=project_group_execution,
         )
         if config is None:
             raise HTTPException(

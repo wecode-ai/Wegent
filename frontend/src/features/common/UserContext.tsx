@@ -4,6 +4,8 @@
 
 'use client'
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
+import { PlatformTaskConnection } from '@wegent/collaboration/platform-task-continuation'
+import { getPublicApiBaseUrl } from '@/lib/runtime-config'
 import { userApis } from '@/apis/user'
 import { ApiError } from '@/apis/client'
 import { User } from '@/types/api'
@@ -271,7 +273,11 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         updatePreferences,
       }}
     >
-      {children}
+      <PlatformTaskConnection.Provider
+        value={user ? { apiBaseUrl: getPublicApiBaseUrl(), userId: user.id } : null}
+      >
+        {children}
+      </PlatformTaskConnection.Provider>
     </UserContext.Provider>
   )
 }

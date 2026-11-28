@@ -100,7 +100,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     task: MysqlRow,
     task_id: i64,
     changed_subtask_id: i64,
-    pending_delivery: Option<(Delivery, Option<&Value>)>,
+    pending_delivery: Option<(Delivery<'_>, Option<&Value>)>,
     terminal: bool,
     required_status: Option<&str>,
     terminal_result: Option<&Value>,
@@ -196,7 +196,13 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         ) {
             updated.insert("completedAt".into(), Value::String(now.clone()));
         }
-        if last_status == "FAILED" {
+        if last_status == "COMPLETED" && new_status == "FAILED" {
+            updated.insert("completedAt".into(), Value::String(now.clone()));
+            updated.insert(
+                "errorMessage".into(),
+                json!(wegent_task_store::task_store_pipeline::PIPELINE_UNAVAILABLE),
+            );
+        } else if last_status == "FAILED" {
             updated.insert(
                 "errorMessage".into(),
                 subtask_column::<String>(last, "error_message").map_or(Value::Null, Value::String),

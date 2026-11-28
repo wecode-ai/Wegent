@@ -15,6 +15,7 @@ use crate::{
 /// Reduces Codex app-server notifications into the visible root-turn outcome.
 #[derive(Default)]
 pub(super) struct CodexRunState {
+    pub(super) manager: Option<std::sync::Arc<super::manager_tools::ManagerTools>>,
     pub(super) quota_recovery: Option<super::CodexQuotaRecovery>,
     pub(super) error_type: Option<String>,
     final_text: String,

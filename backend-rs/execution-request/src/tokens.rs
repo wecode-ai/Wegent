@@ -39,8 +39,20 @@ pub fn create_task_token(
     user_id: i64,
     user_name: &str,
 ) -> Result<String, FastApiError> {
+    create_scoped_task_token(auth, task_id, subtask_id, user_id, user_name, None, false)
+}
+
+pub fn create_scoped_task_token(
+    auth: &wegent_backend_config::AuthConfig,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+    user_name: &str,
+    device_manager_execution_id: Option<i64>,
+    project_group_execution: bool,
+) -> Result<String, FastApiError> {
     let expire = chrono::Utc::now().timestamp() + 24 * 60 * 60;
-    let claims = serde_json::json!({
+    let mut claims = serde_json::json!({
         "task_id": task_id,
         "subtask_id": subtask_id,
         "user_id": user_id,
@@ -51,6 +63,12 @@ pub fn create_task_token(
         "exp": expire,
         "type": "task_token",
     });
+    if project_group_execution {
+        claims["project_group_execution"] = Value::Bool(true);
+    }
+    if let Some(id) = device_manager_execution_id {
+        claims["device_manager_execution_id"] = Value::from(id);
+    }
     sign(auth, &claims, "the task token")
 }
 

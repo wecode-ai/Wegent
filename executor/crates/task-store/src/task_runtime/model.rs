@@ -230,6 +230,8 @@ pub struct ChatAgentUpdate {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatAgent {
+    pub team_ref: String,
+    pub source_project_id: String,
     pub execution_policy: Option<Value>,
     pub model_policy: Option<Value>,
     pub id: String,
@@ -324,6 +326,10 @@ pub struct LocalExecution {
     pub agent_runtime: String,
     pub agent_additional_skills: Vec<Value>,
     pub agent_mcp_servers: Value,
+    #[serde(skip)]
+    pub agent_bots: Value,
+    #[serde(skip)]
+    pub agent_collaboration_model: Value,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,

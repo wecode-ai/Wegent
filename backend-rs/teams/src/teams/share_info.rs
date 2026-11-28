@@ -167,12 +167,12 @@ async fn team_share_info(
         let owned = owned_active_team(&state.mysql, team_id, viewer)
             .await
             .map_err(unhandled)?;
-        let store = wegent_capabilities::task_skills::kinds::KindCacheStore {
-            mysql: &state.mysql,
-            redis: state.redis.as_ref(),
-            erp: Some(state.erp.as_ref()),
-            resolvers: Some(&state.entity_resolvers),
-        };
+        let store = wegent_capabilities::task_skills::kinds::KindCacheStore::new(
+            &state.mysql,
+            state.redis.as_ref(),
+            state.erp.as_ref(),
+            &state.entity_resolvers,
+        );
         if owned.is_none()
             && !store
                 .team_share_permission(team_id, viewer)

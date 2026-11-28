@@ -42,7 +42,7 @@ const CAPACITY_STATUSES: &str = "'claimed', 'running', 'cancel_requested'";
 
 pub(super) const QUEUE_EXECUTION_COLUMNS: &str = "id, loop_item_id, cloud_project_id, \
     executor_owner_user_id, assigner_user_id, agent_id, team_id, automation_run_id, \
-    execution_environment, execution_device_id, runtime_device_id, runtime_task_id, status, \
+    execution_environment, execution_device_id, runtime_device_id, runtime_task_id, status, observed_state, \
     approval_status, execution_payload, error_message, execution_note, version, \
     start_requested_at, completed_at, execution_scope";
 
@@ -62,6 +62,7 @@ pub(super) struct QueueExecutionRow {
     pub runtime_device_id: String,
     pub runtime_task_id: String,
     pub status: String,
+    pub observed_state: Option<String>,
     pub approval_status: String,
     pub execution_payload: String,
     pub error_message: String,
@@ -90,6 +91,7 @@ impl QueueExecutionRow {
             runtime_device_id: self.runtime_device_id.clone(),
             runtime_task_id: self.runtime_task_id.clone(),
             status: self.status.clone(),
+            observed_state: self.observed_state.clone(),
             approval_status: self.approval_status.clone(),
             execution_payload: self.execution_payload.clone(),
             error_message: self.error_message.clone(),
@@ -116,6 +118,13 @@ impl ClaimPreparation {
             intent: Value::Null,
             runner: None,
         }
+    }
+
+    fn assigned_title(&self) -> Option<&str> {
+        self.intent["origin_context"]["workflow_task_title"]
+            .as_str()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
     }
 
     fn binding_task_id(&self) -> String {
@@ -301,6 +310,33 @@ pub(super) async fn reserve(
     }).await
 }
 
+fn binding_metadata(intent: &Value, workspace_device_id: &str) -> Value {
+    let selection = &intent["runtime_selection"];
+    let mut metadata = json!({"workspace_device_id": workspace_device_id});
+    if selection["model"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty())
+    {
+        metadata["model_selection"] = json!({
+            "modelName": selection["model"], "modelType": selection["model_type"],
+            "options": selection["model_options"]
+        });
+    }
+    let context = &intent["origin_context"];
+    if context["dispatch_role"] == "member" {
+        for (source, target) in [
+            ("dispatch_id", "dispatch_id"),
+            ("coordination_round_id", "dispatch_round_id"),
+            ("assignment_id", "assignment_id"),
+        ] {
+            if let Some(value) = context[source].as_str().filter(|id| !id.is_empty()) {
+                metadata[target] = json!(value);
+            }
+        }
+    }
+    metadata
+}
+
 async fn bind_issue_task(
     tx: &mut impl MysqlTransaction,
     command: &super::device_pull::PullCommand<'_>,
@@ -317,21 +353,14 @@ async fn bind_issue_task(
                  ORDER BY id DESC LIMIT 1 FOR UPDATE", store::LIVE),
         (command.owner_user_id, command.runtime_device_id, task_id.as_str()),
     ).await?;
-    let selection = &prepared.intent["runtime_selection"];
-    let mut metadata = json!({"workspace_device_id": if row.execution_device_id.is_empty() {
-        canonical_device
-    } else {
-        &row.execution_device_id
-    }});
-    if selection["model"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty())
-    {
-        metadata["model_selection"] = json!({
-            "modelName": selection["model"], "modelType": selection["model_type"],
-            "options": selection["model_options"]
-        });
-    }
+    let metadata = binding_metadata(
+        &prepared.intent,
+        if row.execution_device_id.is_empty() {
+            canonical_device
+        } else {
+            &row.execution_device_id
+        },
+    );
     if let Some((id, item)) = existing {
         if item != issue.id {
             return Err(MysqlError::InvalidQuery {
@@ -339,10 +368,10 @@ async fn bind_issue_task(
             });
         }
         tx.execute(
-            "UPDATE loop_items SET task_title=?, metadata=JSON_MERGE_PATCH(
+            "UPDATE loop_items SET task_title=COALESCE(?, NULLIF(task_title,''), ?), metadata=JSON_MERGE_PATCH(
                     IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()), CAST(? AS JSON))
                     WHERE id=?",
-            (issue.title.as_str(), metadata.to_string(), id),
+            (prepared.assigned_title(), issue.title.as_str(), metadata.to_string(), id),
         )
         .await?;
         return Ok(());
@@ -353,7 +382,7 @@ async fn bind_issue_task(
         json!({
             "cloud_project_id": issue.cloud_project_id, "loop_item_id": issue.id,
             "task_user_id": command.owner_user_id, "device_id": command.runtime_device_id,
-            "task_id": task_id, "task_title": issue.title,
+            "task_id": task_id, "task_title": prepared.assigned_title().unwrap_or(&issue.title),
             "linked_by_user_id": command.owner_user_id,
             "linked_at": chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
             "metadata": metadata
@@ -487,7 +516,6 @@ fn queue_sql(placeholders: &str) -> String {
               OR loop_item_executions.execution_device_id = '') \
          AND loop_item_executions.status = 'queued' \
          AND loop_item_executions.execution_environment IN ('local','cloud') \
-         AND loop_item_executions.team_id = 0 \
          AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 0 \
          ORDER BY loop_item_executions.priority_weight DESC, \
                   loop_item_executions.queued_at ASC, loop_item_executions.id ASC"
@@ -540,7 +568,6 @@ async fn claimable_by_device(
 ) -> anyhow::Result<bool> {
     let execution = row.execution();
     if execution.assignment_pending()
-        || execution.team_id != 0
         || !matches!(execution.execution_environment.as_str(), "local" | "cloud")
     {
         return Ok(false);
@@ -760,14 +787,14 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
-    async fn device_queue_never_consumes_managed_teams() -> anyhow::Result<()> {
+    async fn device_queue_accepts_device_teams_and_excludes_managed_teams() -> anyhow::Result<()> {
         crate::migrations::mysql_tests::isolated(async |mysql| {
             crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
             for (id, environment, team) in [(1,"local",0), (2,"wegent",42), (3,"cloud",42)] {
                 mysql.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,executor_owner_user_id,status,execution_environment,execution_device_id,team_id,execution_payload,error_message) VALUES (?,'root','1001',7,'queued',?,'',?,'{}','')",(id,environment,team)).await?;
             }
             let rows: Vec<QueueExecutionRow> = mysql.fetch_all(queue_sql("?"),(7,"device","local")).await?;
-            assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1]);
+            assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1,3]);
             Ok(())
         }).await
     }
@@ -786,6 +813,20 @@ mod tests {
         );
         assert_eq!(reply.runtime_task_id, root.runtime_task_id);
         assert_eq!(reply.runtime_turn_id, "codex-queue-17-execution-18");
+    }
+
+    #[test]
+    fn member_binding_retains_the_delivery_source_assignment() {
+        let intent = json!({"origin_context":{"dispatch_role":"member","dispatch_id":"dispatch",
+            "coordination_round_id":"round","assignment_id":"assignment",
+            "workflow_task_title":"Collect runtime evidence"}});
+        let prepared = claim_preparation(17, intent.clone(), None);
+        assert_eq!(prepared.assigned_title(), Some("Collect runtime evidence"));
+        assert_eq!(
+            binding_metadata(&intent, "runner"),
+            json!({"workspace_device_id":"runner",
+            "dispatch_id":"dispatch","dispatch_round_id":"round","assignment_id":"assignment"})
+        );
     }
 
     #[test]
@@ -867,6 +908,7 @@ mod tests {
             error_message: String::new(),
             execution_note: String::new(),
             version: 1,
+            observed_state: None,
             start_requested_at: None,
             completed_at: None,
             execution_scope: scope.into(),

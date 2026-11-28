@@ -125,12 +125,12 @@ async fn run(
     // `Task.model_validate(task.json)` + `get_team_for_task` ->
     // `kindReader.get_by_name_and_namespace` (Team branch).
     let context = TeamContext::from_task_row(&task);
-    let kinds_cache = KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let kinds_cache = KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let Some(team) = kinds_cache
         .resolve_team(task.user_id, &context.team_namespace, &context.team_name)
         .await

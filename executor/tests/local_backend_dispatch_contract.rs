@@ -17,6 +17,9 @@ use wegent_executor::{
     server::{RunnerResult, TaskRunner},
 };
 
+#[path = "../src/test_env.rs"]
+mod test_env;
+
 #[path = "support/git_clone_fixture.rs"]
 mod git_clone_fixture;
 
@@ -169,87 +172,48 @@ async fn task_execute_preserves_skill_identity_token() {
     );
 }
 
-#[tokio::test]
-async fn task_cancel_marks_registered_task_as_cancel_requested() {
-    let transport = RecordingTransport::default();
-    let task_runner = RecordingTaskRunner::default();
-    let runner = LocalBackendRunner::with_task_runner(
-        local_backend_config(),
-        transport.clone(),
-        task_runner.clone(),
-    );
-    runner.register_handlers();
-
-    transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
-    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
-
-    assert!(runner.is_cancel_requested("10", Some("20")));
-    let snapshot = runner.cancellation_snapshot();
-    assert_eq!(snapshot.cancel_requested_task_ids, vec!["10".to_owned()]);
-    assert!(snapshot.pending_task_ids.is_empty());
-    assert!(snapshot.pending_subtask_ids.is_empty());
-
-    transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 21})).await;
-    assert!(!runner.is_cancel_requested("10", Some("21")));
-    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
-    assert!(!runner.is_cancel_requested("10", Some("21")));
-    assert!(runner
-        .cancellation_snapshot()
-        .cancel_requested_task_ids
-        .is_empty());
-    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 21})).await;
-    assert!(runner.is_cancel_requested("10", Some("21")));
+#[test]
+fn early_cancel_is_recovered_and_only_cancels_the_targeted_dispatch() {
+    test_env::run_with_executor_home(verify_early_cancel());
 }
 
-#[tokio::test]
-async fn task_cancel_before_registration_is_stored_by_subtask_and_consumed_on_execute() {
+async fn verify_early_cancel() {
     let transport = RecordingTransport::default();
-    let task_runner = RecordingTaskRunner::default();
-    let runner = LocalBackendRunner::with_task_runner(
-        local_backend_config(),
-        transport.clone(),
-        task_runner.clone(),
-    );
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
-
-    transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
-
-    let pending = runner.cancellation_snapshot();
-    assert!(pending.pending_task_ids.is_empty());
-    assert_eq!(pending.pending_subtask_ids, vec!["20".to_owned()]);
-    assert!(pending.cancel_requested_task_ids.is_empty());
-
-    transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
-
-    let consumed = runner.cancellation_snapshot();
-    assert!(runner.is_cancel_requested("10", Some("20")));
-    assert!(consumed.pending_task_ids.is_empty());
-    assert!(consumed.pending_subtask_ids.is_empty());
-    assert_eq!(consumed.cancel_requested_task_ids, vec!["10".to_owned()]);
-}
-
-#[tokio::test]
-async fn task_cancel_before_registration_without_subtask_is_stored_by_task() {
-    let transport = RecordingTransport::default();
-    let task_runner = RecordingTaskRunner::default();
-    let runner = LocalBackendRunner::with_task_runner(
-        local_backend_config(),
-        transport.clone(),
-        task_runner,
-    );
+    for (task, subtask) in [(10, Some(20)), (11, None)] {
+        transport.handler("task:cancel").unwrap()(json!({"task_id":task,"subtask_id":subtask}))
+            .await;
+    }
+    drop(runner);
+    let restored = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), restored.clone());
     runner.register_handlers();
-
-    transport.handler("task:cancel").unwrap()(json!({"task_id": 11})).await;
-
-    let snapshot = runner.cancellation_snapshot();
-    assert_eq!(snapshot.pending_task_ids, vec!["11".to_owned()]);
-    assert!(snapshot.pending_subtask_ids.is_empty());
-    assert!(snapshot.cancel_requested_task_ids.is_empty());
+    for (task, subtask) in [(11, 21), (10, 20)] {
+        restored.handler("task:execute").unwrap()(json!({"task_id":task,"subtask_id":subtask}))
+            .await;
+    }
+    let events = restored.events.lock().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .map(|(name, payload)| (
+                name.as_str(),
+                payload["subtask_id"].as_i64(),
+                payload["data"]["response"]["status"].as_str()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("response.incomplete", Some(21), Some("cancelled")),
+            ("response.incomplete", Some(20), Some("cancelled")),
+        ]
+    );
 }
 
 #[derive(Clone, Default)]
 struct RecordingTransport {
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
+    events: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
 impl RecordingTransport {
@@ -277,18 +241,26 @@ impl LocalBackendTransport for RecordingTransport {
 
     fn call<'a>(
         &'a self,
-        _event: &'a str,
-        _payload: Value,
+        event: &'a str,
+        payload: Value,
         _timeout: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'a>> {
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.to_owned(), payload));
         Box::pin(async { Ok(json!({"success": true})) })
     }
 
     fn emit<'a>(
         &'a self,
-        _event: &'a str,
-        _payload: Value,
+        event: &'a str,
+        payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.to_owned(), payload));
         Box::pin(async { Ok(()) })
     }
 

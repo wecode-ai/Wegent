@@ -27,3 +27,13 @@ export function createStandInRoleDraft(
   }
   return { draft: { ...current, roles: [...current.roles, role] }, role }
 }
+
+export function editedReferencedTeam(
+  previous: { teamRef?: string | null; name?: string; prompt: string } | undefined,
+  next: { name?: string; prompt: string }
+) {
+  return Boolean(
+    previous?.teamRef?.startsWith('LA-') &&
+    (previous.prompt !== next.prompt || previous.name !== next.name)
+  )
+}

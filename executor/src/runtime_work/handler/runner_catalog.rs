@@ -102,6 +102,12 @@ impl RuntimeWorkRpcHandler {
             }
             Err(_) => errors.push("codex_catalog_unavailable"),
         }
+        // Installed harnesses can serve cloud models without a native account.
+        if std::path::Path::new(&wegent_runtime_config::executables::resolve_claude_binary())
+            .is_file()
+        {
+            runtimes.push("claude_code");
+        }
         let path = std::env::var_os("WEGENT_CLAUDE_HOME")
             .filter(|value| !value.is_empty())
             .map(std::path::PathBuf::from)
@@ -111,7 +117,9 @@ impl RuntimeWorkRpcHandler {
             Ok(contents) => match serde_json::from_str::<Value>(&contents) {
                 Ok(settings) => match claude_runner_models(&settings) {
                     Ok(claude_models) => {
-                        runtimes.push("claude_code");
+                        if !runtimes.contains(&"claude_code") {
+                            runtimes.push("claude_code");
+                        }
                         models.extend(claude_models);
                     }
                     Err(_) => errors.push("claude_catalog_invalid"),

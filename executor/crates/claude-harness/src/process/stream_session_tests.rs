@@ -161,10 +161,10 @@ async fn assert_init_is_saved_and_parent_cancel_stops_the_reader() {
             reader,
             sink,
             ResponsesEventBuilder::new("42", "43", "test"),
-            "42".into(),
-            "43".into(),
+            ("42".into(), "43".into()),
             None,
             Some(recorder.clone()),
+            None,
         ));
         let _guard = ReaderGuard::new(read.abort_handle(), recorder);
         assert!(started.send(read).is_ok());

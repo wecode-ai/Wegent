@@ -619,7 +619,7 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
     assert len(executions) == 1
     dispatch = executions[0]
     assert dispatch.status == "queued"
-    assert dispatch.agent_id == ""
+    assert dispatch.agent_id == leader.id
     assert dispatch.executor_type == "collaboration_group_dispatch"
     assert dispatch.execution_environment == execution_environment
     assert dispatch.runtime_request == {}
@@ -679,6 +679,25 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
     manager_request = runtime_payload["managerRuntimeRequest"]
     assert manager_request["origin"]["dispatchRole"] == "manager"
     assert [value["id"] for value in manager_request["bot"]] == [leader.id]
+    assert runtime_payload["dispatchProtocolVersion"] == 2
+    assert runtime_payload["memberRuntimeProfiles"] == []
+    # Old dispatches must retain their immutable local member launch data.
+    historical = claimed.execution_intent
+    historical["origin_context"].pop("dispatch_protocol_version")
+    import json
+
+    claimed.execution_payload = json.dumps(historical)
+    with patch(
+        "app.services.runtime_work_service.compile_runtime_task_create",
+        side_effect=_compiled_runtime_payload,
+    ):
+        runtime_payload = loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=claimed,
+            execution_target_id=str(claimed.execution_device_id),
+            executor_device_id=str(claimed.execution_device_id),
+        )
+    assert runtime_payload["dispatchProtocolVersion"] == 1
     member_profiles = runtime_payload["memberRuntimeProfiles"]
     assert {profile["agentId"] for profile in member_profiles} == {
         leader.id,
@@ -831,7 +850,7 @@ def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
     assert payload["managerRuntimeRequest"]["deviceId"] == claim_device_id
 
 
-def test_collaboration_group_rejects_non_executor_runtime(
+def test_collaboration_group_routes_managed_team_leader(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -855,21 +874,21 @@ def test_collaboration_group_rejects_non_executor_runtime(
         "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
-        with pytest.raises(
-            HTTPException,
-            match="Collaboration group AI must use an Executor runtime",
-        ):
-            loop_item_service.assign(
-                test_db,
-                project_id=project.id,
-                item_id=item.id,
-                user_id=test_user.id,
-                values=LoopItemAssign(
-                    version=item.version,
-                    assignee_type="group",
-                    assignee_id=str(group["id"]),
-                ),
-            )
+        loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+            ),
+        )
+    dispatch = test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).one()
+    assert dispatch.team_id == leader_team.id
+    assert dispatch.execution_environment == "wegent"
+    assert dispatch.runtime_origin_context["manager_agent_id"] == leader.id
 
 
 def _make_member(db: Session, project: CloudProject, name: str, role: BaseRole) -> User:
@@ -2091,3 +2110,53 @@ def test_external_update_denies_read_only_creator_for_all_writes(
         )
 
     assert excinfo.value.status_code == 403
+
+
+def test_legacy_project_agent_reads_without_backfill_and_preserves_grants(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.delivery import LoopNode
+    from app.services.project_chat.service import compiled_bot_config
+
+    project = _make_project(test_db, test_user)
+    agent = _make_bot(test_db, project, test_user)
+    existing = create_runnable_wegent_team(
+        test_db, user_id=test_user.id, name_prefix="kept"
+    )
+    authorize_resource(test_db, project, existing)
+    bound = _make_bot(test_db, project, test_user)
+    bound.metadata_json = {
+        **bound.metadata_json,
+        "runtime": "wegent",
+        "wegent_team_id": existing.id,
+    }
+    test_db.commit()
+    original_team = existing.json
+    legacy = dict(agent.metadata_json)
+    legacy.pop("teamRef")
+    nodes = LoopNode.__table__
+    test_db.execute(
+        nodes.update().where(nodes.c.id == agent.id).values(metadata=legacy)
+    )
+    test_db.query(Kind).filter_by(
+        user_id=test_user.id,
+        namespace=f"projects/{project.id}",
+        name=f"agent-{agent.id}",
+    ).delete()
+    test_db.commit()
+    grants = test_db.query(ResourceMember).count()
+    test_db.refresh(agent)
+    assert compiled_bot_config(test_db, agent)["runtime"] == legacy["runtime"]
+    assert agent.metadata_json == legacy
+    assert (
+        not test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            namespace=f"projects/{project.id}",
+            name=f"agent-{agent.id}",
+        )
+        .count()
+    )
+    assert bound.metadata_json["wegent_team_id"] == existing.id
+    assert existing.json == original_team
+    assert test_db.query(ResourceMember).count() == grants

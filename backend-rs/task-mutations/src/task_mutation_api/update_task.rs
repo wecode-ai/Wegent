@@ -331,12 +331,12 @@ async fn resolve_team_id(
             .as_ref()
             .is_some_and(wegent_resource_store::crd::NumericId::is_null)
     {
-        let cache = wegent_capabilities::task_skills::kinds::KindCacheStore {
-            mysql: &state.views.mysql,
-            redis: state.views.redis.as_ref(),
-            erp: Some(state.views.erp.as_ref()),
-            resolvers: Some(&state.views.entity_resolvers),
-        };
+        let cache = wegent_capabilities::task_skills::kinds::KindCacheStore::new(
+            &state.views.mysql,
+            state.views.redis.as_ref(),
+            state.views.erp.as_ref(),
+            &state.views.entity_resolvers,
+        );
         cache
             .get_team_id_by_name_and_namespace(user_id, &namespace, &name)
             .await
@@ -347,10 +347,9 @@ async fn resolve_team_id(
     } else {
         // An explicit owner (including 0) queries the kinds table directly
         // with that owner instead of the viewer's cached reader.
-        let kinds = wegent_capabilities::kind_store::KindStore {
-            mysql: &state.views.mysql,
-            redis: state.views.redis.as_ref(),
-        };
+        let kinds = wegent_capabilities::kind_store::KindStore::<_, brz_redis::RedisService>::sql(
+            &state.views.mysql,
+        );
         kinds
             .get_team_by_owner(
                 owner

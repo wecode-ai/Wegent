@@ -59,6 +59,13 @@ pub struct KindStore<'a, M: Mysql, R: Redis> {
     pub redis: Option<&'a R>,
 }
 
+impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
+    /// Read current Kind identities from the authoritative database.
+    pub fn sql(mysql: &'a M) -> Self {
+        Self { mysql, redis: None }
+    }
+}
+
 /// The SQL handle behind a cached-reader miss.
 ///
 /// The pool entry keeps the non-request callers on their own connection. The

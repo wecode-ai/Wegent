@@ -12,10 +12,10 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.services.chat.storage import task_manager
-from app.services.chat.trigger import lifecycle
 
 
 @pytest.mark.asyncio
@@ -29,14 +29,32 @@ async def test_chat_creation_saves_independent_memory_history(
     memory_context_messages: int,
 ) -> None:
     # Arrange real task/history persistence and mock external memory/Redis only.
+    bot = Kind(
+        id=1255,
+        kind="Bot",
+        user_id=test_user.id,
+        name="memory-bot",
+        namespace="default",
+        json={},
+    )
+    test_db.add(bot)
+    test_db.flush()
     team = SimpleNamespace(
-        id=1256, user_id=test_user.id, name="quickstart", namespace="default"
+        json={
+            "metadata": {"name": "quickstart", "namespace": "default"},
+            "spec": {
+                "members": [{"botRef": {"name": bot.name}}],
+                "collaborationModel": "solo",
+            },
+        },
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
     )
     monkeypatch.setattr(
         task_manager, "build_initial_task_knowledge_base_refs", lambda *args, **kw: []
     )
-    monkeypatch.setattr(task_manager, "get_bot_ids_from_team", lambda *args: [1255])
-    monkeypatch.setattr(lifecycle, "_load_team_crd", lambda _team: None)
     monkeypatch.setattr(settings, "MEMORY_CONTEXT_MESSAGES", memory_context_messages)
     task = task_manager.create_new_task(
         test_db, test_user, team, task_manager.TaskCreationParams(message="initial")

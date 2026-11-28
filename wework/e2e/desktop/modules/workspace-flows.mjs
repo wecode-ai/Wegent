@@ -334,7 +334,11 @@ export async function selectCloudAgentModel(
     await control.command('getAttribute', modelOptions, { value: 'data-value' }),
     'The first listed cloud model must be selected before opening runtime settings'
   )
-  await control.command('nativePress', selector, { key: 'Escape' })
+  await control.command('setExpanded', selector, { value: 'false', timeoutMs })
+  await control.command('waitFor', '[data-testid="wework-agent-model-menu"]', {
+    visible: false,
+    timeoutMs,
+  })
   await selectAgentEnvironment(
     control,
     'wework-agent-environment',
@@ -779,16 +783,21 @@ async function captureVerificationScreenshot(control, name, selector = 'body', o
     )
   }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
-  const requiredAppearanceEvidence = name.startsWith('appearance-')
+  const requiredEvidence =
+    name.startsWith('appearance-') ||
+    name === 'platform-task-streaming.png' ||
+    name === 'platform-task-continuation.png' ||
+    name === 'assistant-team-options.png' ||
+    name === 'assistant-team-saved.png'
   if (
-    !requiredAppearanceEvidence &&
+    !requiredEvidence &&
     screenshotMode === 'final' &&
     !name.endsWith('04-task-completed-after-reopen.png')
   ) {
     return null
   }
   if (
-    !requiredAppearanceEvidence &&
+    !requiredEvidence &&
     screenshotMode === 'harness-milestones' &&
     !HARNESS_MILESTONE_SCREENSHOTS.has(name)
   ) {

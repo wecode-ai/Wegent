@@ -86,6 +86,38 @@ impl LocalTaskStore {
         }
     }
 
+    /// Read the project Pipeline snapshot for this active claim. A stage reads only its Bot.
+    pub fn claimed_pipeline_members(
+        &self,
+        claim_id: i64,
+        device: &str,
+        task: &str,
+        project: &str,
+        agent: &str,
+        stage: Option<u64>,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
+        let path = stage.map_or_else(|| "$.bot".to_owned(), |index| format!("$.bot[{index}]"));
+        let selected: Option<Option<String>> = self
+            .connection()?
+            .query_row(
+                "SELECT execution_payload -> ?6 FROM loop_item_executions
+             WHERE id=?1 AND runtime_device_id=?2 AND runtime_task_id=?3
+               AND cloud_project_id=?4 AND agent_id=?5 AND status IN ('claimed','running')
+               AND json_extract(execution_payload,'$.collaboration_model')='pipeline'
+               AND json_type(execution_payload,'$.bot')='array'",
+                params![claim_id, device, task, project, agent, path],
+                |row| row.get(0),
+            )
+            .optional()?;
+        selected
+            .flatten()
+            .map(|json| {
+                serde_json::from_str(&json)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .transpose()
+    }
+
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
         let connection = self.connection()?;
         let current = execution_row(&connection, execution_id)?;

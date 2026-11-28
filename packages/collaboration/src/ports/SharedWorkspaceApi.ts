@@ -270,6 +270,14 @@ export interface WorkspaceAgentCreateInput {
   teamId: number;
 }
 
+export interface PersonalTeamAdoptionInput {
+  sourceOwnerId?: number
+  definition: { id: string; name: string; leadId: string; members: Record<string, string> }
+  memberAgentIds: Record<string, string>
+  memberSourceTeamIds?: Record<string, number>
+  memberTeamDefinitions: Record<string, { name: string; collaboration_model: string; bot: Record<string, unknown>[] }>
+}
+
 export interface CollaborationGroupCreateInput {
   name: string;
   description?: string;
@@ -570,6 +578,10 @@ export interface SharedWorkspaceProjectsApi {
   listCollaborationGroups?(
     projectId: string,
   ): Promise<import("../types").CollaborationGroup[]>;
+  adoptPersonalTeam?(
+    projectId: string,
+    input: PersonalTeamAdoptionInput,
+  ): Promise<void>;
   addCollaborationGroup?(
     projectId: string,
     groupId: string,
@@ -618,7 +630,28 @@ export interface SharedWorkspaceMyWorkApi {
   }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
+export interface CoordinationRound {
+  loopItemId: string;
+  dispatchId: string;
+  roundId: string;
+}
+export interface CoordinationAssignment {
+  assignmentId: string;
+  title: string;
+  instructions: string;
+  assigneeType: "agent" | "human";
+  assigneeId: string;
+  workflowStageId?: string;
+  modelId?: string;
+}
 export interface SharedWorkspaceIssuesApi {
+  submitRound?(projectId: string, input: CoordinationRound & { items: CoordinationAssignment[] }): Promise<void>;
+  decideRound?(projectId: string, input: CoordinationRound & {
+    targetStatus: "inbox" | "pending" | "in_progress" | "in_review" | "completed";
+    idempotencyKey: string;
+    reason: string;
+    comment?: string;
+  }): Promise<void>;
   list(
     projectId: string,
     filters?: WorkspaceIssueListFilters,

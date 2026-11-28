@@ -146,7 +146,13 @@ pub(super) fn configure(
         &config.thread_config,
     )?;
     config.config_overrides.extend(overrides);
-    config.thread_config.extend(permission_config(request));
+    // A private Codex process can reload config before applying thread overrides.
+    // Supply the same named profiles at launch and through thread RPC.
+    config.config_overrides.extend(
+        permission_config(request)
+            .into_iter()
+            .map(|(key, value)| format!("{key}={}", toml_json_value(&value))),
+    );
     config
         .thread_config
         .insert("approvals_reviewer".into(), json!(reviewer(request)));

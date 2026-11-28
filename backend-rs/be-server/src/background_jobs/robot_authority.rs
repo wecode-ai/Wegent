@@ -126,7 +126,8 @@ async fn require_on(
     )
     .await?;
     let context = row.context();
-    if context["comment_continue_task_id"].as_str().is_some()
+    if (context["comment_continue_task_id"].as_str().is_some()
+        || context["dispatch_protocol_version"] == 2)
         && context["dispatch_kind"] == "collaboration_group"
         && !groups::current_dispatch(&issue.metadata.0, &context)
     {
@@ -205,15 +206,19 @@ async fn agent_use_on(
             row.assigner_user_id,
         )
         .await?;
-        if let Some(agent) = agent {
-            team_id = authority::integer(&agent.metadata.0["wegent_team_id"]).unwrap_or(0);
+        if let Some(metadata) = agent {
+            let bound = authority::integer(&metadata["wegent_team_id"]).unwrap_or(0);
+            if team_id != 0 && bound != team_id {
+                bail!("Assigned Team binding changed");
+            }
+            team_id = bound;
             if !row.assignment_pending() {
                 let selection = row.selection();
                 let id = selection["runtime_profile_id"]
                     .as_str()
                     .filter(|id| !id.is_empty())
                     .or_else(|| {
-                        agent.metadata.0["default_runtime_profile_id"]
+                        metadata["default_runtime_profile_id"]
                             .as_str()
                             .filter(|id| !id.is_empty())
                     });
@@ -241,7 +246,7 @@ async fn agent_use_on(
             authority::team_execution_on(query, &row.cloud_project_id, workspace_id, team_id)
                 .await?;
         if !row.assignment_pending() {
-            agents::readiness(app, &team, row.assigner_user_id).await?;
+            agents::readiness(app, &team, row.assigner_user_id, None).await?;
         }
     }
     Ok(())
@@ -254,12 +259,37 @@ async fn group_on(
     workspace: i64,
 ) -> Result<()> {
     let context = row.context();
-    let snapshot = &context["collaboration_group"];
+    let root;
+    let snapshot = if context["dispatch_protocol_version"] == 2
+        && context["dispatch_role"] == "member"
+    {
+        let id = wegent_project_coordination::project_group_access::coordination_key(
+            "issue_coordination",
+            &[
+                &row.cloud_project_id,
+                &row.loop_item_id,
+                context["dispatch_id"]
+                    .as_str()
+                    .context("Missing collaboration dispatch")?,
+            ],
+        );
+        let (document,): (brz_mysql::Json<serde_json::Value>,) = query.fetch_optional(
+            "SELECT metadata FROM project_chat_messages WHERE message_id=? AND message_type='coordination'",(id,)
+        ).await?.context("Collaboration dispatch unavailable")?;
+        root = document;
+        &root.0["group"]
+    } else {
+        &context["collaboration_group"]
+    };
     if !snapshot.is_object() {
         return Ok(());
     }
     groups::authorize_snapshot_on(query, &row.cloud_project_id, snapshot, row.assigner_user_id)
         .await?;
+    if context["dispatch_protocol_version"] == 2 {
+        // Membership authorization covers the snapshot; readiness belongs to the selected assignee.
+        return Ok(());
+    }
     let mut members = vec![&snapshot["leader"]];
     if let Some(others) = snapshot["members"].as_array() {
         members.extend(others);

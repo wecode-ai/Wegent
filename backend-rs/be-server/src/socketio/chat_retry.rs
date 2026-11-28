@@ -75,7 +75,10 @@ pub(crate) async fn retry(
     };
     observation.accept();
     match super::chat_trigger::trigger_existing(state, &prepared.turn, user_id).await {
-        Ok(()) => Ok(Reply::payload(json!({"success": true}))),
+        Ok(()) => Ok(Reply::payload(json!({
+            "success": true,
+            "execution_attempt_id": super::chat_trigger::device_attempt_id(&prepared.turn.task_json, payload.subtask_id)
+        }))),
         Err(error) => {
             tracing::error!(
                 ?error,
@@ -265,14 +268,13 @@ async fn prepare_retry(
         return Err(RetryFailure::Ack(error_ack("User not found")));
     }
     let bot_ids = team_bot_ids(state, &team).await?;
-    apply_model_override(payload, &mut task_json);
     let retry_result = failed
         .result
         .as_ref()
         .map(|result| result.0.to_value())
         .unwrap_or_else(|| json!({}));
     let retry_session = normalize_executor_session(retry_result.get("executor_session"));
-    reset_subtask_for_retry(
+    let reset = reset_subtask_for_retry(
         state,
         &tables,
         payload,
@@ -280,8 +282,20 @@ async fn prepare_retry(
         task_owner,
         &mut task_json,
         retry_session.as_ref(),
-    )
-    .await?;
+    );
+    if let Some(redis) = &state.redis {
+        use wegent_execution_completion::delivery::{device_delivery_lock_key, with_owned_lease};
+        with_owned_lease(
+            redis,
+            &device_delivery_lock_key(payload.subtask_id),
+            || RetryFailure::Internal,
+            None,
+            |_| reset,
+        )
+        .await?;
+    } else {
+        reset.await?;
+    }
     let message = extract_display_prompt(user_subtask.prompt.as_deref()).unwrap_or_default();
     // Follow-ups reuse the device bound to the Task (`extract_task_device_id`).
     let device_id = task_json
@@ -426,14 +440,26 @@ async fn reset_subtask_for_retry(
     let task_table = tables.tasks.clone();
     let now = local_isoformat();
     let row_now = task_update_timestamp();
-    let mut pending = task_json.clone();
-    crate::responses::create::continuation::mark_pending(&mut pending, &local_isoformat());
-    let task_payload = python_json_value(&pending);
+    let previous_attempt = super::chat_trigger::device_attempt_id(task_json, payload.subtask_id);
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|_| RetryFailure::Internal)?;
+    let attempt: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     let reset_result =
         executor_session.map(|session| python_json_value(&json!({"executor_session": session})));
-    let reset = state
+    let pending = state
         .mysql
         .with_transaction(async |transaction| {
+            let row: Option<(Json<Value>,)> = transaction.fetch_optional(
+                format!("SELECT json FROM {task_table} WHERE id=? AND user_id=? AND kind='Task' AND is_active!=0 FOR UPDATE"),
+                (payload.task_id, task_owner)
+            ).await?;
+            let Some((Json(mut pending),)) = row else { return Ok(None) };
+            if super::chat_trigger::device_attempt_id(&pending, payload.subtask_id) != previous_attempt {
+                return Ok(None);
+            }
+            apply_model_override(payload, &mut pending);
+            crate::responses::create::continuation::mark_pending(&mut pending, &now);
+            pending["status"]["executionAttempts"][payload.subtask_id.to_string()] = json!(attempt);
             let updated = transaction
                 .execute(
                     &format!(
@@ -452,7 +478,7 @@ async fn reset_subtask_for_retry(
                 )
                 .await?;
             if updated.rows_affected == 0 {
-                return Ok(false);
+                return Ok(None);
             }
             // Clear stale cancellation while the reset is still private to this
             // transaction. A cancel for the new attempt can only see PENDING
@@ -471,18 +497,18 @@ async fn reset_subtask_for_retry(
                     &format!(
                         "UPDATE {task_table} SET json=?, updated_at=? WHERE {task_table}.id = ?"
                     ),
-                    (task_payload.clone(), row_now.clone(), payload.task_id),
+                    (python_json_value(&pending), row_now.clone(), payload.task_id),
                 )
                 .await?;
-            Ok(true)
+            Ok(Some(pending))
         })
         .await
         .map_err(|_| RetryFailure::Internal)?;
-    if !reset {
+    let Some(pending) = pending else {
         return Err(RetryFailure::Ack(error_ack(
             "Subtask state changed before retry",
         )));
-    }
+    };
     *task_json = pending;
     let _ = state
         .task_store
@@ -578,12 +604,12 @@ async fn team_bot_ids(
     state: &AppState,
     team: &crate::responses::create::resolution::KindRow,
 ) -> Result<Vec<i64>, RetryFailure> {
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let bots =
         crate::responses::create::resolution::resolve_team_bots(&cache, team.user_id, &team.json.0)
             .await

@@ -4,6 +4,12 @@ sidebar_position: 4
 
 # 与 AI 协作
 
+<a id="platform-task-continuation"></a>
+
+## 在 Wework 中续谈设备任务
+
+在 Wegent 网页打开设备任务，点击会话上方的 **在 Wework 中续谈**。在 Issue 活动中的 Wegent 任务卡上也可以点击同名入口，或用 **在任务页打开** 查看网页。桌面端需连接任务所属的后端并登录同一账号。执行设备在线、有权访问且已有可恢复的会话时，会打开原任务的对话。
+
 ## 描述任务
 
 <a id="task-controls"></a>

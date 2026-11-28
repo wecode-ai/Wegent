@@ -125,7 +125,16 @@ def _execution(
             )
             if activity is None or activity.agent_id != target.agent_id:
                 raise HTTPException(409, "The collaboration session is unavailable")
-            return resolve_collaboration_member_session(db, request, activity)
+            if metadata.get("collaboration_member_execution_id") is None:
+                return resolve_collaboration_member_session(db, request, activity)
+            if (activity.metadata_json or {}).get("execution_id") != metadata.get(
+                "collaboration_member_execution_id"
+            ):
+                raise HTTPException(
+                    409, "The collaboration member execution has changed"
+                )
+            target = activity
+            metadata = target.metadata_json
         if metadata.get("dispatch_id") and metadata.get("manager_runtime_task_id"):
             return resolve_collaboration_manager_session(db, request, target)
     if (target.metadata_json or {}).get("dispatch_role") == "manager" and (
@@ -613,7 +622,7 @@ async def execute_comment(
         authority_user_id = execution.assigner_user_id
         if not authority_user_id:
             raise HTTPException(409, "The original execution authority is unavailable")
-    from app.services.collaboration_revocation import execution_authorized
+    from app.services.collaboration_revocation import execution_permission
 
     current_agent = (
         db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
@@ -643,7 +652,7 @@ async def execute_comment(
             origin_context=execution.runtime_origin_context,
         ),
     )
-    if not execution_authorized(db, authority):
+    if not execution_permission(db, authority, for_comment=True).allowed:
         raise HTTPException(403, "Comment execution authorization is revoked")
     if (
         not human_request

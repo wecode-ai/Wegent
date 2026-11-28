@@ -137,15 +137,19 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+use super::manager_tools;
 mod marketplace_catalog;
 mod memory_review;
 mod native_provider;
+mod native_roles;
+use native_roles::{coordinate_role_overrides, coordinate_team};
 mod plugin_cache;
 mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
 #[path = "codex/writer_diagnostics.rs"]
 mod writer_diagnostics;
+pub(crate) use stand_in_approval::managed_mcp_keeps_native_policy;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/child.rs"]
 mod child;
@@ -711,7 +715,9 @@ impl CodexAppServerClient {
         request: ExecutionRequest,
         options: CodexAppServerTurnOptions,
     ) -> Result<CodexAppServerTurn, String> {
-        run_codex_app_server_turn_on_shared_client(self, request, options).await
+        CodexTurnConnection::Shared(self)
+            .run(request, options)
+            .await
     }
 
     pub async fn restart(&self) {
@@ -941,6 +947,7 @@ impl CodexAppServerClient {
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
+                state.private_turn.as_ref(),
                 &process_launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
@@ -1053,11 +1060,15 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
         thread_id: &str,
     ) -> Result<broadcast::Receiver<CodexNotification>, String> {
-        Ok(self
+        let hub = self
             .ensure_process_for_launch_config(launch_config)
             .await?
-            .notifications
-            .subscribe_thread(thread_id))
+            .notifications;
+        Ok(if self.state.lock().await.private_turn.is_some() {
+            hub.subscribe_all()
+        } else {
+            hub.subscribe_thread(thread_id)
+        })
     }
 
     async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -1377,6 +1388,7 @@ impl CodexAppServerClient {
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
+                state.private_turn.as_ref(),
                 &launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
@@ -1428,6 +1440,7 @@ impl CodexAppServerClient {
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
+                state.private_turn.as_ref(),
                 &process_launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
@@ -1576,6 +1589,7 @@ fn is_codex_cloud_config_error(error: &str) -> bool {
 }
 
 struct CodexAppServerSharedState {
+    private_turn: Option<(String, String)>,
     process: Option<CodexAppServerProcess>,
     runtime_notifications: RuntimeNotificationSubscribers,
     executor_shutdown_requested: bool,
@@ -1638,6 +1652,7 @@ async fn stop_codex_app_server_process(
 impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
+            private_turn: None,
             process: None,
             runtime_notifications: Arc::new(StdMutex::new(Vec::new())),
             executor_shutdown_requested: false,
@@ -1989,15 +2004,28 @@ impl CodexAppServerHandle {
 async fn start_persistent_codex_app_server(
     binary: &str,
     next_id: u64,
+    private_turn: Option<&(String, String)>,
     request_launch_config: &CodexLaunchConfig,
     runtime_notifications: RuntimeNotificationSubscribers,
     auth_mode: CodexAuthMode,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 ) -> Result<(CodexAppServerProcess, u64), String> {
-    let mut launch_config = persistent_codex_app_server_launch_config(request_launch_config);
-    let (home, auth_lease) = acquire_codex_app_server_home(&launch_config, Some(auth_mode))?;
-    let catalog =
-        codex_model_catalog::prepare_process_catalog(&resolve_codex_binary(binary), &home).await?;
+    let mut launch_config = if private_turn.is_some() {
+        request_launch_config.clone()
+    } else {
+        persistent_codex_app_server_launch_config(request_launch_config)
+    };
+    let requested_auth = if private_turn.is_some() {
+        request_launch_config.auth_mode
+    } else {
+        Some(auth_mode)
+    };
+    let (home, auth_lease) = acquire_codex_app_server_home(&launch_config, requested_auth)?;
+    let catalog = if private_turn.is_some() {
+        None
+    } else {
+        codex_model_catalog::prepare_process_catalog(&resolve_codex_binary(binary), &home).await?
+    };
     if let Some(catalog) = &catalog {
         launch_config.config_overrides.push(format!(
             "model_catalog_json={}",
@@ -2021,7 +2049,14 @@ async fn start_persistent_codex_app_server(
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new(stdin, CodexStdout::new(stdout, None), next_id);
+        let mut rpc = JsonRpcConnection::new(
+            stdin,
+            CodexStdout::new(
+                stdout,
+                private_turn.map(|(task, subtask)| (task.as_str(), subtask.as_str())),
+            ),
+            next_id,
+        );
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -2040,10 +2075,16 @@ async fn start_persistent_codex_app_server(
     .await;
     match result {
         Ok((stdin, stdout, next_id)) => {
-            log_executor_event(
-                "codex shared app-server process initialized",
-                &[("process_id", process_id)],
-            );
+            if let Some((task, subtask)) = private_turn {
+                let mut fields = task_fields(task, subtask);
+                fields.push(("process_id", process_id));
+                log_executor_event("codex app-server started", &fields);
+            } else {
+                log_executor_event(
+                    "codex shared app-server process initialized",
+                    &[("process_id", process_id)],
+                );
+            }
             let pending = Arc::new(Mutex::new(HashMap::new()));
             let notifications =
                 CodexNotificationHub::for_runtime(runtime_notifications, thread_activity_changed);
@@ -2219,9 +2260,9 @@ async fn read_persistent_codex_app_server_stdout(
                     }
                     let _ = request.sender.send(result);
                     notifications.thread_activity_changed.notify_waiters();
-                    continue;
                 }
             }
+            continue;
         }
 
         log_codex_mcp_startup_status(&message, notifications.process_generation);
@@ -2453,37 +2494,97 @@ fn codex_turn_fields(request: &ExecutionRequest, thread_id: &str) -> Vec<(&'stat
     fields
 }
 
-async fn run_codex_app_server_turn_on_shared_client(
+fn finish_codex_turn(
+    mut state: CodexRunState,
+    thread_id: String,
+    outcome: ExecutionOutcome,
+    mut turn_fields: Vec<(&'static str, String)>,
+    event: &str,
+) -> CodexAppServerTurn {
+    state.finish_turn_timing(current_epoch_millis());
+    turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
+    if let ExecutionOutcome::Failed { message } = &outcome {
+        turn_fields.push(("error", message.clone()));
+        turn_fields.push(("error_len", message.len().to_string()));
+    }
+    log_executor_event(event, &turn_fields);
+    let response_item_id = state.response_item_id().map(str::to_owned);
+    let response_value_origin = state.response_value_origin();
+    let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+    let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
+    CodexAppServerTurn {
+        quota_recovery: state.quota_recovery.take(),
+        thread_id,
+        outcome,
+        error_type: state.error_type.clone(),
+        response_item_id,
+        response_value_origin,
+        goal_status,
+        goal_status_observed,
+        started_at_ms,
+        completed_at_ms,
+        duration_ms,
+    }
+}
+
+pub(crate) enum CodexTurnConnection<'a> {
+    Shared(&'a CodexAppServerClient),
+    Private(&'a str),
+}
+
+impl CodexTurnConnection<'_> {
+    pub(crate) async fn run(
+        self,
+        request: ExecutionRequest,
+        options: CodexAppServerTurnOptions,
+    ) -> Result<CodexAppServerTurn, String> {
+        let client = match self {
+            Self::Shared(client) => client,
+            Self::Private(binary) => {
+                let client = CodexAppServerClient::new(binary);
+                return run_private_codex_turn(&client, request, options, Default::default()).await;
+            }
+        };
+        // Tool registration is process-scoped in Codex. A shared process cannot
+        // establish a no-tools boundary through thread overrides alone.
+        if super::instance_home::request_home(&request).is_some()
+            || coordinate_team(&request)
+            || request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+            || memory_review::applies(&request)
+        {
+            let mut options = options;
+            if let Some(thread_id) = options.direct_thread_id.take() {
+                options.resume_thread_id = Some(thread_id);
+            }
+            let subscribers = Arc::clone(&client.state.lock().await.runtime_notifications);
+            return run_private_codex_turn(client, request, options, subscribers).await;
+        }
+        drive_codex_turn(client, request, options, None).await
+    }
+}
+
+async fn drive_codex_turn(
     client: &CodexAppServerClient,
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
+    private_owner: Option<&CodexAppServerClient>,
 ) -> Result<CodexAppServerTurn, String> {
-    // Tool registration is process-scoped in Codex. A shared process cannot
-    // establish a no-tools boundary through thread overrides alone.
-    if super::instance_home::request_home(&request).is_some()
-        || request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
-        || memory_review::applies(&request)
-    {
-        let mut options = options;
-        if let Some(thread_id) = options.direct_thread_id.take() {
-            options.resume_thread_id = Some(thread_id);
-        }
-        let state = client.state.lock().await;
-        let runtime_notifications = CodexNotificationHub::for_runtime(
-            Arc::clone(&state.runtime_notifications),
-            Arc::clone(&state.thread_activity_changed),
-        );
-        drop(state);
-        return run_codex_app_server_turn_with_runtime(
-            &client.binary,
-            request,
-            options,
-            Some(runtime_notifications),
-        )
-        .await;
-    }
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
+    let mut private_admission = match (
+        private_owner,
+        options
+            .resume_thread_id
+            .as_deref()
+            .or(options.direct_thread_id.as_deref()),
+    ) {
+        (Some(owner), Some(id)) => Some(owner.admit_isolated_thread(id).await?),
+        _ => None,
+    };
+    if private_owner.is_some() {
+        super::environment_setup::prepare_execution_environment(&request).await?;
+        super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
+    }
     // A peer preparing its thread still owns the shared process, before it
     // can be represented in active_threads by its native thread ID.
     let turn_preparation = client.state.lock().await.preparing_turns.begin();
@@ -2506,17 +2607,24 @@ async fn run_codex_app_server_turn_on_shared_client(
         active_turn_started,
         active_turn_finished,
         overload_turn_recovering,
-        defer_interactive_forms: _,
+        defer_interactive_forms,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config =
+    let mut launch_config =
         build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
         fields.push(("cwd", cwd.to_owned()));
     }
-    log_executor_event("codex shared app-server turn starting", &fields);
+    log_executor_event(
+        if private_owner.is_some() {
+            "codex app-server starting"
+        } else {
+            "codex shared app-server turn starting"
+        },
+        &fields,
+    );
 
     let mut subscribed_thread_id = None;
     let mut early_request_context = None;
@@ -2531,6 +2639,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         if let Some(admit) = input_admission.as_ref() { admit()?; }
         let mut state = CodexRunState::default();
+        state.manager = launch_config.manager.clone();
         let thread_plan = codex_thread_plan(
             direct_thread_id.as_deref(),
             fork_thread_id.as_deref(),
@@ -2539,9 +2648,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        let thread_admission=client
-            .prepare_thread_admission(&thread_plan, request, &launch_config)
-            .await?;
+        // A new private process has no retained thread or subscription to unload.
+        // Its writer gate is already held in the owner's registry.
+        let thread_admission = if private_owner.is_none() {
+            client.prepare_thread_admission(&thread_plan, request, &launch_config).await?
+        } else {
+            None
+        };
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             // Native resume may start an active Goal before returning its RPC
             // response. Both its route and notification listener must exist first.
@@ -2619,10 +2732,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                 }
                 resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
-                log_executor_event("codex shared thread request finished", &thread_fields);
+                log_executor_event(if private_owner.is_some() { "codex thread request finished" } else { "codex shared thread request finished" }, &thread_fields);
                 thread_id
             }
         };
+        if let Some(owner) = private_owner {
+            if private_admission.is_none() {
+                private_admission = Some(owner.thread_lifecycle_gate(&thread_id).await.lock_owned().await);
+            }
+        }
         if let Some(active_thread_id) = subscribed_thread_id.as_deref() {
             if active_thread_id != thread_id {
                 return Err(format!(
@@ -2662,6 +2780,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
             }
         };
+        launch_config.thread_model = resolved_model.0.clone();
         if let Some(callback) = thread_started {
             let resolved_model = native_activity::reporting_model_identity(
                 resolved_model,
@@ -2735,7 +2854,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .request(client, "thread/goal/set", goal_params, &launch_config)
                 .await?;
             sync_goal_status_from_response(&mut state, &goal_response);
-        } else if !request.ephemeral && thread_plan.resume_requested {
+        } else if !request.ephemeral && thread_plan.resume_requested && (private_owner.is_none() || resume_goal_only) {
             if let Ok(goal_response) = turn_request_context
                 .request(
                     client,
@@ -2781,6 +2900,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
             restored_quota_goal = true;
         }
+        // A one-shot native process can exit immediately after emitting turn/completed.
+        // Hold its mailbox while delivering the buffered turn, including after EOF.
+        let runtime_notifications = client.existing_process().await?.notifications;
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
@@ -2842,8 +2964,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                defer_interactive_forms,
                 recover_usage_limits: recover_usage_limits && !request.uses_ephemeral_codex_thread(),
-                runtime_notifications: Some(client.existing_process().await?.notifications),
+                runtime_notifications: Some(runtime_notifications),
                 overload_continuation_params: turn_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
                 ),
@@ -2880,35 +3003,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             }
         }
-        state.finish_turn_timing(current_epoch_millis());
-        turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
-        if let ExecutionOutcome::Failed { message } = &outcome {
-            turn_fields.push(("error", message.clone()));
-            turn_fields.push(("error_len", message.len().to_string()));
-        }
-        log_executor_event("codex shared turn request finished", &turn_fields);
-        let response_item_id = state.response_item_id().map(str::to_owned);
-        let response_value_origin = state.response_value_origin();
-        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
-        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
-        Ok(CodexAppServerTurn {
-            quota_recovery: state.quota_recovery.take(),
-            thread_id,
-            outcome,
-            error_type: state.error_type.clone(),
-            response_item_id,
-            response_value_origin,
-            goal_status,
-            goal_status_observed,
-            started_at_ms,
-            completed_at_ms,
-            duration_ms,
-        })
+        Ok(finish_codex_turn(state, thread_id, outcome, turn_fields, if private_owner.is_some() { "codex turn request finished" } else { "codex shared turn request finished" }))
     }
     .await
     .map_err(|error| temporary_thread_error(&prepared.request, direct_thread_id.as_deref(), error));
 
-    if let Some(thread_id) = subscribed_thread_id {
+    if private_owner.is_some() {
+        client.restart().await;
+        drop(private_admission);
+    } else if let Some(thread_id) = subscribed_thread_id {
         let retain_subscription = result.is_ok() && !prepared.request.uses_ephemeral_codex_thread();
         client
             .finish_thread_activity(&thread_id, retain_subscription)
@@ -2975,387 +3078,38 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     ]
 }
 
-struct CodexTurnProcess {
-    child: CodexAppServerChild,
-}
-
 pub async fn run_codex_app_server_turn_with_cancel(
     binary: &str,
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    run_codex_app_server_turn_with_runtime(binary, request, options, None).await
+    CodexTurnConnection::Private(binary)
+        .run(request, options)
+        .await
 }
 
-async fn run_codex_app_server_turn_with_runtime(
-    binary: &str,
+async fn run_private_codex_turn(
+    owner: &CodexAppServerClient,
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
-    runtime_notifications: Option<CodexNotificationHub>,
+    runtime_notifications: RuntimeNotificationSubscribers,
 ) -> Result<CodexAppServerTurn, String> {
-    let mut capability_lease =
-        Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
-    let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
-    let mut thread_admission = match options
-        .resume_thread_id
-        .as_deref()
-        .or(options.direct_thread_id.as_deref())
-    {
-        Some(thread_id) => Some(admission_client.admit_isolated_thread(thread_id).await?),
-        None => None,
+    let owner = owner.for_request(&request)?;
+    let state = owner.state.lock().await;
+    let private = CodexAppServerClient {
+        binary: owner.binary.clone(),
+        home: owner.home.clone(),
+        state: Arc::new(Mutex::new(CodexAppServerSharedState {
+            private_turn: Some((request.task_id.clone(), request.subtask_id.clone())),
+            runtime_notifications,
+            thread_activity_changed: Arc::clone(&state.thread_activity_changed),
+            runtime_proxy_env: runtime_proxy_env(&request.model_config),
+            ..Default::default()
+        })),
     };
-    super::environment_setup::prepare_execution_environment(&request).await?;
-    super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
-    let CodexAppServerTurnOptions {
-        mut event_goal,
-        input_admission,
-        gateway_credentials,
-        recover_usage_limits,
-        quota_resume,
-        direct_thread_id,
-        fork_thread_id,
-        fork_thread_path,
-        resume_thread_id,
-        initial_thread_goal,
-        notifications,
-        mut cancellation,
-        request_user_input_answers,
-        defer_interactive_forms,
-        overload_turn_recovering,
-        thread_started,
-        active_turn_started,
-        active_turn_finished,
-        ..
-    } = options;
-    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config =
-        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
-    let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
-    fields.push(("binary", resolve_codex_binary(binary)));
-    if let Some(cwd) = prepared.request.cwd() {
-        fields.push(("cwd", cwd.to_owned()));
-    }
-    log_executor_event("codex app-server starting", &fields);
-    let mut process = match spawn_codex_app_server(binary, &launch_config, launch_config.auth_mode)
-    {
-        Ok(child) => {
-            if let Some(pid) = child.id() {
-                fields.push(("process_id", pid.to_string()));
-            }
-            log_executor_event("codex app-server started", &fields);
-            CodexTurnProcess { child }
-        }
-        Err(error) => {
-            let mut failed_fields = fields.clone();
-            failed_fields.push(("error_len", error.len().to_string()));
-            log_executor_event("codex app-server failed to start", &failed_fields);
-            cleanup_generated_files(&prepared.generated_files);
-            return Err(error);
-        }
-    };
-
-    let result: Result<CodexAppServerTurn, String> = async {
-        let timeout_seconds = codex_rpc_timeout_seconds();
-        let stdin = process
-            .child
-            .stdin
-            .take()
-            .ok_or_else(|| "codex app-server stdin was not captured".to_owned())?;
-        let stdout = process
-            .child
-            .stdout
-            .take()
-            .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let stdout = CodexStdout::new(
-            stdout,
-            Some((&prepared.request.task_id, &prepared.request.subtask_id)),
-        );
-        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
-            .with_runtime_notifications(runtime_notifications.clone());
-        let mut state = CodexRunState::default();
-
-        with_rpc_timeout(
-            "initialize",
-            timeout_seconds,
-            rpc.request("initialize", initialize_params(), &mut state),
-        )
-        .await?;
-        configure_codex_log_db_filter(wework_codex_home()).await;
-        with_rpc_timeout(
-            "initialized",
-            timeout_seconds,
-            rpc.notify("initialized", json!({})),
-        )
-        .await?;
-
-        let request = &prepared.request;
-        if let Some(admission) = event_goal.as_ref() {
-            admission.before_resume_direct(&mut rpc, &mut state).await?;
-        }
-        if let Some(admit) = input_admission.as_ref() {
-            admit()?;
-        }
-        let thread_plan = codex_thread_plan(
-            direct_thread_id.as_deref(),
-            fork_thread_id.as_deref(),
-            fork_thread_path.as_deref(),
-            resume_thread_id.as_deref(),
-            request,
-            &launch_config,
-        );
-        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
-            bind_local_proxy_thread(&launch_config, thread_id)?;
-            state.set_root_thread_id(thread_id.to_owned());
-        }
-        let mut resolved_model = (None, None);
-        let thread_id = match thread_plan.start {
-            CodexThreadStart::Direct(thread_id) => {
-                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-                thread_fields.push(("operation", "thread/direct".to_owned()));
-                thread_fields.push(("thread_id", thread_id.clone()));
-                log_executor_event("codex thread request skipped", &thread_fields);
-                thread_id
-            }
-            CodexThreadStart::Request { operation, params } => {
-                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-                thread_fields.push(("operation", operation.to_owned()));
-                log_executor_event("codex thread request started", &thread_fields);
-                let response = with_rpc_timeout(
-                    operation,
-                    timeout_seconds,
-                    rpc.request(operation, params, &mut state),
-                )
-                .await?;
-                let thread_id = thread_id_from_response(
-                    operation,
-                    &response,
-                    launch_config.model_provider.as_deref(),
-                )?;
-                resolved_model = native_activity::model_identity(&response);
-                thread_fields.push(("thread_id", thread_id.clone()));
-                log_executor_event("codex thread request finished", &thread_fields);
-                thread_id
-            }
-        };
-        if thread_admission.is_none() {
-            // New and forked identities become visible to prediction below.
-            let gate = admission_client.thread_lifecycle_gate(&thread_id).await;
-            thread_admission = Some(gate.lock_owned().await);
-        }
-        state.set_root_thread_id(thread_id.clone());
-        bind_local_proxy_thread(&launch_config, &thread_id)?;
-        let local_notifications = local_notifications::LocalNotificationSource::new(
-            runtime_notifications.clone(),
-            notifications.clone(),
-        );
-        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
-            &thread_id,
-            Some(&local_notifications.sender),
-        );
-        if let Some(callback) = thread_started {
-            let resolved_model = native_activity::reporting_model_identity(
-                resolved_model,
-                codex_request_model(request),
-                launch_config.inference_model_provider.as_deref(),
-            );
-            callback(thread_id.clone(), resolved_model.0, resolved_model.1);
-        }
-        notify_thread_started(notifications.as_ref(), &thread_id);
-        if thread_plan.fork_requested && request.ephemeral {
-            with_rpc_timeout(
-                "thread/inject_items",
-                timeout_seconds,
-                rpc.request(
-                    "thread/inject_items",
-                    side_boundary_inject_params(&thread_id),
-                    &mut state,
-                ),
-            )
-            .await?;
-        }
-        if request_model_provider_switched(request) {
-            with_rpc_timeout(
-                "thread/inject_items",
-                timeout_seconds,
-                rpc.request(
-                    "thread/inject_items",
-                    provider_switch_boundary_inject_params(&thread_id),
-                    &mut state,
-                ),
-            )
-            .await?;
-            log_executor_event(
-                "codex provider switch boundary injected",
-                &[("thread_id", thread_id.clone())],
-            );
-        }
-        drop(capability_lease.take());
-        let event_goal_request_id = if let Some(admission) = event_goal.as_mut() {
-            ensure_codex_turn_not_cancelled(&mut cancellation)?;
-            if let Some(admit) = input_admission.as_ref() {
-                admit()?;
-            }
-            let id = admission
-                .activate_direct(
-                    &mut rpc,
-                    &mut state,
-                    &codex_home_for_launch_config(&launch_config),
-                    &thread_id,
-                )
-                .await?;
-            Some(id)
-        } else {
-            None
-        };
-        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
-        let mut turn_fields = codex_turn_fields(request, &thread_id);
-        ensure_codex_turn_not_cancelled(&mut cancellation)?;
-        // Cancellation owns the complete admission/read sequence, including
-        // the Goal snapshot and restoration requests before a turn exists.
-        let read_turn = async {
-            if event_goal_request_id.is_none() {
-                if let Some(admit) = input_admission.as_ref() {
-                    admit()?;
-                }
-            }
-            let (turn_method, turn_params) = if event_goal_request_id.is_some() {
-                ("thread/goal/set", Value::Null)
-            } else if let Some(goal) = initial_thread_goal.as_ref().filter(|_| !request.ephemeral) {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                if let Some(params) = initial_goal_image_params(&thread_id, &request.prompt).await?
-                {
-                    with_rpc_timeout(
-                        "thread/inject_items",
-                        timeout_seconds,
-                        rpc.request("thread/inject_items", params, &mut state),
-                    )
-                    .await?;
-                }
-                ("thread/goal/set", goal_params)
-            } else if let Some(goal) = quota_resume
-                .as_ref()
-                .and_then(|recovery| recovery.goal.as_ref())
-            {
-                let current = with_rpc_timeout(
-                    "thread/goal/get",
-                    timeout_seconds,
-                    rpc.request(
-                        "thread/goal/get",
-                        json!({"threadId": thread_id}),
-                        &mut state,
-                    ),
-                )
-                .await?;
-                let params = turn_recovery::goal_resume_params(goal, &current)?
-                    .ok_or("Quota recovery cancelled because the goal changed")?;
-                ("thread/goal/set", params)
-            } else if quota_resume.is_some() {
-                (
-                    "turn/start",
-                    turn_recovery::continuation_params(turn_start_params(
-                        &thread_id,
-                        request,
-                        &launch_config,
-                        Vec::new(),
-                    )),
-                )
-            } else {
-                let turn_input = turn_input(&request.prompt);
-                turn_fields.push(("input_items", turn_input.len().to_string()));
-                log_executor_event("codex turn request started", &turn_fields);
-                (
-                    "turn/start",
-                    turn_start_params(&thread_id, request, &launch_config, turn_input),
-                )
-            };
-            let turn_request_id = if let Some(id) = event_goal_request_id {
-                id
-            } else {
-                with_rpc_timeout(
-                    turn_method,
-                    timeout_seconds,
-                    rpc.send_request(turn_method, turn_params),
-                )
-                .await?
-            };
-            rpc.read_turn(
-                turn_request_id,
-                &mut state,
-                json_rpc::TurnReadOptions {
-                    recover_usage_limits: recover_usage_limits
-                        && !request.uses_ephemeral_codex_thread(),
-                    wait_for_goal_continuation: turn_method == "thread/goal/set",
-                    active_turn_started,
-                    overload_turn_recovering,
-                    overload_continuation_params: turn_recovery::continuation_params(
-                        turn_start_params(&thread_id, request, &launch_config, Vec::new()),
-                    ),
-                    notifications,
-                    request_user_input_answers,
-                    auto_approve_mcp_tool_calls,
-                    auto_approve_commands: codex_auto_approve_commands(request),
-                    defer_interactive_forms,
-                    stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
-                        request,
-                    ),
-                },
-            )
-            .await
-        };
-        let outcome = if let Some(cancellation) = cancellation.as_mut() {
-            tokio::select! {
-                biased;
-                _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
-                outcome = read_turn => outcome?,
-            }
-        } else {
-            read_turn.await?
-        };
-        state.finish_turn_timing(current_epoch_millis());
-        turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
-        if let ExecutionOutcome::Failed { message } = &outcome {
-            turn_fields.push(("error", message.clone()));
-            turn_fields.push(("error_len", message.len().to_string()));
-        }
-        log_executor_event("codex turn request finished", &turn_fields);
-        let response_item_id = state.response_item_id().map(str::to_owned);
-        let response_value_origin = state.response_value_origin();
-        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
-        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
-        Ok(CodexAppServerTurn {
-            quota_recovery: state.quota_recovery.take(),
-            thread_id,
-            outcome,
-            error_type: state.error_type.clone(),
-            response_item_id,
-            response_value_origin,
-            goal_status,
-            goal_status_observed,
-            started_at_ms,
-            completed_at_ms,
-            duration_ms,
-        })
-    }
-    .await;
-
-    if let Some(callback) = active_turn_finished.as_ref() {
-        callback();
-    }
-    terminate_codex_app_server_child(&mut process.child).await;
-    drop(thread_admission);
-    if let Some(runtime) = runtime_notifications.as_ref() {
-        notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
-    }
-    if let Err(error) = &result {
-        let mut failed_fields = fields.clone();
-        failed_fields.push(("error", error.clone()));
-        failed_fields.push(("error_len", error.len().to_string()));
-        log_executor_event("codex app-server request failed", &failed_fields);
-    }
-    log_executor_event("codex app-server stopped", &fields);
-    cleanup_generated_files(&prepared.generated_files);
-    result
+    drop(state);
+    drive_codex_turn(&private, request, options, Some(&owner)).await
 }
 
 fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
@@ -3369,6 +3123,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    defer_interactive_forms: bool,
     recover_usage_limits: bool,
     runtime_notifications: Option<CodexNotificationHub>,
     overload_turn_recovering: Option<CodexActiveTurnCallback>,
@@ -3395,6 +3150,8 @@ async fn read_shared_turn_notifications(
     mut startup_deadline: Instant,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
+    // A private process exclusively serves this Team, including its child threads.
+    let private_turn = client.state.lock().await.private_turn.is_some();
     let mut last_outcome: Option<ExecutionOutcome> = None;
     let mut waiting_for_initial_progress = true;
     let mut goal_continuation_deadline: Option<Instant> = None;
@@ -3416,11 +3173,18 @@ async fn read_shared_turn_notifications(
         // Consume its queued turns before applying the newer RPC snapshot.
         let buffered_notification = if deferred_goal_snapshot.is_some() {
             match notification_rx.try_recv() {
-                Ok(message) => Some(Ok(message)),
+                Ok(message)
+                    if options.active_turn_id.is_some()
+                        || message["method"] != "codex/app-server/exited" =>
+                {
+                    Some(Ok(message))
+                }
                 Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
                     Some(Err(broadcast::error::RecvError::Lagged(skipped)))
                 }
-                Err(_) => {
+                // EOF can immediately follow goal/get. Once all preceding native
+                // notifications are drained, settle its authoritative idle snapshot.
+                Ok(_) | Err(_) => {
                     let response = deferred_goal_snapshot.take().unwrap();
                     turn_recovery::sync_goal_snapshot(
                         state,
@@ -3603,7 +3367,22 @@ async fn read_shared_turn_notifications(
             );
         }
 
-        if !notification_belongs_to_thread(client, &message, thread_id).await {
+        if !private_turn && !notification_belongs_to_thread(client, &message, thread_id).await {
+            continue;
+        }
+
+        if message["method"] == "item/tool/call" && private_turn {
+            if let Some(id) = message.get("id") {
+                let result = manager_tools::respond(
+                    state.manager.as_deref(),
+                    &message["params"],
+                    thread_id,
+                    options.active_turn_id.as_deref(),
+                    cancellation_requested,
+                )
+                .await;
+                client.send_response(id.clone(), result).await?;
+            }
             continue;
         }
 
@@ -3785,6 +3564,34 @@ async fn read_shared_turn_notifications(
             }
         }
 
+        if options.defer_interactive_forms
+            && !state.is_subagent_message(message_params(&message))
+            && mcp_form::deferred_form(&message).is_some()
+        {
+            let turn_id = message_params(&message)["turnId"]
+                .as_str()
+                .ok_or("Form has no turn ID")?;
+            interrupt_shared_turn(client, thread_id, turn_id).await?;
+            with_rpc_timeout(
+                "defer interactive form",
+                codex_rpc_timeout_seconds(),
+                async {
+                    loop {
+                        let next = notification_rx.recv().await.map_err(|e| e.to_string())?;
+                        if next["method"] == "turn/completed"
+                            && next["params"]["threadId"] == thread_id
+                            && next["params"]["turn"]["id"] == turn_id
+                        {
+                            return Ok(());
+                        }
+                    }
+                },
+            )
+            .await?;
+            return Ok(ExecutionOutcome::WaitingForUserInput {
+                stop_reason: "tool_deferred".into(),
+            });
+        }
         if message
             .get("method")
             .and_then(Value::as_str)
@@ -4495,6 +4302,7 @@ fn string_value(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+#[cfg(test)]
 fn spawn_codex_app_server(
     binary: &str,
     launch_config: &CodexLaunchConfig,
@@ -4566,7 +4374,16 @@ fn codex_app_server_command(
     {
         command.env_remove(key);
     }
+    if launch_config.manager.is_some() {
+        command.env_remove("WEGENT_AUTH_TOKEN");
+        command.env_remove("WEWORK_SPACE_AUTH_TOKEN");
+    }
     for config_override in &launch_config.config_overrides {
+        // Task MCP transports and their approval rules are installed together by
+        // thread/start or thread/resume. A field alone is not a valid CLI server.
+        if config_override.starts_with("mcp_servers.") {
+            continue;
+        }
         command.arg("-c").arg(config_override);
     }
     command.arg("app-server");
@@ -4814,10 +4631,12 @@ fn initialize_params() -> Value {
 
 #[derive(Debug, Clone, Default)]
 struct CodexLaunchConfig {
+    manager: Option<Arc<manager_tools::ManagerTools>>,
     config_overrides: Vec<String>,
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
     inference_model_provider: Option<String>,
+    thread_model: Option<String>,
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
@@ -4966,6 +4785,9 @@ fn build_codex_launch_config_with_route_scope(
         .extend(codex_collaboration_config_overrides(request));
     launch_config
         .config_overrides
+        .extend(coordinate_role_overrides(request, &codex_home)?);
+    launch_config
+        .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
     launch_config
         .config_overrides
@@ -5005,6 +4827,19 @@ fn build_codex_launch_config_with_route_scope(
         }
     }
 
+    if launch_config.manager.is_some() {
+        let thread =
+            serde_json::to_string(&launch_config.thread_config).map_err(|e| e.to_string())?;
+        manager_tools::check_shell_values(
+            request,
+            launch_config
+                .config_overrides
+                .iter()
+                .chain(launch_config.env.values())
+                .map(String::as_str)
+                .chain(std::iter::once(thread.as_str())),
+        )?;
+    }
     effective_instructions::publish(request, &launch_config)?;
     Ok(launch_config)
 }
@@ -5229,7 +5064,9 @@ fn explicit_codex_upstream(
 }
 
 pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
-    let restricted = crate::runtime_work::external_work_kind(request).is_some();
+    let restricted = crate::runtime_work::external_work_kind(request).is_some()
+        || (coordinate_team(request)
+            && crate::task_runtime::mcp::native_project_manager(request).unwrap_or(true));
     let mut config = external_work::permission_config(request);
     config.extend(
         task_identity_env(request)
@@ -5237,6 +5074,7 @@ pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<Str
             // External work can declare local files without inheriting account credentials.
             .filter(|(key, _)| {
                 !restricted
+                    || (request.project_group_execution() && key == "WEGENT_PLUGIN_AUTH_MODE")
                     || matches!(
                         key.as_str(),
                         "WEGENT_EXECUTOR_BINARY" | "WEGENT_TASK_ID" | "WEGENT_TASK_WORKSPACE"
@@ -5298,8 +5136,12 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
     overrides
 }
 
+fn codex_single_mode(request: &ExecutionRequest) -> bool {
+    codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single"))
+}
+
 fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
+    if codex_single_mode(request) {
         return vec![
             // Feature toggles alone do not override a resumed thread's persisted agent family.
             CODEX_DISABLE_AGENTS_OVERRIDE.to_owned(),
@@ -5310,6 +5152,7 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
     let explicit_native_mode =
         matches!(codex_collaboration_mode(request), Some("default" | "plan"));
     if explicit_native_mode
+        || coordinate_team(request)
         || request
             .extra
             .get("origin")
@@ -6265,6 +6108,11 @@ fn configure_managed_wework_mcp(
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    if native_roles::coordinate_team(request)
+        && crate::task_runtime::mcp::native_project_manager(request)?
+    {
+        launch.manager = Some(Arc::new(manager_tools::ManagerTools::new(request)?));
+    }
     let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
         runtime_capabilities::mcp_environment::log_server_unavailable(
             request,
@@ -6278,7 +6126,8 @@ fn configure_managed_wework_mcp(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
-    let configs = runtime_capabilities::managed_mcp_configs(request)?;
+    let configs =
+        runtime_capabilities::managed_mcp_configs_for_shell(request, launch.manager.is_none())?;
     for (name, config) in configs {
         configure_managed_mcp_server(request, name, config, launch);
     }
@@ -7235,6 +7084,9 @@ fn validate_codex_model_provider(
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
+    if let Some(manager) = &launch_config.manager {
+        params.insert("dynamicTools".into(), manager.specs());
+    }
     params.insert(
         "historyMode".to_owned(),
         Value::String("paginated".to_owned()),
@@ -7555,7 +7407,7 @@ fn codex_collaboration_mode_payload(
     Some(json!({
         "mode": mode,
         "settings": {
-            "model": codex_request_model(request),
+            "model": codex_request_model(request).or_else(|| launch_config.thread_model.clone())?,
             "reasoning_effort": launch_config.effort,
             "developer_instructions": Value::Null,
         }
@@ -7569,6 +7421,12 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
         .or_else(|| request.extra.get("collaboration_mode"))
         .or_else(|| request.extra.get("collaboration_model"))
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|mode| {
+            ["default", "plan", "single"]
+                .iter()
+                .any(|value| mode.eq_ignore_ascii_case(value))
+        })
 }
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
@@ -7904,42 +7762,6 @@ fn mcp_tool_call_request_user_input_response(params: &Value) -> Option<Value> {
             }
         }
     }))
-}
-
-async fn receive_mcp_server_elicitation_response(
-    message: &Value,
-    request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
-    auto_approve_mcp_tool_calls: bool,
-) -> Result<url_elicitation::ElicitationResult, String> {
-    if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(message)) {
-        return mcp_server_tool_call_approval_response(message)
-            .map(url_elicitation::ElicitationResult::from_result);
-    }
-    if mcp_server_elicitation_request_user_input_params(message_params(message)).is_none() {
-        return mcp_server_elicitation_response(message, None)
-            .map(url_elicitation::ElicitationResult::from_result);
-    }
-    let Some(receiver) = request_user_input_answers else {
-        return mcp_server_elicitation_response(message, None)
-            .map(url_elicitation::ElicitationResult::from_result);
-    };
-    let mut response = match timeout(elicitation::remaining(message), receiver.recv()).await {
-        Ok(response) => response,
-        Err(_) => {
-            elicitation::log_event("codex mcp elicitation timed out", message);
-            return Ok(url_elicitation::ElicitationResult {
-                result: json!({"action": "cancel"}),
-                status: "expired",
-                response: None,
-            });
-        }
-    }
-    .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
-    if message_params(message)["standInSingleApproval"] == true {
-        restrict_stand_in_mcp_answer(&mut response, MCP_ELICITATION_DECLINE);
-    }
-    mcp_server_elicitation_response(message, Some(&response))
-        .map(|result| url_elicitation::ElicitationResult::from_response(result, response))
 }
 
 fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, String> {

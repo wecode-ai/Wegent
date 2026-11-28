@@ -25,6 +25,7 @@
 //! everything else reuses the production modules.
 
 use serde_json::{Map, Value, json};
+use wegent_execution_completion::delivery::DeviceStream;
 
 use crate::internal_callback::channel;
 use crate::internal_callback::completion;
@@ -96,7 +97,23 @@ pub(crate) async fn handle(
         ) else {
             return json!({"error": "Missing task_id or subtask_id"});
         };
+        let initial = subtask_id.to_string();
+        let attempt = match object.get("execution_attempt_id") {
+            None => initial.as_str(),
+            Some(Value::String(id)) if !id.is_empty() => id.as_str(),
+            _ => return json!({"error":"Invalid execution_attempt_id"}),
+        };
+        let stream = DeviceStream {
+            owner: user_id,
+            attempt,
+            devices: [
+                Some(&device_id),
+                snapshot.device.logical_device_id.as_deref(),
+                snapshot.device.execution_target_id.as_deref(),
+            ],
+        };
         return ordered(
+            stream,
             state,
             runtime,
             user_id,
@@ -140,6 +157,7 @@ pub(crate) async fn handle(
 /// The ordered (`task_id` + `subtask_id`) branch.
 #[allow(clippy::too_many_arguments)]
 async fn ordered(
+    stream: DeviceStream<'_>,
     state: &AppState,
     runtime: &SocketRuntime,
     user_id: i64,
@@ -151,11 +169,22 @@ async fn ordered(
     data: &Map<String, Value>,
     event_data: &Value,
 ) -> Value {
-    let outcome = process_remote_event(
-        state, runtime, user_id, device_id, task_id, subtask_id, message_id, event_name, data,
-        event_data,
-    )
-    .await;
+    let work = process_remote_event(
+        stream, state, runtime, user_id, device_id, task_id, subtask_id, message_id, event_name,
+        data, event_data,
+    );
+    let outcome = if let Some(redis) = &state.redis {
+        completion::with_delivery_lock(
+            redis,
+            subtask_id,
+            completion::Delivery::Device(stream),
+            || "Device delivery lock unavailable".to_owned(),
+            work,
+        )
+        .await
+    } else {
+        work.await
+    };
     match outcome {
         Ok(()) => json!({"success": true}),
         Err(error) => {
@@ -173,6 +202,7 @@ async fn ordered(
 /// Write back, forward and persist one task event within its receive-order turn.
 #[allow(clippy::too_many_arguments)]
 async fn process_remote_event(
+    stream: DeviceStream<'_>,
     state: &AppState,
     runtime: &SocketRuntime,
     user_id: i64,
@@ -184,12 +214,44 @@ async fn process_remote_event(
     data: &Map<String, Value>,
     event_data: &Value,
 ) -> Result<(), String> {
+    use brz_mysql::{Json, MysqlTransaction as _};
+    let tables = state
+        .task_store
+        .message_edit_tables(task_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64));
+    type DeviceTurnBinding = (Json<Value>, Option<String>, Option<String>, String);
+    let binding: Option<DeviceTurnBinding> = mysql.with_transaction(async |tx| {
+        tx.fetch_optional(format!(
+            "SELECT t.json,s.executor_namespace,s.executor_name,s.status FROM {} t JOIN {} s ON s.task_id=t.id WHERE t.id=? AND t.kind='Task' AND t.is_active!=0 AND s.id=?",
+            tables.tasks,tables.subtasks), (task_id,subtask_id)).await
+    }).await.map_err(|e|e.to_string())?;
+    let Some((task, namespace, executor, current_status)) = binding else {
+        return Err("Unknown device turn".into());
+    };
+    if !stream.matches(
+        &task.0,
+        subtask_id,
+        namespace.as_deref(),
+        executor.as_deref(),
+    ) {
+        return Ok(());
+    }
     let room = format!("{WEWORK_TASK_ROOM_PREFIX}{task_id}");
     let raw_terminal = matches!(
         event_name,
         "response.completed" | "response.incomplete" | "error"
     );
     if !raw_terminal {
+        if matches!(
+            current_status.as_str(),
+            "COMPLETED" | "CANCELLED" | "FAILED" | "DELETE"
+        ) {
+            return Ok(());
+        }
         let _ = write_back(
             state, runtime, user_id, device_id, task_id, event_name, data,
         )
@@ -216,14 +278,8 @@ async fn process_remote_event(
         };
     };
     if let Some(status) = status {
-        return completion::with_delivery_lock(
-            redis,
-            subtask_id,
-            completion::Delivery::Device,
-            || "Device terminal delivery lock unavailable".to_owned(),
-            deliver_remote_terminal(
-                state, runtime, user_id, device_id, event_name, data, &room, &mut event, status,
-            ),
+        return deliver_remote_terminal(
+            stream, state, runtime, user_id, device_id, event_name, data, &room, &mut event, status,
         )
         .await;
     }
@@ -243,6 +299,7 @@ async fn process_remote_event(
 /// Replay delivery of a committed terminal event until its effects succeed.
 #[allow(clippy::too_many_arguments)]
 async fn deliver_remote_terminal(
+    stream: DeviceStream<'_>,
     state: &AppState,
     runtime: &SocketRuntime,
     user_id: i64,
@@ -256,7 +313,7 @@ async fn deliver_remote_terminal(
     let redis = state.redis.as_ref().ok_or("Device Redis unavailable")?;
     let task_id = event.task_id;
     let subtask_id = event.subtask_id;
-    let delivery = completion::Delivery::Device;
+    let delivery = completion::Delivery::Device(stream);
     let ctx = completion::Completion {
         app: Some(state),
         mysql: &state.mysql,
@@ -322,10 +379,16 @@ async fn deliver_remote_terminal(
         &result,
         &committed.task,
         contexts.as_ref(),
+        Some(stream.attempt),
     )
     .await
     .map_err(|error| error.to_string())?;
-    let raw_key = completion::notification_key(task_id, subtask_id, "device-response");
+    let raw_key = wegent_execution_runtime::delivery::attempt_notification_key(
+        task_id,
+        subtask_id,
+        "device-response",
+        Some(stream.attempt),
+    );
     crate::internal_callback::publish_terminal_emit(
         redis,
         &raw_key,
@@ -336,7 +399,7 @@ async fn deliver_remote_terminal(
     .await
     .map_err(|error| error.to_string())?;
     device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await?;
-    crate::internal_callback::publish_terminal_callback(redis, event)
+    crate::internal_callback::publish_terminal_callback(redis, event, Some(stream.attempt))
         .await
         .map_err(|error| error.to_string())?;
     completion::acknowledge_delivery(&ctx.storage(), task_id, subtask_id, delivery)

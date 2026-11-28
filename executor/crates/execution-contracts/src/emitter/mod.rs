@@ -24,6 +24,8 @@ pub struct EventEnvelope {
     pub executor_namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_attempt_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +41,7 @@ pub struct ResponsesEventBuilder {
     executor_namespace: Option<String>,
     executor_session: Option<Value>,
     validation_id: Option<String>,
+    execution_attempt_id: Option<String>,
     // Clones belong to one execution; the prepared engine publishes data for
     // the runner's final callback without sharing state between requests.
     completed_file_change_fields: Arc<Mutex<Option<Value>>>,
@@ -64,6 +67,7 @@ impl ResponsesEventBuilder {
             executor_namespace: None,
             executor_session: None,
             validation_id: None,
+            execution_attempt_id: None,
             completed_file_change_fields: Arc::new(Mutex::new(None)),
         }
     }
@@ -90,6 +94,11 @@ impl ResponsesEventBuilder {
 
     pub fn with_executor_session(mut self, executor_session: Option<Value>) -> Self {
         self.executor_session = executor_session;
+        self
+    }
+
+    pub fn with_execution_attempt_id(mut self, attempt: Option<&str>) -> Self {
+        self.execution_attempt_id = attempt.map(str::to_owned);
         self
     }
 
@@ -468,6 +477,7 @@ impl ResponsesEventBuilder {
             executor_name: self.executor_name.clone(),
             executor_namespace: self.executor_namespace.clone(),
             validation_id: self.validation_id.clone(),
+            execution_attempt_id: self.execution_attempt_id.clone(),
         }
     }
 

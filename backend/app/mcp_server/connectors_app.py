@@ -28,6 +28,7 @@ from starlette.types import Receive, Scope, Send
 
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.services.auth.task_token import is_project_group_task
 from app.services.connector_runtime import connector_runtime_service
 from shared.utils.connector_tools import split_connector_tool
 
@@ -56,7 +57,8 @@ def current_connector_app_slug() -> str | None:
 
 
 def _active_user(db: Any, user_id: int | None) -> User | None:
-    if user_id is None:
+    token = connector_mcp_token_info.get()
+    if user_id is None or (token is not None and is_project_group_task(db, token)):
         return None
     user = db.get(User, user_id)
     return user if user and user.is_active else None

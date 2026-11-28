@@ -71,9 +71,6 @@ pub struct Deps<M: Mysql, R: Redis> {
     /// The user-cache client of the deployment's cached reader
     /// (`user:v2:data` reads); `None` keeps direct SQL.
     pub(crate) redis: Option<R>,
-    /// The kinds-cache client of the deployment's cached reader
-    /// (`kind:v2:idx` / `kind:v2:data` reads); `None` keeps direct SQL.
-    pub(crate) kinds_redis: Option<R>,
     /// The application's registered entity resolvers: the team-reader
     /// resolution (`_get_team` -> `TeamShareService.check_permission`)
     /// matches entity-derived share bindings through them.
@@ -95,7 +92,6 @@ pub fn build_deps<M: Mysql, R: Redis>(
     task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     http: HttpClient,
     redis: Option<R>,
-    kinds_redis: Option<R>,
     erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
     entity_resolvers: crate::permissions::EntityResolvers<R>,
     video_refresh: crate::remote_workspace_status::app_state::VideoRefresh,
@@ -107,7 +103,6 @@ pub fn build_deps<M: Mysql, R: Redis>(
         task_store,
         erp,
         redis,
-        kinds_redis,
         entity_resolvers,
         video_refresh,
     })
@@ -245,10 +240,7 @@ async fn tree(
         return Err(ApiError::bad_request("Parent traversal is not allowed"));
     }
 
-    let kinds = KindStore {
-        mysql: &deps.mysql,
-        redis: deps.kinds_redis.as_ref(),
-    };
+    let kinds = KindStore::sql(&deps.mysql);
     let erp = wegent_access::group_membership::ErpContext {
         erp: deps.erp.as_ref(),
         redis: deps.redis.as_ref(),
@@ -686,7 +678,6 @@ mod tests {
             Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
             http.clone(),
             None::<brz_redis::RedisService>,
-            None,
             Arc::new(crate::erp_provider::NoopErpProvider),
             crate::permissions::EntityResolvers::public(
                 brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")

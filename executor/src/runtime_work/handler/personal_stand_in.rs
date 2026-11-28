@@ -4,6 +4,7 @@ use super::*;
 use crate::task_runtime::personal_stand_in::{
     collaboration_scope_tags, project_role, role_project_matches,
     role_receives_participating_issues, stand_in_identities, IssueIntakeTrigger,
+    VerifiedPersonalSettings,
 };
 
 pub(super) fn issue_role_config(
@@ -499,6 +500,11 @@ impl RuntimeWorkRpcHandler {
             .as_i64()
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let workspace_owner = self
+            .backend_connection_snapshot()?
+            .as_ref()
+            .and_then(|c| c.authenticated_user_id)
+            == Some(user);
         if save {
             if let Some(route) = payload.get("delegationRoute") {
                 if payload.get("transferRoleId").is_some() {
@@ -519,6 +525,10 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
+            if let Some(fields) = settings.as_object_mut() {
+                fields.remove("transferredTeamDefinition");
+                fields.remove("portableTeam");
+            }
             if let Some(transfer) = payload.get("transferRoleId") {
                 let invalid =
                     || AppIpcError::new("bad_request", "Invalid transferred stand-in role");
@@ -538,27 +548,121 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_object_mut)
                     .ok_or_else(invalid)?;
                 role.remove("taskPermissions");
+                if let Some(definition) = payload.get("portableTeam") {
+                    self.verify_local_stand_in_owner(user)?;
+                    role.remove("teamRef");
+                    settings["transferredTeamDefinition"] =
+                        json!({"roleId":id,"definition":definition});
+                }
+            }
+            let copy_team_role_id = payload
+                .get("copyTeamRoleId")
+                .map(|role| {
+                    role.as_str().filter(|id| !id.is_empty()).ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Invalid assistant Team copy")
+                    })
+                })
+                .transpose()?;
+            if copy_team_role_id.is_some() {
+                self.verify_local_stand_in_owner(user)?;
+            }
+            let owned_team = payload.get("ownedTeam");
+            if owned_team.is_some() {
+                self.verify_local_stand_in_owner(user)?;
+                if user != 0 && !workspace_owner {
+                    return Err(AppIpcError::new(
+                        "permission_denied",
+                        "Connect the Team owner account to configure local grants",
+                    ));
+                }
+                if payload.get("transferRoleId").is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Configure local grants after the Team transfer",
+                    ));
+                }
             }
             store
-                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .validate_personal_settings_for_device_owner(
+                    user,
+                    &self.device_id,
+                    settings.clone(),
+                    workspace_owner,
+                )
                 .map_err(settings_error)?;
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
             let connection = self.backend_connection_snapshot()?;
-            let saved = store
-                .save_personal_stand_in_for_backend(
+            store
+                .save_verified_personal_settings(
                     user,
                     &self.device_id,
                     connection.as_ref().map(|entry| entry.backend_url.as_str()),
                     settings,
+                    VerifiedPersonalSettings {
+                        workspace_owner,
+                        owned_team,
+                        copy_team_role_id,
+                        copy_team_prompt: payload["copyTeamPrompt"].as_bool(),
+                    },
                 )
-                .map_err(settings_error)?;
-            Ok(saved)
-        } else {
-            store
-                .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
+        } else {
+            let mut settings = store
+                .read_personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?;
+            if payload["checkTeamCopy"] == true {
+                settings["teamCopyVersion"] = json!(1);
+            }
+            settings["teamImportVersion"] = json!(1);
+            if let Some(role_id) = payload["exportTeamRoleId"].as_str() {
+                // A stopped installation-local identity can migrate to its connected account.
+                let stopped_local_source =
+                    user == 0 && settings["lifecycle"]["status"] == "stopped" && {
+                        let binding = self.stand_in_binding(json!({"operation": "get"}))?;
+                        binding["status"] == "stopped"
+                            && binding["target"]["userId"] == 0
+                            && binding["target"]["deviceId"].as_str()
+                                == Some(self.device_id.as_str())
+                    };
+                if !stopped_local_source {
+                    self.verify_local_stand_in_owner(user)?;
+                }
+                settings["portableTeam"] = store
+                    .portable_personal_team(user, &self.device_id, role_id)
+                    .map_err(settings_error)?;
+            }
+            if let Some(role_id) = payload["promptTeamRoleId"].as_str() {
+                self.verify_local_stand_in_owner(user)?;
+                let role = if role_id == "@primary" {
+                    settings.get("primary")
+                } else {
+                    settings["roles"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|role| role["id"] == role_id)
+                };
+                let reference = role
+                    .and_then(|role| role["teamRef"].as_str())
+                    .filter(|id| id.starts_with("LA-"))
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Role no longer references a local Team")
+                    })?;
+                let team = store
+                    .personal_execution_team(user, reference)
+                    .map_err(settings_error)?;
+                settings["referencedTeamPrompt"] =
+                    json!(team["system_prompt"].as_str().unwrap_or_default());
+            }
+            if payload["includeTeams"] == true {
+                self.verify_local_stand_in_owner(user)?;
+                settings["bindableTeams"] = json!(store
+                    .bindable_personal_teams(user, workspace_owner)
+                    .map_err(settings_error)?);
+            }
+            Ok(settings)
         }
     }
 

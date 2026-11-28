@@ -50,10 +50,46 @@ pub async fn team_by_owner<M: Mysql>(
 }
 
 /// One team member's `botRef`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BotRef {
     pub namespace: String,
     pub name: String,
+}
+
+/// Batch the execution lookup without changing member order or the requested
+/// spelling used for MySQL collation. A prompt Ghost belongs to the Team
+/// owner; only a Bot reference permits the public/group namespace lookup.
+pub enum ExecutionMemberKind {
+    Bot,
+    PromptGhost,
+}
+
+pub async fn execution_member_rows<M: Mysql>(
+    mysql: &M,
+    owner: i64,
+    kind: ExecutionMemberKind,
+    refs: &[BotRef],
+) -> MysqlResult<Vec<KindRow>> {
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (name, scope) = match kind {
+        ExecutionMemberKind::Bot => (
+            "Bot",
+            "(r.namespace<>'default' OR candidate.user_id IN (?,0))",
+        ),
+        ExecutionMemberKind::PromptGhost => ("Ghost", "candidate.user_id=?"),
+    };
+    mysql.fetch_all(format!(
+        "SELECT {KIND_COLUMNS} FROM JSON_TABLE(?, '$[*]' COLUMNS(
+             ord FOR ORDINALITY, name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.name', namespace VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.namespace'
+         )) r JOIN kinds ON kinds.id=(
+             SELECT candidate.id FROM kinds candidate
+             WHERE candidate.is_active=TRUE AND candidate.kind=? AND candidate.namespace=r.namespace
+               AND candidate.name=r.name AND {scope}
+             ORDER BY (candidate.namespace='default' AND candidate.user_id=?) DESC, candidate.id LIMIT 1
+         ) ORDER BY r.ord"),
+        (Json(refs),name,owner,owner)).await
 }
 
 /// The Team CRD's `spec.members[].botRef` list, in member order
@@ -79,6 +115,17 @@ pub fn bot_refs(team_json: &serde_json::Value) -> Vec<BotRef> {
             Some(BotRef { namespace, name })
         })
         .collect()
+}
+
+/// Resolve only the active pipeline member; coordinate Teams run with their full roster.
+pub fn turn_team(team: &Value, stage: usize) -> Option<std::borrow::Cow<'_, Value>> {
+    if team["spec"]["collaborationModel"] != "pipeline" {
+        return Some(std::borrow::Cow::Borrowed(team));
+    }
+    let member = team["spec"]["members"].get(stage)?;
+    let mut selected = team.clone();
+    selected["spec"]["members"] = serde_json::json!([member]);
+    Some(std::borrow::Cow::Owned(selected))
 }
 
 /// The resolved team bots: their `kinds.id`s in member order plus the first
@@ -805,12 +852,7 @@ pub async fn resolve_task_ref_team<M: Mysql>(
     }
     // A ref without `user_id` resolves through the cached-reader team branch;
     // the store shares the caller's MySQL client.
-    let cache = KindCacheStore::<M, brz_redis::RedisService> {
-        mysql,
-        redis: None,
-        erp: None,
-        resolvers: None,
-    };
+    let cache = KindCacheStore::<M, brz_redis::RedisService>::sql(mysql);
     resolve_team(&cache, viewer_user_id, namespace, name).await
 }
 

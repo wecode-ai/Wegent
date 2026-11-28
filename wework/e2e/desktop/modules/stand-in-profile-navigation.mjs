@@ -68,7 +68,9 @@ export async function openStandInSettings(control) {
 
 export async function closeStandInSettingsAfterBinding(control, timeoutMs) {
   // Binding reconciliation can unmount the settings between UI commands.
-  await control.command('clickIfPresent', '[data-testid="stand-in-primary-profile-close"]')
+  const close = '[data-testid="stand-in-primary-profile-close"]'
+  await control.command('waitFor', `${close}:disabled`, { visible: false, timeoutMs })
+  await control.command('clickIfPresent', close)
   await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
     visible: false,
     timeoutMs,

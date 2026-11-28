@@ -4,6 +4,7 @@
 
 """Focused API tests for LoopItem execution ownership."""
 
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -647,3 +648,340 @@ def test_collaboration_round_owner_records_assignment_without_new_execution(
         == 0
     )
     assert test_db.query(LoopItem).filter(LoopItem.parent_id == item.id).count() == 0
+
+
+def test_server_round_replays_human_receipt_and_rejects_changed_list(
+    test_db: Session,
+    test_user: User,
+    collaboration_dispatch: SimpleNamespace,
+) -> None:
+    scenario = collaboration_dispatch
+    from fastapi.encoders import jsonable_encoder
+
+    from tests.services.test_loop_item_assignment import _collaboration_group
+
+    group, leader, worker = _collaboration_group(test_db, scenario.project, test_user)
+    scenario.execution.runtime_device_id = leader.device_id
+    scenario.execution.agent_id = leader.id
+    intent = scenario.execution.execution_intent
+    intent["origin_context"].update(
+        manager_agent_id=leader.id,
+        collaboration_group=jsonable_encoder(group),
+        collaboration_group_id=group["id"],
+    )
+    scenario.parent.metadata_json = {
+        **scenario.parent.metadata_json,
+        "collaboration_group": {"id": group["id"]},
+    }
+    intent["origin_context"]["dispatch_protocol_version"] = 2
+    scenario.execution.execution_payload = json.dumps(intent)
+    test_db.commit()
+    command = LoopItemExecutionBatchItem(
+        assignment_id="human:1",
+        title="Review",
+        instructions="Verify",
+        assignee_type="human",
+        assignee_id=str(test_user.id),
+    )
+    values = LoopItemExecutionBatchCreate(
+        loop_item_id=scenario.parent.id,
+        dispatch_id="dispatch-1",
+        round_id="round:1",
+        manager_runtime_task_id="manager-runtime-1-manager-initial",
+        manager_agent_id=leader.id,
+        items=[
+            command,
+            command.model_copy(
+                update={
+                    "assignment_id": "agent:1",
+                    "assignee_type": "agent",
+                    "assignee_id": worker.id,
+                }
+            ),
+        ],
+    )
+
+    def submit(request):
+        return loop_item_executions.enqueue_execution_batch(
+            scenario.project.id,
+            request,
+            test_db,
+            test_user,
+        )
+
+    with pytest.raises(HTTPException) as duplicate:
+        submit(values.model_copy(update={"items": [command, command]}))
+    assert duplicate.value.status_code == 422
+    with pytest.raises(HTTPException) as bad_stage:
+        submit(
+            values.model_copy(
+                update={
+                    "items": [
+                        command.model_copy(update={"workflow_stage_id": "unknown"})
+                    ]
+                }
+            )
+        )
+    assert bad_stage.value.status_code == 422
+    old_trigger = ProjectChatMessage(
+        message_id="preceding-round-comment",
+        project_id=str(scenario.project.id),
+        task_id=scenario.parent.id,
+        sender_type="user",
+    )
+    test_db.add(old_trigger)
+    test_db.flush()
+    receipt = submit(values)
+    # A device manager reuses its session while each resumed turn has a distinct ID.
+    next_id = hashlib.sha256(b'["dispatch-1","round:1"]').hexdigest()
+    trigger = ProjectChatMessage(
+        message_id="manager-owner-reply",
+        project_id=str(scenario.project.id),
+        task_id=scenario.parent.id,
+        sender_type="user",
+    )
+    reply = LoopItemExecution(
+        cloud_project_id=trigger.project_id,
+        loop_item_id=trigger.task_id,
+        agent_id=leader.id,
+        status="claimed",
+        executor_owner_user_id=scenario.execution.executor_owner_user_id,
+        runtime_task_id=values.manager_runtime_task_id,
+        execution_payload=json.dumps(
+            {
+                "origin_context": {
+                    "dispatch_role": "manager",
+                    "dispatch_id": values.dispatch_id,
+                    "collaboration_dispatch_execution_id": scenario.execution.id,
+                    "comment_trigger_message_id": trigger.message_id,
+                }
+            }
+        ),
+    )
+    test_db.add_all([trigger, reply])
+    test_db.flush()
+    reply_turn = f"{reply.runtime_task_id}-execution-{reply.id}"
+    for turn_id, detail in [
+        ("initial-turn", "Manager turn does not follow the current round"),
+        (next_id, "Assigned work is still pending"),
+        (reply_turn, "Assigned work is still pending"),
+        (
+            f"wrong-session-execution-{reply.id}",
+            "Manager turn does not follow the current round",
+        ),
+    ]:
+        with pytest.raises(HTTPException) as gated:
+            submit(
+                values.model_copy(
+                    update={"round_id": "round:2", "manager_turn_id": turn_id}
+                )
+            )
+        assert gated.value.detail == detail
+    intent = reply.execution_intent
+    intent["origin_context"]["comment_trigger_message_id"] = old_trigger.message_id
+    reply.execution_payload = json.dumps(intent)
+    with pytest.raises(HTTPException) as stale:
+        submit(
+            values.model_copy(
+                update={"round_id": "round:2", "manager_turn_id": reply_turn}
+            )
+        )
+    assert stale.value.detail == "Manager turn does not follow the current round"
+    execution_id = receipt["agent_assignments"][0]["execution_id"]
+    assert test_db.get(LoopItemExecution, execution_id).agent_id == worker.id
+    assert submit(values) == receipt
+    with pytest.raises(HTTPException) as changed:
+        submit(
+            values.model_copy(
+                update={"items": [command.model_copy(update={"instructions": "Other"})]}
+            )
+        )
+    assert changed.value.status_code == 409
+    member = test_db.get(LoopItemExecution, execution_id)
+    assert member.runtime_origin_context["workflow_task_title"] == "Review"
+    assert (
+        member.runtime_origin_context["execution_prompt"]
+        == "任务标题：Review\n\n执行要求：Verify"
+    )
+    assert member.runtime_origin_context["dispatch_protocol_version"] == 2
+    scenario.parent.metadata_json = {
+        **scenario.parent.metadata_json,
+        "collaboration_group_assignment_key": "new-assignment",
+    }
+    test_db.commit()
+    claimed = loop_item_executions.loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id=worker.device_id,
+        environment=member.execution_environment,
+        runtime_instance_id="revoked-claim",
+        owner_user_id=test_user.id,
+    )
+    assert claimed is None or claimed.id != execution_id
+    assert member.status == "queued"
+
+
+def test_human_leader_submits_and_finishes_round_from_issue(
+    test_db: Session,
+    test_user: User,
+    collaboration_dispatch: SimpleNamespace,
+) -> None:
+    from fastapi import Request
+
+    from app.schemas.project_chat import LoopItemExecutionManagerDecision
+    from app.services.issue_coordination import (
+        coordination_activity,
+        current_dispatch_id,
+    )
+    from tests.services.test_loop_item_assignment import _collaboration_group
+
+    project, issue = collaboration_dispatch.project, collaboration_dispatch.parent
+    group, _, worker = _collaboration_group(test_db, project, test_user)
+    leader = {"kind": "human", "id": str(test_user.id)}
+    group["leader"] = leader
+    record = test_db.get(Kind, int(group["id"]))
+    record.json = {**record.json, "spec": {**record.json["spec"], "leader": leader}}
+    issue.metadata_json = {
+        "collaboration_group": {"id": group["id"]},
+        "collaboration_group_assignment_key": "example",
+    }
+    dispatch_id = current_dispatch_id(issue)
+    coordination_activity(test_db, issue, dispatch_id, group)
+    test_db.commit()
+    request = Request({"type": "http", "state": {"user_session_id": test_user.id}})
+    values = LoopItemExecutionBatchCreate(
+        loop_item_id=issue.id,
+        dispatch_id=dispatch_id,
+        round_id="1",
+        items=[
+            LoopItemExecutionBatchItem(
+                assignment_id="review",
+                assignee_type="agent",
+                assignee_id=worker.id,
+                title="Review",
+                instructions="Verify",
+            )
+        ],
+    )
+    with pytest.raises(HTTPException) as denied:
+        loop_item_executions.enqueue_execution_batch(
+            project.id, values, test_db, test_user
+        )
+    assert denied.value.status_code == 403
+    receipt = loop_item_executions.enqueue_execution_batch(
+        project.id, values, test_db, test_user, request
+    )
+    execution = test_db.get(
+        LoopItemExecution, receipt["agent_assignments"][0]["execution_id"]
+    )
+    detail = loop_item_executions.loop_item_service.response_values(
+        test_db, issue, test_user.id
+    )["coordination"]
+    assert detail["waitingForMembers"]
+    assert not detail["canCoordinate"]
+    assert detail["assignments"][0]["executionId"] == execution.id
+    assert detail["assignments"][0]["status"] == execution.status
+    decision = LoopItemExecutionManagerDecision(
+        loop_item_id=issue.id,
+        dispatch_id=dispatch_id,
+        round_id="2",
+        idempotency_key="finish",
+        target_status="in_review",
+        reason="Verified",
+    )
+    with pytest.raises(HTTPException) as unfinished:
+        loop_item_executions.decide_collaboration_issue_status(
+            project.id, decision, test_db, test_user, request
+        )
+    assert unfinished.value.status_code == 409
+    execution.status = "completed"
+    test_db.commit()
+    response = loop_item_executions.decide_collaboration_issue_status(
+        project.id, decision, test_db, test_user, request
+    )
+    assert response["comment"] is None
+    assert response["item"]["coordination"]["canCoordinate"] is False
+    issue.status = "completed"
+    test_db.commit()
+    assert (
+        loop_item_executions.decide_collaboration_issue_status(
+            project.id, decision, test_db, test_user, request
+        )
+        == response
+    )
+    test_db.refresh(issue)
+    assert issue.status == "completed"
+
+
+def test_device_manager_token_is_bound_to_the_claimed_dispatch(collaboration_dispatch):
+    from app.services.issue_coordination import require_machine_task_scope
+
+    dispatch = collaboration_dispatch.execution
+    dispatch.execution_environment = "local"
+    require_machine_task_scope(0, dispatch, dispatch.id)
+    for scope in (None, dispatch.id + 1):
+        with pytest.raises(HTTPException) as denied:
+            require_machine_task_scope(0, dispatch, scope)
+        assert denied.value.status_code == 403
+    dispatch.execution_environment = "wegent"
+    with pytest.raises(HTTPException) as denied:
+        require_machine_task_scope(0, dispatch, dispatch.id)
+    assert denied.value.status_code == 403
+
+
+def test_managed_turn_uses_assistant_task_binding_and_receipt_owner(
+    test_db: Session, test_user: User, collaboration_dispatch: SimpleNamespace
+) -> None:
+    from app.models.subtask import Subtask, SubtaskRole
+    from app.models.task import TaskResource
+    from app.services.issue_coordination import managed_turn_scope, require_manager_turn
+
+    dispatch = collaboration_dispatch.execution
+    tasks = [
+        TaskResource(
+            user_id=test_user.id, kind="Task", name=name, namespace="default", json={}
+        )
+        for name in ["manager", "unrelated"]
+    ]
+    test_db.add_all(tasks)
+    test_db.flush()
+    assistants = [
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1,
+            title="Review",
+            bot_ids=[],
+            role=SubtaskRole.ASSISTANT,
+        )
+        for task in [tasks[0], tasks[0], tasks[1]]
+    ]
+    test_db.add_all(assistants)
+    test_db.flush()
+    old, active, unrelated = assistants
+    dispatch.backend_task_id = tasks[0].id
+    dispatch.status = "running"
+    tasks[0].json = {
+        "metadata": {
+            "labels": {
+                "projectRobotExecutionId": str(dispatch.id),
+                "projectAutomationSubtaskId": str(old.id),
+                "projectAutomationManagerSubtaskId": str(active.id),
+            }
+        }
+    }
+    test_db.flush()
+
+    def check(assistant, receipt=None):
+        current, _ = managed_turn_scope(test_db, dispatch, tasks[0].id, assistant.id)
+        require_manager_turn(current, assistant.id, receipt)
+
+    check(active)
+    check(old, {"manager_runtime_task_id": str(old.id)})
+    for assistant, receipt in [
+        (old, None),
+        (old, {"manager_runtime_task_id": str(active.id)}),
+        (unrelated, {"manager_runtime_task_id": str(unrelated.id)}),
+    ]:
+        with pytest.raises(HTTPException) as denied:
+            check(assistant, receipt)
+        assert denied.value.status_code == 403

@@ -161,7 +161,10 @@ mod mcp_app_source;
 mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;
+mod personal_pipeline;
 mod personal_stand_in;
+mod platform_continuation;
+mod platform_turns;
 mod plugin_install;
 mod plugin_marketplace;
 mod project_coordination_binding;
@@ -237,6 +240,8 @@ mod transcript_overlays;
 mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
+mod turn_settlement;
+use turn_settlement::TurnSettlement;
 mod turns;
 mod workspace_read;
 mod workspaces;
@@ -291,8 +296,8 @@ use super::{
         is_codex_runtime, item_id, item_type, model_provider_routing, normalize_device_id,
         normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
         raw_string_field, replace_runtime_task_id, restore_cloud_project_id, restore_origin,
-        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
-        timestamp_ms_field, workspace_group_path, workspace_path,
+        runtime_task_id, set_runtime_task_title, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -365,6 +370,8 @@ fn worktree_error_code(error: &str) -> &'static str {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    platform_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     task_kind: Option<RuntimeTaskKind>,
     local_task_id: String,
@@ -655,12 +662,17 @@ struct WorktreeReconciliationState {
 }
 
 struct ActiveLocalExecution {
+    platform_task: Option<(
+        String,
+        Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>,
+    )>,
     execution_id: u64,
     request: Option<ExecutionRequest>,
     stop_requested: bool,
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    claude_approvals: HashMap<String, claude_turns::PendingApproval>,
     codex_turn: Option<ActiveCodexTurn>,
 }
 
@@ -728,12 +740,56 @@ struct PendingCodexNotificationReplay {
 }
 
 struct ScheduledTurnGuard {
-    transferred: bool,
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
     execution_id: u64,
+    disposition: Mutex<TurnDisposition>,
+}
+
+struct TurnDisposition {
+    transferred: bool,
     command_id: Option<String>,
-    command_outcome: Option<command_journal::CommandState>,
+    outcome: Option<command_journal::CommandState>,
+    terminal: Option<(
+        Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>,
+        crate::emitter::EventEnvelope,
+    )>,
+}
+
+type ShellLaunch<'a> = Box<
+    dyn FnOnce(
+            u64,
+            oneshot::Receiver<()>,
+            Arc<ScheduledTurnGuard>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + 'a,
+>;
+
+/// Authenticated Shell resources prepared synchronously while admission still owns the session.
+struct PreparedShell<'a> {
+    session: String,
+    journal_session: String,
+    command: Option<String>,
+    platform: Option<Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>>,
+    run: ShellLaunch<'a>,
+}
+
+impl<'a> PreparedShell<'a> {
+    fn new<F: Future<Output = ()> + Send + 'static>(
+        session: String,
+        journal_session: String,
+        command: Option<String>,
+        platform: Option<Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>>,
+        prepare: impl FnOnce(u64, oneshot::Receiver<()>, Arc<ScheduledTurnGuard>) -> F + 'a,
+    ) -> Self {
+        Self {
+            session,
+            journal_session,
+            command,
+            platform,
+            run: Box::new(move |generation, rx, guard| Box::pin(prepare(generation, rx, guard))),
+        }
+    }
 }
 
 struct StoppedTurnGuard {
@@ -764,26 +820,63 @@ impl ScheduledTurnGuard {
         command_id: Option<String>,
     ) -> Self {
         Self {
-            transferred: false,
             handler,
             local_task_id,
             execution_id,
-            command_id,
-            command_outcome: None,
+            disposition: Mutex::new(TurnDisposition {
+                transferred: false,
+                command_id,
+                outcome: None,
+                terminal: None,
+            }),
         }
+    }
+    fn settle(&self, state: command_journal::CommandState) {
+        self.disposition
+            .lock()
+            .expect("turn disposition poisoned")
+            .outcome = Some(state);
+    }
+    fn deliver_after_release(
+        &self,
+        job: Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>,
+        event: crate::emitter::EventEnvelope,
+    ) {
+        self.disposition
+            .lock()
+            .expect("turn disposition poisoned")
+            .terminal = Some((job, event));
+    }
+
+    fn transfer(&self) {
+        self.disposition
+            .lock()
+            .expect("turn disposition poisoned")
+            .transferred = true;
+    }
+    fn detach_command(&self) {
+        self.disposition
+            .lock()
+            .expect("turn disposition poisoned")
+            .command_id = None;
     }
 }
 
 impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
-        if self.transferred {
+        let disposition = self
+            .disposition
+            .get_mut()
+            .expect("turn disposition poisoned");
+        if disposition.transferred {
             return;
         }
         let handler = self.handler.clone();
         let local_task_id = self.local_task_id.clone();
         let execution_id = self.execution_id;
-        let command_id = self.command_id.clone();
-        let command_outcome = self.command_outcome.clone();
+        let command_id = disposition.command_id.take();
+        let command_outcome = disposition.outcome.take();
+        let terminal = disposition.terminal.take();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 handler
@@ -794,6 +887,24 @@ impl Drop for ScheduledTurnGuard {
                         command_outcome,
                     )
                     .await;
+                if let Some(id) = command_id {
+                    if let Some((job, event)) = terminal {
+                        if let Err(error) = handler
+                            .deliver_saved_terminal(
+                                &(local_task_id.clone(), id.clone()),
+                                job.as_ref(),
+                                event,
+                            )
+                            .await
+                        {
+                            log_executor_event(
+                                "platform terminal delivery unconfirmed",
+                                &[("error", error.message)],
+                            );
+                        }
+                    }
+                    handler.close_delivery(&local_task_id, &id, execution_id);
+                }
             });
         }
     }
@@ -1229,11 +1340,12 @@ impl RuntimeWorkRpcHandler {
         {
             request.backend_url = Some(connection.backend_url.clone());
         }
-        // Coordinator work must retain the enabling actor, including absent credentials.
-        if request
-            .extra
-            .get("origin")
-            .is_some_and(|origin| origin.get("project_coordination").is_some())
+        // Project dispatches retain their scoped credentials, including absent ones.
+        if request.project_group_execution()
+            || request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin.get("project_coordination").is_some())
         {
             return;
         }

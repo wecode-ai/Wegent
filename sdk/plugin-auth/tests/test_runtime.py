@@ -27,6 +27,23 @@ class RuntimeTests(unittest.TestCase):
                 delegate_cloud_command(Path("/missing"), "mail", ["read"])
             )
 
+    def test_project_member_cannot_use_personal_local_or_explicit_account(self):
+        with (
+            patch.dict(os.environ, {"WEGENT_PLUGIN_AUTH_MODE": "project"}, clear=True),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(
+                delegate_cloud_command(Path("/unused"), "mail", ["read"]), 1
+            )
+            self.assertEqual(
+                json.loads(output.getvalue()),
+                {"error": "plugin_auth_device_not_granted"},
+            )
+            with self.assertRaisesRegex(AuthError, "plugin_auth_device_not_granted"):
+                run_account_command(
+                    Path("/unused"), "mail", ["read"], account_id="owner"
+                )
+
     def test_cloud_failure_never_downgrades_to_local_auth(self):
         output = io.StringIO()
         with (

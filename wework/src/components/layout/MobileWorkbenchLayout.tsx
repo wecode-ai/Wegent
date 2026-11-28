@@ -1,3 +1,4 @@
+import { PersonalPipelineConfirmation } from '@/components/chat/PersonalPipelineConfirmation'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
@@ -493,6 +494,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                       compact
                       className="mb-2"
+                    />
+                  )}
+                  {currentRuntimeTask && (
+                    <PersonalPipelineConfirmation
+                      handle={runtimeTaskSummary?.runtimeHandle}
+                      address={currentRuntimeTask}
+                      services={services}
                     />
                   )}
                   {connectorAuthRecovery.pending ? (

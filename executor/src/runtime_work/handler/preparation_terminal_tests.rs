@@ -15,6 +15,7 @@ fn assert_preparation_terminal_state(cancelled: bool) {
         handler.mark_deferred_worktree_cancelled("task");
     } else {
         let turn = SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "task".into(),
             runtime: "codex".into(),

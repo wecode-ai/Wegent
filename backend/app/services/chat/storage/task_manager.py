@@ -402,6 +402,9 @@ def create_new_task(
         project_id=params.project_id or 0,
     )
     task_stores.task_store.update_json(db, task=task, payload=task_json)
+    from app.services.adapters.pipeline_stage import initialize_pipeline
+
+    initialize_pipeline(task, team)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
@@ -774,6 +777,8 @@ async def create_task_and_subtasks(
     if params.pipeline_bot_ids:
         bot_ids = params.pipeline_bot_ids
         logger.info(f"[create_task_and_subtasks] Using pipeline_bot_ids: {bot_ids}")
+    elif task_id:
+        bot_ids = None
     else:
         bot_ids = get_bot_ids_from_team(db, team)
 

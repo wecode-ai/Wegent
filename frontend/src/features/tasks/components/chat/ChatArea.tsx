@@ -31,6 +31,7 @@ import type { Attachment, SubtaskContextBrief, Task, TaskType, Team } from '@/ty
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
+import { usePlatformTaskContinuation } from '@wegent/collaboration/platform-task-continuation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
@@ -345,6 +346,11 @@ function ChatAreaContent({
     accessDenied,
     taskState: sessionTaskState,
   } = useTaskSession()
+  const continuationUrl = usePlatformTaskContinuation(
+    selectedTaskDetail?.id,
+    selectedTaskDetail?.is_group_owner ? selectedTaskDetail.user?.id : null,
+    selectedTaskDetail?.device_id
+  )
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
   const taskState =
@@ -2752,6 +2758,16 @@ function ChatAreaContent({
         hasTaskId={!!taskIdFromUrl}
         onPrefillMessage={chatState.setTaskInputMessage}
       />
+
+      {continuationUrl && selectedTaskDetail?.id === effectiveTaskId && (
+        <a
+          href={continuationUrl}
+          data-testid="continue-platform-task-in-wework"
+          className="inline-flex min-h-11 items-center self-end px-3 text-sm text-primary hover:underline"
+        >
+          {t('continue_in_wework')}
+        </a>
+      )}
 
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
       {hasMessages && selectedTaskDetail?.id && (

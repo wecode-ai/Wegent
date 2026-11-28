@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./platform-task-continuation": "./src/platform-task-continuation.ts",
     "./tailwind-preset": "./tailwind-preset.js",
     ".": {
       "types": "./src/index.ts",

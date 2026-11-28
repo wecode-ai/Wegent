@@ -38,7 +38,7 @@ export async function migrateStandIn(
   const targetApi = input.targetApi ?? api
   if (sourceDevice === targetDevice) throw new StandInMigrationError('same_device')
   const sourceProfile = Promise.all([
-    api.personalGet(sourceUser, sourceDevice),
+    api.personalGet(sourceUser, sourceDevice, { exportTeamRoleId: roleId ?? '@primary' }),
     api.memories(sourceUser, sourceDevice),
   ]).catch(cause => {
     if (isStandInDeviceUnreachable(cause)) throw new StandInMigrationSourceUnavailable(cause)
@@ -98,6 +98,15 @@ export async function migrateStandIn(
       ))
   )
     throw new StandInMigrationError('conflict')
+  if (existing && source.portableTeam) {
+    const restored = await targetApi.personalGet(targetUser, targetDevice, {
+      deviceSettingsOnly: true,
+      exportTeamRoleId: existing.id,
+    })
+    if (!dequal(restored.portableTeam, source.portableTeam)) {
+      throw new StandInMigrationError('conflict')
+    }
+  }
   input.assertOwnership?.()
   if (!existing) {
     if (sourceUser === targetUser && original.connections?.length) {
@@ -106,15 +115,19 @@ export async function migrateStandIn(
     }
     input.assertOwnership?.()
   }
+  let destinationRole = existing
   if (!existing || targetApi !== api) {
-    await targetApi.personalSave(
+    const saved = await targetApi.personalSave(
       targetUser,
       { ...target, roles: existing ? target.roles : [...target.roles, migrated] },
       targetDevice,
-      undefined,
-      { kind: 'create', roleId: id }
+      source.portableTeam ? id : undefined,
+      { kind: 'create', roleId: id },
+      source.portableTeam
     )
+    destinationRole = saved.roles.find(row => row.id === id)
   }
+  if (!destinationRole) throw new StandInMigrationError('changed')
   input.assertOwnership?.()
   const imported = await api.memories(targetUser, targetDevice)
   for (const memory of memories.filter(
@@ -145,5 +158,5 @@ export async function migrateStandIn(
   if (current.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
   input.assertOwnership?.()
   // History, memories and device grants remain on the stopped source. Never restart it here.
-  return existing ?? migrated
+  return destinationRole
 }

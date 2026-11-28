@@ -140,6 +140,9 @@ pub(super) async fn terminal_on(
     at: NaiveDateTime,
     notify: bool,
 ) -> MysqlResult<Effects> {
+    if row.context()["dispatch_role"] == "member" {
+        tx.execute("UPDATE loop_item_executions SET execution_payload=JSON_SET(execution_payload,'$.assignment_result',?), error_message=IF(?='failed',?,error_message) WHERE id=?", (detail, status, detail, row.id)).await?;
+    }
     let mut output = Vec::new();
     if let Some(mut message) = linked(tx, row).await? {
         super::activity::finish(tx, &mut message, status, detail).await?;
@@ -386,6 +389,7 @@ pub(super) mod tests {
             error_message: String::new(),
             execution_note: String::new(),
             version: 1,
+            observed_state: None,
             start_requested_at: None,
             completed_at: None,
         };

@@ -16,6 +16,7 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from '../types'
+import { createSharedWorkspaceHttpApi } from '../http-api/createSharedWorkspaceHttpApi'
 import { WorkspaceMembersConfiguration } from './WorkspaceMembersConfiguration'
 import { ProjectSettingsShell } from '../project-manage/ProjectSettingsShell'
 import {
@@ -569,7 +570,7 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     })
   })
 
-  it('preserves stored leader and member names when candidates are unavailable', async () => {
+  it('preserves saved names and both leader duties when only the description changes', async () => {
     const savedGroup: CollaborationGroup = {
       ...group,
       leader: { ...group.leader, name: 'Stored leader' },
@@ -589,7 +590,7 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
         <WorkspaceCollaborationGroupsConfiguration
           groups={[savedGroup]}
           members={[]}
-          agents={[]}
+          agents={[{ ...codexAgent, name: 'Renamed agent' }]}
           locale="zh-CN"
           commands={commands}
           canManage
@@ -597,18 +598,45 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
       )
     )
     await click(byTestId('collaboration-group-manage-group-1'))
+    await change(byTestId<HTMLInputElement>('collaboration-group-detail-description'), 'Updated goal')
     await click(byTestId('collaboration-group-detail-save'))
 
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        leader: expect.objectContaining({ name: 'Stored leader' }),
+        description: 'Updated goal',
+        leader: savedGroup.leader,
         members: expect.arrayContaining([
+          savedGroup.members[0],
           expect.objectContaining({ id: '2', name: 'Stored reviewer' }),
           expect.objectContaining({ id: '7', name: 'Stored human' }),
         ]),
       })
     )
+  })
+
+  it('saves project settings for an adopted group without submitting its source roster', async () => {
+    const get = vi.fn().mockResolvedValue({ items: [{ ...group, personal_team_managed: true }] })
+    const api = createSharedWorkspaceHttpApi({ get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() })
+    const groups = await api.projects.listCollaborationGroups!('project')
+    expect(get).toHaveBeenCalledWith('/v1/cloud-projects/project/collaboration-groups')
+    await act(async () => root.render(
+      <WorkspaceCollaborationGroupsConfiguration
+        groups={groups}
+        members={[]} agents={[codexAgent, claudeAgent]} locale="zh-CN" commands={commands} canManage
+      />
+    ))
+    await click(byTestId('collaboration-group-manage-group-1'))
+    expect(byTestId<HTMLInputElement>('collaboration-group-detail-name').disabled).toBe(true)
+    expect(byTestId('collaboration-group-remove-member-agent-2')).toBeNull()
+    expect(byTestId<HTMLInputElement>('collaboration-group-create-responsibility-agent-2').disabled).toBe(true)
+    await change(byTestId<HTMLInputElement>('collaboration-group-detail-description'), 'Updated goal')
+    await click(byTestId('collaboration-group-detail-save'))
+    const [, patch] = vi.mocked(commands.updateCollaborationGroup!).mock.calls[0]
+    expect(patch.description).toBe('Updated goal')
+    expect(patch).not.toHaveProperty('name')
+    expect(patch).not.toHaveProperty('leader')
+    expect(patch).not.toHaveProperty('members')
   })
 
   it.each(['Me', '我'])("preserves an agent's actual name %s", async name => {
@@ -689,8 +717,8 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        leader: { kind: 'agent', id: '1', name: 'Codex', responsibility: '' },
-        members: [{ kind: 'agent', id: '1', name: 'Codex', responsibility: '' }],
+        leader: { ...group.leader, name: 'Codex' },
+        members: [{ ...group.members[0], name: 'Codex' }],
         instructions: expect.stringContaining('@Claude Code'),
         stages: [
           expect.objectContaining({

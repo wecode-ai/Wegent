@@ -40,7 +40,19 @@ pub(super) fn configure_task_mcp(
     // Saved MCP definitions are validated and rebound through thread RPC.
     // Prevent their unbound or malformed table from being loaded at child startup.
     launch.config_overrides.push("mcp_servers={}".to_owned());
-    if super::super::instance_home::request_home(request).is_none() {
+    configure_managed_wework_mcp(request, launch)?;
+    let member_request;
+    let request = if launch.manager.is_some() {
+        // Bot connectors bind only their own credentials. Host-owned manager
+        // tokens must never enter native process arguments, environment or MCP.
+        member_request = super::manager_tools::shell_request(request);
+        &member_request
+    } else {
+        request
+    };
+    if !request.project_group_execution()
+        && super::super::instance_home::request_home(request).is_none()
+    {
         launch.mcp_unavailable = configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch
@@ -49,7 +61,6 @@ pub(super) fn configure_task_mcp(
     let (overrides, environment) = cdp_browser_mcp_config_overrides(request)?;
     launch.config_overrides.extend(overrides);
     launch.env.extend(environment);
-    configure_managed_wework_mcp(request, launch)?;
     launch.mcp_unavailable |=
         runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)

@@ -22,10 +22,9 @@ from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
-from app.services.loop_item_executions.profile import native_runtime_contract
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.notification_target import board_notification_target
-from app.services.project_chat.service import bot_config, compiled_bot_config
+from app.services.project_chat.service import bot_config
 from app.services.wework_notifications import create_notification
 from shared.telemetry.decorators import trace_sync
 
@@ -60,6 +59,12 @@ def dispatch_collaboration_group_assignment(
     if not isinstance(leader, dict):
         raise HTTPException(422, "Collaboration group has no leader")
     leader_kind = str(leader.get("kind") or "")
+    from app.services.issue_coordination import (
+        coordination_activity,
+        current_dispatch_id,
+    )
+
+    coordination_activity(db, item, current_dispatch_id(item), group)
     if leader_kind == "human":
         _notify_human_leader(
             db,
@@ -119,18 +124,7 @@ def _enqueue_ai_leader(
         project=project,
         group=group,
     )
-    config = compiled_bot_config(
-        db,
-        leader,
-        execution_user_id=int(leader.created_by_user_id or user_id),
-    )
-    try:
-        native_runtime_contract(str(config.get("runtime") or "codex"))
-    except ValueError as exc:
-        raise HTTPException(
-            422,
-            "Collaboration group AI must use an Executor runtime",
-        ) from exc
+    config = bot_config(leader)
     manager_user_message = _manager_user_message(
         project=project,
         item=item,
@@ -141,6 +135,9 @@ def _enqueue_ai_leader(
         **(automation_context or {}),
         "run_id": run_id,
         "dispatch_kind": "collaboration_group",
+        "dispatch_protocol_version": 2,
+        "runner_selection": runner_selection,
+        "automatic": automatic,
         "dispatch_id": f"collaboration-group:{group['id']}:{assignment_key}",
         "dispatch_task_id": item.id,
         "dispatch_role": "manager",
@@ -159,52 +156,18 @@ def _enqueue_ai_leader(
             if part
         ),
     }
-    from app.services.runner_routing import resolve_group_routing
-
-    routes = resolve_group_routing(
-        db,
-        group=group,
-        project_id=str(project.id),
-        issue_id=item.id,
-        user_id=user_id,
-        selection=runner_selection,
-        automatic=automatic,
-        # The group assignment stores the model selection; it must keep working
-        # after an admin hides that model from new selections.
-        allow_hidden_models=True,
-    )
-    if routes:
-        if leader.id not in routes:
-            raise HTTPException(
-                422, "Configure the group leader's environment and model policies"
-            )
-        context["group_runner_requirements"] = routes
-        context["runner_routing"] = routes[leader.id]
-    device_id = None if routes else str(config.get("execution_device_id") or "") or None
-    dispatch = loop_item_execution_service.enqueue_collaboration_group_dispatch(
+    return loop_item_execution_service.create_for_assignment(
         db,
         loop_item_id=item.id,
         cloud_project_id=str(project.id),
-        owner_user_id=user_id if routes else int(leader.created_by_user_id or user_id),
+        agent=leader,
         assigner_user_id=user_id,
         environment=str(config.get("execution_environment") or "local"),
-        execution_device_id=device_id,
+        execution_device_id=str(config.get("execution_device_id") or "") or None,
         priority=item.priority,
-        dispatch_context=context,
+        automation_context=context,
+        instruction=manager_user_message,
     )
-    dispatch.execution_payload = json.dumps(
-        {
-            "runtime_selection": dict(dispatch.runtime_selection),
-            "origin_context": context,
-            "dispatch_request": {
-                "kind": "collaboration_group",
-            },
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    db.flush()
-    return dispatch
 
 
 def _notify_human_leader(

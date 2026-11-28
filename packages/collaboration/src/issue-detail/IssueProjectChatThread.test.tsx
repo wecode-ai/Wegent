@@ -10,6 +10,7 @@ import {
 } from "./IssueActivityThread";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
+import { PlatformTaskConnection } from "../platform-task-continuation";
 import { IssueChatMessage } from "./IssueChatMessage";
 import {
   backendTaskExecution,
@@ -189,13 +190,16 @@ describe("shared Issue threads", () => {
     ).toHaveLength(1);
   });
 
-  it("shows one public start comment with the recorded task link and threaded result", () => {
+  it.each([
+    { activity_type: "member_execution" },
+    { dispatch_role: "member", execution_id: 17 },
+  ])("shows the recorded task link on the public start for %j", (identity) => {
     const runtimeAddress = { deviceId: "executor", taskId: "member-task" };
     const execution: ProjectChatMessage = {
       ...message,
       runtimeAddress,
       metadata: {
-        activity_type: "member_execution",
+        ...identity,
         workflow_task_title: "Task",
       },
     };
@@ -479,6 +483,10 @@ describe("shared Issue threads", () => {
     expect(comment?.textContent).toContain(
       "负责人已综合证据，将 Issue 提交待确认。",
     );
+    expect(
+      comment?.querySelector('[data-testid="cloud-task-activity-role-root"]')
+        ?.textContent,
+    ).toBe("小组负责人");
     expect(comment?.textContent).not.toContain("已完成任务规划");
   });
 
@@ -612,7 +620,9 @@ describe("shared Issue threads", () => {
     expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     act(() => disclosure.click());
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-    const metadata = container.querySelector(".task-detail-thread-run-metadata");
+    const metadata = container.querySelector(
+      ".task-detail-thread-run-metadata",
+    );
     expect(metadata?.textContent).toContain("Run run-123");
     expect(metadata?.textContent).toContain("test-model");
   });
@@ -651,6 +661,50 @@ describe("shared Issue threads", () => {
         },
       }),
     ).toEqual({ taskId: "7", executionUrl: "https://example.com/task/7" });
+  });
+
+  it.each([
+    [new Map([[7, { task_user_id: 42, device_id: "device" }]]), true],
+    [new Map([[7, { task_user_id: 43, device_id: "device" }]]), false],
+    [new Map([[7, { task_user_id: 42, device_id: "" }]]), false],
+    [new Map([[8, { task_user_id: 42, device_id: "device" }]]), false],
+    [undefined, false],
+  ] as const)("keeps the web task accessible and scopes desktop continuation %#", (bindings, eligible) => {
+    const open = vi.fn();
+    const url = "https://web.example/chat?taskId=7";
+    act(() =>
+      root.render(
+        <PlatformTaskConnection.Provider
+          value={{ apiBaseUrl: "https://backend.example/api", userId: 42 }}
+        >
+          <IssueChatMessage
+            message={{
+              ...message,
+              metadata: { backend_task_id: 7, execution_url: url },
+            }}
+            platformTaskBindings={bindings}
+            mine={false}
+            translate={translate}
+            onOpenUrl={open}
+          />
+        </PlatformTaskConnection.Provider>,
+      ),
+    );
+    expect(
+      container
+        .querySelector(
+          '[data-testid="cloud-task-activity-continue-in-wework-root"]',
+        )
+        ?.getAttribute("href"),
+    ).toBe(eligible ? "wework://platform-tasks/https%3A%2F%2Fbackend.example%2Fapi/42/7" : undefined);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-task-activity-open-backend-task-root"]',
+        )!
+        .click(),
+    );
+    expect(open).toHaveBeenCalledWith(url);
   });
 
   it("opens stored attachments through the host instead of navigating to a custom URL", () => {

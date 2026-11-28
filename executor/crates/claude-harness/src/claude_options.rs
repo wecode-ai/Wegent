@@ -106,13 +106,7 @@ fn collect_mcp_servers_for_claude(
 ) -> Vec<Value> {
     let mut collected = Vec::new();
 
-    if request_mode(request).is_some_and(|mode| mode == "coordinate") {
-        if let Some(bots) = request.bot.as_array() {
-            for bot in bots {
-                append_mcp_servers(&mut collected, bot_mcp_servers(bot));
-            }
-        }
-    } else if let Some(bot) = primary_bot {
+    if let Some(bot) = primary_bot {
         append_mcp_servers(&mut collected, bot_mcp_servers(bot));
     }
 
@@ -375,16 +369,6 @@ fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
         Value::Object(_) => Some(&request.bot),
         _ => None,
     }
-}
-
-fn request_mode(request: &ExecutionRequest) -> Option<String> {
-    request
-        .extra
-        .get("mode")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase)
 }
 
 #[cfg(test)]

@@ -13,6 +13,13 @@ use serde_json::Value;
 use wegent_execution_request::git_identity::{apply_identity, resolve_identity};
 
 pub(crate) async fn enrich(app: &AppState, request: &mut ExecutionRequest) -> Result<()> {
+    if request
+        .task_data
+        .as_ref()
+        .is_some_and(|data| data["project_group_execution"] == true)
+    {
+        return Ok(());
+    }
     let row: Option<brz_mysql::MysqlRow> = app
         .mysql
         .fetch_optional("SELECT git_info FROM users WHERE id=?", (request.user_id,))

@@ -57,6 +57,7 @@ fn event_receipts_validate_host_facts_and_do_not_restart_accepted_execution() {
         request.extra.insert("user_id".into(), json!(user));
         apply_runtime_payload_metadata(&mut request, &payload);
         SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "task".into(),
             runtime: "codex".into(),

@@ -786,6 +786,7 @@ class KnowledgeService:
         scope: ResourceScope = ResourceScope.ALL,
         group_name: Optional[str] = None,
         *,
+        allowed_ids: frozenset[int] | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[Kind], int]:
@@ -807,6 +808,8 @@ class KnowledgeService:
             user_id,
             permission_context,
         )
+        if allowed_ids is not None:
+            query = query.filter(Kind.id.in_(allowed_ids))
         total = query.order_by(None).count()
 
         if scope == ResourceScope.ALL:

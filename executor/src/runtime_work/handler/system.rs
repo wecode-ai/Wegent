@@ -31,6 +31,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
         if self.reconcile_worktrees_once().await {
             self.resume_persisted_turns().await;
+            self.resume_personal_handoffs().await;
         }
     }
 

@@ -6457,6 +6457,7 @@ dependencies = [
  "tokio",
  "wegent-backend-persistence",
  "wegent-backend-test-support",
+ "wegent-protocol",
  "wegent-python-compat",
  "wegent-resource-store",
 ]

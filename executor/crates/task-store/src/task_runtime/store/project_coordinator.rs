@@ -16,12 +16,14 @@ impl LocalTaskStore {
             let id = group["leader"]["id"]
                 .as_str()
                 .ok_or_else(|| TaskRuntimeError::Invalid("Missing project leader".into()))?;
-            serde_json::to_value(map_chat_agent(collaboration_agent(
-                &connection,
-                project_id,
-                id,
-            )?))
-            .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
+            let row = collaboration_agent(&connection, project_id, id)?;
+            let bots = row.metadata["bot"].clone();
+            let mode = row.metadata["collaboration_model"].clone();
+            let mut agent = serde_json::to_value(map_chat_agent(row))
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            agent["bot"] = bots;
+            agent["collaboration_model"] = mode;
+            agent
         } else {
             Value::Null
         };

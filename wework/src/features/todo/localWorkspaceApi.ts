@@ -77,6 +77,7 @@ export function createLocalWorkspaceApi(
   locale: 'zh-CN' | 'en' = 'zh-CN'
 ): SharedWorkspaceApi | null {
   if (!deliveryApi) return null
+  const coordinationApi = deliveryApi.issueCoordination
   const delivery = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
   const automation = createWeworkAutomationSharedWorkspaceApi(
     deliveryApi,
@@ -303,19 +304,19 @@ export function createLocalWorkspaceApi(
     },
   ]
   const projectAgentApi = detailServices?.localProjectChatAgentApi
+  const isProjectBinding = (agent: LocalProjectChatAgent) =>
+    Boolean(agent.sourceProjectId && agent.sourceProjectId !== agent.projectId)
   const toProjectAgent = (agent: LocalProjectChatAgent) => ({
     ...agent,
     agent_id: agent.name,
-    deletable: !isDefaultLocalAgent(agent),
-    can_edit: true,
+    deletable: isProjectBinding(agent) || !isDefaultLocalAgent(agent),
+    can_edit: !isProjectBinding(agent),
     name: agent.displayName || agent.name,
   })
-  const listProjectAgents = async (projectId: string, options?: { forceRefresh?: boolean }) =>
-    (
-      await (options?.forceRefresh
-        ? projectAgentApi?.list(projectId, { forceRefresh: true })
-        : projectAgentApi?.list(projectId))
-    )?.map(toProjectAgent) ?? []
+  const listProjectAgents = async (
+    projectId: string,
+    options?: { forceRefresh?: boolean; includeArchived?: boolean }
+  ) => (await projectAgentApi?.list(projectId, options))?.map(toProjectAgent) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async (
     _workspaceId?: string,
@@ -363,31 +364,7 @@ export function createLocalWorkspaceApi(
       execution_environment_ids: agent.executionDeviceId
         ? [`device:${agent.executionDeviceId}`]
         : [],
-      project_binding_input: {
-        name: agent.name,
-        displayName: agent.displayName,
-        namespace: agent.namespace,
-        runtime: agent.runtime,
-        executionPolicy: agent.executionPolicy,
-        modelPolicy: agent.modelPolicy,
-        model: agent.model,
-        modelType: agent.modelType,
-        modelNamespace: agent.modelNamespace,
-        allowedModels: agent.allowedModels ?? [],
-        capabilityDescription: agent.capabilityDescription,
-        capabilityMode: agent.capabilityMode,
-        systemPrompt: agent.systemPrompt,
-        additionalSkills: agent.additionalSkills,
-        mcpServers: agent.mcpServers,
-        visibility: agent.visibility,
-        executionEnvironment: agent.executionEnvironment,
-        executionMode: agent.executionMode,
-        executionDeviceId: agent.executionDeviceId,
-        localProjectId: agent.localProjectId,
-        maxConcurrentExecutions: agent.maxConcurrentExecutions,
-        workspacePolicy: agent.workspacePolicy,
-        plugins: agent.plugins,
-      },
+      project_binding_input: { team_ref: agent.teamRef ?? agent.id },
     }))
   }
   const projectCollaborationGroups = async (projectId: string): Promise<CollaborationGroup[]> => {
@@ -395,11 +372,10 @@ export function createLocalWorkspaceApi(
     return project.collaboration_groups ?? []
   }
   const persistProjectCollaborationGroups = async (
-    projectId: string,
+    project: CollaborationProject,
     groups: CollaborationGroup[]
   ) => {
-    const project = await delivery.projects.get(projectId)
-    await delivery.projects.update(projectId, {
+    await delivery.projects.update(project.id, {
       version: project.version,
       collaborationGroups: groups,
     })
@@ -745,7 +721,7 @@ export function createLocalWorkspaceApi(
               const existing = (await projectAgentApi.list(projectId, { forceRefresh: true })).find(
                 agent => agent.id === agentId
               )
-              if (existing && isDefaultLocalAgent(existing)) {
+              if (existing && !isProjectBinding(existing) && isDefaultLocalAgent(existing)) {
                 throw new Error(
                   locale === 'zh-CN'
                     ? '默认本地智能体不能停用'
@@ -793,23 +769,61 @@ export function createLocalWorkspaceApi(
       initializeExecutionEnvironment: initializeProjectExecutionEnvironment,
       importMessages: unavailable,
       listCollaborationGroups: projectCollaborationGroups,
+      ...(deliveryApi.adoptPersonalTeam && {
+        adoptPersonalTeam: (
+          projectId: string,
+          input: import('@wegent/collaboration').PersonalTeamAdoptionInput
+        ) => deliveryApi.adoptPersonalTeam!(input.sourceOwnerId ?? userId, projectId, input),
+      }),
       createCollaborationGroup,
       updateCollaborationGroup,
       removeCollaborationGroup,
       async addCollaborationGroup(projectId, groupId) {
-        const groups = await projectCollaborationGroups(projectId)
+        const project = await delivery.projects.get(projectId)
+        const groups = project.collaboration_groups ?? []
         const existing = groups.find(group => group.id === groupId)
         if (existing) return existing
         const source = (await projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID)).find(
           group => group.id === groupId
         )
         if (!source) throw new Error('Collaboration group was not found')
-        await persistProjectCollaborationGroups(projectId, [...groups, source])
+        await persistProjectCollaborationGroups(project, [...groups, source])
         return source
       },
     },
     issues: {
       ...delivery.issues,
+      ...(coordinationApi
+        ? ({
+            async get(issueId: string) {
+              const issue = await delivery.issues.get(issueId)
+              if (!issue.assignee_group_id) return issue
+              const coordination = await coordinationApi.get(
+                userId,
+                String(issue.cloud_project_id),
+                issueId
+              )
+              return { ...issue, coordination }
+            },
+            async submitRound(projectId, { items, ...context }) {
+              await coordinationApi.write('submit', userId, projectId, {
+                ...context,
+                items: items.map(item => ({
+                  assignment_id: item.assignmentId,
+                  assignee_type: item.assigneeType,
+                  assignee_id: item.assigneeId,
+                  title: item.title,
+                  instructions: item.instructions,
+                  workflow_stage_id: item.workflowStageId,
+                  model_id: item.modelId,
+                })),
+              })
+            },
+            async decideRound(projectId, input) {
+              await coordinationApi.write('decide', userId, projectId, { ...input })
+            },
+          } satisfies Partial<SharedWorkspaceApi['issues']>)
+        : {}),
       async getBoardSnapshot(projectId) {
         const [snapshot, agents] = await Promise.all([
           delivery.issues.getBoardSnapshot(projectId),
@@ -833,7 +847,8 @@ export function createLocalWorkspaceApi(
     input: Parameters<NonNullable<SharedWorkspaceApi['projects']['createCollaborationGroup']>>[1]
   ) {
     const now = new Date().toISOString()
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     const group: CollaborationGroup = {
       id: `local-group-${crypto.randomUUID()}`,
       workspace_id: LOCAL_WORKSPACE_ID,
@@ -871,7 +886,7 @@ export function createLocalWorkspaceApi(
       updated_at: now,
     }
     assertValidCollaborationGroup(group.leader, group.members, group.stages)
-    await persistProjectCollaborationGroups(projectId, [...groups, group])
+    await persistProjectCollaborationGroups(project, [...groups, group])
     return group
   }
 
@@ -880,7 +895,8 @@ export function createLocalWorkspaceApi(
     groupId: string,
     input: Parameters<NonNullable<SharedWorkspaceApi['projects']['updateCollaborationGroup']>>[2]
   ) {
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     const current = groups.find(group => group.id === groupId)
     if (!current) throw new Error('Collaboration group was not found')
     if (current.version !== input.version) {
@@ -934,22 +950,26 @@ export function createLocalWorkspaceApi(
     }
     assertValidCollaborationGroup(updated.leader, updated.members, updated.stages)
     await persistProjectCollaborationGroups(
-      projectId,
+      project,
       groups.map(group => (group.id === groupId ? updated : group))
     )
     return updated
   }
 
   async function removeCollaborationGroup(projectId: string, groupId: string) {
-    const groups = await projectCollaborationGroups(projectId)
+    const project = await delivery.projects.get(projectId)
+    const groups = project.collaboration_groups ?? []
     await persistProjectCollaborationGroups(
-      projectId,
+      project,
       groups.filter(group => group.id !== groupId)
     )
   }
 }
 
-function toLocalAgentCreateInput(input: Record<string, unknown>): LocalProjectChatAgentCreateInput {
+function toLocalAgentCreateInput(
+  input: Record<string, unknown>
+): LocalProjectChatAgentCreateInput | { team_ref: string } {
+  if (typeof input.team_ref === 'string') return { team_ref: input.team_ref }
   if (typeof input.name !== 'string' || !input.name.trim()) {
     throw new Error('Local Agent name is required')
   }

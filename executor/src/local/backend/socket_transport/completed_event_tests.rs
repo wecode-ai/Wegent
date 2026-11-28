@@ -6,8 +6,8 @@ use crate::{
     config::device::UpdateConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     local::backend::{
-        CapabilityReportProvider, LocalBackendClient, LocalBackendEventSink,
-        LocalRunningTaskTracker, ManagedLocalTaskRunner,
+        CapabilityReportProvider, LocalBackendClient, LocalBackendEventSink, LocalTaskController,
+        PlatformTaskAdapter,
     },
     protocol::{ExecutionRequest, TaskStatus},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
@@ -259,7 +259,7 @@ impl AgentEngine for CompletionEngine {
     type RunFuture = std::future::Ready<ExecutionOutcome>;
 
     fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
-        panic!("ManagedLocalTaskRunner must execute run_with_events")
+        panic!("PlatformTaskAdapter must execute run_with_events")
     }
 
     fn run_with_events<S>(
@@ -298,11 +298,13 @@ async fn send_managed_completions(cases: Vec<ScriptedCompletion>, root: &Path) -
         )),
         release: Arc::new(tokio::sync::Notify::new()),
     };
-    let running = LocalRunningTaskTracker::default();
-    let runner = ManagedLocalTaskRunner::new(
+    let runner = PlatformTaskAdapter::new(
         engine.clone(),
         LocalBackendEventSink::new(device.client.clone()),
-        running.clone(),
+        Arc::new(crate::runtime_work::RuntimeWorkRpcHandler::new(
+            "test", "unused",
+        )),
+        uuid::Uuid::new_v4().to_string(),
     );
     let mut terminals = Vec::new();
     for index in 0..count {
@@ -321,7 +323,7 @@ async fn send_managed_completions(cases: Vec<ScriptedCompletion>, root: &Path) -
             })
             .await;
         assert_eq!(accepted.status, TaskStatus::Running);
-        assert_eq!(running.running_task_ids(), [task_id]);
+        assert_eq!(runner.running_task_ids(), [task_id]);
         let created = device.next_frame().await;
         let created: Value =
             serde_json::from_str(created.strip_prefix("42/local-executor,").unwrap()).unwrap();
@@ -329,7 +331,7 @@ async fn send_managed_completions(cases: Vec<ScriptedCompletion>, root: &Path) -
         assert_eq!(created[1]["data"]["shell_type"], "claudecode");
         engine.release.notify_one();
         terminals.push(device.next_frame().await);
-        assert!(running.running_task_ids().is_empty());
+        assert!(runner.running_task_ids().is_empty());
     }
     assert!(engine.cases.lock().unwrap().is_empty());
     device.close().await;

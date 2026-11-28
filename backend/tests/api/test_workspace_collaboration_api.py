@@ -534,6 +534,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     )
     assert create_response.status_code == 201
     group = create_response.json()
+    assert group["personal_team_managed"] is False
     assert group["owner_type"] == "workspace"
     assert group["owner_id"] == str(workspace["id"])
     assert group["leader"] == {
@@ -753,6 +754,61 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     )
     assert delete_project_group_response.status_code == 204
 
+    source_group = test_db.get(Kind, int(project_codex_group["id"]))
+    document = dict(source_group.json)
+    document["metadata"] = {
+        **document["metadata"],
+        "personalTeamSource": {"publicationId": 12345},
+    }
+    document["spec"] = {**document["spec"], "leader": dict(document["spec"]["leader"])}
+    document["spec"]["leader"].pop("name", None)
+    document["spec"]["leader"]["responsibility"] = "Review delivery"
+    source_group.json = document
+    source_binding = ResourceMember(
+        resource_type="PersonalTeamProjectBinding",
+        resource_id=12345,
+        entity_type="collaboration_group",
+        entity_id=str(source_group.id),
+        role="Developer",
+        status="approved",
+    )
+    test_db.add(source_binding)
+    test_db.flush()
+    binding_id = source_binding.id
+    test_db.commit()
+    sourced_groups = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    )
+    assert sourced_groups.status_code == 200
+    assert any(
+        entry["id"] == project_codex_group["id"] and entry["personal_team_managed"]
+        for entry in sourced_groups.json()["items"]
+    )
+
+    group_url = f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/{project_codex_group['id']}"
+    update_source = test_client.patch(
+        group_url,
+        headers=_auth(test_token),
+        json={
+            "version": project_codex_group["version"],
+            "description": "Project acceptance",
+            "stages": [],
+        },
+    )
+    assert update_source.status_code == 200, update_source.text
+    assert update_source.json()["leader"]["responsibility"] == "Review delivery"
+    assert update_source.json()["personal_team_managed"] is True
+    forbidden_roster = test_client.patch(
+        group_url,
+        headers=_auth(test_token),
+        json={
+            "version": update_source.json()["version"],
+            "name": "Changed source name",
+        },
+    )
+    assert forbidden_roster.status_code == 409
+
     delete_project_codex_group_response = test_client.delete(
         (
             f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
@@ -761,6 +817,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         headers=_auth(test_token),
     )
     assert delete_project_codex_group_response.status_code == 204
+    assert test_db.query(ResourceMember).filter_by(id=binding_id).count() == 0
 
     delete_response = test_client.delete(
         (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),

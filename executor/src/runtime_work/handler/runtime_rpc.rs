@@ -19,6 +19,33 @@ fn bind_personal_runtime_token(payload: &mut Value, token: &str) {
 }
 
 impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
+    fn running_platform_task_ids(&self, scope: &str) -> Vec<String> {
+        self.active_platform_tasks(scope)
+    }
+
+    fn submit_platform_turn<'a>(
+        &'a self,
+        session: String,
+        subtask: String,
+        turn: Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>,
+        shell: Arc<dyn wegent_execution_contracts::ipc::ShellTurn>,
+    ) -> wegent_execution_contracts::ipc::BoxFuture<
+        'a,
+        Result<wegent_execution_contracts::RunnerResult, AppIpcError>,
+    > {
+        Box::pin(self.admit_platform_turn(session, subtask, turn, shell))
+    }
+
+    fn cancel_platform_turn<'a>(
+        &'a self,
+        session: String,
+        subtask: Option<String>,
+        remember: bool,
+        suspended: wegent_execution_contracts::ipc::CancelSuspendedTurn,
+    ) -> wegent_execution_contracts::ipc::BoxFuture<'a, bool> {
+        Box::pin(self.stop_platform_turn(session, subtask, remember, suspended))
+    }
+
     fn connection_service_owner<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {

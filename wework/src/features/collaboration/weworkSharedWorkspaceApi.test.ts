@@ -1025,6 +1025,31 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       runtimeProfileApi: runtimeProfileApi as never,
     })
 
+    const definition = {
+      id: 'review',
+      name: 'Review',
+      leadId: '@primary',
+      members: { '@primary': 'Approve' },
+    }
+    const executionTeam = {
+      name: 'Reviewer',
+      collaboration_model: 'solo',
+      bot: [{ id: 'reviewer' }],
+    }
+    await api.projects.adoptPersonalTeam!('project-1', {
+      definition,
+      memberAgentIds: { '@primary': 'project-agent-1' },
+      memberTeamDefinitions: { '@primary': executionTeam },
+    })
+    expect(client.put).toHaveBeenCalledWith(
+      '/v1/cloud-projects/project-1/personal-team-bindings/review',
+      {
+        root: { kind: 'team', definition },
+        member_agent_ids: { '@primary': 'project-agent-1' },
+        member_team_definitions: { '@primary': executionTeam },
+      }
+    )
+
     expect(Object.keys(api).sort()).toEqual(
       [
         'automationExecutionCatalog',

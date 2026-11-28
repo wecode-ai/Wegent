@@ -375,6 +375,11 @@ impl LocalTaskStore {
             }
             settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
             write_personal(&transaction, &settings)?;
+            super::personal_team_project::refresh_changed_sources(
+                &transaction,
+                &previous,
+                &settings,
+            )?;
             super::stand_in_processing::update_processing_configuration(
                 &transaction,
                 user,
@@ -698,7 +703,12 @@ mod tests {
                 "roles":[], "primary":{"enabled":true,"prompt":"Keep my prompt","preferences":""},
                 "processing":{"mode":"silent"}
             });
-            write_personal(&store.connection().unwrap(), &legacy).unwrap();
+            // The current writer provisions Team references. Seed the historical on-disk
+            // representation to exercise migration after the lifecycle version check.
+            store.connection().unwrap().execute(
+                "INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at) VALUES(?1,'personal_stand_in',?2,?3,?3)",
+                params![crate::task_runtime::personal_stand_in::personal_key(user),legacy.to_string(),now()]
+            ).unwrap();
             let read_saved = || {
                 get_item_from(
                     &store.connection().unwrap(),

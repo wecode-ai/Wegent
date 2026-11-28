@@ -219,12 +219,12 @@ async fn resolve_create_scope(
         }
         None => None,
     };
-    let kinds_cache = KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let kinds_cache = KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let team = kinds_cache
         .resolve_team_on(
             &mut *transaction,
@@ -244,6 +244,41 @@ async fn resolve_create_scope(
         ));
     };
 
+    let device_id = super::device::resolve(
+        &mut &mut *transaction,
+        user_id,
+        input
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.device_id()),
+        continuation
+            .as_ref()
+            .map(|continuation| &continuation.task_json),
+    )
+    .await?;
+
+    if let Some(previous) = &continuation {
+        if previous.task_json["spec"]["currentStage"].is_number()
+            && (previous.task_json["spec"]["teamRef"]["name"] != team.name
+                || previous.task_json["spec"]["teamRef"]["namespace"] != team.namespace
+                || previous.task_json["spec"]["teamRef"]["user_id"] != team.user_id)
+        {
+            return Err(FastApiError::detail(
+                StatusCode::FORBIDDEN,
+                "Pipeline Team binding changed",
+            ));
+        }
+    } else if team.json.0["spec"]["collaborationModel"] == "pipeline" {
+        crate::background_jobs::project::agents::readiness(
+            state,
+            &team,
+            user_id,
+            model.model_id.as_deref(),
+        )
+        .await
+        .map_err(|error| FastApiError::detail(StatusCode::BAD_REQUEST, error.to_string()))?;
+    }
+
     // `create_response`'s model selection (`openapi_responses.py:594-672`)
     // runs before the task is created: an explicit `model_id` resolves that
     // Model, and without one every team member's Bot is read and validated.
@@ -261,7 +296,15 @@ async fn resolve_create_scope(
     let task_type = model_selection::model_task_type(model_type.as_deref());
 
     // `get_bot_ids_from_team`: one `kindReader` read per member.
-    let bots = resolve_team_bots_on(&mut *transaction, &kinds_cache, team.user_id, &team.json.0)
+    let stage = continuation
+        .as_ref()
+        .and_then(|previous| previous.task_json["spec"]["currentStage"].as_u64())
+        .unwrap_or(0);
+    let turn_team =
+        super::resolution::turn_team(&team.json.0, stage as usize).ok_or_else(|| {
+            FastApiError::detail(StatusCode::BAD_REQUEST, "Pipeline stage unavailable")
+        })?;
+    let bots = resolve_team_bots_on(&mut *transaction, &kinds_cache, team.user_id, &turn_team)
         .await
         .map_err(dependency)?;
     if bots.bot_ids.is_empty() {
@@ -290,19 +333,6 @@ async fn resolve_create_scope(
         ));
     };
 
-    let device_id = super::device::resolve(
-        &mut &mut *transaction,
-        user_id,
-        input
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.device_id()),
-        continuation
-            .as_ref()
-            .map(|continuation| &continuation.task_json),
-    )
-    .await?;
-
     // `create_new_task`'s API source group (`params.is_api_call`): the group
     // id is written to the placeholder Task row. A `previous_response_id`
     // reuse skips task creation, so the source resolves no group.
@@ -330,6 +360,7 @@ async fn resolve_create_scope(
             user_id,
             owner_user_id: user.id,
             continuation,
+            pipeline: team.json.0["spec"]["collaborationModel"] == "pipeline",
             history_window: None,
             team_id: team.id,
             bot_ids: &bots.bot_ids,
@@ -623,7 +654,7 @@ async fn create_response_flow(
             .is_some_and(|refs| !refs.is_empty());
 
     let (bot_role, team_member_prompt) =
-        team_member_context(&team.json.0, &bot.name, &bot.namespace);
+        team_member_context(&team.json.0, &task_json, &bot.name, &bot.namespace);
 
     // `request_preparation.py:966-970`: the middleware request id, or the
     // deterministic `req_{assistant_subtask.id}` fallback when the request
@@ -715,6 +746,7 @@ fn source_group_error(error: crate::task_source_group::SourceGroupError) -> Fast
 /// The matching team member's `role` and `prompt` for the resolved bot.
 pub(crate) fn team_member_context(
     team_json: &serde_json::Value,
+    task_json: &serde_json::Value,
     bot_name: &str,
     bot_namespace: &str,
 ) -> (String, Option<String>) {
@@ -723,15 +755,23 @@ pub(crate) fn team_member_context(
         .and_then(|spec| spec.get("members"))
         .and_then(serde_json::Value::as_array);
     let Some(member) = members.and_then(|members| {
-        members.iter().find(|member| {
-            member.get("botRef").is_some_and(|reference| {
-                reference.get("name").and_then(serde_json::Value::as_str) == Some(bot_name)
-                    && reference
-                        .get("namespace")
-                        .and_then(serde_json::Value::as_str)
-                        == Some(bot_namespace)
-            })
-        })
+        let matches = |member: &serde_json::Value| {
+            member
+                .pointer("/botRef/name")
+                .and_then(serde_json::Value::as_str)
+                == Some(bot_name)
+                && member
+                    .pointer("/botRef/namespace")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("default")
+                    == bot_namespace
+        };
+        if team_json["spec"]["collaborationModel"] == "pipeline" {
+            let stage = task_json["spec"]["currentStage"].as_u64().unwrap_or(0) as usize;
+            members.get(stage).filter(|member| matches(member))
+        } else {
+            members.iter().find(|member| matches(member))
+        }
     }) else {
         return (String::new(), None);
     };

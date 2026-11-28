@@ -1,3 +1,4 @@
+import { PersonalPipelineConfirmation } from '@/components/chat/PersonalPipelineConfirmation'
 import { useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -236,6 +237,13 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
+        {currentRuntimeTask && (
+          <PersonalPipelineConfirmation
+            handle={runtimeTaskSummary?.runtimeHandle}
+            address={currentRuntimeTask}
+            services={services}
+          />
+        )}
         {selectionSharingMounted && currentRuntimeTask && (
           <TaskIssueShare
             toolbarContainer={issueShareToolbarHost}

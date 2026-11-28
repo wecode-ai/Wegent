@@ -2487,6 +2487,54 @@ describe('Wework collaboration workspace API', () => {
     expect(cloudAdd).not.toHaveBeenCalled()
   })
 
+  it('rejects a stale local group edit and preserves the concurrently adopted group on retry', async () => {
+    const original = {
+      id: 'existing',
+      name: 'Existing',
+      version: 1,
+      leader: { kind: 'agent', id: 'leader' },
+      members: [{ kind: 'agent', id: 'leader' }],
+      stages: [],
+    }
+    const adopted = { ...original, id: 'adopted', name: 'Adopted' }
+    let project = { id: 'local-project', version: 1, collaboration_groups: [original] }
+    const list = vi.fn(async () => ({ items: [project] }))
+    list.mockImplementationOnce(async () => {
+      const snapshot = project
+      project = { ...project, version: 2, collaboration_groups: [original, adopted] }
+      return { items: [snapshot] }
+    })
+    const api = createLocalWorkspaceApi(
+      {
+        listCloudProjects: list,
+        updateCloudProject: async (_id: string, input: typeof project) => {
+          if (input.version !== project.version) throw new Error('Project version conflict')
+          project = {
+            ...project,
+            collaboration_groups: input.collaboration_groups,
+            version: project.version + 1,
+          }
+          return project
+        },
+      } as unknown as LocalProjectSpaceApi,
+      1,
+      'admin',
+      null
+    )!
+    const edit = () =>
+      api.projects.updateCollaborationGroup!(project.id, original.id, {
+        version: 1,
+        name: 'Edited',
+      })
+    await expect(edit()).rejects.toThrow('Project version conflict')
+    expect(project.collaboration_groups).toEqual([original, adopted])
+    await expect(edit()).resolves.toMatchObject({ id: original.id, name: 'Edited', version: 2 })
+    expect(project.collaboration_groups).toEqual([
+      { ...original, name: 'Edited', version: 2, updated_at: expect.any(String) },
+      adopted,
+    ])
+  })
+
   it('preserves the unresolved identity of a visible local device placeholder', async () => {
     const detailServices = createLocalDetailServices()
     vi.mocked(detailServices.deviceApi.listDevices).mockResolvedValueOnce([

@@ -674,3 +674,54 @@ async fn responses_passthrough_preserves_wire_body_after_model_routing() {
     app.stop().await;
     database.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL and Redis; invoked by Backend Rust CI"]
+async fn group_inference_credential_selects_only_its_assigned_model() {
+    let database = super::fixture::Fixture::new().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    seed_models(
+        &database.mysql,
+        &format!("http://{}", listener.local_addr().unwrap()),
+    )
+    .await;
+    let provider = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            model_request(&mut stream).await,
+            "post /v1/headers/responses http/1.1"
+        );
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .await
+            .unwrap();
+    });
+    let app = HttpApp::start(database.mysql.clone()).await;
+    let client = brz_http::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &json!({"sub":"llm-proxy-e2e","scope":"model:inference","model_kind_id":1,"exp":chrono::Utc::now().timestamp()+300}),
+        &jsonwebtoken::EncodingKey::from_secret(JWT_KEY.as_bytes()),
+    ).unwrap();
+    for (name, expected) in [("slow-stream", 403), ("slow-headers[1m]", 200)] {
+        let response = client
+            .post(&app.url)
+            .unwrap()
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-wegent-model-type", "user")
+            .header("x-wegent-model-namespace", "default")
+            .header("x-wegent-model-user-id", "7")
+            .header("content-type", "application/json")
+            .body(json!({"model":name,"input":"llm-proxy-timeout-e2e"}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+    }
+    provider.await.unwrap();
+    app.stop().await;
+    database.close().await;
+}

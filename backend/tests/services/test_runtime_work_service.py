@@ -5574,6 +5574,39 @@ def test_cloud_model_override_keeps_anthropic_resource_with_codex_capability_met
     assert config["api_key"] != "provider-secret"
 
 
+def test_project_group_gateway_token_can_only_be_used_for_model_inference(
+    test_db, test_user
+):
+    import jwt
+
+    from app.core.config import settings
+    from app.core.session_token import is_user_session_payload
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services.runtime_work_service import _runtime_model_override
+
+    model = _codex_provider_model(
+        test_db, 0, name="group-model", api_model_id="gpt-test"
+    )
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="continue",
+        modelId=model.name,
+        modelType="public",
+        modelOptions={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+        origin={"dispatch_kind": "collaboration_group"},
+    )
+    config, _, _ = _runtime_model_override(test_db, test_user.id, request)
+    claims = jwt.decode(
+        config["api_key"], settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+    )
+    assert claims["scope"] == "model:inference"
+    assert claims["model_kind_id"] == model.id
+    assert not is_user_session_payload(claims)
+
+
 def test_runtime_model_override_rejects_incomplete_cloud_identity(
     test_db,
     test_user,

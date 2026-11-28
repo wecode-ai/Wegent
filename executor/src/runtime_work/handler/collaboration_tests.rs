@@ -580,6 +580,21 @@ fn round_barrier_requires_every_assigned_member_and_human_delivery() {
         &[member.clone(), human.clone()]
     ));
 
+    let mut server_round = command.clone();
+    server_round.server_dispatched = true;
+    server_round.assignments[0]["execution_id"] = json!(7);
+    let mut server_outcome = member.clone();
+    server_outcome["execution_id"] = json!(8);
+    assert!(!cloud_collaboration_round_is_complete(
+        &server_round,
+        &[server_outcome.clone(), human.clone()]
+    ));
+    server_outcome["execution_id"] = json!(7);
+    assert!(cloud_collaboration_round_is_complete(
+        &server_round,
+        &[server_outcome, human.clone()]
+    ));
+
     human["human_assignment_id"] = json!("another-human-assignment");
     assert!(!cloud_collaboration_round_is_complete(
         &command,
@@ -589,6 +604,7 @@ fn round_barrier_requires_every_assigned_member_and_human_delivery() {
 
 fn command() -> CloudCollaborationRoundCommand {
     CloudCollaborationRoundCommand {
+        server_dispatched: false,
         manager_runtime_task_id: "manager-task-1".to_owned(),
         project_id: "7".to_owned(),
         item_id: "issue-1".to_owned(),
@@ -821,12 +837,13 @@ fn fresh_cloud_manager_replaces_expired_credentials_for_manager_and_members() {
     assert!(apply_fresh_cloud_manager_profiles(&mut payload, Value::Null).is_err());
     apply_fresh_cloud_manager_profiles(
         &mut payload,
-        json!({"manager_model_config":model_config,
+        json!({"manager_model_config":model_config, "manager_callback_token":"group-callback",
             "manager_model_selection":{"modelName":"cloud-model","modelType":"group"},
             "member_runtime_profiles":members}),
     )
     .unwrap();
 
+    assert_eq!(payload["executionRequest"]["auth_token"], "group-callback");
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
     assert_eq!(payload["modelSelection"]["modelName"], "cloud-model");
     assert_eq!(

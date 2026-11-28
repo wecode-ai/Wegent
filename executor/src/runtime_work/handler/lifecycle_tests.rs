@@ -613,6 +613,7 @@ async fn starting_a_backend_fallback_does_not_rebind_an_identity_thread() {
     );
     handler.start_authorized_turn(
         SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "task-1".into(),
             runtime: "codex".into(),
@@ -730,6 +731,7 @@ async fn continuation_admission_observes_a_turn_that_settled_during_preparation(
     handler
         .submit_continuation(
             SpawnTurnRequest {
+                platform_command: None,
                 task_kind: None,
                 local_task_id: "task-1".into(),
                 runtime: "codex".into(),
@@ -787,6 +789,7 @@ async fn queued_goal_recovery_preserves_owned_recovery_without_claiming_a_model_
         .insert(RESUME_GOAL_ONLY_MARKER.into(), json!(true));
     handler
         .queue_turn(SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "task-1".into(),
             runtime: "codex".into(),
@@ -830,6 +833,7 @@ async fn queue_admission_and_cancellation_publish_new_versions_without_rewriting
         .unwrap();
     handler
         .queue_turn(SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "task-1".into(),
             runtime: "codex".into(),

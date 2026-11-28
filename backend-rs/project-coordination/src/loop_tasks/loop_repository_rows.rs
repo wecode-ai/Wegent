@@ -51,6 +51,7 @@ pub struct ItemMetadata {
     pub assignment_history: Option<serde_json::Value>,
     pub status_history: Option<serde_json::Value>,
     pub collaboration_group: Option<serde_json::Value>,
+    pub collaboration_group_assignment_key: Option<String>,
     pub automation: Option<serde_json::Value>,
     pub workflow: Option<serde_json::Value>,
     pub execution_config: Option<serde_json::Value>,
@@ -115,7 +116,7 @@ pub struct BindingRow {
     #[mysql(rename = "loop_items_task_user_id")]
     pub task_user_id: i32,
     #[mysql(rename = "loop_items_device_id")]
-    pub device_id: String,
+    pub device_id: Option<String>,
     #[mysql(rename = "loop_items_task_id")]
     pub task_id: String,
     #[mysql(rename = "loop_items_task_title")]

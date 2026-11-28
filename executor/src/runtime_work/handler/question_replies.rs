@@ -154,9 +154,12 @@ impl RuntimeWorkRpcHandler {
             }));
         }
 
-        if !self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
+        if !self.is_local_task_execution_accepting_notifications(
+            local_task_id,
+            pending_request.execution_id,
+        ) {
             return Err(
-                json!({"success":false,"code":"stale_request_user_input","error":"The question execution changed"}),
+                json!({"success":false,"code":"stale_request_user_input","error":"The question execution changed or was stopped"}),
             );
         }
         let key = active_turn.as_ref().and_then(|turn| {

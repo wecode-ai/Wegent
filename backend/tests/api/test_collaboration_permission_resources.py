@@ -474,11 +474,29 @@ def test_cp15_cross_project_agent_and_issue_injection_is_rejected(
         headers=scope["owner"],
         json={"name": "Other"},
     ).json()
-    agent.cloud_project_id = other["id"]
+    foreign_agent = ProjectChatAgent(
+        cloud_project_id=other["id"],
+        name="Other agent",
+        status="active",
+        created_by_user_id=agent.created_by_user_id,
+        metadata_json={"runtime": "codex"},
+    )
+    authorize_project_agent(test_db, foreign_agent)
+    assert execution_authorized(test_db, run)
+    run.agent_id = foreign_agent.id
     test_db.flush()
     assert not execution_authorized(test_db, run)
-    agent.cloud_project_id = scope["project"]["id"]
-    run.cloud_project_id = other["id"]
+    foreign_issue = LoopItem(
+        cloud_project_id=other["id"],
+        title="Other issue",
+        status="inbox",
+        created_by_user_id=agent.created_by_user_id,
+        metadata_json={},
+    )
+    test_db.add(foreign_issue)
+    test_db.flush()
+    run.agent_id = agent.id
+    run.loop_item_id = foreign_issue.id
     test_db.flush()
     assert not execution_authorized(test_db, run)
 

@@ -16,6 +16,11 @@ use wegent_execution_runtime::session;
 use wegent_python_compat::py_json::python_dumps;
 use wegent_task_store::task_store::subtask_column_index;
 
+#[path = "pipeline_status.rs"]
+mod pipeline_status;
+use pipeline_status::collaboration_status;
+pub use pipeline_status::{CollaborationStatus, settle_unavailable_on};
+
 #[path = "persist_status.rs"]
 mod persist_status;
 #[path = "persist_terminal.rs"]
@@ -233,7 +238,7 @@ pub async fn persist_terminal_transition<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
-    delivery: Option<(Delivery, Option<&Value>)>,
+    delivery: Option<(Delivery<'_>, Option<&Value>)>,
 ) -> MysqlResult<Option<Transition>> {
     let normalized_status = status.to_uppercase();
     let (task_table, subtask_table) =
@@ -255,6 +260,18 @@ pub async fn persist_terminal_transition<M: Mysql, R: Redis>(
         if subtask_column::<i64>(&row, "task_id") != Some(task_id)
             || device_attempt.is_some_and(|attempt| {
                 task_column::<i64>(&task, "user_id") != Some(attempt.owner_id)
+            })
+        {
+            return Ok(None);
+        }
+        if let Some((Delivery::Device(stream), _)) = delivery
+            && !task_column::<Json<Value>>(&task, "json").is_some_and(|json| {
+                stream.matches(
+                    &json.0,
+                    subtask_id,
+                    subtask_column::<String>(&row, "executor_namespace").as_deref(),
+                    subtask_column::<String>(&row, "executor_name").as_deref(),
+                )
             })
         {
             return Ok(None);
@@ -392,7 +409,7 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
     ctx: &CompletionStore<'_, M, R>,
     task_id: i64,
     subtask_id: i64,
-    delivery: Delivery,
+    delivery: Delivery<'_>,
 ) -> MysqlResult<()> {
     let (task_table, _) = super::resolve_tables(ctx.task_store, ctx.tables, task_id).await?;
     let mysql = ctx
@@ -408,6 +425,11 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
             let Some(Json(mut task)) = task_column::<Json<Value>>(&task, "json") else {
                 return Ok(());
             };
+            if let Delivery::Device(stream) = delivery
+                && stream.attempt != delivery::device_attempt_id(&task, subtask_id)
+            {
+                return Ok(());
+            }
             if let Some(labels) = delivery::labels(&mut task).as_object_mut()
                 && labels.shift_remove(&delivery.label(subtask_id)).is_some()
             {
@@ -745,210 +767,6 @@ pub async fn update_task_status<M: Mysql, R: Redis>(
     }
 }
 
-/// The collaboration strategy's two decisions for one completion:
-/// `get_task_status_on_subtask_complete` renders the status, and
-/// `get_auto_advance_info` decides whether `_update_task_status_sync` schedules
-/// the next pipeline turn (`app/services/adapters/collaboration_strategy.py`).
-pub struct CollaborationStatus {
-    pub status: String,
-    pub progress: Option<i64>,
-    pub auto_advance: bool,
-}
-
-/// `CollaborationStrategyFactory.get_strategy_for_task` plus
-/// `get_task_status_on_subtask_complete` and `get_auto_advance_info`.
-async fn collaboration_status<T: MysqlTransaction>(
-    mysql: &mut T,
-    task_table: &str,
-    task_id: i64,
-    payload: &Map<String, Value>,
-    subtask: &MysqlRow,
-    subtask_status: &str,
-    cancelling: bool,
-) -> MysqlResult<CollaborationStatus> {
-    // A real terminal event settles cancellation without scheduling another stage.
-    if cancelling {
-        return Ok(default_collaboration_status(subtask_status));
-    }
-    // `get_regular_active_task`: the exact task read the factory issues. Its
-    // outcome decides whether the factory reads the task's Team at all.
-    let regular_task_found = mysql
-        .fetch_optional::<_, _, MysqlRow>(
-            sql::regular_active_task_statement(task_table),
-            (task_id,),
-        )
-        .await?
-        .is_some();
-
-    let team = strategy_team(mysql, regular_task_found, payload).await?;
-
-    // `PipelineCollaborationStrategy`: a stage that requires confirmation holds
-    // the task at `PENDING_CONFIRMATION` instead of completing it. Only this
-    // strategy auto-advances; every other collaboration model returns `None`
-    // from `get_auto_advance_info` without further reads.
-    let pipeline = team
-        .as_ref()
-        .and_then(|team| team.pointer("/spec/collaborationModel"))
-        .and_then(Value::as_str)
-        == Some("pipeline");
-    if subtask_status == "COMPLETED"
-        && pipeline
-        && let Some(team) = team.as_ref()
-        && let Some(bot_id) = subtask_column::<Json<Value>>(subtask, "bot_ids")
-            .and_then(|ids| ids.0.as_array()?.first()?.as_i64())
-    {
-        let bot: Option<(String, String)> = mysql
-            .fetch_optional(
-                "SELECT kinds.name, kinds.namespace FROM kinds WHERE kinds.id = ? \
-                 AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1",
-                (bot_id,),
-            )
-            .await?;
-        if let Some((name, namespace)) = bot {
-            let stage = stage_decision(payload, team, &name, &namespace);
-            if stage.requires_confirmation {
-                return Ok(CollaborationStatus {
-                    status: "PENDING_CONFIRMATION".to_string(),
-                    progress: Some(100),
-                    auto_advance: false,
-                });
-            }
-            return Ok(CollaborationStatus {
-                status: if stage.auto_advance {
-                    "PENDING"
-                } else {
-                    "COMPLETED"
-                }
-                .to_owned(),
-                progress: Some(if stage.auto_advance { 0 } else { 100 }),
-                auto_advance: stage.auto_advance,
-            });
-        }
-    }
-    Ok(default_collaboration_status(subtask_status))
-}
-
-fn default_collaboration_status(subtask_status: &str) -> CollaborationStatus {
-    CollaborationStatus {
-        status: subtask_status.to_owned(),
-        progress: matches!(subtask_status, "COMPLETED" | "CANCELLED").then_some(100),
-        auto_advance: false,
-    }
-}
-
-/// `CollaborationStrategyFactory.get_strategy_for_task`'s team read
-/// (`app/services/adapters/collaboration_strategy.py:405-440`).
-///
-/// The factory answers `DefaultCollaborationStrategy` as soon as
-/// `get_regular_active_task` finds no row, before `_get_team_from_task_ref` can
-/// read `kinds`; a task outside the regular active state (a subscription task,
-/// whose `is_active` is not the single active state) therefore issues no Team
-/// read at all. The ref's `user_id` is what `_get_team_from_task_ref` keys the
-/// read on, so a ref without one resolves no team either.
-async fn strategy_team<T: MysqlTransaction>(
-    mysql: &mut T,
-    regular_task_found: bool,
-    payload: &Map<String, Value>,
-) -> MysqlResult<Option<Value>> {
-    let team_ref = payload
-        .get("spec")
-        .filter(|_| regular_task_found)
-        .and_then(|spec| spec.get("teamRef"))
-        .and_then(Value::as_object);
-    let Some(team_ref) = team_ref else {
-        return Ok(None);
-    };
-    let name = team_ref
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let namespace = team_ref
-        .get("namespace")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let Some(owner) = team_ref.get("user_id").and_then(Value::as_i64) else {
-        return Ok(None);
-    };
-    let team: Option<MysqlRow> = mysql
-        .fetch_optional(sql::team_by_owner(), (owner, namespace, name))
-        .await?;
-    Ok(team
-        .and_then(|row| row.get::<Json<Value>>("kinds_json").ok().flatten())
-        .map(|json| json.0))
-}
-
-/// `PipelineCollaborationStrategy._should_require_confirmation` and the
-/// `get_auto_advance_info` gate, resolved from the same member list.
-struct StageDecision {
-    requires_confirmation: bool,
-    auto_advance: bool,
-}
-
-fn stage_decision(
-    payload: &Map<String, Value>,
-    team: &Value,
-    bot_name: &str,
-    bot_namespace: &str,
-) -> StageDecision {
-    let none = StageDecision {
-        requires_confirmation: false,
-        auto_advance: false,
-    };
-    let Some(members) = team.pointer("/spec/members").and_then(Value::as_array) else {
-        return none;
-    };
-    if members.is_empty() {
-        return none;
-    }
-    let Some(current_stage) = current_stage(payload) else {
-        return none;
-    };
-    if current_stage >= members.len() {
-        return none;
-    }
-    // A completion whose bot belongs to an older stage is stale: the source
-    // skips both the confirmation check and the auto-advance for it.
-    let matched = member_stage(members, bot_name, bot_namespace);
-    if matched.is_some_and(|stage| stage != current_stage) {
-        return none;
-    }
-    let current_requires = members[current_stage]
-        .get("requireConfirmation")
-        .and_then(Value::as_bool)
-        == Some(true);
-    let has_next = current_stage + 1 < members.len();
-    StageDecision {
-        // `should_set_pending_confirmation_on_complete` needs the completed
-        // bot to resolve to the current stage.
-        requires_confirmation: matched == Some(current_stage) && current_requires && has_next,
-        // `get_auto_advance_info` then only re-checks the current member.
-        auto_advance: !current_requires && has_next,
-    }
-}
-
-/// `task_crd.spec.currentStage` with the source's `None -> 0` default.
-fn current_stage(payload: &Map<String, Value>) -> Option<usize> {
-    match payload
-        .get("spec")
-        .and_then(|spec| spec.get("currentStage"))
-    {
-        None | Some(Value::Null) => Some(0),
-        Some(value) => value.as_u64().and_then(|stage| usize::try_from(stage).ok()),
-    }
-}
-
-/// The member whose `botRef` names the bot that completed the stage.
-fn member_stage(members: &[Value], bot_name: &str, bot_namespace: &str) -> Option<usize> {
-    members.iter().position(|member| {
-        member.pointer("/botRef/name").and_then(Value::as_str) == Some(bot_name)
-            && member
-                .pointer("/botRef/namespace")
-                .and_then(Value::as_str)
-                .unwrap_or("default")
-                == bot_namespace
-    })
-}
-
 /// `datetime.now()` in the `DATETIME(6)` form the source binds to its columns.
 fn local_datetime() -> String {
     chrono::Local::now()
@@ -966,10 +784,6 @@ fn local_isoformat() -> String {
 }
 
 #[cfg(test)]
-#[path = "collaboration_team_tests.rs"]
-mod collaboration_team_tests;
-
-#[cfg(test)]
 #[path = "persist_status_read_tests.rs"]
 mod persist_status_read_tests;
 
@@ -977,61 +791,6 @@ mod persist_status_read_tests;
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn pipeline_confirmation_uses_the_completed_bots_current_nonfinal_stage() {
-        let team = json!({"spec": {"members": [
-            {"botRef": {"name": "first", "namespace": "default"}, "requireConfirmation": true},
-            {"botRef": {"name": "second", "namespace": "default"}, "requireConfirmation": true}
-        ]}});
-        let task = |stage: Value| {
-            json!({"spec": {"currentStage": stage}})
-                .as_object()
-                .unwrap()
-                .clone()
-        };
-        let requires = |task: &Map<String, Value>, bot: &str, namespace: &str| {
-            stage_decision(task, &team, bot, namespace).requires_confirmation
-        };
-        assert!(requires(&task(json!(0)), "first", "default"));
-        assert!(!requires(&task(json!(1)), "second", "default"));
-        assert!(!requires(&task(json!(1)), "first", "default"));
-        assert!(!requires(&task(json!(0)), "missing", "default"));
-        assert!(!requires(&task(json!(0)), "first", "other"));
-        assert!(requires(&task(Value::Null), "first", "default"));
-        let mut automatic = team.clone();
-        automatic["spec"]["members"][0]["requireConfirmation"] = json!(false);
-        assert!(
-            !stage_decision(&task(json!(0)), &automatic, "first", "default").requires_confirmation
-        );
-    }
-
-    /// `get_auto_advance_info` only produces an intent for a non-final current
-    /// stage that needs no confirmation, and never for a stale completion.
-    #[test]
-    fn pipeline_auto_advance_requires_a_current_nonfinal_stage() {
-        let team = json!({"spec": {"members": [
-            {"botRef": {"name": "first", "namespace": "default"}, "requireConfirmation": false},
-            {"botRef": {"name": "second", "namespace": "default"}, "requireConfirmation": false}
-        ]}});
-        let task = |stage: Value| {
-            json!({"spec": {"currentStage": stage}})
-                .as_object()
-                .unwrap()
-                .clone()
-        };
-        let advances = |task: &Map<String, Value>, bot: &str| {
-            stage_decision(task, &team, bot, "default").auto_advance
-        };
-        assert!(advances(&task(json!(0)), "first"));
-        assert!(!advances(&task(json!(1)), "second"));
-        assert!(!advances(&task(json!(1)), "first"));
-        let mut final_team = team.clone();
-        final_team["spec"]["members"] = json!([
-            {"botRef": {"name": "only", "namespace": "default"}, "requireConfirmation": false}
-        ]);
-        assert!(!stage_decision(&task(json!(0)), &final_team, "only", "default").auto_advance);
-    }
 
     /// `_before_flush` tracks assistant subtasks: a user subtask, an untracked
     /// row, and a missing creation stamp publish nothing.

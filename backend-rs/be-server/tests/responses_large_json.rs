@@ -10,6 +10,8 @@ mod http_e2e;
 mod llm_proxy_deadlines;
 #[path = "support/llm_proxy_timeouts.rs"]
 mod llm_proxy_timeouts;
+#[path = "support/pipeline_receipts.rs"]
+mod pipeline_receipts;
 #[path = "support/streaming_block_index_http.rs"]
 mod streaming_block_index;
 #[path = "support/responses_terminal_storage.rs"]

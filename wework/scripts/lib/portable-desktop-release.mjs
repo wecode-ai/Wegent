@@ -78,6 +78,7 @@ export async function portableDesktopRelease({
       ...archive,
       blockMap,
       sourceSha: packaged.sourceSha,
+      teamAssignmentProtocol: packaged.teamAssignmentProtocol,
       afterStopPreparation: packaged.afterStopPreparation,
       dataSchema,
       readableDataSchemas,

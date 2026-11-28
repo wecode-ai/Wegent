@@ -267,7 +267,7 @@ async fn deliver_terminal_callback(
     let Some(completion::TerminalCompletion {
         result: final_result,
         user_id,
-        task,
+        mut task,
         replay_error,
         replay_source,
     }) = completion
@@ -292,6 +292,17 @@ async fn deliver_terminal_callback(
     } else {
         None
     };
+    if task.auto_advance
+        && advance.is_none()
+        && let Some(current) =
+            pipeline::settle_unavailable_advance(state, event.task_id, event.subtask_id).await?
+    {
+        if current.auto_advance {
+            // An existing RUNNING child can still deliver its terminal receipt.
+            return Ok(false);
+        }
+        task = current;
+    }
     if let Some(error) = replay_error {
         event.error = error;
     }
@@ -315,12 +326,20 @@ async fn deliver_terminal_callback(
     };
     // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
     // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
-    emitter::emit_terminal_frames_once(redis, event, user_id, &result, &task, contexts.as_ref())
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "callback terminal frames failed");
-            FastApiError::internal()
-        })?;
+    emitter::emit_terminal_frames_once(
+        redis,
+        event,
+        user_id,
+        &result,
+        &task,
+        contexts.as_ref(),
+        None,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "callback terminal frames failed");
+        FastApiError::internal()
+    })?;
     let has_pending_execution = advance.is_some();
     if let Some(advance) = advance {
         if defer_advance {
@@ -330,7 +349,7 @@ async fn deliver_terminal_callback(
         Box::pin(pipeline::dispatch_next(state, advance)).await?;
     }
 
-    let published = session::publish_terminal_callback(redis, event)
+    let published = session::publish_terminal_callback(redis, event, None)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "terminal callback channel publish failed");

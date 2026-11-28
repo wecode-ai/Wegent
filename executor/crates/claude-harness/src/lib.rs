@@ -30,3 +30,4 @@ use wegent_hooks as hooks;
 use wegent_mcp_runtime::mcp_utils;
 use wegent_multimodal::{attachments, prompt_enrichment};
 use wegent_plugin_packages::local;
+pub mod permission;

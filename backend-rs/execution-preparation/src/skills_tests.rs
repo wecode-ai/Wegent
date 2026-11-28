@@ -351,16 +351,33 @@ fn binding_predicates_and_extractors_follow_the_source() {
 }
 
 #[test]
-fn subscription_manager_injection_skips_subscription_tasks() {
-    assert_eq!(inject_subscription_manager_skill(true), Vec::<Value>::new());
-    assert_eq!(
-        inject_subscription_manager_skill(false),
-        vec![json!({
-            "name": "subscription-manager",
-            "namespace": "default",
-            "is_public": true,
-        })]
-    );
+fn subscription_manager_injection_preserves_native_coordinate_role_grants() {
+    let implicit_skill = [json!({
+        "name": "subscription-manager",
+        "namespace": "default",
+        "is_public": true,
+    })];
+    for (mode, shell, count, subscription, inject) in [
+        ("solo", "Codex", 1, false, true),
+        ("pipeline", "Codex", 2, false, true),
+        ("coordinate", "Codex", 1, false, true),
+        ("coordinate", "Chat", 2, false, true),
+        ("coordinate", "Codex", 2, false, false),
+        ("coordinate", "ClaudeCode", 2, false, false),
+        ("solo", "Codex", 1, true, false),
+    ] {
+        let team = json!({"spec": {"collaborationModel": mode, "members": vec![json!({}); count]}});
+        let refs = inject_subscription_manager_skill(subscription, &team, shell);
+        assert_eq!(
+            refs.as_slice(),
+            if inject {
+                implicit_skill.as_slice()
+            } else {
+                &[]
+            },
+            "{mode} {shell} {count} subscription={subscription}"
+        );
+    }
 }
 
 #[test]

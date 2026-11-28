@@ -69,6 +69,8 @@ pub struct TaskDetailResponse {
 
 /// Fields needed to render a referenced task's conversation.
 pub struct SubtaskMessage {
+    pub id: i64,
+    pub created_at: Option<String>,
     pub status: String,
     pub role: String,
     pub prompt: Option<String>,
@@ -78,6 +80,8 @@ pub struct SubtaskMessage {
 impl TaskDetailResponse {
     pub fn into_subtask_messages(self) -> impl Iterator<Item = SubtaskMessage> {
         self.subtasks.into_iter().map(|subtask| SubtaskMessage {
+            id: subtask.id,
+            created_at: subtask.created_at,
             status: subtask.status,
             role: subtask.role,
             prompt: subtask.prompt,

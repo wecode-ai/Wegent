@@ -21,7 +21,7 @@ const independent = new Set([
 ])
 const expectedCounts: Record<string, number> = {
   'tasks/chat-sandbox-connector.spec.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 27,
+  'tasks/agent-conversation-regression.spec.ts': 31,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,
@@ -31,7 +31,9 @@ const expectedCounts: Record<string, number> = {
   'tasks/provider-native-claudecode.spec.ts': 4,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 2,
-  'collaboration/issue-dispatch-executor.spec.ts': 5,
+  'collaboration/legacy-team-execution.spec.ts': 2,
+  'collaboration/dual-turn-delivery.spec.ts': 1,
+  'collaboration/issue-dispatch-executor.spec.ts': 6,
 }
 
 type ListedSuite = {

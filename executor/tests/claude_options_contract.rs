@@ -108,7 +108,7 @@ fn task_model_id_is_explicit_and_missing_model_keeps_default() {
 }
 
 #[test]
-fn coordinate_mode_includes_member_bot_mcp_servers() {
+fn coordinate_parent_loads_only_its_own_bot_mcp_servers() {
     let request = ExecutionRequest {
         task_id: "1".to_owned(),
         bot: json!([
@@ -128,10 +128,7 @@ fn coordinate_mode_includes_member_bot_mcp_servers() {
     let options = extract_claude_options(&request, &BTreeMap::new());
 
     assert!(options.mcp_servers.contains_key("leader-server"));
-    assert_eq!(
-        options.mcp_servers["dube-mcp"]["url"],
-        "http://10.185.16.187:8121/mcp"
-    );
+    assert!(!options.mcp_servers.contains_key("dube-mcp"));
 }
 
 #[test]

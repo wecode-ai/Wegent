@@ -137,7 +137,10 @@ impl LocalTaskStore {
             user,
             device,
             settings.clone(),
-            super::personal_stand_in::StandInSaveOptions { backend: None },
+            super::personal_stand_in::StandInSaveOptions {
+                workspace_owner: false,
+                backend: None,
+            },
         )?;
         connection.execute_batch(
             "ROLLBACK TO validate_stand_in_proposal; RELEASE validate_stand_in_proposal",
@@ -198,7 +201,10 @@ impl LocalTaskStore {
                 user,
                 device,
                 next,
-                super::personal_stand_in::StandInSaveOptions { backend },
+                super::personal_stand_in::StandInSaveOptions {
+                    workspace_owner: false,
+                    backend,
+                },
             )?
         } else {
             previous

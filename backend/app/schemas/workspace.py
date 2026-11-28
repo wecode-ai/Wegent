@@ -320,6 +320,8 @@ class CollaborationGroupUpdate(BaseModel):
 
 
 class CollaborationGroupResponse(BaseModel):
+    binding_required: bool = False
+    personal_team_managed: bool = False
     id: SnowflakeId
     workspace_id: SnowflakeId
     owner_type: Literal["workspace", "project"]

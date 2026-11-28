@@ -2,6 +2,7 @@ use super::*;
 
 fn turn(id: &str, origin: Value) -> SpawnTurnRequest {
     SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: id.into(),
         runtime: "codex".into(),

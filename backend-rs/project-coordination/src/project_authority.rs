@@ -135,12 +135,10 @@ fn project_node(row: ProjectRow) -> Node {
 
 /// The Agent fields needed for execution authorization.
 #[derive(FromMysqlRow)]
-struct RawNodeRow {
-    pub id: String,
-    pub cloud_project_id: String,
-    pub created_by_user_id: Option<i64>,
-    pub assignee_user_id: Option<i64>,
-    pub metadata: Option<brz_mysql::Json<serde_json::Value>>,
+struct ExecutionAgentRow {
+    enabled: bool,
+    created_by_user_id: Option<i64>,
+    metadata: Option<brz_mysql::Json<serde_json::Value>>,
 }
 
 #[derive(FromMysqlRow)]
@@ -259,24 +257,21 @@ pub async fn agent_execution_on(
     workspace_id: i64,
     agent_id: &str,
     user_id: i64,
-) -> Result<Option<Node>> {
-    let agent: Option<RawNodeRow> = query
+) -> Result<Option<serde_json::Value>> {
+    let agent: Option<ExecutionAgentRow> = query
         .fetch_optional(
-            format!(
-                "SELECT id, cloud_project_id, created_by_user_id, assignee_user_id, metadata \nFROM loop_items \n\
-                 WHERE loop_items.id = '{agent_id}' \
-                 AND loop_items.resource_type IN ('chat_agent')"
-            ),
-            (),
-        )
-        .await?;
+            format!("SELECT COALESCE(cloud_project_id = ? AND status='active' AND {LIVE}, FALSE) AS enabled, created_by_user_id, metadata FROM loop_items WHERE id=? AND resource_type='chat_agent'"),
+            (project_id, agent_id),
+        ).await?;
     let Some(agent) = agent else {
         return Ok(None);
     };
+    if !agent.enabled {
+        bail!("Agent is not enabled in this project");
+    }
     let metadata = agent
         .metadata
-        .as_ref()
-        .map(|metadata| metadata.0.clone())
+        .map(|metadata| metadata.0)
         .unwrap_or_else(|| serde_json::json!({}));
     if metadata["visibility"] == "private" && agent.created_by_user_id != Some(user_id) {
         bail!("Private Agent is not shared with this member");
@@ -286,12 +281,8 @@ pub async fn agent_execution_on(
     } else {
         let grant: Option<Grant> = query
             .fetch_optional(
-                format!(
-                    "SELECT status,role FROM resource_members \
-                     WHERE resource_type='Workspace' AND resource_id={workspace_id} \
-                     AND entity_type='project_agent' AND entity_id='{agent_id}' \n LIMIT 1"
-                ),
-                (),
+                "SELECT status,role FROM resource_members WHERE resource_type='Workspace' AND resource_id=? AND entity_type='project_agent' AND entity_id=? LIMIT 1",
+                (workspace_id, agent_id),
             )
             .await?;
         if !grant.as_ref().is_some_and(approved)
@@ -300,35 +291,7 @@ pub async fn agent_execution_on(
             bail!("Agent resource authorization is revoked or unavailable");
         }
     }
-    Ok(Some(Node {
-        id: agent.id,
-        cloud_project_id: agent.cloud_project_id,
-        created_by_user_id: agent.created_by_user_id.unwrap_or(0),
-        assignee_user_id: agent.assignee_user_id.unwrap_or(0),
-        metadata: brz_mysql::Json(metadata),
-        resource_type: "chat_agent".into(),
-        parent_id: String::new(),
-        loop_item_id: String::new(),
-        name: String::new(),
-        project_key: String::new(),
-        next_item_number: 1,
-        local_project_id: 0,
-        assignee_team_id: 0,
-        priority: String::new(),
-        title: String::new(),
-        description: String::new(),
-        status: String::new(),
-        source: String::new(),
-        user_id: 0,
-        task_user_id: 0,
-        task_id: String::new(),
-        task_title: String::new(),
-        device_id: String::new(),
-        backend_task_id: 0,
-        assignee_agent_id: String::new(),
-        due_at: None,
-        version: 1,
-    }))
+    Ok(Some(metadata))
 }
 
 #[derive(FromMysqlRow)]

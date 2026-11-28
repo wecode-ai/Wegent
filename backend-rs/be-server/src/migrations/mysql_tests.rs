@@ -13,6 +13,9 @@ struct Name {
 #[path = "historical_tests.rs"]
 mod historical;
 
+#[path = "../task_continuation_mysql_tests.rs"]
+mod task_continuation;
+
 #[tokio::test]
 #[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; creates and drops an isolated migration_test_* schema"]
 async fn fresh_schema_and_historical_upgrade_round_trip() -> Result<()> {

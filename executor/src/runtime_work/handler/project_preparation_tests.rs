@@ -19,18 +19,7 @@ fn turn_with_setup(id: &str, command: &str) -> SpawnTurnRequest {
         }}}),
     )
     .unwrap();
-    SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: id.into(),
-        runtime: "codex".into(),
-        request,
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    }
+    SpawnTurnRequest::new(id.into(), "codex".into(), request)
 }
 
 #[test]

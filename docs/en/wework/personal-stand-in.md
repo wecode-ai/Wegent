@@ -48,6 +48,8 @@ The number beside **My assistants** counts unread AI messages in primary and rol
 
 <a id="assistant-teams"></a>
 
+When creating an assistant, create a Team or select an existing one. An assistant that uses an existing Team runs with its prompt, Bots and collaboration mode. To change those settings for this assistant, confirm that you want to copy the Team and save your changes to the copy. Cancel to keep the original Team and its configuration. Changing the device or workspace under **Manage assistant → Execution environment** does not require a copy.
+
 ## Organize assistant teams
 
 Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.
@@ -55,6 +57,16 @@ Open **My assistants → Teams → Create team**, enter a name, choose a lead an
 Open a saved team from **Teams** to give it work. The lead delegates based on the team roster and duties, and results return to the team conversation. Each team conversation has its own history. Changing the lead opens a conversation under the new lead.
 
 From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
+
+### Adopt your assistant team in a project
+
+1. In Wework desktop, open a project you can manage. Go to **Project settings → AI configuration → Collaboration groups** and click **Adopt my assistant team**. Under **Select your team**, choose one of your own teams.
+2. Use **Select a project agent** to assign a distinct project Agent to the lead and each member. In cloud projects, the form preselects an Agent when it can identify a unique match for the same Team. When choosing manually, check the ID beside the Agent name. If the Agent is missing, add and authorize it in the project’s Agent settings, then reopen the form.
+3. Click **Adopt my assistant team** again to confirm. You can now assign a project Issue to the collaboration group. Your personal team conversations use your account. Project Issues run through the bound virtual members with project permissions. Your personal connections and approval permissions stay with your account.
+
+**Editing and rebinding.** Edit the name, lead, members, and duties under **My assistants → Teams**. Edit the description, stages, and execution requirements in the project group. When you add a source role or the project reports that the group needs rebinding, the source team owner can reopen **Adopt my assistant team**, select the original team, map the missing Agents or resolve a name conflict, and confirm again. This updates the existing project group.
+
+**Offline use.** A local project can adopt a team stored on this device while offline. A role that references a workspace Agent requires an existing project grant for that Agent. A device-private Team runs through the selected project Agent. If this device has only a remote role’s name and device route, import the role onto this device and select the local role in your source team first. Saving a cloud project binding requires a cloud connection. When the device hosting a member must export its execution definition, that device must also be reachable. The export includes Bot prompts. [Project Agents and collaboration groups](./projects.md#agent-capabilities)
 
 <a id="assistant-sharing"></a>
 

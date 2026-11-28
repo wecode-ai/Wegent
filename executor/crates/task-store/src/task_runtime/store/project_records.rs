@@ -263,6 +263,12 @@ impl LocalTaskStore {
             metadata["workflow_definition"] = workflow_definition;
         }
         if let Some(collaboration_groups) = input.collaboration_groups {
+            personal_team_project::protect_update(
+                &transaction,
+                project_id,
+                &metadata["collaboration_groups"],
+                &collaboration_groups,
+            )?;
             let previous: std::collections::HashSet<&str> = metadata["collaboration_groups"]
                 .as_array()
                 .into_iter()

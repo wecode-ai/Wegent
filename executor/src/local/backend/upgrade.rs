@@ -232,8 +232,6 @@ where
                         });
                     }
                 }
-                self.client
-                    .set_running_task_ids(controller.running_task_ids());
                 let _ = self
                     .client
                     .send_heartbeat(self.client.config.heartbeat_timeout)

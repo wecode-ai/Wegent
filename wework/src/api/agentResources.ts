@@ -289,6 +289,15 @@ export function createAgentResourceApi(
       cache.invalidate('/v1/workspaces/')
       return saved
     },
+    async getTeamIdentity(teamId: number) {
+      const { id, name, namespace, user_id } = await client.get<{
+        id: number
+        name: string
+        namespace: string
+        user_id: number
+      }>(`/teams/${teamId}`)
+      return { id, name, namespace, userId: user_id }
+    },
     async getAgent(teamId: number): Promise<AgentResourceDetail> {
       const team = await client.get<TeamDetailResponse>(`/teams/${teamId}`)
       const bot = leaderBot(team)

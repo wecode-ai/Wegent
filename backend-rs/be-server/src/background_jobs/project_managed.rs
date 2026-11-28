@@ -253,13 +253,16 @@ pub(crate) async fn request_for_task(
     let directory = state
         .entity_resolvers
         .execution_directory(state.erp.as_ref());
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(directory),
-        resolvers: Some(&resolvers),
-    };
-    let bots = resolution::resolve_team_bots(&cache, team.user_id, &team.json.0).await?;
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        directory,
+        &resolvers,
+    );
+    let stage = task.json.0["spec"]["currentStage"].as_u64().unwrap_or(0) as usize;
+    let turn_team =
+        resolution::turn_team(&team.json.0, stage).context("Managed Team stage unavailable")?;
+    let bots = resolution::resolve_team_bots(&cache, team.user_id, turn_team.as_ref()).await?;
     let bot = resolution::resolve_bot(
         &state.mysql,
         team.user_id,
@@ -271,7 +274,7 @@ pub(crate) async fn request_for_task(
     if bots.bot_ids.is_empty() {
         bail!("No valid bots found in managed project automation Team")
     }
-    let member = &team.json.0["spec"]["members"][0];
+    let member = &turn_team["spec"]["members"][0];
     // Reuse the automatic-pipeline queue's task/turn idempotency contract.
     let request_id = format!("pipeline-{}-{}", input.task_id, input.assistant_subtask_id);
     let mut request = create::request::build_background_execution_request(
@@ -318,7 +321,7 @@ pub(crate) async fn request_for_task(
     )
     .await
     .map_err(|error| anyhow::anyhow!("managed project request preparation failed: {error:?}"))?;
-    add_board_capabilities(&mut request);
+    add_board_capabilities(&mut request, &task.json.0["metadata"]["labels"])?;
     if !input.developer_instruction.trim().is_empty() {
         request.system_prompt = [
             request.system_prompt.trim(),
@@ -333,7 +336,39 @@ pub(crate) async fn request_for_task(
     Ok(request)
 }
 
-fn add_board_capabilities(request: &mut ExecutionRequest) {
+fn add_board_capabilities(request: &mut ExecutionRequest, labels: &Value) -> Result<()> {
+    // A delegated Team receives the work and returns its result through the Task.
+    // Its native children share the shell process, so adding a primary-only
+    // board credential here would also authorize the children.
+    if request.collaboration_model == "coordinate"
+        && request.bot.as_array().is_some_and(|bots| bots.len() > 1)
+        && matches!(
+            request.bot[0]["shell_type"].as_str(),
+            Some("ClaudeCode" | "Codex")
+        )
+    {
+        if labels["dispatchRole"] == "executor" {
+            return Ok(());
+        }
+        if !labels["projectAutomationManagerSubtaskId"].is_null() {
+            let current_turn = request.subtask_id.to_string();
+            anyhow::ensure!(
+                labels["projectAutomationManagerSubtaskId"] == current_turn,
+                "Managed manager turn is stale"
+            );
+            anyhow::ensure!(
+                !labels["projectRobotExecutionId"].is_null(),
+                "Managed manager execution is missing"
+            );
+            request.origin = Some(json!({
+                "type":"issue_dispatch", "dispatch_kind":"collaboration_group",
+                "projectStore":"backend", "dispatchRole":"manager",
+                "cloudProjectId":labels["weworkSpaceProjectId"], "loopItemId":labels["weworkSpaceTaskId"],
+                "projectRobotExecutionId":labels["projectRobotExecutionId"]
+            }));
+            return Ok(());
+        }
+    }
     const GUIDANCE: &str = "<wegent_board_runtime>\nThis execution is bound to a Wework board item. The injected\nwegent-wework-space MCP is the source of truth for the board. Call\nget_current_context before board operations; do not probe Backend routes,\nread authentication files, or guess project/item identifiers. Use the MCP\ntools to read, create, update, assign, comment, attach, and inspect deliveries.\n</wegent_board_runtime>";
     request.system_prompt = format!("{}\n\n{GUIDANCE}", request.system_prompt.trim_end());
     let base = std::env::var("WEGENT_BACKEND_PUBLIC_URL")
@@ -352,6 +387,7 @@ fn add_board_capabilities(request: &mut ExecutionRequest) {
         servers.push(bot_server);
         bot["mcp_servers"] = json!(servers);
     }
+    Ok(())
 }
 
 pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Result<()> {
@@ -502,7 +538,7 @@ mod tests {
             bot: json!([{"mcp_servers":[{"name":"wegent-wework-space","url":"old"}]}]),
             ..Default::default()
         };
-        add_board_capabilities(&mut request);
+        add_board_capabilities(&mut request, &json!({})).unwrap();
         assert_eq!(request.mcp_servers.len(), 2);
         assert_eq!(
             request.mcp_servers[1]["auth"]["Authorization"],
@@ -513,6 +549,53 @@ mod tests {
             "Bearer task-identity"
         );
         assert!(request.system_prompt.contains("get_current_context"));
+    }
+
+    #[test]
+    fn managed_coordinate_manager_keeps_credentials_in_executor_for_the_current_turn() {
+        let labels = json!({"projectAutomationManagerSubtaskId":"56","projectRobotExecutionId":"23",
+            "weworkSpaceProjectId":"44","weworkSpaceTaskId":"issue-2"});
+        let bots = json!([{"shell_type":"Codex"},{"shell_type":"Codex"}]);
+        let mut request = ExecutionRequest {
+            subtask_id: 56,
+            task_id: 33,
+            bot: bots.clone(),
+            auth_token: "task-credential".into(),
+            collaboration_model: "coordinate".into(),
+            ..Default::default()
+        };
+        add_board_capabilities(&mut request, &labels).unwrap();
+        let payload = create::dispatch::assemble(&request, false, true);
+        let wire = serde_json::to_value(payload).unwrap();
+        assert_eq!(wire["metadata"]["origin"]["projectRobotExecutionId"], "23");
+        assert_eq!(wire["metadata"]["origin"]["dispatchRole"], "manager");
+        assert_eq!(wire["metadata"]["bot"], bots);
+        assert!(request.mcp_servers.is_empty());
+        let received = wegent_protocol::OpenAIResponsesRequest::from_value(wire)
+            .unwrap()
+            .to_execution_request();
+        assert_eq!(received.extra["origin"], request.origin.clone().unwrap());
+        assert!(received.project_group_execution());
+        request.subtask_id = 55;
+        assert!(add_board_capabilities(&mut request, &labels).is_err());
+    }
+
+    #[test]
+    fn native_coordinate_members_keep_configured_grants_without_an_ambient_board_token() {
+        for shell in ["ClaudeCode", "Codex"] {
+            let mut request = ExecutionRequest {
+                auth_token: "member-task".into(),
+                collaboration_model: "coordinate".into(),
+                bot: json!([{"shell_type":shell,"mcp_servers":[{"name":"leader-only"}]},
+                            {"shell_type":shell,"mcp_servers":[]}]),
+                ..Default::default()
+            };
+            let original = request.bot.clone();
+            add_board_capabilities(&mut request, &json!({"dispatchRole":"executor"})).unwrap();
+            assert_eq!(request.bot, original);
+            assert!(request.mcp_servers.is_empty());
+            assert!(!request.system_prompt.contains("get_current_context"));
+        }
     }
 
     /// The managed-project builder resolves the same `User` row the source's

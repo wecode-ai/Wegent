@@ -115,14 +115,6 @@ pub fn collect_skill_names_for_deployment(
     let mut names = Vec::new();
     add_skill_names(&mut names, bot_config.get("skills"));
 
-    if request_mode(request).is_some_and(|mode| mode == "coordinate") {
-        if let Some(bots) = request.bot.as_array() {
-            for bot in bots {
-                add_skill_names(&mut names, bot.get("skills"));
-            }
-        }
-    }
-
     add_skill_names(&mut names, request.extra.get("skill_names"));
     add_skill_names(&mut names, request.extra.get("preload_skills"));
     add_configured_skill_names(&mut names, request.extra.get("additional_skills"));
@@ -343,16 +335,6 @@ fn value_i64(value: Option<&Value>) -> Option<i64> {
             .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
             .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
     })
-}
-
-fn request_mode(request: &ExecutionRequest) -> Option<String> {
-    request
-        .extra
-        .get("mode")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase)
 }
 
 #[cfg(test)]

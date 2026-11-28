@@ -303,7 +303,7 @@ impl SessionClaims {
 pub const WEWORK_ACCESS_TOKEN_USE: &str = "wework_access";
 
 /// Decode keys derived from the active key and legacy decode-only keys.
-fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
+pub(crate) fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
     let mut keys = vec![config.jwt_key.as_bytes().to_vec()];
     for key in &config.legacy_jwt_keys {
         if !keys.iter().any(|existing| existing == key.as_bytes()) {

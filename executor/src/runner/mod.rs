@@ -20,7 +20,6 @@ use crate::{
     protocol::{ExecutionRequest, TaskStatus},
 };
 
-#[cfg(test)]
 use crate::emitter::EventEnvelope;
 use wegent_execution_contracts::{RunnerResult, TaskRunner};
 
@@ -205,25 +204,14 @@ async fn run_in_background<E, S>(
     let _ = start_rx.await;
     let fields = task_fields(&request.task_id, &request.subtask_id);
     log_executor_event("background task started", &fields);
-    let session_request = request.clone();
-    let outcome = engine
-        .run_with_events(request, sink.clone(), builder.clone())
-        .await;
-    let executor_session = agent_session::saved_executor_session(&session_request);
-    let builder = builder.with_executor_session(executor_session);
+    let (outcome, builder) = run_engine_turn(&engine, request, &sink, builder).await;
     let mut outcome_fields = fields.clone();
     outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
     log_executor_event("background task finished", &outcome_fields);
     registration.remove_if_current();
 
-    let event = match outcome {
-        ExecutionOutcome::Completed { content } => builder.response_completed(&content),
-        ExecutionOutcome::WaitingForUserInput { stop_reason } => {
-            builder.response_waiting_for_user_input(&stop_reason)
-        }
-        ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
-        ExecutionOutcome::Cancelled { message } => builder.response_cancelled(&message),
-        ExecutionOutcome::Running => return,
+    let Some(event) = result_event(&builder, outcome) else {
+        return;
     };
     match sink.send(event).await {
         Ok(()) => log_executor_event("final callback sent", &outcome_fields),
@@ -274,6 +262,95 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .with_message_id(request.message_id)
         .with_executor_info(executor_name.as_deref(), executor_namespace.as_deref())
         .with_validation_id(validation_id)
+}
+
+pub(crate) struct EngineTurn<E, S> {
+    pub engine: E,
+    pub request: ExecutionRequest,
+    pub sink: S,
+    pub builder: ResponsesEventBuilder,
+}
+
+impl<E: AgentEngine, S: EventSink> wegent_execution_contracts::ipc::ShellTurn for EngineTurn<E, S> {
+    fn start(&self) -> wegent_execution_contracts::ipc::BoxFuture<'_, ExecutionOutcome> {
+        self.engine.run_with_events(
+            self.request.clone(),
+            self.sink.clone(),
+            self.builder.clone(),
+        )
+    }
+    fn interrupt(&self) {
+        self.engine.cancel_pending(
+            &self.request.task_id,
+            Some(&execution_command_id(&self.request)),
+        );
+    }
+}
+
+pub(crate) fn platform_session_key(scope: &str, task: &str) -> String {
+    serde_json::json!(["platform", scope, task]).to_string()
+}
+
+pub(crate) fn platform_command_id(subtask: &str, attempt: Option<&str>) -> String {
+    match attempt {
+        Some(attempt) if attempt != subtask => serde_json::json!([subtask, attempt]).to_string(),
+        _ => subtask.to_owned(),
+    }
+}
+
+pub(crate) fn execution_command_id(request: &ExecutionRequest) -> String {
+    platform_command_id(
+        &request.subtask_id,
+        request
+            .extra
+            .get("execution_attempt_id")
+            .and_then(serde_json::Value::as_str),
+    )
+}
+
+pub(crate) async fn run_bound_shell(
+    shell: &dyn wegent_execution_contracts::ipc::ShellTurn,
+    cancel: oneshot::Receiver<()>,
+    cancelled_message: &str,
+) -> ExecutionOutcome {
+    tokio::select! {
+        biased;
+        _ = cancel => {
+            shell.interrupt();
+            ExecutionOutcome::Cancelled { message: cancelled_message.to_owned() }
+        }
+        outcome = async { shell.start().await } => outcome,
+    }
+}
+
+pub(crate) async fn run_engine_turn<E: AgentEngine, S: EventSink>(
+    engine: &E,
+    request: ExecutionRequest,
+    sink: &S,
+    builder: ResponsesEventBuilder,
+) -> (ExecutionOutcome, ResponsesEventBuilder) {
+    let session_request = request.clone();
+    let outcome = engine
+        .run_with_events(request, sink.clone(), builder.clone())
+        .await;
+    let executor_session = agent_session::saved_executor_session(&session_request);
+    let builder = builder.with_executor_session(executor_session);
+    (outcome, builder)
+}
+
+pub(crate) fn result_event(
+    builder: &ResponsesEventBuilder,
+    outcome: ExecutionOutcome,
+) -> Option<EventEnvelope> {
+    Some(match outcome {
+        ExecutionOutcome::Completed { content } => builder.response_completed(&content),
+        ExecutionOutcome::WaitingForUserInput { stop_reason } => {
+            builder.response_waiting_for_user_input(&stop_reason)
+        }
+        ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
+        ExecutionOutcome::Cancelled { message } => builder.response_cancelled(&message),
+        ExecutionOutcome::Running => return None,
+    })
 }
 
 fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {

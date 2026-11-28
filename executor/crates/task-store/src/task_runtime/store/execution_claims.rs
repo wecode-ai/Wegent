@@ -100,17 +100,17 @@ impl LocalTaskStore {
             )? {
                 continue;
             }
-            selected = Some(id);
+            selected = Some(pending);
             break;
         }
-        let Some(candidate_id) = selected else {
+        let Some(pending) = selected else {
             drop(statement);
             connection.commit()?;
             return Ok(None);
         };
         let now = now();
         let runtime_device_id = execution_device_id.unwrap_or("local-device");
-        let pending = execution_row(&connection, candidate_id)?;
+        let candidate_id = pending.id;
         project_coordination_commands::authorize_execution_on(&connection, &pending)?;
         let issue = get_item_from(&connection, &pending.loop_item_id, "task")?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
@@ -120,7 +120,11 @@ impl LocalTaskStore {
                 .pointer("/runner_binding/environment_id")
                 .and_then(Value::as_str)
                 .is_some_and(|bound| bound != runtime_device_id);
-        let mut payload = local_execution_runtime_payload(&pending);
+        let team = personal_team_project::definition_for_claim(&connection, &pending);
+        let mut payload = execution_payload::runtime_payload_with_team(
+            &pending,
+            team.as_ref().ok().and_then(Option::as_ref),
+        );
         let previous = issue
             .metadata
             .pointer("/runner_binding/environment_id")
@@ -150,11 +154,13 @@ impl LocalTaskStore {
                 "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
             ))
         } else {
-            crate::task_runtime::runner_routing::resolve_pending(
-                &mut payload,
-                catalog,
-                runtime_device_id,
-            )
+            team.and_then(|_| {
+                crate::task_runtime::runner_routing::resolve_pending(
+                    &mut payload,
+                    catalog,
+                    runtime_device_id,
+                )
+            })
         };
         if let Err(error) = validation {
             connection.execute("UPDATE loop_item_executions SET status='waiting_runtime', error_message=?1 WHERE id=?2", params![error.to_string(), candidate_id])?;
@@ -174,7 +180,7 @@ impl LocalTaskStore {
                  execution_device_id = COALESCE(NULLIF(execution_device_id, ''), ?4),
                  runtime_instance_id = ?6,
                  runtime_device_id = ?4, runtime_task_id = ?5,
-                 lease_expires_at = ?2, version = version + 1, updated_at = ?1
+                 lease_expires_at = ?2, execution_payload = ?7, version = version + 1, updated_at = ?1
              WHERE id = ?3 AND status = 'queued'",
             params![
                 now,
@@ -183,15 +189,12 @@ impl LocalTaskStore {
                 runtime_device_id,
                 runtime_task_id,
                 runtime_instance_id,
+                payload.to_string(),
             ],
         )?;
         if changed != 1 {
             return Ok(None);
         }
-        connection.execute(
-            "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
-            params![payload.to_string(), candidate_id],
-        )?;
         let mut execution = execution_row(&connection, candidate_id)?;
         drop(statement);
         connection.execute(

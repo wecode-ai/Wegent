@@ -639,3 +639,5 @@ export async function createDesktopScenario({
     },
   }
 }
+
+export { CLAUDE_BINARY, writeText, writeToolCall }

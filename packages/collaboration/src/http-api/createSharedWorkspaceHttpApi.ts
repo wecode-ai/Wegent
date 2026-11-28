@@ -71,6 +71,8 @@ export interface SharedWorkspaceHttpApi {
   issues: Required<
     Pick<
       SharedWorkspaceApi["issues"],
+      | "submitRound"
+      | "decideRound"
       | "listAssistantParticipations"
       | "readAssistantParticipation"
       | "backfillAssistantParticipations"
@@ -194,6 +196,7 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
                   ? ("human" as const)
                   : ("agent" as const),
               id: String(assignee.id),
+              ...(assignee.name ? { name: String(assignee.name) } : {}),
               responsibility: String(assignee.responsibility ?? ""),
             },
     };
@@ -204,12 +207,15 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
     owner_type:
       (row.owner_type ?? row.ownerType) === "project" ? "project" : "workspace",
     owner_id: String(row.owner_id ?? row.ownerId),
+    ...(row.personal_team_managed === true || row.personalTeamManaged === true ? { personal_team_managed: true } : {}),
+    ...(row.binding_required === true || row.bindingRequired === true ? { binding_required: true } : {}),
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     instructions: String(row.instructions ?? ""),
     leader: {
       kind: leader.kind === "human" ? "human" : "agent",
       id: String(leader.id),
+      ...(leader.name ? { name: String(leader.name) } : {}),
       responsibility: String(leader.responsibility ?? ""),
     },
     members: members.map((member) => {
@@ -217,6 +223,7 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
       return {
         kind: value.kind === "human" ? "human" : "agent",
         id: String(value.id),
+        ...(value.name ? { name: String(value.name) } : {}),
         responsibility: String(value.responsibility ?? ""),
       };
     }),
@@ -554,6 +561,12 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     issues: {
+      async submitRound(projectId, input) {
+        await transport.post(`/v1/cloud-projects/${encoded(projectId)}/executions/batch`, input);
+      },
+      async decideRound(projectId, input) {
+        await transport.post(`/v1/cloud-projects/${encoded(projectId)}/executions/manager-decision`, input);
+      },
       listAssistantParticipations(issueId) {
         return transport.get<AssistantParticipation[]>(
           `/v1/loop-items/${encoded(issueId)}/assistant-participations`,

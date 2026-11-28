@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 
+from app.mcp_server.auth import scope_personal_resources
 from app.mcp_server.context import get_mcp_context
 from app.mcp_server.schema_extractor import generate_tool_docstring
 from app.mcp_server.tools.decorator import get_registered_mcp_tools
@@ -137,7 +138,17 @@ def _register_tool(
             call_kwargs = {k: v for k, v in kwargs.items() if k in mcp_param_names}
 
             # Inject token_info
-            call_kwargs["token_info"] = ctx.token_info
+            identity = ctx.token_info
+            if (
+                server_name in {"subscription", "knowledge"}
+                and identity.project_group_execution is not False
+            ):
+                identity = await asyncio.to_thread(
+                    scope_personal_resources, server_name, identity
+                )
+                if identity is None:
+                    return json.dumps({"error": "Authentication required"})
+            call_kwargs["token_info"] = identity
 
             if is_async_func:
                 # Async function - await directly

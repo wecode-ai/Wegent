@@ -18,6 +18,7 @@ type Scenario = {
   model: string
   mode: 'complete' | 'stop' | 'large-output'
   subagentType?: string
+  parentProbed?: boolean
   parentCalls: number
   childCalls: number
   childFinished: boolean
@@ -59,12 +60,16 @@ function tools(res: ServerResponse, body: MessageRequest, calls: ToolCallRule[])
   else writeAnthropicJsonToolCalls(res, body, body.model!, calls)
 }
 
-function startChildWork(res: ServerResponse, body: MessageRequest): void {
+function startChildWork(res: ServerResponse, body: MessageRequest, readSkill: boolean): void {
   tools(res, body, [
     {
       toolName: 'Bash',
       arguments: {
-        command: `sleep 2; printf 'BG_WAIT=%s REPORT=%s CHILD_PROBE_OK' "$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" "$CLAUDE_CODE_BG_TASKS_REPORT_RUNNING"`,
+        command:
+          (readSkill
+            ? 'cat "${SKILLS_DIR:-${CLAUDE_CONFIG_DIR:-.claude}/skills}/interactive/SKILL.md" && '
+            : '') +
+          `sleep 2; printf 'BG_WAIT=%s REPORT=%s CHILD_PROBE_OK' "$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" "$CLAUDE_CODE_BG_TASKS_REPORT_RUNNING"`,
         description: 'Finish the real background worker after the inherited wait ceiling',
       },
     },
@@ -151,6 +156,35 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
   const child = body.messages?.some(
     message => message.role === 'user' && userText(message.content).includes(workerPrompt)
   )
+  if (scenario.subagentType && !child && !scenario.parentProbed) {
+    scenario.requests.push({ kind: 'primary-capabilities', timestamp: Date.now(), body })
+    const outputs = JSON.stringify(
+      body.messages?.flatMap(m =>
+        Array.isArray(m.content) ? m.content.filter(b => b.type === 'tool_result') : []
+      )
+    )
+    if (!outputs.includes('# Ask User')) {
+      tools(res, body, [
+        {
+          toolName: 'Bash',
+          arguments: {
+            command:
+              'grep -m 1 "^# " "${SKILLS_DIR:-${CLAUDE_CONFIG_DIR:-.claude}/skills}/interactive/SKILL.md"',
+          },
+        },
+      ])
+      return
+    }
+    if (!outputs.includes('MCP_RECEIPT:')) {
+      const name = 'mcp__capability__js'
+      const call = body.tools?.some(t => t.name === name)
+        ? { toolName: name, arguments: { code: '7 * 12' } }
+        : { toolName: 'ToolSearch', arguments: { query: 'select:' + name } }
+      tools(res, body, [call])
+      return
+    }
+    scenario.parentProbed = true
+  }
   const kind = child ? `child-${scenario.childCalls++}` : `parent-${scenario.parentCalls++}`
   scenario.requests.push({ kind, timestamp: Date.now(), body })
   if (scenario.mode === 'large-output') return respondLargeOutput(res, body, scenario, !!child)
@@ -160,9 +194,18 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
     if (scenario.childCalls === 1) {
       // Start the real two-second command only after the parent's early end_turn.
       if (scenario.parentCalls < 2) {
-        pendingChildren.current().set(scenario.model, () => startChildWork(res, body))
+        pendingChildren
+          .current()
+          .set(scenario.model, () => startChildWork(res, body, Boolean(scenario.subagentType)))
         res.on('close', () => pendingChildren.current().delete(scenario.model))
-      } else startChildWork(res, body)
+      } else startChildWork(res, body, Boolean(scenario.subagentType))
+    } else if (scenario.subagentType && !JSON.stringify(body.messages).includes('result: 84')) {
+      const name = 'mcp__capability__js'
+      if (body.tools?.some(tool => tool.name === name))
+        tools(res, body, [{ toolName: name, arguments: { code: '7 * 12' } }])
+      else if (scenario.childCalls === 2)
+        tools(res, body, [{ toolName: 'ToolSearch', arguments: { query: 'select:' + name } }])
+      else throw new Error('Configured Claude child MCP tool was not offered after discovery')
     } else {
       scenario.childFinished = true
       text(res, body, `BG_CHILD_DONE_${scenario.model}`)

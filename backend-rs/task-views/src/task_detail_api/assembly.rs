@@ -158,18 +158,15 @@ pub async fn build_task_detail(
     subtasks_ordered_in_sql: bool,
 ) -> anyhow::Result<TaskDetailOutcome> {
     let mysql = &state.mysql;
-    let kinds = KindStore {
-        mysql,
-        redis: state.redis.as_ref(),
-    };
+    let kinds = KindStore::<_, brz_redis::RedisService>::sql(mysql);
     // `resolve_task_ref_team`'s `kindReader.get_by_name_and_namespace` branch
     // resolves the Team through the same clients the cached reader uses.
-    let team_access = KindCacheStore {
+    let team_access = KindCacheStore::new(
         mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
 
     // `get_task_by_id`: active non-deleted task, `is_member`'s accessible
     // check, then the member-row check for non-owners.

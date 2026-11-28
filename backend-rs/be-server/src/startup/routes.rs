@@ -297,6 +297,7 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
         task_store: Arc::clone(&app.task_store),
     });
     let connectors = Arc::new(wegent_connector_apps::ConnectorState {
+        tasks_table: app.task_store.table_templates().tasks,
         mysql: app.mysql.clone(),
         auth: app.auth.clone(),
     });

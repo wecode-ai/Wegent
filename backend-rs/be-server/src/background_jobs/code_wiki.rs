@@ -330,12 +330,12 @@ async fn strategy(app: &AppState, user: i64, policy: &Value, id: &str) -> Result
         .get("teamRef")
         .or(binding.get("team_ref"))
         .context("Code Wiki strategy Team is missing")?;
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &app.mysql,
-        redis: app.redis.as_ref(),
-        erp: Some(app.erp.as_ref()),
-        resolvers: Some(&app.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &app.mysql,
+        app.redis.as_ref(),
+        app.erp.as_ref(),
+        &app.entity_resolvers,
+    );
     let team = resolution::resolve_team(
         &cache,
         user,

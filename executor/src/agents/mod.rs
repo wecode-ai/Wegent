@@ -14,9 +14,10 @@ use wegent_claude_harness::claude_options;
 mod codex;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
-pub(crate) use codex::{codex_error_type, codex_guidance_input};
+pub(crate) use codex::{codex_error_type, codex_guidance_input, CodexTurnConnection};
 pub(crate) use codex::{
-    prepare_provider_migration, provider_state_is_current, redact_diagnostic_text,
+    managed_mcp_keeps_native_policy, prepare_provider_migration, provider_state_is_current,
+    redact_diagnostic_text,
 };
 mod completed_file_changes;
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub(crate) use wegent_workspace::environment_setup;
 pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
+mod manager_tools;
 pub(crate) mod model_gateway;
 pub(crate) use instance_home::{agent_homes, validate_session};
 pub use wegent_mcp_runtime::interactive_mcp;
@@ -170,6 +172,29 @@ fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> Strea
             )
         }
         agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
+    }
+}
+
+fn request_process_engine(
+    request: &ExecutionRequest,
+    kind: &AgentKind,
+    spec: CommandSpec,
+) -> Result<StreamProcessEngine, String> {
+    if crate::task_runtime::mcp::native_project_manager(request)? {
+        manager_tools::check_shell_values(
+            request,
+            spec.args()
+                .iter()
+                .chain(spec.envs().values())
+                .map(String::as_str)
+                .chain(spec.stdin_input()),
+        )?;
+        Ok(stream_process_engine_for(kind, spec).with_manager(
+            std::sync::Arc::new(manager_tools::ManagerTools::new(request)?),
+            std::sync::Arc::new(crate::process_environment::ManagerEnvironment),
+        ))
+    } else {
+        Ok(stream_process_engine_for(kind, spec))
     }
 }
 
@@ -378,9 +403,10 @@ impl AgentEngine for AgentProcessEngine {
                                 }
                             }
                             drop(capability_lease);
-                            stream_process_engine_for(&agent_kind, spec)
-                                .run(request)
-                                .await
+                            match request_process_engine(&request, &agent_kind, spec) {
+                                Ok(engine) => engine.run(request).await,
+                                Err(message) => ExecutionOutcome::Failed { message },
+                            }
                         }
                         Err(message) => {
                             let mut failed_fields = fields;
@@ -554,7 +580,10 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             drop(capability_lease);
                             let workspace = spec.current_dir().map(PathBuf::from);
-                            let engine = stream_process_engine_for(&agent_kind, spec);
+                            let engine = match request_process_engine(&request, &agent_kind, spec) {
+                                Ok(engine) => engine,
+                                Err(message) => return ExecutionOutcome::Failed { message },
+                            };
                             completed_file_changes::capture_completed_file_changes(
                                 &request,
                                 workspace,

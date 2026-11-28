@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 
-fn stand_in_owner(origin: &Value) -> Option<i64> {
+pub(super) fn stand_in_owner(origin: &Value) -> Option<i64> {
     (origin["initiatedBy"] == "stand_in"
         || matches!(
             origin["type"].as_str(),
@@ -311,18 +311,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .queued_turns
-                .push_back(SpawnTurnRequest {
-                    task_kind: None,
-                    local_task_id: "worker".into(),
-                    runtime: "claudecode".into(),
+                .push_back(SpawnTurnRequest::new(
+                    "worker".into(),
+                    "claudecode".into(),
                     request,
-                    send_payload: None,
-                    direct_thread_id: None,
-                    fork_thread_id: None,
-                    fork_thread_path: None,
-                    resume_thread_id: None,
-                    initial_thread_goal: None,
-                });
+                ));
         }
         let (cancel, cancelled) = oneshot::channel();
         let (stopped, stop) = oneshot::channel();

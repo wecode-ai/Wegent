@@ -237,9 +237,19 @@ async fn call_deferred_tool(
 }
 
 /// `_active_user`: the caller of the task token, when still active.
-async fn resolve_user(state: &ConnectorState, authorization: Option<&str>) -> Option<UserRow> {
-    let identity = task_token::verify(&state.auth, authorization)?;
-    let user = match db::find_user_by_id(&state.mysql, identity.user_id).await {
+pub(crate) async fn resolve_user(
+    state: &ConnectorState,
+    authorization: Option<&str>,
+) -> Option<UserRow> {
+    let identity = task_token::verify_personal_connector(&state.auth, authorization)?;
+    let user = match db::personal_connector_user(
+        &state.mysql,
+        state.tasks_table,
+        identity.user_id,
+        identity.task_id,
+    )
+    .await
+    {
         Ok(user) => user?,
         Err(error) => {
             tracing::error!(%error, "connector MCP user lookup failed");

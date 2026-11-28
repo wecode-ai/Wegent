@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
-  /(tasks\/(agent-conversation-regression|chat-sandbox-connector|claude-background-lifecycle|claudecode-compaction|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel|device-artifact-declaration|device-ide)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
+  /(tasks\/(agent-conversation-regression|chat-sandbox-connector|claude-background-lifecycle|claudecode-compaction|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel|device-artifact-declaration|device-ide)|collaboration\/(collaboration-agent-execution|legacy-team-execution|dual-turn-delivery|issue-dispatch-executor))\.spec\.ts/
 const EXECUTOR_INDEPENDENT_SPEC =
   /tasks\/(chat-sandbox-connector|claude-background-lifecycle|device-artifact-declaration|device-ide|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel)\.spec\.ts/
 const STALLED_CHAT_SPEC = /tasks\/chat-stalled-execution\.spec\.ts/

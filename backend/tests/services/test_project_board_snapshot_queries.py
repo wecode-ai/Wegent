@@ -304,7 +304,8 @@ def test_board_and_page_bindings_only_expose_the_readers_own_tasks(
     member = (
         test_db.query(User).filter(User.user_name.like(f"{project.public_id}-%")).one()
     )
-    for owner_id in [test_user.id, member.id]:
+    devices = {test_user.id: None, member.id: f"device-{member.id}"}
+    for owner_id, device_id in devices.items():
         test_db.add(
             LoopItemTaskBinding(
                 id=uuid.uuid4().hex,
@@ -312,7 +313,7 @@ def test_board_and_page_bindings_only_expose_the_readers_own_tasks(
                 loop_item_id=item_ids[0],
                 task_user_id=owner_id,
                 linked_by_user_id=owner_id,
-                device_id=f"device-{owner_id}",
+                device_id=device_id,
                 task_id=f"private-task-{owner_id}",
             )
         )
@@ -326,6 +327,7 @@ def test_board_and_page_bindings_only_expose_the_readers_own_tasks(
             test_db, item_ids[0], reader_id
         )
         for bindings in [snapshot.task_bindings, page_bindings, issue_bindings]:
+            assert [binding.device_id for binding in bindings] == [devices[reader_id]]
             assert [binding.task_user_id for binding in bindings] == [reader_id]
             assert [binding.task_id for binding in bindings] == [
                 f"private-task-{reader_id}"

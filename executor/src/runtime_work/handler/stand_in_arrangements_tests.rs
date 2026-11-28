@@ -340,6 +340,7 @@ fn insert_receipt(handler: &RuntimeWorkRpcHandler, run: &AutomationRun, state: C
     request.extra.insert("user_id".into(), json!(7));
     apply_runtime_payload_metadata(&mut request, &payload);
     let turn = SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: task.clone(),
         runtime: "codex".into(),
@@ -716,8 +717,10 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
             .unwrap_err();
         assert_eq!(error.code, "model_reasoning_unavailable");
         assert!(saved["primary"]["model"].is_null());
+        let mut primary = saved["primary"].clone();
+        primary["userId"] = json!(7);
         let direct_error = handler
-            .prepare_stand_in_execution(json!({"message":"Direct work"}), &saved["primary"])
+            .prepare_stand_in_execution(json!({"message":"Direct work"}), &primary)
             .await
             .unwrap_err();
         assert_eq!(direct_error.code, "model_reasoning_unavailable");

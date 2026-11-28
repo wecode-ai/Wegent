@@ -373,14 +373,9 @@ where
                 .await?
                 .map(|record| record.id),
             None => {
-                crate::task_skills::kinds::KindCacheStore {
-                    mysql,
-                    redis: kinds.redis,
-                    erp: Some(erp.erp),
-                    resolvers: Some(resolvers),
-                }
-                .get_team_id_by_name_and_namespace(user_id, &namespace, &name)
-                .await?
+                crate::task_skills::kinds::KindCacheStore::new(mysql, redis, erp.erp, resolvers)
+                    .get_team_id_by_name_and_namespace(user_id, &namespace, &name)
+                    .await?
             }
         };
     }

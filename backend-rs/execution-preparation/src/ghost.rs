@@ -81,6 +81,9 @@ pub async fn load_ghost_chain<M: Mysql, R: brz_redis::Redis>(
     namespace: &str,
     name: &str,
 ) -> Result<Vec<GhostNode>, GhostChainError> {
+    if name.is_empty() {
+        return Ok(Vec::new());
+    }
     let Some(ghost) = read_ghost(cache, owner_user_id, namespace, name)
         .await
         .map_err(GhostChainError::Dependency)?

@@ -151,6 +151,9 @@ pub(super) fn follow_up_spec(
     spec = spec.arg("--resume".to_owned());
     spec = spec.arg(resume_argument(base_spec, session_id).to_owned());
     match query {
+        ClaudeFollowUpQuery::Prompt(prompt) if crate::permission::interactive(base_spec) => {
+            spec = crate::claude_code::stream_prompt(spec.arg("-p"), &prompt);
+        }
         ClaudeFollowUpQuery::Prompt(prompt) => {
             spec = spec.arg("-p".to_owned());
             spec = spec.arg(prompt);

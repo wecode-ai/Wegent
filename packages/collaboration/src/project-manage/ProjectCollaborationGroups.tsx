@@ -9,6 +9,7 @@ import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationAgent, CollaborationGroup, CollaborationMember } from '../types'
 import { WorkspaceCollaborationGroupsConfiguration } from '../platform/WorkspaceResourceConfiguration'
+import { createSharedAgentBindingInput } from '../project-agent-config/model'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import { readTemplateAgents, templateRoutingResolver } from '../templates/agents'
 import { applyProjectTemplate } from '../templates/projectConfiguration'
@@ -165,17 +166,18 @@ function ScopedProjectCollaborationGroups({
                   onCreated(agent: CollaborationAgent): Promise<void>
                 }) => {
                   if (location === 'local' && agentConfiguration.renderLocalAgentCreator) {
-                    const previousIds = new Set(availableAgents.map(agent => agent.id))
+                    const known = new Set(availableAgents.map(agent => agent.id))
                     return agentConfiguration.renderLocalAgentCreator({
                       projectId,
                       onClose,
-                      onCreated: async () => {
+                      onCreated: async agentId => {
                         requireActive()
                         const projectAgents = await reload()
                         requireActive()
-                        const created =
-                          projectAgents.find(agent => !previousIds.has(agent.id)) ??
-                          projectAgents.at(-1)
+                        const candidates = projectAgents.filter(agent =>
+                          agentId ? agent.id === agentId : !known.has(agent.id)
+                        )
+                        const created = candidates.length === 1 ? candidates[0] : undefined
                         if (!created) {
                           throw new Error('Created collaboration group agent was not found')
                         }
@@ -192,9 +194,10 @@ function ScopedProjectCollaborationGroups({
                     onClose,
                     onCreated: async resource => {
                       requireActive()
-                      const created = await api.agents.create(projectId, {
-                        team_id: resource.teamId,
-                      })
+                      const created = await api.agents.create(
+                        projectId,
+                        createSharedAgentBindingInput({ name: resource.name, team_id: resource.teamId })
+                      )
                       await reload()
                       requireActive()
                       await onCreated(created)
@@ -215,7 +218,6 @@ function ScopedProjectCollaborationGroups({
                     version: undefined,
                     name: `copied-agent-${suffix}`,
                     displayName: locale === 'zh-CN' ? `${source.name} 副本` : `${source.name} copy`,
-                    runtime: record.runtime === 'claude_code' ? 'claude_code' : 'codex',
                   })
                   await reload()
                   return created
@@ -266,6 +268,16 @@ function ScopedProjectCollaborationGroups({
           </ControlButton>
         </div>
       ) : null}
+      {canManage && api.projects.adoptPersonalTeam &&
+        agentConfiguration?.renderPersonalTeamAdoption?.({
+          projectId, location,
+          agents: availableAgents,
+          adopt: async input => {
+            requireActive()
+            await api.projects.adoptPersonalTeam!(projectId, input)
+            await reloadAfterMutation()
+          },
+        })}
       <WorkspaceCollaborationGroupsConfiguration
         groups={groups}
         collectionState={collectionState}

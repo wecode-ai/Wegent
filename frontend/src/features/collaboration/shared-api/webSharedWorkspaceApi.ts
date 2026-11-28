@@ -588,6 +588,7 @@ export function createWebSharedWorkspaceApi(
       },
     },
     issues: {
+      ...sharedHttpApi.issues,
       async list(projectId, filters) {
         const query = new URLSearchParams()
         if (filters?.assigneeType) query.set('assignee_type', filters.assigneeType)

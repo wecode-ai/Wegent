@@ -343,6 +343,7 @@ mod tests {
         let handler = RuntimeWorkRpcHandler::new("target", "unused");
         let request = bind(&handler);
         let turn = SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "remote-task".into(),
             runtime: "codex".into(),

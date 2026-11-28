@@ -83,17 +83,16 @@ impl RuntimeWorkRpcHandler {
         let coordinator_identity = execution_request(&manager_request)
             .as_ref()
             .and_then(super::project_coordination_execution::capture_identity);
-        let member_profiles = payload
-            .get("memberRuntimeProfiles")
-            .and_then(Value::as_array)
-            .filter(|profiles| !profiles.is_empty())
-            .cloned()
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "bad_request",
-                    "collaboration member Runtime profiles are required",
-                )
-            })?;
+        let server_dispatched = payload["dispatchProtocolVersion"] == 2;
+        let member_profiles = payload["memberRuntimeProfiles"]
+            .as_array()
+            .filter(|p| !p.is_empty());
+        if !server_dispatched && member_profiles.is_none() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration member Runtime profiles are required",
+            ));
+        }
         detach_collaboration_manager_from_backend_execution(&mut manager_request, &manager_task_id);
         let manager_context = string_field(&manager_request, "message")
             .or_else(|| string_field(&manager_request, "content"))
@@ -132,13 +131,12 @@ impl RuntimeWorkRpcHandler {
                     "collaborationDispatchTaskId".to_owned(),
                     Value::String(dispatch_task_id),
                 );
-            runtime_handle
-                .as_object_mut()
-                .expect("collaboration Runtime handle was normalized")
-                .insert(
-                    "collaborationMemberRuntimeProfiles".to_owned(),
-                    Value::Array(member_profiles),
-                );
+            if let Some(profiles) = member_profiles {
+                runtime_handle["collaborationMemberRuntimeProfiles"] = json!(profiles);
+            }
+            if server_dispatched {
+                runtime_handle["dispatchProtocolVersion"] = json!(2);
+            }
         }
         self.create_task(manager_request).await
     }
@@ -557,6 +555,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if payload["origin"]["dispatchRole"] == "member" {
+            request.system_prompt =
+                crate::task_runtime::collaboration_member_system_prompt(&request.system_prompt);
+        }
         let deferred_environment = project_preparation::configure(&mut request, &payload)?;
         if deferred_environment {
             payload_workspace_path = None;
@@ -890,6 +892,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        if let Some(previous) = failed_start.as_ref() {
+            link.execution_backend = previous.execution_backend.clone();
+        }
         self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
@@ -939,49 +944,36 @@ impl RuntimeWorkRpcHandler {
             }
         }
         self.schedule_worktree_prune();
-        if is_claude_runtime(&runtime) {
-            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            if let Err(error) = self
-                .spawn_claude_turn(local_task_id.clone(), request, force_start)
-                .await
-            {
-                self.retain_failed_runtime_task(&local_task_id, &error);
-                return Err(error);
-            }
+        let claude = is_claude_runtime(&runtime);
+        let mut turn = SpawnTurnRequest::new(local_task_id.clone(), runtime.clone(), request);
+        if claude {
+            self.prepare_claude_goal(&local_task_id, &mut turn.request, &payload);
         } else {
-            let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            if let Some(source) = &mut side_source {
-                self.prepare_side_source(source).await?;
+            turn.initial_thread_goal = initial_thread_goal_from_payload(&payload);
+            if let Some(mut source) = side_source.take() {
+                self.prepare_side_source(&mut source).await?;
+                turn.fork_thread_id = Some(source.thread_id);
+                turn.fork_thread_path = source.thread_path;
             }
-            let turn = SpawnTurnRequest {
-                task_kind: None,
-                local_task_id: local_task_id.clone(),
-                runtime: "codex".to_owned(),
-                request,
-                send_payload: None,
-                direct_thread_id: None,
-                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-                fork_thread_path: side_source.and_then(|source| source.thread_path),
-                resume_thread_id: None,
-                initial_thread_goal,
-            };
-            let admission = if force_start {
-                TurnAdmission::Forced
-            } else {
-                TurnAdmission::Normal
-            };
-            let spawn_result = self
-                .schedule_turn(turn, admission, initial_permissions.is_some())
-                .await;
-            if let Err(error) = spawn_result {
-                self.retain_failed_runtime_task(&local_task_id, &error);
+        }
+        let admission = if force_start {
+            TurnAdmission::Forced
+        } else {
+            TurnAdmission::Normal
+        };
+        if let Err(error) = self
+            .schedule_turn(turn, admission, !claude && initial_permissions.is_some())
+            .await
+        {
+            self.retain_failed_runtime_task(&local_task_id, &error);
+            if !claude {
                 self.forget_runtime_model_config(&local_task_id);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")
                     .remove(&local_task_id);
-                return Err(error);
             }
+            return Err(error);
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1221,6 +1213,13 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         owner_input: bool,
     ) -> Result<Value, AppIpcError> {
+        if owner_input && payload["action"] == "pipeline:confirm" {
+            let task = runtime_task_id(&payload)
+                .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+            return self
+                .advance_personal_pipeline(&task, Some(&payload["expectedStage"]))
+                .await;
+        }
         self.send_message_with_task_gate(payload, owner_input, false)
             .await
     }
@@ -1486,6 +1485,16 @@ impl RuntimeWorkRpcHandler {
                 self.refresh_persisted_model_credentials(&mut payload)
                     .await?;
             } else {
+                if existing_link
+                    .as_ref()
+                    .is_some_and(|link| is_claude_runtime(&link.runtime))
+                {
+                    return Ok(self.respond_to_claude_approval(
+                        &local_task_id,
+                        &response,
+                        matches!(owner_message, Some(OwnerMessage::Direct)),
+                    ));
+                }
                 if let Some(result) = self
                     .respond_to_child_approval(&local_task_id, &response)
                     .await?
@@ -1535,7 +1544,8 @@ impl RuntimeWorkRpcHandler {
             && was_busy
             && !start_new_session
             && existing_link.as_ref().is_some_and(|link| {
-                is_codex_runtime(&link.runtime) && stand_in_guidance_during_interaction(link)
+                is_codex_runtime(&link.runtime)
+                    && stand_in_guidance_during_interaction(link, owner_input)
             });
         let automatic_stand_in_waiting = payload["automaticStandIn"] == true
             && existing_link.as_ref().is_some_and(|link| {
@@ -1557,6 +1567,14 @@ impl RuntimeWorkRpcHandler {
                 "error": "runtime task is already running",
                 "code": "bad_request",
             }));
+        }
+        if let Some((link, binding)) = existing_link.as_ref().and_then(|link| {
+            link.execution_backend
+                .as_ref()
+                .filter(|binding| binding.task_id.is_some())
+                .map(|binding| (link, binding))
+        }) {
+            return self.send_platform_message(link, binding, &payload).await;
         }
         let workspace_path = existing_link
             .as_ref()
@@ -1634,11 +1652,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             set_runtime_task_title(&mut request, &link.title);
-        }
-        if let Some(link) = existing_link.as_ref() {
             mark_runtime_model_switch(&mut request, link, &payload);
-        }
-        if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
             if let Some(attempt) = role_retry_attempt {
@@ -1649,6 +1663,26 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(super::stand_in_role_delegation::denied)?;
                 delegation["attempt"] = json!(attempt);
             }
+            if personal_pipeline::waiting_project_pipeline(link)
+                && reply_input
+                && !super::super::util::is_private_discussion(&request)
+            {
+                let saved = runtime_event_request_from_link(link);
+                let user = saved
+                    .extra
+                    .get("user_id")
+                    .and_then(Value::as_i64)
+                    .filter(|id| *id >= 0)
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "permission_denied",
+                            "Project execution identity is unavailable",
+                        )
+                    })?;
+                request.extra.insert("user_id".into(), json!(user));
+                restore_pipeline_definition(&mut request, link, &saved);
+            }
+            restore_personal_conversation_team(&mut request, link);
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
             self.refresh_shared_conversation_request(&mut request)
@@ -1753,13 +1787,13 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            if was_busy {
-                self.queue_claude_turn(local_task_id.clone(), request)
-                    .await?;
+            let turn = SpawnTurnRequest::new(local_task_id.clone(), "claude_code".into(), request);
+            let admission = if was_busy {
+                TurnAdmission::Queue
             } else {
-                self.spawn_claude_turn(local_task_id.clone(), request, false)
-                    .await?;
-            }
+                TurnAdmission::Normal
+            };
+            self.schedule_turn(turn, admission, false).await?;
             let queue_position = self
                 .queued_local_task_position(&local_task_id)
                 .map(|position| position + 1);
@@ -1872,6 +1906,7 @@ impl RuntimeWorkRpcHandler {
         let turn = SpawnTurnRequest {
             // A verified retry already restored its origin and advanced only the attempt.
             // Rebinding at admission would replace it with the preceding attempt.
+            platform_command: None,
             task_kind: role_retry_attempt.map(|_| RuntimeTaskKind::StandIn),
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
@@ -2225,6 +2260,7 @@ impl RuntimeWorkRpcHandler {
         };
         self.schedule_turn(
             SpawnTurnRequest {
+                platform_command: None,
                 task_kind: None,
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
@@ -2447,18 +2483,7 @@ impl RuntimeWorkRpcHandler {
             guidance["conversationContext"] = context.clone();
         }
         let command = RuntimeCommand::from_turn(
-            &SpawnTurnRequest {
-                task_kind: None,
-                local_task_id: task.clone(),
-                runtime: "codex".into(),
-                request: request.clone(),
-                send_payload: None,
-                direct_thread_id: None,
-                fork_thread_id: None,
-                fork_thread_path: None,
-                resume_thread_id: None,
-                initial_thread_goal: None,
-            },
+            &SpawnTurnRequest::new(task.clone(), "codex".into(), request.clone()),
             CommandState::RecoveryRequired,
         )?;
         if let Some(command) = &command {
@@ -2601,7 +2626,7 @@ impl RuntimeWorkRpcHandler {
         }
         if preserve_interaction
             && self.store.read_task(&local_task_id, |link| {
-                !stand_in_guidance_during_interaction(link)
+                !stand_in_guidance_during_interaction(link, owner_input)
             }) == Some(true)
         {
             return Ok(json!({"accepted":false,"code":"user_input_pending"}));
@@ -2695,7 +2720,7 @@ impl RuntimeWorkRpcHandler {
                 }
                 if preserve_interaction
                     && self.store.read_task(&local_task_id, |link| {
-                        !stand_in_guidance_during_interaction(link)
+                        !stand_in_guidance_during_interaction(link, owner_input)
                     }) == Some(true)
                 {
                     return Ok(json!({"accepted":false,"code":"user_input_pending"}));
@@ -3208,6 +3233,26 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
+        if !had_active_local_execution && pending_client_user_message_id.is_none() {
+            if let Some(waiting) = link
+                .as_ref()
+                .filter(|link| personal_pipeline::waiting_project_pipeline(link))
+            {
+                self.settle_cancelled_idle_task(&local_task_id, thread_id);
+                self.finish_queue_run(
+                    &local_task_id,
+                    &runtime_event_request_from_link(waiting),
+                    AutomationRunStatus::Cancelled,
+                    Some("cancelled".into()),
+                    None,
+                );
+                return Ok(task_action_success(
+                    &self
+                        .local_task_link(&local_task_id)
+                        .unwrap_or_else(|| waiting.clone()),
+                ));
+            }
+        }
         let cancelled_preparing_turn = self.cancel_preparing_turn(&local_task_id);
         if cancelled_preparing_turn {
             self.request_active_turn_stop(&local_task_id);
@@ -3279,14 +3324,6 @@ impl RuntimeWorkRpcHandler {
             }
         };
         let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped && !require_stopped {
-            self.force_settle_local_task_execution(
-                &local_task_id,
-                thread_id.clone(),
-                "cancelled",
-                "cancel_timeout",
-            );
-        }
         let cleanup_pending = !local_stopped || !provider_stopped;
 
         if cancels_pending_send {
@@ -3317,67 +3354,15 @@ impl RuntimeWorkRpcHandler {
             .get_task(&local_task_id)
             .map(|link| link.runtime)
             .unwrap_or_else(|| "codex".to_owned());
-        let _operation = self.turn_queue_operation.lock().await;
-        let (previous, queued_turn, remaining_turns) = {
-            let mut scheduler = self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned");
-            if scheduler.queued_position(&local_task_id).is_none() {
-                return Ok(json!({
-                    "success": false,
-                    "accepted": false,
-                    "taskId": local_task_id,
-                    "runtime": runtime,
-                    "error": "runtime task is not queued",
-                    "code": "not_queued",
-                }));
-            }
-            let previous = scheduler.clone();
-            scheduler.refresh_automatic_waits(&self.store, None);
-            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
-                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
-            })?;
-            (previous, turn, scheduler.queued_turns.clone())
-        };
-        if let Err(error) = self
-            .persist_turn_queue(
-                remaining_turns,
-                Some(&previous),
-                std::slice::from_ref(&queued_turn),
-            )
-            .await
-        {
-            *self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned") = previous;
-            return Err(error);
-        }
-        self.reserve_turn_preparation(&queued_turn);
-        drop(_operation);
-        log_executor_event(
-            "runtime work queued turn force started",
-            &[("local_task_id", local_task_id.clone())],
-        );
-        if queued_turn
-            .request
-            .extra
-            .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
-            || queued_turn
-                .request
-                .extra
-                .contains_key(quota_recovery::MARKER)
-        {
-            self.start_queued_turn(queued_turn);
-        } else if queued_turn
-            .request
-            .extra
-            .contains_key("deferred_worktree_source_path")
-        {
-            self.prepare_and_start_reserved_turn(queued_turn).await?;
-        } else {
-            self.start_turn(queued_turn);
+        if !self.drain_queued_turns(Some(&local_task_id)).await? {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": runtime,
+                "error": "runtime task is not queued",
+                "code": "not_queued",
+            }));
         }
         Ok(json!({
             "success": true,
@@ -3494,7 +3479,7 @@ impl RuntimeWorkRpcHandler {
             if !preserve_identity_thread {
                 link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             }
-            clear_runtime_handle_messages(&mut link.runtime_handle);
+            clear_runtime_handle_messages(link);
             if let Some(presentation) = presentation.clone() {
                 append_runtime_handle_user_message_presentation(
                     &mut link.runtime_handle,
@@ -3960,11 +3945,14 @@ fn stand_in_waiting_for_user() -> Value {
     json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
 }
 
-fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
-    matches!(
-        link.interaction_status.as_deref(),
-        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
-    )
+fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink, owner_input: bool) -> bool {
+    // A result turn acts for its originating delegation. Queue a new owner
+    // message with its own command identity so it can start independent work.
+    !(owner_input && link.runtime_handle["executionRequest"]["standInRoleResultRoot"].is_string())
+        && matches!(
+            link.interaction_status.as_deref(),
+            None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
+        )
 }
 
 #[cfg(test)]

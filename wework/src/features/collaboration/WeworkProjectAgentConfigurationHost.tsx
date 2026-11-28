@@ -9,6 +9,7 @@ import type { createAgentResourceApi } from '@/api/agentResources'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
+import { PersonalTeamAdoption } from './PersonalTeamAdoption'
 import { ExternalProjectAgentForm } from './ExternalProjectAgentForm'
 import { WeworkAgentPickerDialog } from './WeworkAgentPickerDialog'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
@@ -32,6 +33,12 @@ export function createWeworkProjectAgentConfigurationHost(
     agents: SharedWorkspaceApi['agents']
     modelApi: WorkbenchServices['modelApi']
     name: string
+  },
+  personal?: Pick<
+    WorkbenchServices,
+    'standInApi' | 'getLocalRuntimeSidebarIdentity' | 'personalAssistantAccountApi'
+  > & {
+    userId: number
   }
 ): ProjectAgentConfigurationHost {
   const editor =
@@ -46,6 +53,25 @@ export function createWeworkProjectAgentConfigurationHost(
         : undefined
   return {
     ...weworkProjectAgentConfigurationHost,
+    ...(personal?.standInApi
+      ? {
+          renderPersonalTeamAdoption: (
+            props: Parameters<
+              NonNullable<ProjectAgentConfigurationHost['renderPersonalTeamAdoption']>
+            >[0]
+          ) => (
+            <PersonalTeamAdoption
+              key={JSON.stringify([personal.userId, props.projectId])}
+              {...props}
+              userId={personal.userId}
+              api={personal.standInApi!}
+              accountApi={personal.personalAssistantAccountApi}
+              agentApi={agentResourceApi}
+              identity={personal.getLocalRuntimeSidebarIdentity}
+            />
+          ),
+        }
+      : {}),
     ...(localAgentApi
       ? {
           async listTemplateAgentEnvironments(projectId, location) {

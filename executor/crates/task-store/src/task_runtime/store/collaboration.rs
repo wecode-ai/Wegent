@@ -20,6 +20,25 @@ pub(super) fn dispatch_collaboration_group_assignment(
             TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
         })?;
     if leader_kind == "human" {
+        let dispatch = Uuid::new_v4().to_string();
+        let actor = leader_id
+            .parse::<i64>()
+            .map_err(|_| TaskRuntimeError::Invalid("Invalid human leader identity".into()))?;
+        let payload = json!({
+            "dispatch_id": dispatch,
+            "collaboration_group": input.group,
+            "runnerSelection": input.payload.get("runnerSelection"),
+            "project_workspace_roots": project.metadata.get("workspace_roots"),
+        });
+        connection.execute(
+            "INSERT INTO loop_items(id,loop_item_id,resource_type,created_at,updated_at,metadata,assignee_user_id)
+             VALUES (?1,?2,'issue_coordination',?4,?4,?3,?5)",
+            params![dispatch,input.item_id,json!({"payload":payload,"round":1}).to_string(),now(),actor],
+        )?;
+        connection.execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.human_coordination_dispatch',?1) WHERE id=?2",
+            params![dispatch,input.item_id],
+        )?;
         return Ok(None);
     }
     if leader_kind != "agent" {
@@ -29,12 +48,6 @@ pub(super) fn dispatch_collaboration_group_assignment(
     }
     let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
     let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
-    runner_dispatch::add_group_profiles(
-        connection,
-        input.project_id,
-        input.group,
-        &mut execution_payload,
-    )?;
     let manager_context = collaboration_manager_message(
         input.group,
         project
@@ -53,18 +66,13 @@ pub(super) fn dispatch_collaboration_group_assignment(
     );
     execution_payload.insert(
         "projectInstructions".to_owned(),
-        json!([
+        json!(manager_system_prompt(
             leader_agent.metadata["system_prompt"]
                 .as_str()
-                .unwrap_or_default(),
-            COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS,
-        ]
-        .into_iter()
-        .filter(|instruction| !instruction.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")),
+                .unwrap_or_default()
+        )),
     );
-    execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
+    execution_payload.insert("dispatch_id".to_owned(), json!(Uuid::new_v4().to_string()));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
     execution_payload.insert("collaboration_group".to_owned(), input.group.clone());
     if let Some(workspace_roots) = project
@@ -89,11 +97,39 @@ pub(super) fn dispatch_collaboration_group_assignment(
     .map(Some)
 }
 
+pub(super) fn manager_system_prompt(prompt: &str) -> String {
+    [prompt, COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS]
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub(super) fn has_active_project_team_binding(
+    connection: &Connection,
+    project: &str,
+    agent: &str,
+) -> Result<bool, TaskRuntimeError> {
+    Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2) AND status='active')", params![project, agent], |row| row.get(0))?)
+}
+
+pub(super) fn has_project_team_binding(
+    connection: &Connection,
+    project: &str,
+    agent: &str,
+) -> Result<bool, TaskRuntimeError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2))",
+        params![project, agent],
+        |row| row.get(0),
+    )?)
+}
+
 pub(super) fn collaboration_group(
     project: &LoopItem,
     group_id: &str,
 ) -> Result<Value, TaskRuntimeError> {
-    project
+    let group = project
         .metadata
         .get("collaboration_groups")
         .and_then(Value::as_array)
@@ -102,8 +138,13 @@ pub(super) fn collaboration_group(
                 .iter()
                 .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
         })
-        .cloned()
-        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))
+        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))?;
+    if group["binding_required"] == true {
+        return Err(TaskRuntimeError::Invalid(
+            "Source team requires new project bindings".into(),
+        ));
+    }
+    Ok(group.clone())
 }
 
 pub(super) fn record_assignment_change(
@@ -191,6 +232,13 @@ pub(super) fn collaboration_agent(
         .ok_or_else(|| {
             TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
         })?;
+    if has_project_team_binding(connection, project_id, &agent.id)?
+        && !has_active_project_team_binding(connection, project_id, &agent.id)?
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Project Team binding is archived".into(),
+        ));
+    }
     let agent_project_id = agent.cloud_project_id.as_deref();
     if !matches!(
         agent_project_id,

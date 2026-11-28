@@ -51,6 +51,7 @@ export function IssueProjectChatThread({
   send,
   translate,
   executions,
+  platformTaskBindings,
   onOpenExecution,
   onStopExecution,
   stoppingMessageId,
@@ -72,6 +73,7 @@ export function IssueProjectChatThread({
   members?: CollaborationMember[]
   agents?: CollaborationAgent[]
   translate(key: string, fallback?: string, options?: Record<string, string | number>): string
+  platformTaskBindings?: ComponentProps<typeof IssueChatMessage>['platformTaskBindings']
   executions: CollaborationExecution[]
   taskSummaryForMessage?(message: ProjectChatMessage): ExecutionTaskSummary | undefined
   singleExecutionForMessage?(message: ProjectChatMessage): boolean
@@ -91,7 +93,8 @@ export function IssueProjectChatThread({
     const target = messageRuntimeExecutionTarget(message, execution)
     const singleExecution = singleExecutionForMessage?.(target?.activityMessage ?? message) ?? false
     const dispatchRole =
-      message.sender.type === 'agent' && message.metadata.dispatch_role === 'manager'
+      message.metadata.dispatch_role === 'manager' &&
+      (message.sender.type === 'agent' || message.metadata.activity_type === 'manager_assignment')
         ? 'manager'
         : message.sender.type === 'agent'
           ? 'member'
@@ -103,6 +106,7 @@ export function IssueProjectChatThread({
           message={target?.activityMessage ?? message}
           members={members}
           singleExecution={singleExecution}
+          platformTaskBindings={platformTaskBindings}
           persistedStatus={execution?.display_state}
           mine={false}
           compact

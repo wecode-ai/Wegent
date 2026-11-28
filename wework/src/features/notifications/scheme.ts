@@ -11,6 +11,7 @@ export type WeworkDestination =
       itemId?: string
       commentId?: string
     }
+  | { kind: 'platform-task'; apiBaseUrl: string; userId: number; taskId: number }
   | { kind: 'task'; deviceId: string; taskId: string }
   | { kind: 'interaction'; deviceId: string; taskId: string; requestKey: string }
   | { kind: 'app'; appId: string }
@@ -117,6 +118,19 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
         ? { kind: 'board', projectId, itemId, commentId, ...store }
         : null
     }
+    if (url.hostname === 'platform-tasks' && parts.length === 3) {
+      const api = new URL(decodeURIComponent(parts[0]))
+      const userId = Number(parts[1])
+      const taskId = Number(parts[2])
+      return ['http:', 'https:'].includes(api.protocol) &&
+        !api.username &&
+        !api.password &&
+        !api.search &&
+        !api.hash &&
+        parts.slice(1).every(id => /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
+        ? { kind: 'platform-task', apiBaseUrl: api.href.replace(/\/+$/, ''), userId, taskId }
+        : null
+    }
     if (url.hostname === 'tasks' && parts.length === 2) {
       const deviceId = segment(parts[0])
       const taskId = segment(parts[1])
@@ -139,7 +153,7 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
 }
 
 export function weworkDestinationRoute(
-  destination: WeworkDestination,
+  destination: Exclude<WeworkDestination, { kind: 'platform-task' }>,
   focusRequest?: string
 ): string {
   if (destination.kind === 'collaboration-exp') return destination.contentRoute

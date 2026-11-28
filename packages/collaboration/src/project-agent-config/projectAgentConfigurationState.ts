@@ -4,6 +4,7 @@ import type { CollaborationOwnedAgent, CollaborationProject } from '../types'
 import { requestFailureMessage as errorMessage } from '../controls/requestFailure'
 import {
   createResourceAgentBindingInput,
+  createSharedAgentBindingInput,
   isSelectableAgentResource,
   normalizeProjectAgent,
   type ProjectAgentConfigurationRecord,
@@ -415,12 +416,7 @@ export function createProjectAgentConfigurationState(identity: ProjectAgentConfi
       const owner = generation
       if (
         (await addAgent(
-          {
-            name: agent.name,
-            runtime: 'wegent',
-            wegentTeamId: agent.teamId,
-            shareWithWorkspace: true,
-          },
+          createSharedAgentBindingInput({ name: agent.name, team_id: agent.teamId }),
           true
         )) &&
         owned(owner)

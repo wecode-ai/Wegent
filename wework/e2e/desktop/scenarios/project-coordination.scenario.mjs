@@ -6,7 +6,10 @@ import {
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
-import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
+} from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -45,6 +48,7 @@ export function createDesktopScenario({
   restartDesktopApp,
   resultDir,
 }) {
+  let accountToken
   let assessments = 0
   let expectedModel
   let workRequests = 0
@@ -71,6 +75,9 @@ export function createDesktopScenario({
     assert.fail(`${label}: ${JSON.stringify(value)}`)
   }
   return {
+    prepareApp({ appEnvironment }) {
+      accountToken = appEnvironment.WEWORK_E2E_CLOUD_TOKEN
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -356,6 +363,7 @@ export function createDesktopScenario({
       )
       const acceptSelector = `[data-testid="cloud-task-activity-accept-${issue.id}"]`
       await control.command('scrollIntoView', acceptSelector)
+      await captureScreenshot(control, 'project-coordination-05b-human-accept-action.png')
       await control.command('clickWhenEnabled', acceptSelector)
       await until(
         () => rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id }),
@@ -383,8 +391,12 @@ export function createDesktopScenario({
         appEnvironmentOverrides: { WEWORK_USER_DATA_DIR: join(resultDir, 'device-b-user-data') },
         expectNewDeviceIdentity: true,
       })
-      await control.command('waitFor', '[data-testid="telemetry-consent-decline"]')
-      await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]')
+      await declineInitialTelemetryConsent(control)
+      await control.command('setCloudSessionToken', 'body', { value: accountToken })
+      await control.command('waitFor', '[data-testid="desktop-sidebar-account"]', {
+        text: 'wework-desktop-e2e-cloud-user',
+        timeoutMs: uiTimeoutMs,
+      })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(

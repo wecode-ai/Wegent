@@ -215,21 +215,13 @@ describe("workspace resources in the Issue assignee directory", () => {
     expect(api.agents.create).not.toHaveBeenCalled();
   });
 
-  it("preserves local configuration and distinguishes resource identity from its display name", async () => {
+  it("binds the local Team by its stable reference despite matching names", async () => {
     const localSource: CollaborationOwnedAgent = {
       ...source,
       id: "local-source",
       team_id: undefined,
       location: "local",
-      project_binding_input: {
-        name: "resource-name",
-        namespace: "custom",
-        runtime: "codex",
-        displayName: source.name,
-        model: "model-1",
-        systemPrompt: "Review code",
-        mcpServers: { review: { command: "review" } },
-      },
+      project_binding_input: { team_ref: "local-source" },
     };
     const localProject = {
       ...project,

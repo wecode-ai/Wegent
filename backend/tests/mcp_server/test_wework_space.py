@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.orm import Session
 
-from app.mcp_server.auth import MCPAuthInfo
+from app.mcp_server.auth import MCPAuthInfo, authenticate_mcp_token
 from app.mcp_server.tools import wework_space
 from app.models.delivery import (
     CloudProject,
@@ -26,8 +26,10 @@ from app.models.delivery import (
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services import collaboration_manager_decisions
+from app.services.auth.task_token import create_task_token
 from app.services.board_tools import candidates
 from app.services.issue_assignments import issue_assignment_service
 from app.services.project_automation_execution import project_automation_execution
@@ -374,26 +376,34 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
         priority="none",
         created_by_user_id=test_user.id,
     )
-    test_db.add(item)
-    test_db.commit()
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space.task_store,
-        "get_by_id",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            json={
-                "metadata": {
-                    "labels": {
-                        "source": "project_automation",
-                        "weworkSpaceProjectId": str(project.id),
-                        "weworkSpaceTaskId": item.id,
-                    }
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="member-task",
+        namespace="default",
+        json={
+            "metadata": {
+                "labels": {
+                    "source": "project_automation",
+                    "weworkSpaceProjectId": str(project.id),
+                    "weworkSpaceTaskId": item.id,
+                    "dispatchRole": "executor",
                 }
             }
-        ),
+        },
     )
-
-    context = wework_space.get_current_context(_token(test_user))
+    test_db.add_all([item, task])
+    test_db.commit()
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    token = authenticate_mcp_token(
+        create_task_token(task.id, 2, test_user.id, test_user.user_name)
+    )
+    assert token is not None
+    with pytest.raises(ValueError, match="cannot enumerate participating Issues"):
+        wework_space.list_board_items(token, participating=True)
+    with pytest.raises(ValueError, match="not a dispatch manager"):
+        wework_space.update_issue_status(token, "decision", "completed", "Reviewed")
+    context = wework_space.get_current_context(token)
 
     assert context["space_id"] == str(project.id)
     assert context["item_id"] == item.id

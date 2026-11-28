@@ -1,3 +1,7 @@
+import {
+  handleAssistantReviewRequest,
+  verifyAssistantTeam,
+} from '../modules/verify-assistant-team.mjs'
 import { createDesktopScenario as createReview } from './stand-in-profile-with-review.scenario.mjs'
 import { createDesktopScenario as createSharedSettings } from './stand-in-shared-settings.scenario.mjs'
 import { withScheduleUpdate } from '../modules/stand-in-schedule-update.mjs'
@@ -15,9 +19,16 @@ export function createDesktopScenario(options) {
   const sharedSettings = createSharedSettings(options)
   return {
     ...scheduledContext,
+    async handleHttp(req, res, url) {
+      return (
+        (await handleAssistantReviewRequest(req, res, url)) ||
+        scheduledContext.handleHttp(req, res, url)
+      )
+    },
     async verify(control) {
       await scheduledContext.verify(control)
       await sharedSettings.verify(control)
+      await verifyAssistantTeam(control, options)
     },
   }
 }

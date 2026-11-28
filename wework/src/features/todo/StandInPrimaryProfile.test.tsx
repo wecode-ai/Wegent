@@ -19,7 +19,11 @@ import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
-function openPrimaryProfile(selfLearningEnabled?: boolean, cloudDefinitionRevision?: string) {
+function openPrimaryProfile(
+  selfLearningEnabled?: boolean,
+  cloudDefinitionRevision?: string,
+  teamRef?: string
+) {
   const { settings } = personalStandInFixture()
   settings.cloudDefinitionRevision = cloudDefinitionRevision
   const { services } = standInOverviewFixture().props
@@ -33,11 +37,17 @@ function openPrimaryProfile(selfLearningEnabled?: boolean, cloudDefinitionRevisi
     is_default: false,
   }
   if (services.standInApi) {
+    if (teamRef)
+      services.standInApi.personalGet = async () => ({
+        ...settings,
+        referencedTeamPrompt: 'Current source instructions',
+      })
     services.standInApi.catalog = async () => ({ models: [model] })
   }
   settings.primary = {
     enabled: true,
     selfLearningEnabled,
+    ...(teamRef ? { teamRef } : {}),
     prompt: 'Ask for evidence',
     preferences: 'Private context',
   }
@@ -67,6 +77,7 @@ function openPrimaryProfile(selfLearningEnabled?: boolean, cloudDefinitionRevisi
   )
   return {
     model,
+    onSave,
     save: () => {
       fireEvent.click(screen.getByTestId('stand-in-primary-save'))
       return onSave.mock.calls[0]?.[0].primary
@@ -138,6 +149,20 @@ test('retrying settings requires discarding the profile draft separately from an
   expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
 })
 
+test('creating an assistant has no instance stop action', async () => {
+  const { props } = standInOverviewFixture([newStandInRole('device', 'existing')])
+  render(
+    <StandInSettingsPage
+      {...props}
+      initialCreate
+      initialDeviceId="device"
+      footerLeading={<button>Stop assistant</button>}
+    />
+  )
+  expect(await screen.findByTestId('stand-in-create-team')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Stop assistant' })).toBeNull()
+})
+
 test('closing role settings confirms unsaved role changes after discarding an unfinished project tag', async () => {
   const role = newStandInRole('device', 'default')
   const { props } = standInOverviewFixture([
@@ -154,12 +179,14 @@ test('closing role settings confirms unsaved role changes after discarding an un
       {...props}
       initialProfileId={role.id}
       initialDeviceId={role.executionDeviceId}
+      footerLeading={<button>Stop assistant</button>}
       onCancel={onCancel}
     />
   )
   fireEvent.change(await screen.findByTestId('stand-in-role-name'), {
     target: { value: 'Unsaved role' },
   })
+  expect(screen.getByRole('button', { name: 'Stop assistant' })).toBeVisible()
   await enterUnfinishedProjectTag('stand-in-connections-open')
 
   fireEvent.click(screen.getByTestId('stand-in-close'))
@@ -314,4 +341,24 @@ test('a migrated default assistant keeps its shared instructions when private pr
     prompt: 'Ask for evidence',
     preferences: 'Edited private context',
   })
+})
+
+test('saving edits to a referenced Team requires explicit copy confirmation', async () => {
+  const { save, onSave } = openPrimaryProfile(undefined, undefined, 'LA-original')
+  const editor = await screen.findByDisplayValue('Current source instructions')
+  fireEvent.change(editor, {
+    target: { value: 'New instructions' },
+  })
+  save()
+  fireEvent.click(screen.getByTestId('stand-in-copy-team-cancel'))
+  expect(onSave).not.toHaveBeenCalled()
+  save()
+  fireEvent.click(screen.getByTestId('stand-in-copy-team-confirm'))
+  expect(onSave).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({ teamRef: 'LA-original', prompt: 'New instructions' }),
+    }),
+    false,
+    true
+  )
 })

@@ -20,12 +20,14 @@ pub mod connector;
 pub mod dispatch;
 mod execution;
 mod openai;
+pub mod pipeline;
 mod status;
 pub mod workday_calendar;
 
 pub use execution::{
-    AgentKind, ExecutionRequest, KnowledgeBaseScope, StandInCommandApproval, StandInPermissionMode,
-    StandInTaskPermissions, FULL_KB_TOOL_ACCESS_MODE,
+    project_group_task_labels, AgentKind, ExecutionRequest, KnowledgeBaseScope,
+    StandInCommandApproval, StandInPermissionMode, StandInTaskPermissions,
+    FULL_KB_TOOL_ACCESS_MODE,
 };
 pub use openai::{
     map_request_model, OpenAIResponsesRequest, ProtocolError, LEGACY_SESSION_FALLBACK,

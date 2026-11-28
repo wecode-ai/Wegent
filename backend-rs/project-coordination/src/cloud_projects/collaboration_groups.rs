@@ -63,6 +63,8 @@ WHERE kinds.kind = 'CollaborationGroup' AND kinds.is_active IS true AND resource
 /// numeric and the timestamps render as pydantic naive datetimes.
 #[derive(Debug, Serialize)]
 struct CollaborationGroupItem {
+    binding_required: bool,
+    personal_team_managed: bool,
     id: String,
     workspace_id: String,
     owner_type: String,
@@ -234,6 +236,8 @@ fn group_response(
     let status_field = |key: &str| status_value.and_then(|status| status.get(key));
 
     Ok(CollaborationGroupItem {
+        binding_required: status_field("state").and_then(Value::as_str) == Some("binding_required"),
+        personal_team_managed: payload["metadata"]["personalTeamSource"].is_object(),
         id: row.id.to_string(),
         workspace_id: workspace_id.to_string(),
         owner_type: owner_type.to_string(),
@@ -385,13 +389,15 @@ mod tests {
                         "stages": [],
                         "executionRequirements": {"required_tags": ["t"]}
                     },
-                    "status": {"state": "active", "version": 3}
+                    "metadata": {"personalTeamSource": {"revision": 1}},
+                    "status": {"state": "binding_required", "version": 3}
                 }),
             ),
             353932,
             "8308220868516891581",
         )
         .unwrap();
+        assert!(item.personal_team_managed && item.binding_required);
         assert_eq!(item.owner_type, "project");
         assert_eq!(item.owner_id, "8308220868516891581");
         assert_eq!(item.id, "8300000000000000001");
@@ -412,6 +418,7 @@ mod tests {
             "8308220868516891581",
         )
         .unwrap();
+        assert!(!item.personal_team_managed && !item.binding_required);
         assert_eq!(item.owner_type, "workspace");
         assert_eq!(item.owner_id, "353932");
         // Missing spec fields fall back to the source defaults.

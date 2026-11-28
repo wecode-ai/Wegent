@@ -409,7 +409,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         }
     };
     let (bot_role, team_member_prompt) =
-        team_member_context(&team.json.0, &bot.name, &bot.namespace);
+        team_member_context(&team.json.0, &turn.task_json, &bot.name, &bot.namespace);
     let request_id = request_id();
     let persisted_options = turn
         .task_json
@@ -466,6 +466,10 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         turn.created_git_repository.as_ref(),
     )
     .await?;
+    request.device_execution_attempt_id = Some(device_attempt_id(
+        &turn.task_json,
+        turn.assistant_subtask_id,
+    ));
     request.enable_clarification = turn.options.enable_clarification;
     if let Some(options) = model_options.and_then(Value::as_object) {
         use crate::responses::create::wework::reasoning_from_model_options;
@@ -543,6 +547,8 @@ fn created_task(
         project_id: turn.project_id,
     })
 }
+
+pub(super) use wegent_execution_completion::delivery::device_attempt_id;
 
 /// `get_request_id()`'s 8-character request context (`uuid4().hex[:8]`).
 fn request_id() -> String {

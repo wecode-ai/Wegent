@@ -45,12 +45,10 @@ where
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
         let connection_snapshot = Arc::clone(&self.connection_snapshot);
-        let cancellations = self.cancellations.clone();
         Arc::new(move |payload| {
             let runner = runner.clone();
             let config = Arc::clone(&config);
             let connection_snapshot = Arc::clone(&connection_snapshot);
-            let cancellations = cancellations.clone();
             Box::pin(async move {
                 write_executor_log_line(&format_executor_log(
                     "task:execute received",
@@ -86,7 +84,10 @@ where
                     return None;
                 };
                 normalize_local_task_request(&mut request, &config);
-                cancellations.register_task(&request);
+                if parse_attempt(request.extra.get("execution_attempt_id")).is_err() {
+                    write_executor_log_line("task:execute ignored for malformed attempt identity");
+                    return None;
+                }
                 let result = runner.submit(request).await;
                 write_executor_log_line(&format_executor_log(
                     "task:execute submit result",
@@ -101,15 +102,25 @@ where
     }
 
     pub(super) fn cancel_handler(&self) -> EventHandler {
-        let cancellations = self.cancellations.clone();
         let task_controller = self.task_controller.clone();
+        let config = self.client.config.clone();
+        let snapshot = self.connection_snapshot.clone();
         Arc::new(move |payload| {
-            let cancellations = cancellations.clone();
             let task_controller = task_controller.clone();
+            let config = config.clone();
+            let snapshot = snapshot.clone();
             Box::pin(async move {
+                task_config_from_snapshot(&config, &snapshot)?;
                 let task_id = id_field(&payload, "task_id")?;
-                let subtask_id = payload.get("subtask_id").and_then(id_value_string);
-                cancellations.cancel_task(task_id.clone(), subtask_id.clone());
+                let attempt = parse_attempt(payload.get("execution_attempt_id")).ok()?;
+                let subtask_id = match payload.get("subtask_id") {
+                    None | Some(Value::Null) if attempt.is_none() => None,
+                    Some(value) => Some(tasks::platform_command_id(
+                        &id_value_string(value)?,
+                        attempt,
+                    )),
+                    None => return None,
+                };
                 if let Some(controller) = task_controller {
                     let _ = controller.cancel_task(task_id, subtask_id).await;
                 }
@@ -121,16 +132,18 @@ where
     pub(super) fn close_session_handler(&self) -> EventHandler {
         let task_controller = self.task_controller.clone();
         let client = self.client.clone();
+        let snapshot = self.connection_snapshot.clone();
         Arc::new(move |payload| {
             let task_controller = task_controller.clone();
             let client = client.clone();
+            let snapshot = snapshot.clone();
             Box::pin(async move {
+                task_config_from_snapshot(&client.config, &snapshot)?;
                 let Some(task_id) = id_field(&payload, "task_id") else {
                     return Some(json!({"success": false, "error": "task_id is required"}));
                 };
                 if let Some(controller) = task_controller {
                     let _ = controller.close_task_session(task_id).await;
-                    client.set_running_task_ids(controller.running_task_ids());
                 }
                 let _ = client.send_heartbeat(client.config.heartbeat_timeout).await;
                 Some(json!({"success": true}))
@@ -625,6 +638,23 @@ where
     }
 }
 
+fn parse_attempt(value: Option<&Value>) -> Result<Option<&str>, ()> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if !id.is_empty() && id.trim() == id => Ok(Some(id.as_str())),
+        _ => Err(()),
+    }
+}
+
+pub(super) fn matches_task_connection(
+    config: &LocalBackendConfig,
+    connection: &ConnectionConfig,
+) -> bool {
+    connection.backend_url == config.backend_url
+        && connection.socket_url == config.socket_url
+        && super::config::normalize_token(&connection.auth_token) == config.auth_token
+}
+
 fn task_config_from_snapshot(
     config: &LocalBackendConfig,
     snapshot: &Mutex<Option<ConnectionConfig>>,
@@ -633,10 +663,7 @@ fn task_config_from_snapshot(
         .lock()
         .expect("backend connection snapshot lock")
         .clone()?;
-    if connection.backend_url != config.backend_url
-        || connection.socket_url != config.socket_url
-        || super::config::normalize_token(&connection.auth_token) != config.auth_token
-    {
+    if !matches_task_connection(config, &connection) {
         return None;
     }
     let mut config = config.clone();

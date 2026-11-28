@@ -2396,6 +2396,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     )
     assert claimed is not None
     assert claimed.runtime_selection == {
+        "team_ref": bot.metadata_json["teamRef"],
         "runtime_source": "agent_default",
         "runtime_profile_id": bot.metadata_json["default_runtime_profile_id"],
         "runtime_profile_version": 1,
@@ -5419,6 +5420,7 @@ def test_waiting_execution_can_select_owned_runtime_once(
         "pending_approval" if mode == "manual_approval" else "queued"
     )
     assert selected.runtime_selection == {
+        "team_ref": bot.metadata_json["teamRef"],
         "runtime_source": "selected",
         "runtime_profile_id": profile["id"],
         "runtime_profile_version": 1,

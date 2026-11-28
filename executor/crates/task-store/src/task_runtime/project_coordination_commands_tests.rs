@@ -243,10 +243,7 @@ fn command_admits_real_group_work_with_verified_actor_and_original_issue() {
     assert_eq!(payload["project_coordination"]["userId"], 7);
     assert_eq!(payload["project_coordination"]["deviceId"], "runner-a");
     assert!(payload.get("automation_run_id").is_none());
-    assert_eq!(
-        payload["memberRuntimeProfiles"].as_array().unwrap().len(),
-        2
-    );
+    assert!(payload.get("memberRuntimeProfiles").is_none());
     let issue = fixture
         .store
         .get_task(&fixture.project.id, &fixture.issue.id)
@@ -676,20 +673,17 @@ fn automatic_admission_keeps_model_readiness_and_native_approval_policy() {
             [&missing.member],
         )
         .unwrap();
+    assert!(missing.dispatch("missing-policy").unwrap()["accepted"] == true);
+    let manager = missing.claim();
+    missing.start(&manager);
+    let assignment = json!({"round_id":"round-1","items":[{"assignment_id":"member","title":"Review","instructions":"Review","assignee_type":"agent","assignee_id":missing.member}]});
     assert!(missing
-        .dispatch("missing-policy")
+        .store
+        .submit_collaboration_round(manager.runtime_task_id.as_deref().unwrap(), &assignment)
         .unwrap_err()
         .to_string()
         .contains("RUNNER_CONFIGURATION_REQUIRED"));
-    assert_eq!(missing.count(), 0);
-    assert_eq!(
-        missing
-            .store
-            .get_task(&missing.project.id, &missing.issue.id)
-            .unwrap()
-            .metadata,
-        missing.issue.metadata
-    );
+    assert_eq!(missing.count(), 1);
     let fixture = Fixture::new();
     fixture.store.connection().unwrap().execute("UPDATE loop_items SET metadata=json_set(metadata,'$.execution_mode','manual_approval') WHERE id=?1",[&fixture.leader]).unwrap();
     let receipt = fixture.dispatch("needs-approval").unwrap();

@@ -354,27 +354,28 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn().unwrap();
-    let mut rpc = JsonRpcConnection::new(
-        child.stdin.take().unwrap(),
-        CodexStdout::new(child.stdout.take().unwrap(), None),
-        1,
-    )
-    .with_runtime_notifications(Some(hub.clone()));
-    let start = rpc.read_message().await.unwrap();
-    assert_eq!(start["method"], "turn/started");
-    let native_start = runtime.try_recv().unwrap();
+    let stdout = CodexStdout::new(child.stdout.take().unwrap(), None);
+    let handle = CodexAppServerHandle {
+        stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub.clone(),
+    };
+    let reader = tokio::spawn(read_persistent_codex_app_server_stdout(stdout, handle));
+    let native_start = runtime.recv().await.unwrap();
+    assert_eq!(native_start["method"], "turn/started");
     assert_eq!(native_start["params"]["threadId"], "named-thread");
     assert_eq!(native_start.process_generation(), hub.process_generation);
-    assert_eq!(rpc.read_message().await.unwrap()["id"], 1);
-    assert!(matches!(
-        runtime.try_recv(),
-        Err(mpsc::error::TryRecvError::Empty)
-    ));
-    let approval = rpc.read_message().await.unwrap();
-    assert_eq!(runtime.try_recv().unwrap()["id"], 2);
-    rpc.publish_runtime_notification(elicitation::settled(&approval, "expired", None))
+    let approval = runtime.recv().await.unwrap();
+    assert_eq!(approval["id"], 2);
+    reader.await.unwrap();
+    assert_eq!(
+        runtime.recv().await.unwrap()["method"],
+        "codex/app-server/exited"
+    );
+    assert!(runtime.try_recv().is_err());
+    hub.send_runtime(elicitation::settled(&approval, "expired", None).into())
         .await;
-    let settled = runtime.try_recv().unwrap();
+    let settled = runtime.recv().await.unwrap();
     assert_eq!(settled["method"], "wegent/approval/settled");
     assert_eq!(settled["params"]["interactionStatus"], "expired");
     assert_eq!(
@@ -1315,6 +1316,31 @@ async fn codex_app_server_starts_beyond_windows_max_path() {
         .unwrap()
         .unwrap();
     assert!(status.success());
+}
+
+#[test]
+fn private_process_defers_mcp_approval_until_the_thread_binds_its_transport() {
+    let mut config = CodexLaunchConfig::default();
+    config.config_overrides.extend([
+        "mcp_servers={}".into(),
+        "mcp_servers.probe.default_tools_approval_mode=\"writes\"".into(),
+    ]);
+    config.thread_config.insert(
+        "mcp_servers.probe.url".into(),
+        json!("http://127.0.0.1/probe"),
+    );
+    let command = codex_app_server_command("codex", Path::new("/tmp"), &config);
+    let args: Vec<_> = command.as_std().get_args().collect();
+    assert!(args.iter().any(|arg| *arg == "mcp_servers={}"));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.to_string_lossy().contains("probe")));
+    let mut params = Map::new();
+    append_thread_launch_params(&mut params, &config);
+    assert_eq!(
+        params["config"]["mcp_servers"]["probe"],
+        json!({"url":"http://127.0.0.1/probe", "default_tools_approval_mode":"writes"})
+    );
 }
 
 #[test]
@@ -2847,6 +2873,54 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 }
 
 #[test]
+fn coordinate_roles_keep_their_snapshot_across_model_and_prompt_changes() {
+    let home = tempfile::tempdir().unwrap();
+    let mut request = ExecutionRequest {
+        bot: json!([{"name":"primary"}, {"id":7, "name":"Code Reviewer", "system_prompt":"first", "shell_type":"Codex", "agent_config":{"env":{"model_id":"review-model"}}}]),
+        ..Default::default()
+    };
+    request.extra.insert("mode".into(), json!("coordinate"));
+    let original = coordinate_role_overrides(&request, home.path()).unwrap();
+    assert!(original.iter().any(|item| item.contains("code-reviewer-7")));
+    request.extra.remove("mode");
+    request
+        .extra
+        .insert("collaboration_model".into(), json!("coordinate"));
+    assert!(codex_collaboration_mode(&request).is_none());
+    for mode in ["default", "plan"] {
+        request
+            .extra
+            .insert("collaborationMode".into(), json!(mode));
+        assert_eq!(
+            coordinate_role_overrides(&request, home.path()).unwrap(),
+            original
+        );
+        assert_eq!(codex_collaboration_mode(&request), Some(mode));
+    }
+    let contents = || {
+        std::fs::read_dir(home.path().join("wegent-team-roles"))
+            .unwrap()
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let initial = contents();
+    assert_eq!(initial.len(), 1);
+    assert!(initial[0].contains("review-model"));
+    request.bot[1]["system_prompt"] = json!("second");
+    assert_ne!(
+        coordinate_role_overrides(&request, home.path()).unwrap(),
+        original
+    );
+    assert!(contents().contains(&initial[0]));
+    request
+        .extra
+        .insert("collaborationMode".into(), json!("single"));
+    assert!(coordinate_role_overrides(&request, home.path())
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn single_collaboration_mode_disables_codex_native_subagents() {
     let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
@@ -3021,11 +3095,23 @@ fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origin
             request
                 .extra
                 .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
+            request
+                .extra
+                .insert("collaboration_model".into(), json!("solo"));
+            assert!(codex_collaboration_config_overrides(&request).is_empty());
             let config = collaboration::thread_config(&request);
             assert_eq!(config["agents.enabled"], true);
             assert_eq!(config["features.multi_agent_v2"], true);
             assert!(collaboration::thread_config(&request)
                 .contains_key("features.multi_agent_v2.multi_agent_mode_hint_text"));
+            request
+                .extra
+                .insert("collaborationMode".into(), json!("single"));
+            assert_eq!(codex_collaboration_config_overrides(&request).len(), 3);
+            assert_ne!(
+                collaboration::thread_config(&request).get("agents.enabled"),
+                Some(&json!(true))
+            );
         }
     }
 }
@@ -4162,7 +4248,7 @@ fn unavailable_managed_mcps_are_omitted_instead_of_creating_invalid_transports()
         task_id: "42".into(),
         ..Default::default()
     };
-    let configs = runtime_capabilities::managed_mcp_configs(&request).unwrap();
+    let configs = runtime_capabilities::managed_mcp_configs_for_shell(&request, true).unwrap();
     assert!(
         configs.len() < 4,
         "the request must contain an unavailable managed service"
@@ -4430,6 +4516,7 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
         Value::String("default".to_owned()),
     );
     let launch_config = CodexLaunchConfig {
+        thread_model: Some("gpt-5.6-luna".to_owned()),
         effort: Some("medium".to_owned()),
         ..CodexLaunchConfig::default()
     };
@@ -4448,6 +4535,21 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
         "medium"
     );
     assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
+
+    request.model_config = Value::Null;
+    let resumed = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    assert!(resumed.get("model").is_none());
+    assert_eq!(
+        resumed["collaborationMode"]["settings"]["model"],
+        "gpt-5.6-luna"
+    );
+    let unresolved = turn_start_params(
+        "thread-1",
+        &request,
+        &CodexLaunchConfig::default(),
+        Vec::new(),
+    );
+    assert!(unresolved.get("collaborationMode").is_none());
 }
 
 #[test]
@@ -5006,22 +5108,34 @@ async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers(
     restrict_stand_in_approval(&mut message);
     assert_eq!(message["params"]["expiresAtUnixMs"], deadline);
     for (answer, action) in [("Allow", "accept"), ("Allow for this session", "decline")] {
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1);
         sender
-            .send(json!({"answers":{"__mcp_approval":{"answers":[answer]}}}))
+            .send(json!({"requestId":71,"answers":{"__mcp_approval":{"answers":[answer]}}}))
             .await
             .unwrap();
-        let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
-            .await
-            .unwrap();
+        let result = url_elicitation::shared_response(
+            &message,
+            Some(InteractionAnswerRouter::new(receiver)),
+            "71".to_owned(),
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(result.result["action"], action);
         assert!(result.result["_meta"]["persist"].is_null());
     }
     message["params"]["expiresAtUnixMs"] = json!(0);
-    let (_sender, mut receiver) = mpsc::channel(1);
-    let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
-        .await
-        .unwrap();
+    let (_sender, receiver) = mpsc::channel(1);
+    let result = url_elicitation::shared_response(
+        &message,
+        Some(InteractionAnswerRouter::new(receiver)),
+        "71".to_owned(),
+        false,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(result.result["action"], "cancel");
     assert_eq!(result.status, "expired");
 }

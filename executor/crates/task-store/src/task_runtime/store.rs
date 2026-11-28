@@ -29,6 +29,7 @@ mod issue_badges;
 pub mod milestones;
 mod my_work;
 mod ordering;
+mod personal_team_project;
 #[path = "project_coordination.rs"]
 mod project_coordination;
 #[path = "project_coordination_commands.rs"]
@@ -52,9 +53,6 @@ use super::model::{
 mod local_automation;
 pub(super) use local_automation::on_status_changed;
 pub(super) use project_status::runtime_transition_status;
-
-#[path = "runner_dispatch.rs"]
-mod runner_dispatch;
 
 #[cfg(test)]
 #[path = "runner_routing_tests.rs"]
@@ -418,10 +416,12 @@ use binding_rows::insert_chat_agent;
 use binding_rows::local_workflow_stage_snapshot;
 use binding_rows::map_task_binding;
 use binding_rows::validate_local_workflow_task_binding;
-use collaboration::collaboration_agent;
 use collaboration::collaboration_group;
 use collaboration::dispatch_collaboration_group_assignment;
 use collaboration::record_assignment_change;
+use collaboration::{
+    collaboration_agent, has_active_project_team_binding, has_project_team_binding,
+};
 use execution_payload::cancel_active_executions;
 use execution_payload::local_execution_runtime_payload;
 use execution_payload::update_agent_comment;

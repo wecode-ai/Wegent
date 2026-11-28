@@ -305,6 +305,7 @@ class LoopItemExecutionBatchItem(ProjectChatSchema):
     instructions: str = Field(min_length=1, max_length=100_000)
     assignee_type: Literal["agent", "human"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    model_id: str | None = Field(default=None, max_length=255)
     workflow_stage_id: str | None = Field(default=None, max_length=128)
 
 
@@ -314,8 +315,11 @@ class LoopItemExecutionBatchCreate(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)
     round_id: str = Field(min_length=1, max_length=128)
-    manager_runtime_task_id: str = Field(min_length=1, max_length=255)
-    manager_agent_id: str = Field(min_length=1, max_length=128)
+    manager_turn_id: str | None = Field(default=None, min_length=1, max_length=255)
+    manager_runtime_task_id: str | None = Field(
+        default=None, min_length=1, max_length=255
+    )
+    manager_agent_id: str | None = Field(default=None, min_length=1, max_length=128)
     items: list[LoopItemExecutionBatchItem] = Field(min_length=1, max_length=20)
 
 
@@ -324,10 +328,12 @@ class LoopItemExecutionManagerDecision(ProjectChatSchema):
 
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)
-    manager_agent_id: str = Field(min_length=1, max_length=128)
+    manager_agent_id: str | None = Field(default=None, min_length=1, max_length=128)
+    manager_turn_id: str | None = Field(default=None, min_length=1, max_length=255)
     manager_runtime_task_id: str | None = Field(
         default=None, min_length=1, max_length=255
     )
+    round_id: str | None = Field(default=None, min_length=1, max_length=128)
     idempotency_key: str = Field(min_length=1, max_length=255)
     target_status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
     reason: str = Field(min_length=1, max_length=2_000)

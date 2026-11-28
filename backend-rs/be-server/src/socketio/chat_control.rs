@@ -72,10 +72,7 @@ pub(crate) async fn cancel(
             info.status
         ))));
     }
-    let device_id = info
-        .executor_name
-        .as_deref()
-        .and_then(|name| name.strip_prefix("device-"));
+    let device_id = info.device_id();
     let shell_type = data
         .get("shell_type")
         .and_then(Value::as_str)
@@ -83,11 +80,17 @@ pub(crate) async fn cancel(
     if let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await? {
         return Ok(Reply::payload(ack));
     }
-    if !mark_cancelling(state, info.task_id, subtask_id).await? {
+    let expected = match data.get("execution_attempt_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) if !id.is_empty() && id.trim() == id => Some(id.as_str()),
+        _ => return Ok(Reply::payload(error_ack("Invalid execution_attempt_id"))),
+    };
+    let Some(attempt) = mark_attempt_cancelling(state, info.task_id, subtask_id, expected).await?
+    else {
         return Ok(Reply::payload(error_ack("Subtask is no longer running")));
-    }
+    };
     let delivered = deliver_cancel(
-        state, runtime, user_id, &info, subtask_id, device_id, shell_type,
+        state, runtime, user_id, &info, subtask_id, shell_type, &attempt,
     )
     .await?;
     if device_id.is_none() && shell_type == "Chat" {
@@ -103,7 +106,14 @@ pub(crate) async fn cancel(
             );
             return Ok(Reply::payload(json!({"success": true, "finalized": true})));
         }
-        process_local_cancellation(state, info.task_id, subtask_id, client_partial_content).await?;
+        process_local_cancellation(
+            state,
+            info.task_id,
+            subtask_id,
+            client_partial_content,
+            &attempt,
+        )
+        .await?;
         // The missing consumer cannot run the SSE finally branch, so close its
         // cancel lifecycle explicitly after the local terminal transition.
         wegent_execution_runtime::stream_state::unregister_stream(state.redis.as_ref(), subtask_id)
@@ -119,7 +129,7 @@ pub(crate) async fn cancel(
     // Keep the recovery fallback for that path while Chat waits for its SSE
     // consumer above.
     if !stream_alive(state, info.task_id, subtask_id).await? {
-        process_local_cancellation(state, info.task_id, subtask_id, "").await?;
+        process_local_cancellation(state, info.task_id, subtask_id, "", &attempt).await?;
         tracing::info!(
             task_id = info.task_id,
             subtask_id,
@@ -175,6 +185,7 @@ async fn process_local_cancellation(
     task_id: i64,
     subtask_id: i64,
     client_partial_content: &str,
+    attempt: &str,
 ) -> Result<(), ClientError> {
     // Server-side streaming state can be newer than the client's rendered
     // snapshot, especially when the consumer dies after flushing deltas.
@@ -194,10 +205,11 @@ async fn process_local_cancellation(
         task_id,
         subtask_id,
     );
-    let event = crate::internal_callback::event::ExecutionEvent {
-        result: Some(json!({ "value": partial_content })),
-        ..event
-    };
+    let mut event = event;
+    event.result = Some(json!({ "value": partial_content }));
+    event
+        .data
+        .insert("execution_attempt_id".into(), json!(attempt));
     crate::internal_callback::process_execution_event(state, event, None, None)
         .await
         .map_err(|_| internal_error())
@@ -253,6 +265,12 @@ struct CancelInfo {
     executor_name: Option<String>,
 }
 
+impl CancelInfo {
+    fn device_id(&self) -> Option<&str> {
+        self.executor_name.as_deref()?.strip_prefix("device-")
+    }
+}
+
 /// `_get_subtask_for_cancel`.
 ///
 /// `subtask_store.get_by_id` shares the sharded full-row lookup with
@@ -278,30 +296,46 @@ async fn subtask_for_cancel(
 }
 
 /// Record cancellation under the same parent lock used by terminal callbacks.
+#[cfg(test)]
 pub(crate) async fn mark_cancelling(
     state: &AppState,
     task_id: i64,
     subtask_id: i64,
 ) -> Result<bool, ClientError> {
+    Ok(mark_attempt_cancelling(state, task_id, subtask_id, None)
+        .await?
+        .is_some())
+}
+
+async fn mark_attempt_cancelling(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    expected: Option<&str>,
+) -> Result<Option<String>, ClientError> {
     use crate::internal_callback::completion::dispatchable_task_status;
 
     let tables = crate::internal_callback::tables(state);
     state.mysql.route(crate::task_routing::ByTaskId(task_id as u64))
         .with_transaction(async |tx| {
             let Some(mut payload) = lock_cancel_task(tx, tables.tasks, task_id).await? else {
-                return Ok(false);
+                return Ok(None);
             };
+            let attempt = super::chat_trigger::device_attempt_id(&payload, subtask_id);
+            if expected.is_some_and(|expected| expected != attempt) {
+                return Ok(None);
+            }
             let already_cancelling = payload.pointer("/status/status").and_then(Value::as_str)
                 == Some("CANCELLING");
             if !already_cancelling && dispatchable_task_status(&payload).is_none() {
-                return Ok(false);
+                return Ok(None);
             }
             let live: Option<i64> = tx.fetch_optional(
                 format!("SELECT id FROM {} WHERE id = ? AND task_id = ? AND status IN ('PENDING', 'RUNNING') FOR UPDATE", tables.subtasks),
                 (subtask_id, task_id),
             ).await?;
             if live.is_none() {
-                return Ok(false);
+                return Ok(None);
             }
             if !already_cancelling {
                 let now = local_isoformat();
@@ -314,7 +348,7 @@ pub(crate) async fn mark_cancelling(
                     (python_json_value(&payload), task_update_timestamp(), task_id),
                 ).await?;
             }
-            Ok(true)
+            Ok(Some(attempt))
         })
         .await
         .map_err(|error| {
@@ -354,12 +388,12 @@ async fn deliver_cancel(
     user_id: i64,
     info: &CancelInfo,
     subtask_id: i64,
-    device_id: Option<&str>,
     shell_type: &str,
+    attempt: &str,
 ) -> Result<bool, ClientError> {
-    if let Some(device_id) = device_id {
+    if let Some(device_id) = info.device_id() {
         let room = format!("device:{user_id}:{device_id}");
-        let payload = json!({"task_id": info.task_id, "subtask_id": subtask_id});
+        let payload = json!({"task_id": info.task_id, "subtask_id": subtask_id, "execution_attempt_id": attempt});
         if let Err(error) = runtime.emitters().task_cancel(&room, &payload).await {
             tracing::warn!(%error, "task:cancel local delivery failed");
         }

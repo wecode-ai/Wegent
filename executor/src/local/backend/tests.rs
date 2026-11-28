@@ -451,6 +451,23 @@ fn local_project_request_keeps_device_without_backend_context() {
     assert!(request.runtime_auth_token.is_none());
 }
 
+#[test]
+fn project_group_execution_keeps_callback_without_borrowing_device_login() {
+    let config = backend_config("local-device");
+    let mut request = ExecutionRequest {
+        auth_token: Some("dispatch-only".into()),
+        ..Default::default()
+    };
+    request.retain_project_group_scope();
+    normalize_local_task_request(&mut request, &config);
+    assert_eq!(request.auth_token.as_deref(), Some("dispatch-only"));
+    assert!(request.runtime_auth_token.is_none());
+    request.auth_token = None;
+    normalize_local_task_request(&mut request, &config);
+    assert!(request.auth_token.is_none());
+    assert_eq!(request.device_id.as_deref(), Some("local-device"));
+}
+
 struct RouteRegistrationRuntimeWorkHandler;
 
 struct PersonalTaskTestHandler(AtomicUsize);

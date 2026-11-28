@@ -124,7 +124,19 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
+export interface IssueCoordination {
+  waitingForMembers?: boolean;
+  assignments?: { assignmentId: string; assigneeId: string; assigneeType: "human" | "agent"; status: string }[];
+  dispatchId: string;
+  roundId: string;
+  canCoordinate: boolean;
+  leader: CollaborationGroupMember;
+  members: CollaborationGroupMember[];
+  stages: CollaborationGroupStage[];
+}
+
 export interface CollaborationIssue {
+  coordination?: IssueCoordination | null;
   resource_participants?: Array<{
     kind: "agent" | "group";
     id: number;
@@ -363,6 +375,8 @@ export interface CollaborationGroupStage {
 }
 
 export interface CollaborationGroup {
+  binding_required?: boolean;
+  personal_team_managed?: boolean;
   id: string;
   workspace_id: string;
   owner_type: "workspace" | "project";

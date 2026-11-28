@@ -700,7 +700,10 @@ impl LocalTaskStore {
                 user,
                 &profile_device,
                 settings,
-                super::personal_stand_in::StandInSaveOptions { backend },
+                super::personal_stand_in::StandInSaveOptions {
+                    workspace_owner: false,
+                    backend,
+                },
             )?;
         }
         tx.execute(

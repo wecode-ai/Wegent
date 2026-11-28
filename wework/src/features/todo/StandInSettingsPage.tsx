@@ -6,6 +6,7 @@ import {
   roleSelectsProject,
   standInRoleName,
 } from '@/api/personalStandIn'
+import { StandInTeamCopyDialog } from './StandInTeamCopyDialog'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
@@ -39,8 +40,10 @@ import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
+import { StandInCreateTeam } from './StandInCreateTeam'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
+import { useReferencedTeamPrompt } from './useReferencedTeamPrompt'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
@@ -50,7 +53,7 @@ import {
   rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import { projectRefKey, updateProjectSource } from './standInProjects'
-import { createStandInRoleDraft } from './standInRoleDraft'
+import { createStandInRoleDraft, editedReferencedTeam } from './standInRoleDraft'
 import {
   StandInSettingsActions,
   StandInSettingsEntry,
@@ -204,6 +207,13 @@ function StandInSettingsEditor({
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     draft?.roles[0]
   const previousRole = saved?.roles.find(row => row.id === role?.id)
+  const teamPrompt = useReferencedTeamPrompt(
+    services.standInApi,
+    userId,
+    state.loadedDeviceId,
+    previousRole?.id,
+    previousRole?.teamRef
+  )
   const changingDevice =
     role &&
     (previousRole
@@ -260,7 +270,10 @@ function StandInSettingsEditor({
     [onCalendarViewChange]
   )
   const dirty =
-    Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty || connectionDraftDirty
+    Boolean(draft && saved && !dequal(draft, saved)) ||
+    teamPrompt.edited ||
+    scheduleDirty ||
+    connectionDraftDirty
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
@@ -329,9 +342,10 @@ function StandInSettingsEditor({
   }))
   const savedRole = saved?.roles.find(row => row.id === role?.id)
   const scopeView = view === 'connections' && connectionScopeTitle ? connectionView : null
-  const save = async (disconnectProject = false) => {
+  const [pendingTeamCopy, setPendingTeamCopy] = useState<boolean | null>(null)
+  const save = async (disconnectProject = false, copyTeam = false) => {
     if (!draft || !role || moving || connectionDraftDirty) return
-    if (!saved?.roles.some(value => value.id === role.id) && !role.name.trim()) {
+    if (!savedRole && !role.name.trim()) {
       if (view === 'project') openView('create')
       else if (view === 'advanced' || view === 'connections') closeView()
       setRoleNameError(true)
@@ -351,7 +365,7 @@ function StandInSettingsEditor({
             ...connectionConfigurationChanges(savedRole, role, scopeView),
           }
         : null
-    const value =
+    let value =
       scopeSettings && saved
         ? {
             ...saved,
@@ -390,8 +404,21 @@ function StandInSettingsEditor({
                 ),
               }
             : draft
+    const editedPrompt = !scopeSettings && teamPrompt.edited ? teamPrompt.prompt : undefined
+    if (editedPrompt !== undefined)
+      value = {
+        ...value,
+        roles: value.roles.map(row =>
+          row.id === role.id ? { ...row, prompt: editedPrompt } : row
+        ),
+      }
     const changedRole = value.roles.find(row => row.id === role.id)!
+    if (!copyTeam && (editedPrompt !== undefined || editedReferencedTeam(savedRole, changedRole))) {
+      setPendingTeamCopy(disconnectProject)
+      return
+    }
     const definitionChange = {
+      ...(copyTeam ? { copyTeam: true, copyTeamPrompt: editedPrompt !== undefined } : {}),
       kind: role.id === createdRoleId ? ('create' as const) : ('update' as const),
       roleId: role.id,
     }
@@ -477,11 +504,7 @@ function StandInSettingsEditor({
   const receivingSources = Boolean(
     role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
   )
-  const canDeleteRole =
-    initialProfileId &&
-    !initialProject &&
-    view === 'main' &&
-    saved?.roles.some(row => row.id === role?.id)
+  const canDeleteRole = initialProfileId && !initialProject && view === 'main' && savedRole
 
   const deviceControl = role && (
     <StandInDeviceSelect
@@ -497,6 +520,7 @@ function StandInSettingsEditor({
         updateRole(role.id, current => ({
           ...current,
           executionDeviceId: value,
+          ...(!savedRole && current.teamRef ? { teamRef: null, prompt: '' } : {}),
           model: undefined,
           modelOptions: undefined,
           workspace: undefined,
@@ -619,6 +643,24 @@ function StandInSettingsEditor({
       ) : draft && role ? (
         <>
           <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+            {view === 'create' && services.standInApi && executionDeviceId && (
+              <StandInCreateTeam
+                api={services.standInApi}
+                userId={userId}
+                deviceId={executionDeviceId}
+                teamRef={role.teamRef}
+                disabled={saving}
+                onSelect={team => {
+                  setRoleNameError(false)
+                  changeRole({
+                    ...role,
+                    teamRef: team?.id ?? null,
+                    prompt: team ? '' : role.prompt,
+                    name: role.name.trim() || team?.name || '',
+                  })
+                }}
+              />
+            )}
             {(view === 'main' || view === 'create') && (
               <label className="grid gap-2">
                 <span className="text-text-secondary">
@@ -664,18 +706,28 @@ function StandInSettingsEditor({
                 {t('standIn.personal.current_project', { project: initialProject.name })}
               </p>
             )}
-            {(view === 'main' || view === 'create') && (
+            {(view === 'main' || (view === 'create' && !role.teamRef)) && (
               <div className="space-y-2">
                 <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
-                <StandInRequirements
-                  key={role.id}
-                  role={role}
-                  runtimeWork={runtimeWork}
-                  services={services}
-                  onChange={update => updateRole(role.id, update)}
-                  disabled={saving}
-                  onSave={() => void save()}
-                />
+                {teamPrompt.error != null && (
+                  <StandInSettingsError
+                    error={getStandInErrorMessage(teamPrompt.error, 'load_environment_failed')}
+                    retry={{ testId: 'stand-in-team-prompt-retry', onClick: teamPrompt.retry }}
+                  />
+                )}
+                {teamPrompt.ready && (
+                  <StandInRequirements
+                    key={role.id}
+                    role={role}
+                    referencedPrompt={teamPrompt.linked ? teamPrompt.prompt : undefined}
+                    onReferencedPromptChange={teamPrompt.linked ? teamPrompt.setPrompt : undefined}
+                    runtimeWork={runtimeWork}
+                    services={services}
+                    onChange={update => updateRole(role.id, update)}
+                    disabled={saving}
+                    onSave={() => void save()}
+                  />
+                )}
               </div>
             )}
             {(view === 'main' || (view === 'create' && !initialProject)) && (
@@ -817,6 +869,15 @@ function StandInSettingsEditor({
                 {t('standIn.saved')}
               </p>
             )}
+            <StandInTeamCopyDialog
+              open={pendingTeamCopy !== null}
+              onClose={() => setPendingTeamCopy(null)}
+              onConfirm={() => {
+                const disconnect = pendingTeamCopy === true
+                setPendingTeamCopy(null)
+                void save(disconnect, true)
+              }}
+            />
             <ConfirmDialog
               open={confirmDiscard}
               destructive
@@ -863,6 +924,7 @@ function StandInSettingsEditor({
               prefix="stand-in"
               busy={saving}
               leading={
+                savedRole &&
                 !connectionDetailOpen &&
                 (footerLeading || canDeleteRole) && (
                   <>

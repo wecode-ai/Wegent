@@ -114,7 +114,7 @@ function extractText(value: unknown): string {
 
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>
-    return ['body', 'messages', 'system', 'input', 'content', 'text', 'prompt']
+    return ['body', 'messages', 'system', 'instructions', 'input', 'content', 'text', 'prompt']
       .map(key => extractText(obj[key]))
       .join(' ')
   }
@@ -726,11 +726,11 @@ const server = http.createServer((req, res) => {
     // Handle different endpoints
     if (req.url?.includes('/responses')) {
       if (toolScenario && scenarioStep) {
-        if (scenarioStep.toolCalls?.length) {
+        if (scenarioStep.toolCalls?.length || scenarioStep.preamble) {
           writeResponsesToolCalls(
             res,
             parsedBody,
-            resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
+            resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls ?? []),
             parsedBody?.model || 'mock-codex',
             scenarioStep.preamble,
             streamRule?.holdDone ? responseGate : undefined

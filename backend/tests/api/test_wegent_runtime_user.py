@@ -48,6 +48,28 @@ def test_get_wegent_runtime_user_returns_encrypted_task_user_info(
     assert isinstance(payload["expire_at"], int)
 
 
+def test_project_group_runtime_token_cannot_get_dispatchers_identity(
+    test_client, test_user
+):
+    token = create_task_token(
+        0,
+        0,
+        test_user.id,
+        test_user.user_name,
+        project_group_execution=True,
+    )
+    response = test_client.get(
+        "/api/users/me/wegent-runtime", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 401
+    assert "user" not in response.json()
+    headers = {"Authorization": f"Bearer {token}"}
+    assert test_client.get("/api/v1/resources", headers=headers).status_code == 403
+    issued = test_client.post("/api/v1/token-issuers/1/issue", json={}, headers=headers)
+    assert issued.status_code == 403
+    assert "access_token" not in issued.json()
+
+
 def test_get_wegent_runtime_user_rejects_missing_token(
     test_client: TestClient,
 ) -> None:

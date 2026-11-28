@@ -62,6 +62,8 @@ pub struct LoopItemResponse {
     pub status_history: Vec<Value>,
     pub approval: Option<Value>,
     pub human_task_binding: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<Value>,
     pub queued_at: Option<String>,
     pub execution_note: Option<String>,
     pub execution_error: Option<String>,
@@ -723,6 +725,55 @@ async fn response_values_in_context(
     )
     .await?;
 
+    let coordination = if can_view_detail
+        && let (Some(key), Some(group_id)) = (
+            metadata
+                .collaboration_group_assignment_key
+                .as_deref()
+                .filter(|key| !key.is_empty()),
+            metadata
+                .collaboration_group
+                .as_ref()
+                .and_then(|group| super::super::project_authority::integer(&group["id"])),
+        ) {
+        let dispatch = format!("collaboration-group:{group_id}:{key}");
+        let id = crate::project_group_access::coordination_key(
+            "issue_coordination",
+            &[&item.cloud_project_id, &item.id, &dispatch],
+        );
+        let root: Option<(String, brz_mysql::Json<Value>)> = {
+            state.mysql.fetch_optional("SELECT status,metadata FROM project_chat_messages WHERE message_id=? AND message_type='coordination'",(id,)).await.map_err(HttpError::internal)?
+        };
+        if let Some((status, root)) = root {
+            let group = &root.0["group"];
+            let (waiting, assignments) = match root.0["last_batch"].as_str() {
+                Some(batch) => crate::loop_item_executions::assignment_progress(
+                    state.mysql,
+                    &item.cloud_project_id,
+                    &item.id,
+                    batch,
+                )
+                .await
+                .map_err(HttpError::internal)?,
+                None => (false, Vec::new()),
+            };
+            let can_coordinate = permissions.execute
+                && !waiting
+                && status == "active"
+                && group["leader"]["kind"] == "human"
+                && crate::project_authority::integer(&group["leader"]["id"])
+                    == Some(i64::from(current_user.id));
+            Some(json!({
+                "dispatchId":dispatch, "roundId":root.0["round"].as_i64().unwrap_or(1).to_string(),
+                "leader":group["leader"], "members":group["members"], "stages":group["stages"],
+                "canCoordinate":can_coordinate, "waitingForMembers":waiting, "assignments":assignments
+            }))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     Ok(LoopItemResponse {
         id: item.id.clone(),
         cloud_project_id: item.cloud_project_id.clone(),
@@ -759,6 +810,7 @@ async fn response_values_in_context(
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
         human_task_binding,
+        coordination,
         queued_at: overlay
             .queued_at
             .or_else(|| json_string(metadata.queued_at.as_ref())),

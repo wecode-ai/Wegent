@@ -9,3 +9,5 @@ mod executions;
 pub use executions::ACTIVE_STATUSES;
 mod handler;
 mod statuses;
+pub(crate) use statuses::assignment_progress;
+pub use statuses::manager_round_outcomes;

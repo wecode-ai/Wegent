@@ -1,0 +1,842 @@
+//! Device-owned pipeline state. Each member runs as a separate native command.
+use super::*;
+use sha2::{Digest, Sha256};
+use wegent_protocol::pipeline::handoff_text;
+
+const STATE: &str = "personalPipeline";
+
+pub(super) fn project_pipeline_has_next_stage(link: &RuntimeTaskLink) -> bool {
+    let state = &link.runtime_handle[STATE];
+    state["claimId"].is_i64()
+        && state["phase"] != "finished"
+        && state["stage"]
+            .as_u64()
+            .and_then(|stage| stage.checked_add(1))
+            .and_then(|next| state["members"].get(next as usize))
+            .is_some()
+}
+
+pub(super) fn waiting_project_pipeline(link: &RuntimeTaskLink) -> bool {
+    let state = &link.runtime_handle[STATE];
+    state["claimId"].is_i64()
+        && state["phase"] == "waiting_input"
+        && !matches!(link.status.as_str(), "cancelled" | "failed" | "archived")
+}
+
+pub(super) fn strip_personal_bot_mcp(bots: &mut Value) {
+    for bot in bots.as_array_mut().into_iter().flatten() {
+        if bot["native_capability_scope"] == "bot" {
+            if let Some(fields) = bot.as_object_mut() {
+                fields.remove("mcp_servers");
+            }
+        }
+    }
+}
+
+fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String, AppIpcError> {
+    let invalid = || AppIpcError::new("invalid_team_stage", "Personal Team stage is unavailable");
+    let stage = state["stage"].as_u64().ok_or_else(invalid)? as usize;
+    let bot = state["members"].get(stage).ok_or_else(invalid)?;
+    let shell_changed = request
+        .bot
+        .get(0)
+        .is_some_and(|previous| previous["shell_type"] != bot["shell_type"]);
+    let provider_changed = bot
+        .get("model_provider")
+        .is_some_and(|provider| request.model_config.get("model_provider") != Some(provider));
+    if shell_changed || provider_changed {
+        // Resolve the new native provider through its own account on this device.
+        request.model_config = json!({});
+        for key in [
+            "submittedModelBinding",
+            "modelSelection",
+            "model_selection",
+            "runnerModelProvider",
+        ] {
+            request.extra.remove(key);
+        }
+    }
+    if let Some(provider) = bot["model_provider"].as_str() {
+        request.model_config["model_provider"] = json!(provider);
+    }
+    request.bot = json!([bot]);
+    request.system_prompt = crate::task_runtime::runner_routing::bot_instructions(
+        state["instructions"].as_str().unwrap_or_default(),
+        bot,
+    );
+    if let Some(model) = bot["model_id"].as_str() {
+        request.model_config["model_id"] = json!(model);
+    }
+    request
+        .extra
+        .insert("personalPipelineTurn".into(), json!([state["root"], stage]));
+    match bot["shell_type"].as_str() {
+        Some("Codex") => Ok("codex".into()),
+        Some("ClaudeCode") => Ok("claude_code".into()),
+        _ => Err(invalid()),
+    }
+}
+
+impl RuntimeWorkRpcHandler {
+    fn claimed_pipeline_members(
+        &self,
+        claim_id: i64,
+        task: &str,
+        origin: &Value,
+        team: Option<&Value>,
+        stage: Option<u64>,
+    ) -> Result<Value, AppIpcError> {
+        let denied =
+            || AppIpcError::new("permission_denied", "Project Pipeline claim is unavailable");
+        let project = origin["cloudProjectId"].as_str().ok_or_else(denied)?;
+        let agent = team.and_then(Value::as_str).ok_or_else(denied)?;
+        LocalTaskStore::open(self.task_store_path.as_ref())
+            .and_then(|store| {
+                store.claimed_pipeline_members(
+                    claim_id,
+                    &self.device_id,
+                    task,
+                    project,
+                    agent,
+                    stage,
+                )
+            })
+            .map_err(super::stand_in::settings_error)?
+            .ok_or_else(denied)
+    }
+
+    pub(super) fn restore_personal_bot_grants(
+        &self,
+        task: &str,
+        request: &mut ExecutionRequest,
+    ) -> Result<(), AppIpcError> {
+        if let Some(marker) = request.extra.get("personalPipelineTurn") {
+            let binding = self.store.read_task(task, |link| {
+                let state = &link.runtime_handle[STATE];
+                (
+                    link.runtime_handle["origin"].clone(),
+                    state["claimId"].as_i64(),
+                    json!([state["root"], state["stage"]]),
+                )
+            });
+            if let Some((origin, claim_id, current)) =
+                binding.filter(|(origin, _, _)| origin["projectStore"] == "local")
+            {
+                let stale =
+                    || AppIpcError::new("stale_stage", "Project Pipeline stage has changed");
+                if marker != &current {
+                    return Err(stale());
+                }
+                let stage = marker[1].as_u64().ok_or_else(stale)?;
+                let bot = self.claimed_pipeline_members(
+                    claim_id.ok_or_else(stale)?,
+                    task,
+                    &origin,
+                    request.extra.get("team_ref"),
+                    Some(stage),
+                )?;
+                if bot["id"].is_null() || bot["id"] != request.bot[0]["id"] {
+                    return Err(stale());
+                }
+                request.bot = json!([bot]);
+                return Ok(());
+            }
+        }
+        if request.bot[0]["native_capability_scope"] != "bot"
+            || !request
+                .extra
+                .get("team_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with("stand-in-team-"))
+        {
+            return Ok(());
+        }
+        let denied =
+            || AppIpcError::new("permission_denied", "Personal Team binding is unavailable");
+        let link = self.local_task_link(task).ok_or_else(denied)?;
+        let origin = &link.runtime_handle["origin"];
+        let user = super::stand_in_lifecycle::stand_in_owner(origin).ok_or_else(denied)?;
+        if request.extra.get("user_id").and_then(Value::as_i64) != Some(user) {
+            return Err(denied());
+        }
+        self.verify_local_stand_in_owner(user)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let role = origin["standInId"].as_str().unwrap_or("@primary");
+        let current = store
+            .owned_personal_role_team(user, &self.device_id, role)
+            .map_err(super::stand_in::settings_error)?;
+        if request.extra.get("team_ref") != current.get("id") {
+            return Err(denied());
+        }
+        let current_bots = current["bot"].as_array().ok_or_else(denied)?;
+        let stage = if let Some(marker) = request.extra.get("personalPipelineTurn") {
+            let saved = &link.runtime_handle[STATE];
+            if *marker != json!([saved["root"], saved["stage"]]) {
+                return Err(denied());
+            }
+            Some(marker[1].as_u64().ok_or_else(denied)? as usize)
+        } else {
+            None
+        };
+        let bots = request.bot.as_array_mut().ok_or_else(denied)?;
+        if bots.len() != stage.map_or(current_bots.len(), |_| 1) {
+            return Err(denied());
+        }
+        for (index, target) in bots.iter_mut().enumerate() {
+            let bot = current_bots
+                .get(stage.unwrap_or(index))
+                .filter(|bot| bot["id"] == target["id"])
+                .ok_or_else(denied)?;
+            for key in ["skills", "skill_refs", "mcp_servers"] {
+                target.as_object_mut().expect("validated Bot").remove(key);
+                if let Some(value) = bot.get(key) {
+                    target[key] = value.clone();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn begin_personal_pipeline(
+        &self,
+        turn: &mut SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let request = &mut turn.request;
+        if request
+            .extra
+            .get("collaboration_model")
+            .and_then(Value::as_str)
+            != Some("pipeline")
+            || !request.extra.get("team_ref").is_some_and(Value::is_string)
+        {
+            return Ok(());
+        }
+        let (prior, terminated, awaiting_reply, origin) = self
+            .store
+            .read_task(&turn.local_task_id, |link| {
+                (
+                    link.runtime_handle[STATE].clone(),
+                    matches!(link.status.as_str(), "failed" | "cancelled" | "archived"),
+                    link.interaction_status.is_some(),
+                    link.runtime_handle["origin"].clone(),
+                )
+            })
+            .unwrap_or_default();
+        let project = origin["projectStore"] == "local";
+        if turn.task_kind == Some(RuntimeTaskKind::Agent) && !project {
+            return Ok(());
+        }
+        if let Some(marker) = request.extra.get("personalPipelineTurn") {
+            if terminated
+                || marker != &json!([prior["root"], prior["stage"]])
+                || !matches!(
+                    prior["phase"].as_str(),
+                    Some("dispatching" | "active" | "waiting_input")
+                )
+            {
+                return Err(AppIpcError::new(
+                    "stale_stage",
+                    "Personal Team stage has changed",
+                ));
+            }
+            turn.runtime = stage_request(request, &prior)?;
+            return Ok(());
+        }
+        if !terminated
+            && (prior["phase"] == "waiting_input" || (prior["phase"] == "active" && awaiting_reply))
+        {
+            turn.runtime = stage_request(request, &prior)?;
+            return Ok(());
+        }
+        if !terminated
+            && matches!(
+                prior["phase"].as_str(),
+                Some("active" | "ready" | "dispatching" | "confirmation")
+            )
+        {
+            return Err(AppIpcError::new(
+                "pipeline_active",
+                "The personal Team already has a running pipeline",
+            ));
+        }
+        request.new_session = true;
+        turn.resume_thread_id = None;
+        turn.direct_thread_id = None;
+        let (claim_id, mut members) = if project {
+            let id = request
+                .extra
+                .get("localExecutionClaimId")
+                .or_else(|| request.extra.get("origin")?.get("executionId"))
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    AppIpcError::new("permission_denied", "Project Pipeline claim is unavailable")
+                })?;
+            let bots = self.claimed_pipeline_members(
+                id,
+                &turn.local_task_id,
+                &origin,
+                request.extra.get("team_ref"),
+                None,
+            )?;
+            (Some(id), bots)
+        } else {
+            (None, request.bot.clone())
+        };
+        if project
+            || request.extra["team_ref"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("stand-in-team-"))
+        {
+            strip_personal_bot_mcp(&mut members);
+        }
+        redact_execution_profile_secrets(&mut members);
+        let state = json!({"root":request.subtask_id,"stage":0,"phase":"active","members":members,"original":request.prompt,"instructions":request.system_prompt});
+        let mut state = state;
+        if let Some(id) = claim_id {
+            state["claimId"] = json!(id);
+        }
+        state["useSavedPermissions"] =
+            json!(request.extra.get("useSavedStandInTaskPermissions") == Some(&Value::Bool(true)));
+        turn.runtime = stage_request(request, &state)?;
+        self.store
+            .try_update_task(&turn.local_task_id, |link| {
+                link.runtime_handle[STATE] = state
+            })
+            .map_err(|e| AppIpcError::new("pipeline_save_failed", e.to_string()))?
+            .ok_or_else(|| AppIpcError::new("not_found", "Personal Task is unavailable"))?;
+        Ok(())
+    }
+
+    pub(super) fn settle_personal_pipeline(
+        &self,
+        task: &str,
+        request: &ExecutionRequest,
+        outcome: &ExecutionOutcome,
+    ) -> bool {
+        let Some(marker) = request.extra.get("personalPipelineTurn") else {
+            return false;
+        };
+        let mut phase = None;
+        let mut stale = false;
+        let updated = self.store.try_update_task(task, |link| {
+            let state = &mut link.runtime_handle[STATE];
+            if marker != &json!([state["root"], state["stage"]])
+                || !matches!(
+                    state["phase"].as_str(),
+                    Some("active" | "dispatching" | "waiting_input")
+                )
+                || matches!(link.status.as_str(), "cancelled" | "archived")
+            {
+                stale = true;
+                return;
+            }
+            let stage = state["stage"].as_u64().unwrap_or_default() as usize;
+            match outcome {
+                ExecutionOutcome::Completed { content }
+                    if state["members"].get(stage + 1).is_some() =>
+                {
+                    let member = &state["members"][stage];
+                    let confirmation = member
+                        .get("requireConfirmation")
+                        .or_else(|| member.get("require_confirmation"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let mode = member
+                        .get("contextPassing")
+                        .or_else(|| member.get("context_passing"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("none");
+                    let prompt = handoff_text(
+                        mode,
+                        state["original"].as_str().unwrap_or_default(),
+                        content,
+                    );
+                    state["handoff"] = json!(prompt);
+                    let next = if confirmation {
+                        "confirmation"
+                    } else {
+                        "ready"
+                    };
+                    phase = Some(next);
+                }
+                ExecutionOutcome::WaitingForUserInput { .. } if state["claimId"].is_i64() => {
+                    link.running = false;
+                    phase = Some("waiting_input");
+                }
+                ExecutionOutcome::Running | ExecutionOutcome::WaitingForUserInput { .. } => {}
+                _ => {
+                    if state["phase"] == "waiting_input" {
+                        link.interaction_status = None;
+                    }
+                    state["phase"] = json!("finished");
+                }
+            }
+            if let Some(next) = phase {
+                state["phase"] = json!(next);
+                link.status = "running".into();
+                link.completed_at = None;
+                link.interaction_status = matches!(next, "confirmation" | "waiting_input")
+                    .then(|| INTERACTION_AWAITING_USER_REPLY.into());
+            }
+        });
+        if let Err(ref error) = updated {
+            self.retain_failed_runtime_task(
+                task,
+                &AppIpcError::new("pipeline_save_failed", error.to_string()),
+            );
+            return true;
+        }
+        if let Ok(Some(link)) = updated {
+            if phase.is_some() {
+                self.publish_native_execution(task, request, link);
+            }
+        }
+        if phase == Some("ready") {
+            let handler = self.clone();
+            let task = task.to_owned();
+            tokio::spawn(async move {
+                if let Err(error) = handler.advance_personal_pipeline(&task, None).await {
+                    if error.code != "stale_stage" {
+                        handler.retain_failed_runtime_task(&task, &error);
+                    }
+                }
+            });
+        }
+        stale || phase.is_some()
+    }
+
+    pub(super) async fn resume_personal_handoffs(&self) {
+        for link in self.store.list_filtered_task_summaries(false, |link| {
+            matches!(
+                link.runtime_handle[STATE]["phase"].as_str(),
+                Some("ready" | "dispatching")
+            ) && !matches!(link.status.as_str(), "archived" | "cancelled" | "failed")
+        }) {
+            if self.is_busy_local_task(&link.local_task_id) {
+                continue;
+            }
+            if let Err(error) = self
+                .advance_personal_pipeline(&link.local_task_id, None)
+                .await
+            {
+                if error.code != "stale_stage" {
+                    self.retain_failed_runtime_task(&link.local_task_id, &error);
+                }
+            }
+        }
+    }
+
+    pub(super) async fn advance_personal_pipeline(
+        &self,
+        task: &str,
+        confirmation: Option<&Value>,
+    ) -> Result<Value, AppIpcError> {
+        let gate = self.task_send_gate(&format!("pipeline:{task}"));
+        let _guard = gate.lock().await;
+        let link = self
+            .local_task_link(task)
+            .ok_or_else(|| AppIpcError::new("not_found", "Personal Task is unavailable"))?;
+        let mut state = link.runtime_handle[STATE].clone();
+        let confirm = confirmation.is_some();
+        if confirmation.is_some_and(|id| id != &json!([state["root"], state["stage"]])) {
+            return Err(AppIpcError::new(
+                "stale_stage",
+                "Personal Team stage has changed",
+            ));
+        }
+        let expected = if confirm { "confirmation" } else { "ready" };
+        let replay = !confirm && state["phase"] == "dispatching";
+        if (!replay && state["phase"] != expected)
+            || matches!(link.status.as_str(), "archived" | "cancelled" | "failed")
+        {
+            return Err(AppIpcError::new(
+                "stale_stage",
+                "Personal Team stage has changed",
+            ));
+        }
+        let mut request = runtime_event_request_from_link(&link);
+        if link.runtime_handle["origin"]["projectStore"] != "local" {
+            let user = link.runtime_handle["origin"]["userId"]
+                .as_i64()
+                .or_else(|| link.runtime_handle["executionRequest"]["user_id"].as_i64())
+                .ok_or_else(|| {
+                    AppIpcError::new("permission_denied", "Personal Task owner is unavailable")
+                })?;
+            self.verify_local_stand_in_owner(user)?;
+            let reference = request
+                .extra
+                .get("team_ref")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppIpcError::new("not_found", "Personal Team binding is unavailable")
+                })?;
+            LocalTaskStore::open(self.task_store_path.as_ref())
+                .and_then(|store| store.personal_execution_team(user, reference))
+                .map_err(super::stand_in::settings_error)?;
+        }
+        if let Some(model) = self.runtime_model_config(task) {
+            request.model_config = model;
+        }
+        let stage = state["stage"].as_u64().unwrap_or_default() + u64::from(!replay);
+        state["stage"] = json!(stage);
+        state["phase"] = json!("dispatching");
+        let runtime = stage_request(&mut request, &state)?;
+        request.new_session = true;
+        request.history.clear();
+        request.prompt = state["handoff"].clone();
+        let command_input = json!([state["root"], stage, request.bot[0]["id"], request.prompt]);
+        request.subtask_id = format!(
+            "pipeline:{:x}",
+            Sha256::digest(command_input.to_string().as_bytes())
+        );
+        request
+            .extra
+            .insert("runtime_command_id".into(), json!(request.subtask_id));
+        request
+            .extra
+            .insert("runtime_command_input".into(), command_input);
+        let previous = link.runtime_handle[STATE].clone();
+        let saved_permissions = state["useSavedPermissions"] == true;
+        let mut claimed = false;
+        self.store
+            .try_update_task(task, |link| {
+                if link.runtime_handle[STATE] != previous
+                    || matches!(link.status.as_str(), "cancelled" | "archived" | "failed")
+                {
+                    return;
+                }
+                claimed = true;
+                link.runtime_handle[STATE] = state;
+                link.interaction_status = None;
+            })
+            .map_err(|e| AppIpcError::new("pipeline_save_failed", e.to_string()))?;
+        if !claimed {
+            return Err(AppIpcError::new(
+                "stale_stage",
+                "Personal Team stage has changed",
+            ));
+        }
+        if let Err(error) = self
+            .submit_continuation(
+                SpawnTurnRequest::new(task.into(), runtime, request),
+                saved_permissions,
+            )
+            .await
+        {
+            self.store
+                .update_task(task, |link| link.runtime_handle[STATE] = previous);
+            return Err(error);
+        }
+        Ok(json!({"accepted":true,"taskId":task,"stage":stage,"status":"running"}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_pipeline_stage_reads_only_its_bound_active_claim() {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("project-pipeline-claim");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let db = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+        let task = "continued-project-conversation";
+        let members = json!([
+            {"id":"first","shell_type":"Codex"},
+            {"id":"second","shell_type":"Codex","skills":["project-review"]}
+        ]);
+        for (id, bots) in [
+            (21, members),
+            (22, json!([{"id":"other","shell_type":"Codex"}])),
+        ] {
+            db.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,agent_id,status,runtime_device_id,runtime_task_id,execution_payload,created_at,updated_at)
+                VALUES(?1,'issue','project','agent','claimed','device-1',?2,?3,'now','now')",
+                rusqlite::params![id,task,json!({"bot":bots,"collaboration_model":"pipeline"}).to_string()]).unwrap();
+        }
+        let mut link = RuntimeTaskLink::new_pending(
+            task.into(),
+            root.to_string_lossy().into_owned(),
+            "Project".into(),
+        );
+        link.runtime_handle["origin"] = json!({"type":"issue_dispatch","projectStore":"local","cloudProjectId":"project","executionId":20});
+        let mut request = serde_json::from_value(json!({"task_id":task,"subtask_id":"native-turn-uuid","team_ref":"agent","collaboration_model":"pipeline"})).unwrap();
+        crate::runtime_work::util::apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"origin":{"type":"issue_dispatch","projectStore":"local","cloudProjectId":"project","executionId":21}}),
+        );
+        crate::runtime_work::util::restore_origin(&mut request, &link.runtime_handle);
+        assert_eq!(request.extra["origin"]["executionId"], 20);
+        handler.store.upsert_task(link);
+        let mut turn = SpawnTurnRequest::new(task.into(), "codex".into(), request);
+        handler.begin_personal_pipeline(&mut turn).unwrap();
+        assert_eq!(turn.request.bot[0]["id"], "first");
+        handler
+            .store
+            .update_task(task, |link| link.runtime_handle[STATE]["stage"] = json!(1));
+        turn.request.extra.insert(
+            "personalPipelineTurn".into(),
+            json!(["native-turn-uuid", 1]),
+        );
+        assert!(handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .is_err());
+        // Previously persisted Pipelines already hold the claim ID in their state.
+        turn.request.extra.remove("localExecutionClaimId");
+        turn.request.bot = json!([{"id":"second"}]);
+        handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .unwrap();
+        assert_eq!(turn.request.bot[0]["skills"], json!(["project-review"]));
+        for (device, runtime_task, project, agent) in [
+            ("other", task, "project", "agent"),
+            ("device-1", "other", "project", "agent"),
+            ("device-1", task, "other", "agent"),
+            ("device-1", task, "project", "other"),
+        ] {
+            assert!(store
+                .claimed_pipeline_members(21, device, runtime_task, project, agent, Some(1))
+                .unwrap()
+                .is_none());
+        }
+        db.execute(
+            "UPDATE loop_item_executions SET status='cancel_requested' WHERE id=21",
+            [],
+        )
+        .unwrap();
+        assert!(handler
+            .restore_personal_bot_grants(task, &mut turn.request)
+            .is_err());
+        drop(db);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    async fn run_two_stages(confirm: bool) {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("personal-pipeline");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "device-1").unwrap();
+        settings["roles"] = json!([{"id":"copied","name":"Reviewer","enabled":true,"prompt":"","executionDeviceId":"device-1",
+            "version":0,"tags":[],"migrationSource":"[\"previous-device\",7,\"original\"]",
+            "collaboration":{"enabled":false,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}}]);
+        settings["transferredTeamDefinition"] = json!({"roleId":"copied","definition":{
+        "name":"Reviewer","collaboration_model":"pipeline","bot":[
+            {"id":"a","shell_type":"Codex","system_prompt":"prepare","prompt":"draft","contextPassing":"previous_bot","requireConfirmation":confirm},
+            {"id":"b","shell_type":"ClaudeCode","system_prompt":"review"}
+        ]}});
+        let saved = store
+            .save_personal_stand_in(7, "device-1", settings)
+            .unwrap();
+        let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
+        let grants = json!({"roleId":"copied","botGrants":[
+            {"id":"a","mcp_servers":{"probe":{"headers":{"X-Test-Token":"first"}}}},
+            {"id":"b","mcp_servers":{"probe":{"headers":{"X-Test-Token":"second"}}}}
+        ]});
+        store
+            .save_verified_personal_settings(
+                7,
+                "device-1",
+                None,
+                saved.clone(),
+                crate::task_runtime::personal_stand_in::VerifiedPersonalSettings {
+                    workspace_owner: true,
+                    owned_team: Some(&grants),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let team = store.personal_execution_team(7, reference).unwrap();
+        let origin = json!({"type":"stand_in_identity","deviceId":"device-1","userId":7,"standInId":"copied"});
+        let request:ExecutionRequest = serde_json::from_value(json!({
+            "task_id":"personal","subtask_id":"root","user_id":7,"origin":origin,
+            "team_ref":reference,"collaboration_model":team["collaboration_model"],"prompt":"original","system_prompt":"shared",
+            "bot":team["bot"]
+        })).unwrap();
+        let mut link = RuntimeTaskLink::new_pending(
+            "personal".into(),
+            root.to_string_lossy().into_owned(),
+            "Review".into(),
+        );
+        link.runtime_handle["origin"] = origin;
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+        handler.store.upsert_task(link);
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .settings
+            .max_concurrent_stand_in_tasks = 0;
+        let mut first = SpawnTurnRequest::new("personal".into(), "codex".into(), request);
+        first.bind_task_kind(&handler.store);
+        handler.begin_personal_pipeline(&mut first).unwrap();
+        assert_eq!(first.request.bot.as_array().unwrap().len(), 1);
+        assert_eq!(first.request.system_prompt, "shared\n\nprepare\n\ndraft");
+        handler
+            .restore_personal_bot_grants("personal", &mut first.request)
+            .unwrap();
+        assert_eq!(
+            first.request.bot[0]["mcp_servers"]["probe"]["headers"]["X-Test-Token"],
+            "first"
+        );
+        assert!(!handler
+            .local_task_link("personal")
+            .unwrap()
+            .runtime_handle
+            .to_string()
+            .contains("X-Test-Token"));
+        assert!(handler.settle_personal_pipeline(
+            "personal",
+            &first.request,
+            &ExecutionOutcome::Completed {
+                content: "finding".into()
+            }
+        ));
+        let intermediate = handler.local_task_link("personal").unwrap();
+        assert_eq!(intermediate.status, "running");
+        assert!(intermediate.completed_at.is_none());
+        if confirm {
+            assert_eq!(intermediate.runtime_handle[STATE]["phase"], "confirmation");
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .is_empty());
+            assert!(handler
+                .advance_personal_pipeline("personal", Some(&json!(["old", 0])))
+                .await
+                .is_err());
+            handler.send_message_from_owner(json!({"taskId":"personal","action":"pipeline:confirm","expectedStage":["root",0]}),true).await.unwrap();
+        }
+        let mut next = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if let Some(turn) = handler
+                    .turn_scheduler
+                    .lock()
+                    .unwrap()
+                    .queued_turns
+                    .front()
+                    .cloned()
+                {
+                    break turn;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second Team stage should enter the durable native queue");
+        let handoff = handler.task_send_gate("pipeline:personal");
+        let _completed_handoff = handoff.lock().await;
+        assert_eq!(next.runtime, "claude_code");
+        assert!(next.request.new_session);
+        assert_eq!(next.request.prompt, "Previous stage output:\nfinding");
+        assert_eq!(next.request.bot[0]["id"], "b");
+        handler
+            .restore_personal_bot_grants("personal", &mut next.request)
+            .unwrap();
+        assert_eq!(
+            next.request.bot[0]["mcp_servers"]["probe"]["headers"]["X-Test-Token"],
+            "second"
+        );
+        assert_eq!(next.request.system_prompt, "shared\n\nreview");
+        assert!(!handler.settle_personal_pipeline(
+            "personal",
+            &next.request,
+            &ExecutionOutcome::Completed {
+                content: "approved".into()
+            }
+        ));
+        assert_eq!(
+            handler.local_task_link("personal").unwrap().runtime_handle[STATE]["phase"],
+            "finished"
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn account_team_handoff_uses_the_started_definition_offline() {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("offline-account-pipeline");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let member = |name: &str| {
+            json!({
+                "member": {"requireConfirmation":true,"contextPassing":"previous_bot"},
+                "bot": {"metadata":{"name":name,"displayName":name},"spec":{"shellRef":{"name":"Codex"}}},
+                "ghost": {"spec":{"systemPrompt":name}}
+            })
+        };
+        let mut source = json!({
+            "roleId":"review", "team":{"metadata":{"name":"review","namespace":"personal-assistant","displayName":"Review"},"spec":{"collaborationModel":"pipeline"}},
+            "members":[member("draft"),member("verify")]
+        });
+        let reference = store.import_account_execution_team(7, &source).unwrap();
+        let team = store.personal_execution_team(7, &reference).unwrap();
+        let origin = json!({"type":"stand_in_identity","userId":7,"deviceId":"device-1","standInId":"review"});
+        let request = serde_json::from_value(json!({
+            "task_id":"offline", "subtask_id":"root", "user_id":7, "origin":origin,
+            "team_ref":reference, "collaboration_model":"pipeline", "bot":team["bot"]
+        }))
+        .unwrap();
+        let mut link = RuntimeTaskLink::new_pending(
+            "offline".into(),
+            root.to_string_lossy().into_owned(),
+            "Review".into(),
+        );
+        link.runtime_handle["origin"] = origin;
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+        handler.store.upsert_task(link);
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .settings
+            .max_concurrent_stand_in_tasks = 0;
+        let mut turn = SpawnTurnRequest::new("offline".into(), "codex".into(), request);
+        turn.bind_task_kind(&handler.store);
+        handler.begin_personal_pipeline(&mut turn).unwrap();
+        source["members"][1] = member("replacement");
+        assert_eq!(
+            store.import_account_execution_team(7, &source).unwrap(),
+            reference
+        );
+        assert!(handler.settle_personal_pipeline(
+            "offline",
+            &turn.request,
+            &ExecutionOutcome::Completed {
+                content: "draft output".into()
+            }
+        ));
+        handler
+            .advance_personal_pipeline("offline", Some(&json!(["root", 0])))
+            .await
+            .unwrap();
+        let queued = handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .front()
+            .unwrap()
+            .clone();
+        assert_eq!(queued.request.bot[0]["id"], "verify");
+        assert_eq!(
+            queued.request.prompt,
+            "Previous stage output:\ndraft output"
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn confirmed_team_waits_for_owner_before_second_bot() {
+        run_two_stages(true).await;
+    }
+
+    #[tokio::test]
+    async fn automatic_team_delivers_after_second_bot() {
+        run_two_stages(false).await;
+    }
+}

@@ -391,22 +391,12 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
     let mut request = ExecutionRequest::default();
     request.extra.insert("user_id".into(), json!(7));
     let command = RuntimeCommand {
+        pending_terminal: None,
         id: action["id"].as_str().unwrap().into(),
         fingerprint: "original-assessment".into(),
         state: CommandState::AwaitingUser,
         accepted_at: 1,
-        turn: SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: task_id(7),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        },
+        turn: SpawnTurnRequest::new(task_id(7), "codex".into(), request),
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,

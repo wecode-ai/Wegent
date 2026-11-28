@@ -48,4 +48,4 @@ pub(crate) use wegent_runtime_config::workspace_paths;
 pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 
 #[cfg(test)]
-pub(crate) use wegent_executor_test_support as test_env;
+pub(crate) mod test_env;

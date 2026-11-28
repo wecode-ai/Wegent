@@ -357,3 +357,49 @@ async def test_proxy_closes_client_when_error_body_read_is_cancelled(
             )
 
     client.aclose.assert_awaited_once()
+
+
+def test_group_inference_token_is_bound_to_the_selected_model(
+    test_client, test_db, test_user, test_token, monkeypatch
+):
+    from app.core.config import settings
+    from app.core.security import create_access_token
+
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "http://backend.test")
+    assigned = _model_kind(test_user.id, name="assigned")
+    other = _model_kind(test_user.id, name="other")
+    test_db.add_all([assigned, other])
+    test_db.commit()
+    config = _build_cloud_gateway_model_config(
+        test_db,
+        model_name=assigned.name,
+        creator=test_user,
+        model_type="user",
+        namespace="default",
+        resource_user_id=test_user.id,
+        project_group_execution=True,
+    )
+    unbound = create_access_token(
+        {"sub": test_user.user_name, "scope": "model:inference"}
+    )
+    provider = AsyncMock()
+    provider.send.return_value = _upstream_response(200, b"data: ok\n\n")
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient", return_value=provider
+    ):
+        for token, name, status in [
+            (unbound, "assigned", 401),
+            (config["api_key"], "other", 403),
+            (config["api_key"], "assigned[1m]", 200),
+            (test_token, "other", 200),
+        ]:
+            response = test_client.post(
+                "/api/runtime-work/llm-responses-proxy/chat/completions",
+                headers={
+                    **config["default_headers"],
+                    "authorization": f"Bearer {token}",
+                },
+                json={"model": name, "input": "hello"},
+            )
+            assert response.status_code == status, response.text
+    assert provider.send.await_count == 2

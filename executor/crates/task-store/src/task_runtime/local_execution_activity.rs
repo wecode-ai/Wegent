@@ -28,10 +28,41 @@ pub(super) fn create_local_execution(
     agent_id: &str,
     agent: &LoopItem,
     priority: &str,
+    payload: Value,
+) -> Result<i64, TaskRuntimeError> {
+    if payload.get("human_coordination_member").is_some() {
+        return Err(TaskRuntimeError::Invalid(
+            "Human coordination requires an authorized round".into(),
+        ));
+    }
+    let actor =
+        super::project_coordination_commands::execution_actor_on(connection, project_id, &payload)?;
+    create_scoped_local_execution(
+        connection, item_id, project_id, agent_id, agent, priority, payload, actor,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn create_scoped_local_execution(
+    connection: &Connection,
+    item_id: &str,
+    project_id: &str,
+    agent_id: &str,
+    agent: &LoopItem,
+    priority: &str,
     mut payload: Value,
+    actor: i64,
 ) -> Result<i64, TaskRuntimeError> {
     super::runner_recovery::validate_on(connection, item_id, &payload)?;
     let metadata = &agent.metadata;
+    if !payload.is_object() {
+        payload = json!({});
+    }
+    if let Some(bots) = metadata.get("bot").filter(|bots| bots.is_array()) {
+        payload["bot"] = bots.clone();
+        payload["collaboration_model"] = metadata["collaboration_model"].clone();
+        payload["teamRef"] = json!(agent.id);
+    }
     if metadata
         .get("routing_configuration_required")
         .and_then(Value::as_bool)
@@ -71,8 +102,6 @@ pub(super) fn create_local_execution(
         None
     };
     let execution_scope = local_execution_scope(item_id, &payload);
-    let actor =
-        super::project_coordination_commands::execution_actor_on(connection, project_id, &payload)?;
     connection.execute(
         "INSERT INTO loop_item_executions (
             loop_item_id, cloud_project_id, agent_id, execution_environment,
@@ -470,6 +499,14 @@ pub(super) fn comment_execution_payload(
     .map_err(|_| TaskRuntimeError::Invalid("Invalid thread execution metadata".into()))?;
     let task_id = if let Some(execution_id) = previous["execution_id"].as_i64() {
         let execution = execution_row(connection, execution_id)?;
+        if execution.loop_item_id != trigger.task_id
+            || execution.cloud_project_id != trigger.project_id
+            || execution.agent_id != agent_id
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Thread execution does not belong to this Issue and agent".into(),
+            ));
+        }
         let task_id = execution
             .runtime_task_id
             .as_deref()

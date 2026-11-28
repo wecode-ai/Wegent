@@ -10,6 +10,7 @@ description = "Task persistence, transactional lifecycle, and stable documents"
 test-support = []
 
 [dependencies]
+wegent-protocol = { workspace = true }
 wegent-backend-persistence = { workspace = true }
 wegent-resource-store = { workspace = true }
 wegent-python-compat = { workspace = true }

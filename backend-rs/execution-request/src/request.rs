@@ -49,10 +49,10 @@ use super::skill_generation;
 use super::skills::{
     BotSkills, SkillAccess, SkillBindingContext, get_bot_skills, preload_skill_refs,
 };
-use super::tokens::{create_skill_identity_token, create_task_token};
+use super::tokens::{create_scoped_task_token, create_skill_identity_token};
 
 #[path = "request_coordinate.rs"]
-mod coordinate;
+pub(super) mod coordinate;
 
 /// The inputs the create flow has after the session setup and team resolution.
 pub struct BuildExecutionRequestInput<'a> {
@@ -71,6 +71,7 @@ pub struct BuildExecutionRequestInput<'a> {
     pub task_id: i64,
     pub assistant_subtask_id: i64,
     pub user_subtask_id: i64,
+
     pub team: &'a KindRow,
     /// The first team-member bot (the recorded create cases have one member).
     pub bot: &'a KindRow,
@@ -392,7 +393,7 @@ pub async fn build_execution_request(
     preload_skills: &[String],
 ) -> Result<ExecutionRequest, FastApiError> {
     let requested: Vec<Value> = preload_skills.iter().cloned().map(Value::String).collect();
-    build_request(state, input, false, &requested, true, None).await
+    build_request(state, input, false, &requested, None).await
 }
 
 /// Socket.IO chat passes user-selected skills through the standard compiler,
@@ -411,7 +412,6 @@ pub async fn build_chat_execution_request(
         input,
         is_subscription,
         preload_skills,
-        true,
         generation,
         ExecutionOverrides {
             runtime_model,
@@ -445,7 +445,6 @@ pub(super) async fn build_request(
     input: &BuildExecutionRequestInput<'_>,
     is_subscription: bool,
     preload_skills: &[Value],
-    compile_coding_mcp: bool,
     generation: Option<&Value>,
 ) -> Result<ExecutionRequest, FastApiError> {
     build_request_with_runtime(
@@ -453,7 +452,6 @@ pub(super) async fn build_request(
         input,
         is_subscription,
         preload_skills,
-        compile_coding_mcp,
         generation,
         ExecutionOverrides::default(),
     )
@@ -467,12 +465,37 @@ struct ExecutionOverrides<'a> {
     include_coordinate_members: bool,
 }
 
+struct ExecutionConnections<'a> {
+    project_group: bool,
+    git_accounts: &'a Value,
+    mcp_preferences: Option<&'a str>,
+}
+
+impl<'a> ExecutionConnections<'a> {
+    fn for_task(task: &Value, git: &'a Value, preferences: Option<&'a str>) -> Self {
+        let labels = &task["metadata"]["labels"];
+        let project_group = wegent_protocol::project_group_task_labels(labels);
+
+        Self {
+            project_group,
+            git_accounts: if project_group { &Value::Null } else { git },
+            mcp_preferences: if project_group { None } else { preferences },
+        }
+    }
+
+    fn task_data(&self) -> Result<Option<Value>, FastApiError> {
+        if self.project_group {
+            return Ok(Some(serde_json::json!({"project_group_execution":true})));
+        }
+        wegent_mcp_providers::mcp_user_service::build_request_task_data(self.mcp_preferences)
+    }
+}
+
 async fn build_request_with_runtime(
     state: &RequestServices<'_>,
     input: &BuildExecutionRequestInput<'_>,
     is_subscription: bool,
     preload_skills: &[Value],
-    compile_coding_mcp: bool,
     generation: Option<&Value>,
     overrides: ExecutionOverrides<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
@@ -481,6 +504,11 @@ async fn build_request_with_runtime(
         created_git_repository,
         include_coordinate_members,
     } = overrides;
+    let connections = ExecutionConnections::for_task(
+        input.task_json,
+        input.user_git_info,
+        input.user_preferences,
+    );
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
@@ -579,7 +607,7 @@ async fn build_request_with_runtime(
     // its token, and classify the transport the executor must expect.
     let git_identity = crate::git_identity::resolve_identity(
         state.repository_tokens.as_ref(),
-        input.user_git_info,
+        connections.git_accounts,
         git_domain.as_deref(),
     )
     .await
@@ -599,7 +627,7 @@ async fn build_request_with_runtime(
     let mut user_info = build_user_metadata(&user_json);
     state
         .user_info_extension
-        .decorate(input.user_preferences, &mut user_info)
+        .decorate(connections.mcp_preferences, &mut user_info)
         .await;
 
     // Model config (`get_model_config_for_bot` + placeholder processing).
@@ -690,12 +718,12 @@ async fn build_request_with_runtime(
 
     // The ghost chain reads through the deployment's cached kind reader.
     let ghost_ref = bot_spec.get("ghostRef");
-    let kinds_cache = wegent_capabilities::task_skills::kinds::KindCacheStore {
-        mysql: state.mysql,
-        redis: state.redis.as_ref(),
-        erp: Some(state.erp),
-        resolvers: Some(state.entity_resolvers),
-    };
+    let kinds_cache = wegent_capabilities::task_skills::kinds::KindCacheStore::new(
+        state.mysql,
+        state.redis.as_ref(),
+        state.erp,
+        state.entity_resolvers,
+    );
     let chain = load_ghost_chain(
         &kinds_cache,
         input.team.user_id,
@@ -713,12 +741,15 @@ async fn build_request_with_runtime(
         tracing::error!(%error, "failed to load the bot ghost chain");
         FastApiError::internal()
     })?;
-    let merged = merge_ghost_capabilities(&chain);
-
     let capability_mode = bot_spec
         .get("capability_mode")
         .and_then(Value::as_str)
         .unwrap_or("manual");
+    let merged = if capability_mode == "follow_device" {
+        Default::default()
+    } else {
+        merge_ghost_capabilities(&chain)
+    };
     let system_prompt = base_system_prompt(&chain, input.team_member_prompt);
 
     // Skills (`_get_bot_skills`). `_build_skill_binding_context`: a group-owned
@@ -750,23 +781,27 @@ async fn build_request_with_runtime(
     // `_get_bot_skills` runs; a `force_preload` ref joins the requested stage,
     // the rest join the available refs after the injected subscription Skill.
     let user_default_target_id = format!("user:{}", input.user_id);
-    let binding_refs = super::skills::list_user_default_skill_refs(
-        state.mysql,
-        input.user_id,
-        &user_default_target_id,
-        &binding_context,
-        Some(&skill_access),
-    )
-    .await
-    .map_err(dependency)?;
-    let mut available_refs = super::skills::inject_subscription_manager_skill(is_subscription);
-    super::skills::route_binding_refs(binding_refs, &mut requested_skills, &mut available_refs);
+    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
+    let mut available_refs =
+        super::skills::inject_subscription_manager_skill(is_subscription, team_json, &shell_type);
+    if !connections.project_group {
+        let binding_refs = super::skills::list_user_default_skill_refs(
+            state.mysql,
+            input.user_id,
+            &user_default_target_id,
+            &binding_context,
+            Some(&skill_access),
+        )
+        .await
+        .map_err(dependency)?;
+        super::skills::route_binding_refs(binding_refs, &mut requested_skills, &mut available_refs);
+    }
     let mut skills = get_bot_skills(
         state.mysql,
         &merged,
         capability_mode,
         input.user_id,
-        input.user_preferences,
+        connections.mcp_preferences,
         &tokens,
         &user_default_target_id,
         Some(&skill_access),
@@ -784,10 +819,6 @@ async fn build_request_with_runtime(
         generation.as_ref(),
         Some(input.message),
     );
-
-    // As in the Python builder, resolve the Bot's Shell after resolving its
-    // Skills. The legacy bindShells field is carried as Skill metadata.
-    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
 
     // `_append_web_runtime_guidance` (`request_builder.py:551-566`): the
     // chat entry point injects the Wegent web runtime guidance into the
@@ -872,17 +903,27 @@ async fn build_request_with_runtime(
     } else {
         Vec::new()
     };
-    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
-        super::skills::extend_resolved_skills_from_bot_configs(
-            &kinds_cache,
-            &member_configs,
-            &mut skills,
-            input.user_preferences,
-            &tokens,
-            input.team.user_id,
-            &input.team.namespace,
-        )
-        .await?;
+    if super::skills::is_coding_shell(&shell_type) {
+        for member in &mut member_configs {
+            let mut member_skills = super::skills::BotSkills::default();
+            super::skills::extend_resolved_skills_from_bot_configs(
+                &kinds_cache,
+                std::slice::from_ref(member),
+                &mut member_skills,
+                connections.mcp_preferences,
+                &tokens,
+                input.team.user_id,
+                &input.team.namespace,
+            )
+            .await?;
+            super::skills::sync_bot_skill_refs(member, &member_skills.skill_refs);
+            let mut servers = member["mcp_servers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            super::skills::append_coding_mcp(&mut servers, &member_skills, &shell_type);
+            member["mcp_servers"] = Value::Array(servers);
+        }
     }
 
     // `build_execution_request` (`unified.py:277-306`): persist the request's
@@ -959,32 +1000,31 @@ async fn build_request_with_runtime(
 
     let mut bot_configs = vec![leader];
     bot_configs.append(&mut member_configs);
-    if super::skills::is_coding_shell(&shell_type) && coordinate_team {
-        super::background::merge_leader_capabilities(&mut bot_configs);
-        for bot in &mut bot_configs {
-            super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
-        }
-    }
-
     // Tokens.
-    let auth_token = create_task_token(
+    let auth_token = create_scoped_task_token(
         state.auth,
         input.task_id,
         input.assistant_subtask_id,
         input.user_id,
         input.user_name,
+        None,
+        connections.project_group,
     )?;
-    let skill_identity_token = create_skill_identity_token(
-        state.auth,
-        input.user_id,
-        input.user_name,
-        input.task_id,
-        input.assistant_subtask_id,
-        // `_generate_skill_identity_token` (`request_builder.py:3410`): the
-        // assistant subtask's persisted `executor_name`, with the
-        // `task-…-subtask-…` fallback only when it is empty.
-        input.executor_name,
-    )?;
+    let skill_identity_token = if connections.project_group {
+        String::new()
+    } else {
+        create_skill_identity_token(
+            state.auth,
+            input.user_id,
+            input.user_name,
+            input.task_id,
+            input.assistant_subtask_id,
+            // `_generate_skill_identity_token` (`request_builder.py:3410`): the
+            // assistant subtask's persisted `executor_name`, with the
+            // `task-…-subtask-…` fallback only when it is empty.
+            input.executor_name,
+        )?
+    };
 
     // `_build_session_context` (`request_builder.py:554`): the persisted
     // executor sessions and the legacy bindings. It is the last read of the
@@ -1069,9 +1109,7 @@ async fn build_request_with_runtime(
         user_name: input.user_name.to_string(),
         // `_build_request_task_data(user)`: the enabled user-configured MCP
         // services, or `null` when the caller has none.
-        task_data: wegent_mcp_providers::mcp_user_service::build_request_task_data(
-            input.user_preferences,
-        )?,
+        task_data: connections.task_data()?,
         bot: Value::Array(bot_configs),
         mcp_servers,
         bot_name: input.bot.name.clone(),
@@ -1151,18 +1189,20 @@ async fn build_request_with_runtime(
             input.team.user_id,
         ),
         input.user_id,
-        input.user_preferences,
+        connections.mcp_preferences,
         &tokens,
         &skill_access,
         &input.team.namespace,
     )
     .await?;
     let has_local_device = execution_device_id(input.task_json, &request.workspace).is_some();
-    super::connectors::attach(state.mysql, &mut request, has_local_device).await?;
+    if !connections.project_group {
+        super::connectors::attach(state.mysql, &mut request, has_local_device).await?;
+    }
     // Compile only after late Skill resolution and connector authorization
     // have established the final tool surface. Otherwise stale personal MCP
     // servers can survive in the Bot even after a connector supersedes them.
-    if super::skills::is_coding_shell(&shell_type) && compile_coding_mcp {
+    if super::skills::is_coding_shell(&shell_type) {
         let mut servers = request.bot[0]["mcp_servers"]
             .as_array()
             .cloned()
@@ -1178,7 +1218,25 @@ async fn build_request_with_runtime(
         request.bot[0]["mcp_servers"] = Value::Array(servers);
     }
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
-        coordinate::keep_compiled_mcp_servers(&mut request);
+        // Follow-device Bots share the same execution principal and runtime.
+        // Their grants come from this request's resolved bindings and authorized
+        // connectors. Ghost capabilities are excluded when compiling that mode.
+        if capability_mode == "follow_device"
+            && let Some((leader, members)) = request
+                .bot
+                .as_array_mut()
+                .and_then(|bots| bots.split_first_mut())
+        {
+            for member in members
+                .iter_mut()
+                .filter(|bot| bot["capability_mode"] == "follow_device")
+            {
+                for field in ["skills", "skill_refs", "mcp_servers"] {
+                    member[field] = leader[field].clone();
+                }
+            }
+        }
+        coordinate::finalize_bot_grants(&mut request);
     }
     if !resolved_api_key.is_empty() {
         // The key belongs to the primary model unless an explicit runtime
@@ -1204,13 +1262,15 @@ async fn build_request_with_runtime(
     // `_apply_user_runtime_config` (`request_preparation.py:655`): it runs in
     // `prepare_execution_request`, after `TaskRequestBuilder.build` returned, so
     // its two kind reads follow every read above.
-    super::runtime_config::apply_user_runtime_config(
-        state.mysql,
-        &mut request.model_config,
-        input.user_id,
-        input.user_preferences,
-    )
-    .await?;
+    if !connections.project_group {
+        super::runtime_config::apply_user_runtime_config(
+            state.mysql,
+            &mut request.model_config,
+            input.user_id,
+            input.user_preferences,
+        )
+        .await?;
+    }
     Ok(request)
 }
 

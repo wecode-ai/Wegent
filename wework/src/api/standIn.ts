@@ -597,14 +597,26 @@ export interface StandInExecutorApi {
   personalGet(
     userId: number,
     deviceId: string,
-    options?: { deviceSettingsOnly?: boolean; roleDirectory?: boolean }
+    options?: {
+      deviceSettingsOnly?: boolean
+      roleDirectory?: boolean
+      includeTeams?: boolean
+      promptTeamRoleId?: string
+      exportTeamRoleId?: string
+    }
   ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string,
     transferRoleId?: string,
-    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string }
+    definitionChange?: {
+      kind: 'create' | 'update' | 'delete'
+      roleId: string
+      copyTeam?: boolean
+      copyTeamPrompt?: boolean
+    },
+    portableTeam?: PersonalStandInSettings['portableTeam']
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -972,13 +984,24 @@ export function createStandInExecutorApi(
       },
     },
     deviceIdentity: deviceId => request('runtime.stand_in.device_identity', {}, deviceId),
-    personalGet: (userId, deviceId) => {
-      const key = JSON.stringify([userId, deviceId])
+    personalGet: (userId, deviceId, options) => {
+      const key = JSON.stringify([
+        userId,
+        deviceId,
+        Boolean(options?.includeTeams),
+        options?.promptTeamRoleId,
+        options?.exportTeamRoleId,
+      ])
       const pending = personalReads.get(key)
       if (pending) return pending
       const result = request<PersonalStandInSettings>(
         'runtime.stand_in.personal.get',
-        { userId },
+        {
+          userId,
+          ...(options?.promptTeamRoleId ? { promptTeamRoleId: options.promptTeamRoleId } : {}),
+          ...(options?.includeTeams ? { includeTeams: true } : {}),
+          ...(options?.exportTeamRoleId ? { exportTeamRoleId: options.exportTeamRoleId } : {}),
+        },
         deviceId
       )
       personalReads.set(key, result)
@@ -1005,10 +1028,41 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId, transferRoleId) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId, change, portableTeam) => {
+      const configuration = { ...settings }
+      delete configuration.bindableTeams
+      delete configuration.portableTeam
+      delete configuration.teamImportVersion
+      if (portableTeam && !settings.teamImportVersion) {
+        throw Object.assign(new Error('The target Executor cannot import this Team'), {
+          code: 'stand_in_team_import_unsupported',
+        })
+      }
+      if (change?.copyTeam) {
+        const capabilities = await request<PersonalStandInSettings>(
+          'runtime.stand_in.personal.get',
+          { userId, checkTeamCopy: true },
+          deviceId
+        )
+        if (!capabilities.teamCopyVersion) {
+          throw Object.assign(new Error('The target Executor cannot copy an assistant Team'), {
+            code: 'stand_in_team_copy_unsupported',
+          })
+        }
+      }
+      delete configuration.teamCopyVersion
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
-        { userId, settings, ...(transferRoleId !== undefined ? { transferRoleId } : {}) },
+        {
+          userId,
+          settings: configuration,
+          ...(change?.copyTeamPrompt !== undefined
+            ? { copyTeamPrompt: change.copyTeamPrompt }
+            : {}),
+          ...(change?.copyTeam ? { copyTeamRoleId: change.roleId } : {}),
+          ...(transferRoleId !== undefined ? { transferRoleId } : {}),
+          ...(portableTeam ? { portableTeam } : {}),
+        },
         deviceId
       )
       publishPersonalStandIn(saved)

@@ -277,6 +277,94 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
+  test('human lead dispatches a member from the Issue and submits its decision', async ({
+    page,
+    request,
+  }, info) => {
+    test.setTimeout(150_000)
+    if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+    const fixture = await createProjectFixture(
+      page,
+      Date.now().toString(36),
+      'Human release review'
+    )
+    const me = await apiRequest<{ id: number }>(request, model.token, '/api/users/me')
+    const agent = await createProjectAgent(page, 'Release reviewer', model.modelName)
+    const group = await createCollaborationGroup(page, 'Release group', {
+      agentIds: [String(agent.wegentTeamId)],
+      humanId: String(me.id),
+      leader: { id: String(me.id), type: 'human' },
+    })
+    const instruction = 'Check the release log ' + fixture.issueId
+    const clear = await configureIssueDispatchModelScenario(request, instruction, [
+      { responseContent: 'Release log checked.' },
+    ])
+    try {
+      await page.goto(fixture.projectPath + '/issues/' + fixture.issueId)
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId('cloud-todo-detail-assignee-option-group:' + group).click()
+      const submit = page.getByTestId('issue-coordination-submit')
+      await expect(submit).toBeDisabled()
+      await page.getByTestId(/^issue-dispatch-instructions-/).fill(instruction)
+      await captureEvidence(page, info, 'human-lead-round')
+      const posted = page.waitForResponse(
+        resp => resp.url().endsWith('/executions/batch') && resp.request().method() === 'POST'
+      )
+      await submit.click()
+      expect((await posted).ok()).toBe(true)
+      const executions = await waitForCollaborationExecutions(
+        request,
+        model.token,
+        fixture.projectId,
+        fixture.issueId,
+        1
+      )
+      expect(executions[0]).toMatchObject({
+        agentId: agent.id,
+        status: 'completed',
+        executionNote: 'Release log checked.',
+      })
+      await page.reload()
+      await page.getByTestId('issue-coordination-action').click()
+      await page.getByTestId('issue-coordination-action-option-decision').click()
+      await page.getByTestId('issue-decision-reason').fill('The reviewer verified the release log.')
+      await captureEvidence(page, info, 'human-lead-decision')
+      const decided = page.waitForResponse(
+        resp =>
+          resp.url().endsWith('/executions/manager-decision') && resp.request().method() === 'POST'
+      )
+      await submit.click()
+      expect((await decided).ok()).toBe(true)
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
+      const activity = page.locator('[data-testid^="cloud-task-activity-card-"]')
+      const assignment = activity.filter({
+        hasText: `assigned “${instruction}” to Release reviewer`,
+      })
+      await expect(assignment).toHaveCount(1)
+      await expect(assignment).toBeVisible()
+      await expect(activity.filter({ hasText: 'Release log checked.' })).toContainText(
+        'Release reviewer'
+      )
+      await captureEvidence(page, info, 'human-lead-delivered')
+    } finally {
+      await clear()
+      for (const path of [
+        '/api/v1/cloud-projects/' + fixture.projectId,
+        '/api/v1/workspaces/' + fixture.workspaceId,
+      ]) {
+        const current = await apiRequest<{ version: number }>(request, model.token, path)
+        const deleted = await request.delete(
+          `${PROVIDER_NATIVE_API_URL}${path}?version=${current.version}`,
+          { headers: authHeaders(model.token) }
+        )
+        expect(deleted.ok(), await deleted.text()).toBe(true)
+      }
+    }
+  })
+
   test('registers an assistant and creates an idempotent risk-scoped dispatch', async ({
     page,
     request,
@@ -586,15 +674,17 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await captureEvidence(page, testInfo, '01-group-assigned')
 
-      const memberExecutionCard = (agentName: string) =>
+      const memberExecutionCard = (agentName: string, taskTitle: string) =>
         page
           .locator('[data-testid^="cloud-task-activity-card-"]')
           .filter({ hasText: agentName })
           .filter({
-            has: page.locator('[data-testid^="cloud-task-activity-execution-badge-"]'),
+            has: page
+              .locator('[data-testid^="cloud-task-activity-task-title-"]')
+              .filter({ hasText: taskTitle }),
           })
-      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
-      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
+      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`, collectorTask)
+      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`, reviewerTask)
       const managerAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
@@ -622,14 +712,17 @@ test.describe('Collaboration group Executor coordination', () => {
         model.token,
         fixture.projectId,
         fixture.issueId,
-        1
+        4
       )
-      expect(executions[0].executorType).toBe('collaboration_group_dispatch')
-      expect(executions[0].backendTaskId).toBeNull()
-      expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
-      expect(executions[0].executionEnvironment).toBe('local')
-      expectCanonicalAppRoute(executions[0], appDevice)
-      expect(executions[0].status).toBe('completed')
+      const managers = executions.filter(row => row.executorType === 'collaboration_group_dispatch')
+      expect(managers).toHaveLength(1)
+      const [manager] = managers
+      expect(manager.executorType).toBe('collaboration_group_dispatch')
+      expect(manager.backendTaskId).toBeNull()
+      expect(manager.runtimeTaskId).toMatch(/^codex-queue-\d+$/)
+      expect(manager.executionEnvironment).toBe('local')
+      expectCanonicalAppRoute(manager, appDevice)
+      expect(manager.status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -651,7 +744,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const managerToolNames = modelToolNames(managerBodies)
       expect(managerBodies.length).toBeGreaterThanOrEqual(6)
       expect(managerScenario.nextStep).toBe(6)
-      expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
+      expect(managerSessionIds).toEqual([`${manager.runtimeTaskId}-manager-initial`])
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
       expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
@@ -689,15 +782,14 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(
         memberRuntimeSessionIds.every(sessionId => !managerSessionIds.includes(sessionId))
       ).toBe(true)
-      expect(collectorSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${firstRoundId}-collector-${suffix}`
-      )
-      expect(reviewerSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${firstRoundId}-reviewer-${suffix}`
-      )
-      expect(synthesisSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${secondRoundId}-synthesis-${suffix}`
-      )
+      for (const [sessionId, agentId] of [
+        [collectorSessionIds[0], collector.id],
+        [reviewerSessionIds[0], reviewer.id],
+        [synthesisSessionIds[0], collector.id],
+      ]) {
+        const member = executions.find(row => row.runtimeTaskId === sessionId)
+        expect(member).toMatchObject({ agentId, status: 'completed' })
+      }
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(

@@ -106,7 +106,7 @@ impl RuntimeWorkRpcHandler {
                         "The project leader is unavailable to this user",
                     )
                 })?;
-            super::stand_in_agent::cloud_agent_profile(agent)
+            super::stand_in_agent::cloud_agent_profile(agent)?
         } else {
             Value::Null
         };
@@ -173,7 +173,7 @@ impl RuntimeWorkRpcHandler {
                 "This project's group has a human leader; choose a group with an AI leader",
             ));
         }
-        let agent = self
+        let mut agent = self
             .normalize_stand_in_agent(context["agent"].clone())
             .await?;
         let config = self
@@ -183,9 +183,37 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         let origin = json!({"type":"project_coordinator","initiatedBy":"project_coordinator","userId":user,"deviceId":self.device_id,"cloudProjectId":payload["projectId"],"projectStore":payload["projectStore"],"projectVersion":context["project"]["version"],"groupId":payload["groupId"],"leaderId":context["group"]["leader"]["id"],"groupVersion":context["group"]["version"],"agentVersion":context["agent"]["version"]});
-        let input = json!({"taskId":task_id,"title":context["project"]["name"],"message":message,"origin":origin,"cloudProjectId":payload["projectId"],"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"],"queueIfBusy":true});
+        let mut input = json!({"taskId":task_id,"title":context["project"]["name"],"message":message,"origin":origin,"cloudProjectId":payload["projectId"],"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"],"queueIfBusy":true});
+        if let Some(team) = agent["wegentTeamId"].as_u64() {
+            // The backend resolves the Team. The private message stays on this device.
+            let intent = json!({"schemaVersion":3,"wegentTeamId":team,"cloudProjectId":payload["projectId"],
+                "deviceId":self.device_id,"taskId":task_id,"message":"Project coordination","runtime":agent["runtime"],"origin":origin,
+                "newSession":self.local_task_link(task_id).is_none(),"standaloneChatWorkspace":true});
+            let compiled = self
+                .runtime_http(
+                    reqwest::Method::POST,
+                    "/runtime-work/materialize",
+                    Some(&intent),
+                )
+                .await?;
+            if compiled["runtimeHandle"]["wegentTeam"]["id"] != team
+                || compiled["payload"]["taskId"] != task_id
+            {
+                return Err(AppIpcError::new(
+                    "invalid_response",
+                    "Compiled coordinator Team identity does not match",
+                ));
+            }
+            let request = &compiled["payload"]["executionRequest"];
+            agent["runtime"] = compiled["payload"]["runtime"].clone();
+            agent["bot"] = request["bot"].clone();
+            agent["collaboration_model"] = request["collaboration_model"].clone();
+            input["executionRequest"] = request.clone();
+            input["executionRequest"]["prompt"] = json!(message);
+            input["runtimeHandle"] = compiled["runtimeHandle"].clone();
+        }
         let mut prepared = self
-            .prepare_stand_in_execution_with_agent(input, &config, Some(agent))
+            .prepare_stand_in_execution_with_agent(input, &config, agent)
             .await?;
         super::stand_in_conversations::apply_runtime_model_selection(
             &mut prepared,

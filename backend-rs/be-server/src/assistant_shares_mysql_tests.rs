@@ -7,7 +7,7 @@ const OWNER: i32 = 7101;
 const RECIPIENT: i32 = 7102;
 const STRANGER: i32 = 7103;
 
-fn user(id: i32) -> SessionUser {
+pub(super) fn user(id: i32) -> SessionUser {
     let now = chrono::Utc::now().naive_utc();
     SessionUser(crate::auth::UserRow {
         id,
@@ -32,7 +32,7 @@ fn assistant(id: &str, prompt: &str) -> Definition {
     .unwrap()
 }
 
-fn team(id: &str, with_reviewer: bool) -> Definition {
+pub(super) fn team(id: &str, with_reviewer: bool) -> Definition {
     let members = if with_reviewer {
         json!({"data":"Verify figures","review":"Check the report"})
     } else {
@@ -68,6 +68,18 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
         .await
         .unwrap();
     }
+
+    assert_eq!(
+        list_shares(&state, user(OWNER))
+            .await
+            .unwrap()
+            .publication_revisions,
+        BTreeMap::from([
+            ("assistant:data".into(), 1),
+            ("team:release".into(), 1),
+            ("team:weekly".into(), 1)
+        ])
+    );
 
     assert!(
         get_share(&state, user(RECIPIENT), OWNER, "team", "weekly")
@@ -312,5 +324,6 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
             .status(),
         StatusCode::NOT_FOUND,
     );
+    super::project_binding::tests::verify(&state).await?;
     Ok(())
 }

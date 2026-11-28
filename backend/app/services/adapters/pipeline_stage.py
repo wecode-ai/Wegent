@@ -18,9 +18,9 @@ from sqlalchemy.orm.attributes import flag_modified
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
-from app.models.subtask import SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.schemas.kind import Task, Team
+from app.schemas.kind import Task, Team, TeamMember
 from app.services.adapters.pipeline_context import (
     build_pipeline_context_prompt,
     normalize_context_passing,
@@ -29,6 +29,67 @@ from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
+
+
+def initialize_pipeline(task: TaskResource, team: Kind) -> None:
+    if team.json["spec"].get("collaborationModel") == "pipeline":
+        spec = task.json["spec"]
+        task.json = {
+            **task.json,
+            "spec": {
+                **spec,
+                "currentStage": 0,
+                "teamRef": {**spec["teamRef"], "user_id": team.user_id},
+            },
+        }
+
+
+def validate_pipeline_team(task: TaskResource, team: Kind) -> None:
+    spec = task.json["spec"]
+    if (
+        spec.get("currentStage") is None
+        and team.json["spec"].get("collaborationModel") != "pipeline"
+    ):
+        return
+    ref = spec["teamRef"]
+    if (
+        ref["name"] != team.name
+        or ref.get("namespace", "default") != team.namespace
+        or (ref.get("user_id") is not None and ref["user_id"] != team.user_id)
+    ):
+        raise ValueError("Pipeline Team binding changed")
+
+
+def resolve_pipeline_stage_bot(
+    db: Session, task: TaskResource, team: Kind, team_crd: Team
+) -> tuple[TeamMember, Kind]:
+    stage = task.json["spec"].get("currentStage") or 0
+    members = team_crd.spec.members
+    if not 0 <= stage < len(members):
+        raise ValueError("Pipeline stage is out of range")
+    member = members[stage]
+    ref = member.botRef
+    bot = kindReader.get_by_name_and_namespace(
+        db, team.user_id, KindType.BOT, ref.namespace, ref.name
+    )
+    if not bot:
+        raise ValueError("Pipeline stage Bot is unavailable")
+    return member, bot
+
+
+def latest_stage_completion(
+    db: Session, task_id: int, subtask_id: int
+) -> Optional[Subtask]:
+    subtask = task_stores.subtask_store.get_latest_assistant_by_statuses(
+        db, task_id=task_id, statuses=list(SubtaskStatus)
+    )
+    if (
+        subtask
+        and subtask.id == subtask_id
+        and subtask.status == SubtaskStatus.COMPLETED
+    ):
+        return subtask
+    return None
 
 
 class PipelineStageService:
@@ -257,9 +318,12 @@ class PipelineStageService:
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
 
-        return kindReader.get_by_name_and_namespace(
+        team = kindReader.get_by_name_and_namespace(
             db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
+        if team:
+            validate_pipeline_team(task, team)
+        return team
 
     def pipeline_confirm(
         self,
@@ -610,52 +674,22 @@ class PipelineStageService:
             if team_crd.spec.collaborationModel != "pipeline":
                 return False
 
-            # Get the subtask that just completed
-            subtask = task_stores.subtask_store.get_basic_by_id(
-                db, subtask_id=subtask_id
-            )
-            if not subtask or subtask.status != SubtaskStatus.COMPLETED:
+            subtask = latest_stage_completion(db, task_id, subtask_id)
+            if subtask is None or not subtask.bot_ids:
                 return False
-
-            # Find which stage this subtask belongs to by matching bot_id
-            if not subtask.bot_ids:
-                return False
-
-            bot_id = subtask.bot_ids[0]
-            bot = self._get_bot_by_id(db, bot_id)
+            bot = self._get_bot_by_id(db, subtask.bot_ids[0])
             if not bot:
                 return False
 
-            # Find the stage index for this bot
-            current_stage_index = None
-            for i, member in enumerate(team_crd.spec.members):
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    current_stage_index = i
-                    break
-
-            if current_stage_index is None:
+            current_stage_index = task_crd.spec.currentStage or 0
+            if not 0 <= current_stage_index < len(team_crd.spec.members):
                 return False
-
-            active_stage_index = (
-                task_crd.spec.currentStage
-                if task_crd.spec.currentStage is not None
-                else 0
-            )
-            if current_stage_index != active_stage_index:
-                logger.info(
-                    "Pipeline: skip stale confirmation check for task %s: "
-                    "subtask_stage=%s, currentStage=%s",
-                    task_id,
-                    current_stage_index,
-                    active_stage_index,
-                )
-                return False
-
-            # Check if this stage has requireConfirmation
             current_member = team_crd.spec.members[current_stage_index]
+            if (current_member.botRef.name, current_member.botRef.namespace) != (
+                bot.name,
+                bot.namespace,
+            ):
+                return False
             if not current_member.requireConfirmation:
                 return False
 

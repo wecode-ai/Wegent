@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  adoptedIssue,
+  adoptedReceipt,
+  pipelineHandoff,
+  pipelineIssue,
+  pipelineReceipt,
+  pipelineReview,
+  sourceInstructions,
+  verifyLocalPersonalTeamAdoption,
+} from '../modules/local-personal-team-adoption.mjs'
 
 import {
   assistantMessage,
@@ -16,11 +26,16 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
+  inCollaborationSidebar,
   selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
-import { verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
+import { openWorkspaceAgentConfiguration } from '../modules/workspace-agent-setup.mjs'
+import {
+  verifyAgentDialogKeyboard,
+  verifyLocalSettingsProjectVersion,
+} from '../modules/collaboration-settings-ux.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'local-model:desktop-e2e-responses'
@@ -142,7 +157,15 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     timeoutMs
   )
   const agentId = rowTestId.slice('project-agent-row-'.length)
-  await control.command('click', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
+  const projectNavId = await waitForTestIdByText(
+    control,
+    inCollaborationSidebar('[data-testid="collaboration-project-tree"]', CONTENT),
+    'collaboration-workspace-project-',
+    PROJECT,
+    timeoutMs
+  )
+  await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
+  await control.command('clickWhenEnabled', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
     timeoutMs,
@@ -180,6 +203,12 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     visible: false,
     timeoutMs,
   })
+  await verifyAgentDialogKeyboard(control, scoped, `project-agent-edit-${agentId}`)
+  await control.command(
+    'clickWhenEnabled',
+    inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
+  )
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   return agentId
 }
 
@@ -275,14 +304,20 @@ async function createCoordinateGroup(control, timeoutMs) {
   }
 }
 
-async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
+async function createIssueAndAssignGroup(
+  control,
+  timeoutMs,
+  title = ISSUE,
+  groupName = GROUP,
+  description = `${MARKER}。负责人必须并发分配两个子任务，等待结果后显式更新 Issue 状态。`
+) {
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: title,
   })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
-    value: `${MARKER}。负责人必须并发分配两个子任务，等待结果后显式更新 Issue 状态。`,
+    value: description,
   })
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs,
@@ -296,12 +331,12 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
     control,
     'body',
     'cloud-todo-detail-assignee-option-group:',
-    GROUP,
+    groupName,
     timeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
-    text: GROUP,
+    text: groupName,
     timeoutMs,
   })
 }
@@ -395,9 +430,22 @@ async function waitForHumanNotification(control, timeoutMs) {
 
 export async function createDesktopScenario({
   captureScreenshot,
+  resultDir,
   modelResponseTimeoutMs,
   uiTimeoutMs,
 }) {
+  const reviewerStarted = Promise.withResolvers()
+  const reviewerRelease = Promise.withResolvers()
+  const pipeline = {
+    stages: [],
+    waitForReviewer: () =>
+      waitForPromise(
+        reviewerStarted.promise,
+        modelResponseTimeoutMs,
+        'The claimed project Pipeline did not reach its second Bot'
+      ),
+    releaseReviewer: reviewerRelease.resolve,
+  }
   let active = false
   let parentStage = 'initial'
   let collectorAgentId = ''
@@ -443,6 +491,42 @@ export async function createDesktopScenario({
       const kind = codexRequestKind(body)
       if (kind === 'prewarm' || kind === 'compaction') {
         writeEvents(response, responseId, [assistantMessage('Ready')])
+        return true
+      }
+      const pipelineRequest =
+        requestText.includes(pipelineIssue) || requestText.includes(pipelineReview)
+      if (pipelineRequest && !requestText.includes(pipelineReview)) {
+        assert.ok(requestText.includes(sourceInstructions))
+        pipeline.stages.push(sourceInstructions)
+        writeEvents(response, responseId, [assistantMessage(pipelineHandoff)])
+        return true
+      }
+      if (pipelineRequest || requestText.includes(adoptedIssue)) {
+        if (pipelineRequest) {
+          assert.ok(
+            requestText.includes(pipelineHandoff),
+            'The second Bot did not receive the first Bot output'
+          )
+          if (!pipeline.stages.includes(pipelineReview)) pipeline.stages.push(pipelineReview)
+          reviewerStarted.resolve()
+          await reviewerRelease.promise
+        }
+        const receipt = pipelineRequest ? pipelineReceipt : adoptedReceipt
+        assert.ok(
+          requestText.includes(pipelineRequest ? pipelineReview : sourceInstructions),
+          'The project did not run the adopted Bot instructions'
+        )
+        const callId = pipelineRequest
+          ? 'pipeline-project-agent-signoff'
+          : 'adopted-project-agent-signoff'
+        const events = requestContainsToolOutput(body, callId)
+          ? [assistantMessage(receipt)]
+          : managerToolEvents(body, 'update_issue_status', callId, {
+              status: 'in_review',
+              reason: '交付已核验',
+              comment: receipt,
+            }).events
+        writeEvents(response, responseId, events)
         return true
       }
       if (!requestText.includes(MARKER)) {
@@ -732,6 +816,26 @@ export async function createDesktopScenario({
         'local-coordinate-07-human-notification-opened-issue.png',
         CONTENT
       )
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      const adoptionOptions = {
+        content: CONTENT,
+        projectName: PROJECT,
+        captureScreenshot,
+        resultDir,
+        assignIssue: (...args) => createIssueAndAssignGroup(control, uiTimeoutMs, ...args),
+        uiTimeoutMs,
+        modelResponseTimeoutMs,
+      }
+      await verifyLocalPersonalTeamAdoption(control, {
+        ...adoptionOptions,
+        agentId: group.leaderId,
+      })
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await verifyLocalPersonalTeamAdoption(control, {
+        ...adoptionOptions,
+        agentId: group.collectorId,
+        pipeline,
+      })
     },
 
     diagnostics() {

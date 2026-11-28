@@ -125,6 +125,7 @@ async fn the_primary_late_bot_read_uses_the_subtask_id_and_bot_predicate() {
     let cache: KindCacheStore<'_, _, RecordingRedis> = KindCacheStore {
         mysql: &mysql,
         redis: Some(&redis),
+        use_kind_cache: true,
         erp: None,
         resolvers: None,
     };
@@ -159,6 +160,7 @@ async fn the_late_bot_fallback_is_owner_scoped() {
     let cache: KindCacheStore<'_, _, RecordingRedis> = KindCacheStore {
         mysql: &mysql,
         redis: Some(&redis),
+        use_kind_cache: true,
         erp: None,
         resolvers: None,
     };
@@ -252,6 +254,7 @@ async fn the_late_ghost_chain_feeds_the_skill_compilation() {
     let cache: KindCacheStore<'_, _, RecordingRedis> = KindCacheStore {
         mysql: &mysql,
         redis: Some(&redis),
+        use_kind_cache: true,
         erp: None,
         resolvers: None,
     };

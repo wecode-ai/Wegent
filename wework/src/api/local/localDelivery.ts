@@ -144,6 +144,8 @@ interface LocalAccessRecord {
 }
 
 export interface LocalProjectChatAgent {
+  teamRef?: string
+  sourceProjectId?: string
   executionPolicy?: AgentExecutionPolicy
   modelPolicy?: AgentModelPolicy
   id: string
@@ -464,6 +466,8 @@ export function createExternalIssueApi(request: LocalRequest) {
 }
 
 type LocalAgentRecord = Record<string, unknown> & {
+  team_ref?: string
+  source_project_id?: string
   execution_policy?: AgentExecutionPolicy
   model_policy?: AgentModelPolicy
   id: string
@@ -507,6 +511,8 @@ export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProje
   return {
     id: record.id,
     projectId: record.project_id ?? '',
+    teamRef: record.team_ref,
+    sourceProjectId: record.source_project_id,
     name: record.name ?? 'AI',
     displayName: record.display_name ?? record.name ?? 'AI',
     namespace: record.namespace ?? 'default',
@@ -624,14 +630,16 @@ export function createLocalProjectChatAgentApi(
     listModels,
     async list(
       projectId: string,
-      options?: { forceRefresh?: boolean }
+      options?: { forceRefresh?: boolean; includeArchived?: boolean }
     ): Promise<LocalProjectChatAgent[]> {
-      if (options?.forceRefresh) cache.invalidate(`agents:${projectId}`)
+      const key = `agents:${projectId}:${options?.includeArchived ? 'all' : 'active'}`
+      if (options?.forceRefresh) cache.invalidate(key)
       return cache.get(
-        `agents:${projectId}`,
+        key,
         async () => {
           const records = await request<LocalAgentRecord[]>('chat_agents.list', {
             project_id: projectId,
+            ...(options?.includeArchived ? { include_archived: true } : {}),
           })
           return records.map(projectChatAgentFromRecord)
         },
@@ -640,11 +648,11 @@ export function createLocalProjectChatAgentApi(
     },
     async create(
       projectId: string,
-      input: LocalProjectChatAgentCreateInput
+      input: LocalProjectChatAgentCreateInput | { team_ref: string }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.create', {
         project_id: projectId,
-        agent: createPayload(input),
+        agent: 'team_ref' in input ? { team_ref: input.team_ref } : createPayload(input),
       })
       cache.invalidate('agents:')
       return projectChatAgentFromRecord(record)
@@ -1095,6 +1103,35 @@ export function createLocalDeliveryApi(
   }
 
   const api = {
+    async adoptPersonalTeam(
+      userId: number,
+      projectId: string,
+      { definition, memberAgentIds }: import('@wegent/collaboration').PersonalTeamAdoptionInput
+    ) {
+      await request('runtime.project_coordinator.adopt_personal_team', {
+        userId,
+        projectId,
+        definition,
+        memberAgentIds,
+      })
+      invalidateProjectRecords()
+    },
+    issueCoordination: {
+      get(userId: number, projectId: string, loopItemId: string) {
+        return request<import('@wegent/collaboration').IssueCoordination | null>(
+          'runtime.issue_coordination.get',
+          { userId, projectId, input: { loopItemId } }
+        )
+      },
+      async write(
+        action: 'submit' | 'decide',
+        userId: number,
+        projectId: string,
+        input: Record<string, unknown>
+      ) {
+        await request(`runtime.issue_coordination.${action}`, { userId, projectId, input })
+      },
+    },
     async listCloudProjects() {
       const records = await loadProjectRecords(true)
       return {

@@ -83,12 +83,7 @@ pub(crate) async fn agent_admission(
     let model_type = pick("model_type");
     let options = pick("model_options");
     let runtime = config["runtime"].as_str().unwrap_or("");
-    let team_id = if runtime == "wegent" {
-        authority::integer(&config["wegent_team_id"])
-            .context("Project Agent has an invalid Team binding")?
-    } else {
-        0
-    };
+    let team_id = authority::integer(&config["wegent_team_id"]).unwrap_or(0);
     let mut owner = profile.as_ref().map_or(subject, |profile| profile.user_id);
     let inherited = profile::inherited(&context);
     let mut device = if runtime == "wegent" {

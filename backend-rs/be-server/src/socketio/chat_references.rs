@@ -101,7 +101,7 @@ async fn load(
     })
 }
 
-fn assistant_text(result: &Value) -> String {
+pub(crate) fn assistant_text(result: &Value) -> String {
     let chain_text: Vec<_> = result["messages_chain"]
         .as_array()
         .into_iter()

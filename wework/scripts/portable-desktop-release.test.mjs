@@ -80,6 +80,7 @@ test('publishes the packaged data compatibility without inferring older readable
         dataSchema: 2,
         readableDataSchemas: [2],
         afterStopPreparation: 1,
+        teamAssignmentProtocol: 1,
       })
     )
     const release = await portableDesktopRelease({
@@ -91,6 +92,7 @@ test('publishes the packaged data compatibility without inferring older readable
     })
     assert.equal(release.dataSchema, 2)
     assert.equal(release.afterStopPreparation, 1)
+    assert.equal(release.teamAssignmentProtocol, 1)
     assert.deepEqual(release.readableDataSchemas, [2])
     assert.match(release.sha256, /^[a-f0-9]{64}$/)
     const archive = await readFile(release.path)
