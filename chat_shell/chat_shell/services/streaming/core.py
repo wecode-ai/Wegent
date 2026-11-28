@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
 from chat_shell.core.config import settings
+from chat_shell.models.response_validation import MalformedModelResponseError
 from shared.models import ResponsesAPIEmitter
 
 logger = logging.getLogger(__name__)
@@ -599,6 +600,10 @@ class StreamingCore:
         error_msg = format_error_message(error)
         error_code = classify_error(error)
         await self.emitter.error(error_msg, code=error_code)
+
+        if isinstance(error, MalformedModelResponseError):
+            # The backend persists the error event as the terminal result.
+            return
 
         # Emit done event with error content so error_type is persisted on page refresh
         await self.emitter.done(

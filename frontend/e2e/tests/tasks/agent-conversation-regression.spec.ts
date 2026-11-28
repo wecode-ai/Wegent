@@ -211,6 +211,45 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
+  test('Chat Shell persists a malformed model response as failed', async ({ page, request }) => {
+    const prompt = `Return a malformed response for ${makeContextToken('malformed_response')}`
+    streamRuleMatchTexts.add(prompt)
+    const rule = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
+      ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
+      data: { matchText: prompt, finishReason: 'MALFORMED_RESPONSE' },
+    })
+    expect(rule.status()).toBe(200)
+
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+
+    const errorCard = page.getByTestId('error-card')
+    await expect(errorCard, 'Chat Shell should report the failed generation').toBeVisible({
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+
+    const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+    })
+    expect(response.status(), await response.text()).toBe(200)
+    const task = (await response.json()) as {
+      status: string
+      subtasks: Array<{ role: string; status: string; error_message?: string }>
+    }
+    expect(task.status).toBe('FAILED')
+    expect(task.subtasks.find(subtask => subtask.role === 'ASSISTANT')).toMatchObject({
+      status: 'FAILED',
+      error_message: expect.stringContaining('MALFORMED_RESPONSE'),
+    })
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(errorCard.getByTestId('error-card-retry')).toBeVisible({
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+  })
+
   test('handoff mention injects the referenced task and keeps the bubble clean', async ({
     page,
     request,

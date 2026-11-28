@@ -361,10 +361,110 @@ async def test_normal_completion_persists_from_aget_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_limit_recovery_persists_full_chain_without_instruction(monkeypatch):
-    from langchain_core.messages import ToolMessage
+@pytest.mark.parametrize("stream", [False, True])
+async def test_malformed_model_response_rejects_the_turn_before_tool_execution(stream):
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.models.response_validation import MalformedModelResponseError
+    from chat_shell.tools.base import ToolRegistry
+
+    tool_calls: list[str] = []
+
+    @tool
+    def record(value: str) -> str:
+        """Record a value."""
+        tool_calls.append(value)
+        return value
+
+    class _MalformedResponseModel(_LoopingModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            if any(message.type == "tool" for message in messages):
+                return ChatResult(
+                    generations=[ChatGeneration(message=AIMessage(content="done"))]
+                )
+            return ChatResult(
+                generations=[
+                    ChatGeneration(
+                        message=AIMessage(
+                            content="",
+                            response_metadata={"finish_reason": "MALFORMED_RESPONSE"},
+                            tool_calls=[
+                                {
+                                    "name": record.name,
+                                    "args": {"value": "unexpected"},
+                                    "id": "call",
+                                }
+                            ],
+                        )
+                    )
+                ]
+            )
+
+    registry = ToolRegistry()
+    registry.register(record)
+    builder = LangGraphAgentBuilder(
+        llm=_MalformedResponseModel(), tool_registry=registry
+    )
+    messages = [{"role": "user", "content": "hi"}]
+
+    with pytest.raises(MalformedModelResponseError, match="MALFORMED_RESPONSE"):
+        if stream:
+            async for _ in builder.stream_tokens(messages):
+                pass
+        else:
+            await builder.execute(messages)
+
+    assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_malformed_gemini_frames_fail_before_aggregation():
+    import json
+
+    import httpx
+    from langchain_google_genai import ChatGoogleGenerativeAI
 
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.models.response_validation import MalformedModelResponseError
+
+    frame = {
+        "modelVersion": "gemini-3-pro-preview",
+        "candidates": [{"index": 0, "finishReason": "MALFORMED_RESPONSE"}],
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(":streamGenerateContent")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text=f"data: {json.dumps(frame)}\n\n" * 2,
+        )
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3-pro-preview",
+        google_api_key="fixture-only",
+        base_url="https://model.test",
+        client_args={"transport": httpx.MockTransport(respond)},
+        streaming=True,
+        max_retries=0,
+    )
+    builder = LangGraphAgentBuilder(llm=llm)
+    try:
+        with pytest.raises(MalformedModelResponseError, match="MALFORMED_RESPONSE"):
+            await anext(builder.stream_tokens([{"role": "user", "content": "hi"}]))
+    finally:
+        await llm.client.aio.aclose()
+        llm.client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_tool_limit_recovery_persists_full_chain_without_instruction(
+    monkeypatch, malformed
+):
+    from langchain_core.messages import AIMessageChunk, ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.models.response_validation import MalformedModelResponseError
 
     authoritative = [
         HumanMessage(
@@ -397,24 +497,30 @@ async def test_tool_limit_recovery_persists_full_chain_without_instruction(monke
 
     recovery_seen: list = []
 
-    class _Chunk:
-        def __init__(self, content):
-            self.content = content
-
     class _RecoveryLLM:
         async def astream(self, messages):
             recovery_seen.extend(messages)
-            yield _Chunk("final ")
-            yield _Chunk("answer")
+            yield AIMessageChunk(content="final ")
+            yield AIMessageChunk(
+                content="answer",
+                response_metadata=(
+                    {"finish_reason": "MALFORMED_RESPONSE"} if malformed else {}
+                ),
+            )
 
     builder = LangGraphAgentBuilder(llm=_LoopingModel())
     monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
     monkeypatch.setattr(builder, "llm", _RecoveryLLM())
 
     tokens: list[str] = []
-    async for token in builder.stream_tokens(
-        messages=[{"role": "user", "content": "hi"}]
-    ):
+    stream = builder.stream_tokens(messages=[{"role": "user", "content": "hi"}])
+    if malformed:
+        assert await anext(stream) == "final "
+        with pytest.raises(MalformedModelResponseError):
+            await anext(stream)
+        return
+
+    async for token in stream:
         tokens.append(token)
 
     assert "".join(tokens) == "final answer"  # recovery streamed to the client
@@ -616,10 +722,14 @@ async def test_stream_tokens_deletes_turn_thread_on_exit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monkeypatch):
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(
+    monkeypatch, malformed
+):
     from langchain_core.messages import ToolMessage
 
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.models.response_validation import MalformedModelResponseError
 
     authoritative = [
         HumanMessage(
@@ -641,13 +751,15 @@ async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monke
     recovery_seen: list = []
     deleted: list[str] = []
 
-    class _Resp:
-        content = "final answer"
-
     class _RecoveryLLM:
         async def ainvoke(self, messages):
             recovery_seen.extend(messages)
-            return _Resp()
+            return AIMessage(
+                content="final answer",
+                response_metadata=(
+                    {"stop_reason": "MALFORMED_RESPONSE"} if malformed else {}
+                ),
+            )
 
     class _MockSaver:
         async def adelete_thread(self, thread_id):
@@ -669,8 +781,15 @@ async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monke
     monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
     builder._checkpointer = _MockSaver()
 
+    messages = [{"role": "user", "content": "hi"}]
+    if malformed:
+        with pytest.raises(MalformedModelResponseError):
+            await builder.execute(messages)
+        assert len(deleted) == 1
+        return
+
     final_state, _events = await builder._collect_final_state_from_events(
-        messages=[{"role": "user", "content": "hi"}]
+        messages=messages
     )
 
     msgs = final_state["messages"]
