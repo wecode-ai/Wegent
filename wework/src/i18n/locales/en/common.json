@@ -5788,7 +5788,7 @@
   "standIn": {
     "welcome": {
       "title": "What can your assistant help with today?",
-      "try": "Try this",
+      "try": "Use as a draft",
       "advanced": "Advanced mode",
       "home": "Assistant home",
       "dashboard": "Work overview",
@@ -5809,12 +5809,12 @@
         "dingtalk_reply": {
           "title": "Run DingTalk support from a local handbook",
           "hint": "Answer from the handbook and escalate uncertain questions",
-          "prompt": "Set up my assistant to answer questions in the DingTalk support group using the Product Support Handbook on my computer. Confirm the work account, group, device, and handbook path with me. Verify that you can read the handbook and show me the proposed rules before enabling it. Watch all new questions, including messages that don’t mention me.\n\nIf the handbook clearly answers a question for the applicable product version, reply in the original thread and cite the section. If the handbook is silent, conflicts with a newer message, or the question involves a refund, schedule change, or customer commitment, privately send me the original question, evidence, and a draft. Wait for me to confirm before replying."
+          "prompt": "Create a DingTalk Support Assistant to answer questions in the DingTalk support group using the Product Support Handbook on my computer. Confirm the work account, group, device, and handbook path with me. Verify that you can read the handbook and show me the proposed rules before enabling it. Watch all new questions, including messages that don’t mention me.\n\nIf the handbook clearly answers a question for the applicable product version, reply in the original thread and cite the section. If the handbook is silent, conflicts with a newer message, or the question involves a refund, schedule change, or customer commitment, privately send me the original question, evidence, and a draft. Wait for me to confirm before replying."
         },
         "development": {
           "title": "Create my AI development assistant",
           "hint": "Take assigned issues through changes, tests, and reporting",
-          "prompt": "Create a Development Assistant for me. When a development issue is assigned to me in a selected project, have it review the requirements, make the change in the linked repository, run the relevant tests, and report the changes, evidence, and decisions I still owe in the original issue. Confirm the projects, tasks, repository, and execution device before enabling it. Ask me before using production access, changing public interfaces, or acting on conflicting requirements."
+          "prompt": "Create an AI Development Assistant for me. When a development issue is assigned to me in a selected project, have it review the requirements, make the change in the linked repository, run the relevant tests, and report the changes, evidence, and decisions I still owe in the original issue. Confirm the projects, tasks, repository, and execution device before enabling it. Ask me before using production access, changing public interfaces, or acting on conflicting requirements."
         },
         "daily_check": {
           "title": "Check for loose ends every day at 5 pm",
@@ -5824,7 +5824,7 @@
         "knowledge": {
           "title": "Save useful conversation knowledge locally",
           "hint": "Put reusable notes in a local folder you choose",
-          "prompt": "Create a Knowledge Assistant that periodically reviews my authorized Wework conversations. Save verified techniques, decisions, and reusable troubleshooting steps as Markdown in the local folder I choose. Confirm the scope, frequency, device, and folder, and show me an example from recent work. Update existing topics with dated citations, flag contradictions, and protect my handwritten notes."
+          "prompt": "Create a Personal Knowledge Assistant that periodically reviews my authorized Wework conversations. Save verified techniques, decisions, and reusable troubleshooting steps as Markdown in the local folder I choose. Confirm the scope, frequency, device, and folder, and show me an example from recent work. Update existing topics with dated citations, flag contradictions, and protect my handwritten notes."
         },
         "weekly_review": {
           "title": "Review my AI conversations on Fridays",
@@ -5834,6 +5834,10 @@
         "meeting_prep": {
           "title": "The meeting is soon and I haven’t read the material",
           "prompt": "My launch review is about to start and I have five minutes to prepare. Make a one-page briefing from the related conversations, notes, and release checklist I provide. Start with the decision the meeting needs to make. List confirmed items, conflicting records, and the three questions I should ask. For each question, say who to ask and why it matters now. Cite the source for each conclusion.\n\nDeliver the briefing in this conversation. If I haven’t shared the material yet, tell me what to provide."
+        },
+        "disk_space": {
+          "title": "Find what’s using my disk space",
+          "prompt": "Analyze the disk space on this computer. Start with the system disk’s total capacity, available space, and percentage used. Then inspect folders I can access in my home directory, especially Downloads, Desktop, Documents, and common project folders. Rank the largest folders and files by space used, with paths, sizes, and what they appear to contain.\n\nFlag inaccessible folders, cloud-only placeholders, and system usage you cannot attribute to files. Tell me the three places most worth checking first and how much space each uses. Keep the inspection read-only. Leave all files in place."
         },
         "brief": {
           "title": "What needs my attention today?",

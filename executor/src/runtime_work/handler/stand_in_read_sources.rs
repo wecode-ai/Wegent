@@ -49,6 +49,23 @@ fn selection(value: Option<&Value>) -> Result<Vec<Value>, AppIpcError> {
     Ok(refs)
 }
 
+fn selected_current_sources(
+    current: Vec<Value>,
+    selected: Vec<Value>,
+) -> Result<Vec<Value>, AppIpcError> {
+    selected
+        .iter()
+        .map(|reference| {
+            let source = current
+                .iter()
+                .find(|source| same_source(source, reference))
+                .ok_or_else(denied)?;
+            source_ref(source)?;
+            Ok(source.clone())
+        })
+        .collect()
+}
+
 impl RuntimeWorkRpcHandler {
     fn primary_read_sources(&self, user: i64, parent: &str) -> Result<Vec<Value>, AppIpcError> {
         let actor = self.local_task_link(parent).ok_or_else(denied)?;
@@ -130,6 +147,27 @@ impl RuntimeWorkRpcHandler {
         let actor = self.local_task_link(&child.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
         let saved = &actor.runtime_handle["executionRequest"];
+        if origin["type"] == "stand_in_schedule" && origin["scheduledSourceRead"] == true {
+            if actor.ephemeral
+                || actor.status == "archived"
+                || self.archived_link_is_deleted(&actor)
+                || origin["userId"] != child.user
+                || origin["deviceId"] != self.device_id
+                || origin["standInId"] != "@primary"
+                || saved["user_id"] != child.user
+            {
+                return Err(denied());
+            }
+            let automation = self
+                .scheduled_read_automation(&actor, child)
+                .ok_or_else(denied)?;
+            let calendar = &automation.task_request["standInCalendar"];
+            let parent = calendar["readSourceParent"].as_str().ok_or_else(denied)?;
+            return selected_current_sources(
+                self.primary_read_sources(child.user, parent)?,
+                selection(calendar.get("readSources"))?,
+            );
+        }
         let delegation = &saved["standInDelegation"];
         if actor.ephemeral
             || actor.status == "archived"
@@ -150,19 +188,10 @@ impl RuntimeWorkRpcHandler {
             self.source_task_parent(&actor)?;
             return Ok(Vec::new());
         }
-        let current = self.primary_read_sources(child.user, parent)?;
-        let selected = selection(delegation.get("readSources"))?;
-        selected
-            .iter()
-            .map(|reference| {
-                let source = current
-                    .iter()
-                    .find(|source| same_source(source, reference))
-                    .ok_or_else(denied)?;
-                source_ref(source)?;
-                Ok(source.clone())
-            })
-            .collect()
+        selected_current_sources(
+            self.primary_read_sources(child.user, parent)?,
+            selection(delegation.get("readSources"))?,
+        )
     }
 
     pub(super) fn validate_continued_read_sources(
@@ -249,6 +278,58 @@ mod tests {
             );
             handler.upsert_local_task(actor.clone());
         }
+    }
+
+    #[tokio::test]
+    async fn scheduled_source_reads_require_a_running_task_with_a_current_scope() {
+        let (root, mut handler, parent, source) = fixture();
+        handler.automation_store = crate::runtime_work::automations::AutomationStore::new(
+            root.path().join("automations.json"),
+        );
+        let saved = handler
+            .stand_in_schedule_operation(
+                &parent,
+                "schedule_task",
+                &json!({"requestId":"daily-selected","title":"Read approved source","message":"Summarize",
+                    "cron":"0 17 * * *","timezone":"Asia/Shanghai","readSources":[source_ref(&source).unwrap()]}),
+            )
+            .await
+            .unwrap();
+        let id = saved["automation"]["id"].as_str().unwrap();
+        let mut child = parent.clone();
+        child.task_id = "scheduled-test-task".into();
+        child.readonly_worker = true;
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: child.task_id.clone(),
+            status: "running".into(),
+            runtime_handle: json!({
+                "origin":{"type":"stand_in_schedule","scheduledSourceRead":true,"automationId":id,
+                          "userId":7,"standInId":"@primary","deviceId":"mac"},
+                "executionRequest":{"user_id":7},
+            }),
+            ..Default::default()
+        });
+        assert!(handler.delegated_read_sources(&child).is_err());
+        let (_, run) = handler.automation_store.start_manual_run(id).unwrap();
+        let bound = run.coordination.as_ref().unwrap();
+        let mut actor = handler.local_task_link(&child.task_id).unwrap();
+        child.task_id = bound.task_id.clone();
+        actor.local_task_id = child.task_id.clone();
+        actor.runtime_handle["executionRequest"]["standInSchedule"] = json!({
+            "id": id, "runId": run.id, "userId": 7, "roleId": "@primary",
+            "version": bound.automation_version,
+        });
+        handler.upsert_local_task(actor);
+        assert_eq!(
+            handler.delegated_read_sources(&child).unwrap(),
+            vec![source]
+        );
+
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"]["connections"] = json!([]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        assert!(handler.delegated_read_sources(&child).is_err());
     }
 
     fn fixture() -> (

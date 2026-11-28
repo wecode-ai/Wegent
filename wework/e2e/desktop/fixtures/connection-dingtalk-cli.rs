@@ -196,6 +196,18 @@ fn main() {
             assert_eq!(option(&arguments, "--sender-ids"), Some("scoped-contact"));
             read_scoped_messages("selected-direct-messages")
         }
+        ["calendar", "event", "list", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_CALENDAR").is_some() =>
+        {
+            assert_eq!(option(&arguments, "--calendar-id"), Some("primary"));
+            assert!(option(&arguments, "--start").is_some());
+            assert!(option(&arguments, "--end").is_some());
+            record("calendar-read");
+            (
+                r#"{"success":true,"result":[{"id":"event-fixture-1","summary":"DAILY_CHECK：评审会后的动作尚未指定负责人"}]}"#,
+                0,
+            )
+        }
         ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => {
             (EMPTY_MESSAGES, 0)
         }

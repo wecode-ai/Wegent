@@ -414,7 +414,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 ## Set up your stand-in
 
-Open **My assistants** to see the assistant home. Choose a DingTalk or meeting briefing example, preview the request, and select **Try this**. When a usable model is available, the default assistant conversation opens with an editable draft. Send it when you are ready. If a model still needs to be selected, follow the execution device and chat model prompt. **Advanced mode** opens device, model, and app connection settings.
+Open **My assistants** to see the assistant home. Choose a DingTalk or meeting briefing example, preview the request, and select **Use as a draft**. When a usable model is available, the default assistant conversation opens with an editable draft. Send it when you are ready. If a model still needs to be selected, follow the execution device and chat model prompt. **Advanced mode** opens device, model, and app connection settings.
 
 To select specific projects, choose **Add a receive scope → Projects and independent issues**, then search and select the projects. Expand **Task tags** in the scope details to filter each selected project, issues you participate in, or independent issues. If you receive issues from all projects, you can set one filter for that range. New ranges receive issues with any tag by default. Use **Remove** beside a scope to remove it from the draft.
 
@@ -426,7 +426,9 @@ After first-time setup, the header shows **Default assistant** and **Add assista
 
 Open a connection from assistant setup to see its receive scopes. Edit or add a scope, then select **Save scope** to return to its list. Select a model and **Start chatting** from assistant setup. If you close setup with unsaved changes, the guide asks whether to discard them. Apps that require authorization prompt you to sign in.
 
-Assistant home highlights five templates: DingTalk support, a development assistant, a daily check for unfinished work, local knowledge notes, and a weekly AI conversation review. Select **More templates** to browse by category. Select a template to preview it, then choose **Try this** to put the draft in the composer. Select **Assistant home** in the conversation header to return at any time and keep your existing draft. You can also open **Conversation templates** above the composer.
+Assistant home highlights five templates: DingTalk support, a development assistant, a daily check for unfinished work, local knowledge notes, and a weekly AI conversation review. Select **More templates** to browse by category, including a read-only disk space analysis for the current computer. Select a template to preview it, then choose **Use as a draft** to put the draft in the composer. Select **Assistant home** in the conversation header to return at any time and keep your existing draft. You can also open **Conversation templates** above the composer.
+
+After you send a template, the assistant checks the required material and scope in chat. The daily check uses the mailbox and DingTalk conversation you select, and verifies access again at execution time. The knowledge assistant reads only the conversations you select for the schedule and writes to the chosen local project directory. Use **Run now** in **Scheduled** to try an arrangement immediately.
 
 The DingTalk support template asks you to confirm the account, group, execution device, and local handbook. Review the proposed intake scope and reply rules in the conversation. The assistant can reply in the group when the handbook has a clear answer. It brings uncertain questions and draft replies to you privately.
 

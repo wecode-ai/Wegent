@@ -78,8 +78,12 @@ export function TemporaryConversationLayout({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-sm text-text-secondary">
-          <MessageCircle className="h-5 w-5 text-text-secondary" />
-          <p>{emptyStateText}</p>
+          {emptyStateText && (
+            <>
+              <MessageCircle aria-hidden="true" className="h-5 w-5 text-text-secondary" />
+              <p>{emptyStateText}</p>
+            </>
+          )}
         </div>
       )}
       <div

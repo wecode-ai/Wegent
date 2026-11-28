@@ -141,6 +141,38 @@ impl RuntimeWorkRpcHandler {
         Ok((run.to_owned(), through))
     }
 
+    pub(super) fn capture_scheduled_history(
+        &self,
+        identity: &StandInMcpIdentity,
+        tasks: &Value,
+    ) -> Result<Vec<String>, AppIpcError> {
+        if identity.work.is_some()
+            || identity.readonly_worker
+            || !matches!(identity.role.as_deref(), None | Some("@primary"))
+        {
+            return Err(denied());
+        }
+        let tasks = tasks
+            .as_array()
+            .filter(|items| !items.is_empty() && items.len() <= 50)
+            .ok_or_else(denied)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let scope = self.conversation_scope(identity, &store)?;
+        let mut ids = Vec::new();
+        for item in tasks {
+            let id = item.as_str().ok_or_else(denied)?;
+            let task = self.local_task_link(id).ok_or_else(denied)?;
+            if ids.iter().any(|existing| existing == id)
+                || !self.conversation_visible(&task, identity, &scope, &store)
+            {
+                return Err(denied());
+            }
+            ids.push(id.to_owned());
+        }
+        Ok(ids)
+    }
+
     pub(super) fn conversation_scope(
         &self,
         identity: &StandInMcpIdentity,
@@ -151,6 +183,8 @@ impl RuntimeWorkRpcHandler {
         }
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
+        let scheduled_history =
+            origin["type"] == "stand_in_schedule" && origin["scheduledHistoryRead"] == true;
         if actor.ephemeral
             || self.archived_link_is_deleted(&actor)
             || actor.status == "archived"
@@ -159,7 +193,7 @@ impl RuntimeWorkRpcHandler {
             || origin["deviceId"] != self.device_id
             || origin["standInId"].as_str() != identity.role.as_deref()
             || origin["workId"].as_str() != identity.work.as_deref()
-            || (origin["type"] == "stand_in_task") != identity.readonly_worker
+            || (origin["type"] == "stand_in_task" || scheduled_history) != identity.readonly_worker
         {
             return Err(denied());
         }
@@ -176,6 +210,29 @@ impl RuntimeWorkRpcHandler {
                 .ok_or_else(denied)?,
             None => &settings["primary"],
         };
+        if scheduled_history {
+            if role["enabled"] != true {
+                return Err(denied());
+            }
+            let entry = self
+                .scheduled_read_automation(&actor, identity)
+                .ok_or_else(denied)?;
+            let ids = entry.task_request["standInCalendar"]["historyTaskIds"]
+                .as_array()
+                .ok_or_else(denied)?;
+            return Ok(ReadScope {
+                source: None,
+                role: role.clone(),
+                coordinator_tasks: Some(
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                ),
+                can_orchestrate: false,
+                window: None,
+            });
+        }
         let coordinator = identity.coordinator_batch.is_some();
         if identity.memory_review && !settings["lifecycle"]["status"].is_null() {
             return Err(denied());
@@ -791,6 +848,33 @@ mod tests {
             created_at: 1000,
             runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":user}}),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scheduled_history_accepts_only_distinct_visible_conversations() {
+        let (_root, handler, mut identity) = fixture();
+        identity.role = None;
+        handler.upsert_local_task(link(
+            "identity",
+            7,
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"}),
+        ));
+        handler.upsert_local_task(link("selected", 7, json!({})));
+        handler.upsert_local_task(link("foreign", 8, json!({})));
+        assert_eq!(
+            handler
+                .capture_scheduled_history(&identity, &json!(["selected"]))
+                .unwrap(),
+            ["selected"]
+        );
+        for items in [
+            json!(["selected", "foreign"]),
+            json!(["selected", "selected"]),
+        ] {
+            assert!(handler
+                .capture_scheduled_history(&identity, &items)
+                .is_err());
         }
     }
 

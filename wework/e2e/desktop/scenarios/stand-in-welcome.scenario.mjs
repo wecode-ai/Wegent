@@ -19,6 +19,7 @@ import {
   selectedToolCall,
 } from '../modules/response-protocol.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
+import { createWelcomeMaterialStories } from '../modules/stand-in-welcome-materials.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import { STORY_CHAT, STORY_USER, storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 
@@ -34,7 +35,9 @@ const more = byId('stand-in-welcome-more')
 const library = byId('stand-in-template-library')
 const input = `${STORY_CHAT} ${byId('chat-message-input')}`
 const send = `${STORY_CHAT} ${byId('send-message-button')}`
-const roleId = 'welcome-launch-assistant'
+const roleId = 'welcome-dingtalk-support'
+const supportName = '钉钉客服助理'
+const supportSetupQuestion = '请告诉我用哪个工作钉钉账号、要接入的群、运行设备和客服手册路径。'
 const addedRole = { id: 'welcome-release-notes', name: '发布说明校对助理' }
 const addRequest = addPrompt + '请叫它「发布说明校对助理」，只校对我在对话中发给它的发布说明。'
 const launchResponsibilities =
@@ -42,6 +45,7 @@ const launchResponsibilities =
 const handbookQuestion = '请问今天上线的验收窗口是几点？'
 const handbookReply = '根据《产品客服手册》v3 第 2 节，本次验收窗口是 18:00。'
 const handbookMessageId = 'welcome-launch-handbook'
+const handbookResult = '已根据手册第 2 节在原消息下答复。'
 const uncertainMessageId = 'welcome-launch-regression'
 const handbookContent = '《产品客服手册》v3 第 2 节：本次验收窗口是 18:00。'
 const followUp = '上线组有一项支付回调回归未通过，17:30 复测后需要确认发布窗口。'
@@ -81,7 +85,8 @@ export function createDesktopScenario(options) {
   const handbookPath = join(options.workspacePath, 'product-support-handbook.md')
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const load = control => rpc(control, 'runtime.stand_in.personal.get', { userId: STORY_USER })
-  const meetingRequest = examples.meeting_prep.prompt + '\n\n材料见会话《发布评审会原始材料》。'
+  const materialStories = createWelcomeMaterialStories({ ...options, rpc }, examples)
+  const meetingRequest = examples.meeting_prep.prompt
   const meeting = createMeetingUserStory({
     ...options,
     rpc,
@@ -92,7 +97,6 @@ export function createDesktopScenario(options) {
       await captureScreenshot(control, '05-assistant-home-return.png')
       await chooseExample(control, 'meeting_prep')
       await captureScreenshot(control, '06-meeting-draft.png')
-      await control.command('fill', input, { value: meetingRequest })
     },
   })
   let activeStory
@@ -152,7 +156,7 @@ export function createDesktopScenario(options) {
           roles: [
             ...current.roles,
             {
-              ...personalRole(current, { id: roleId, name: '上线跟进助理' }),
+              ...personalRole(current, { id: roleId, name: supportName }),
               prompt: `${launchResponsibilities} 本地路径：${handbookPath}`,
               connections: [
                 {
@@ -205,6 +209,7 @@ export function createDesktopScenario(options) {
       context.appEnvironment.WEWORK_E2E_DINGTALK_HANDBOOK_REPLY = '1'
     },
     async handleHttp(req, response, url) {
+      if (materialStories.active) return materialStories.handleHttp(req, response, url)
       if (!activeStory) return meeting.handleHttp(req, response, url)
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -247,11 +252,16 @@ export function createDesktopScenario(options) {
             events = call(body, 'reply', { messageId: question.recordId, text: handbookReply })
           } else {
             assert.ok(readMcpToolOutput(body, 'welcome-reply').includes('welcome-handbook-reply'))
-            events = [assistantMessage('已根据手册第 2 节在原消息下答复。')]
+            events = [assistantMessage(handbookResult)]
           }
         }
-      } else if (activeStory === 'dingtalk' && input.includes('钉钉「Scoped Group」')) {
+      } else if (activeStory === 'dingtalk' && input.includes('群是 Scoped Group')) {
         events = configureDingTalk(body)
+      } else if (
+        activeStory === 'dingtalk' &&
+        body.input.map(modelMessageText).some(text => text === examples.dingtalk_reply.prompt)
+      ) {
+        events = [assistantMessage(supportSetupQuestion)]
       } else if (activeStory === 'add' && input.includes(addRequest)) {
         events = configurePersonalRole(body)
       } else return false
@@ -287,6 +297,7 @@ export function createDesktopScenario(options) {
         'weekly_review',
       ]
       const grouped = [
+        'disk_space',
         'brief',
         'project',
         'weekly',
@@ -325,7 +336,7 @@ export function createDesktopScenario(options) {
       for (const id of grouped) {
         await control.command('clickWhenEnabled', more)
         await control.command('waitFor', library)
-        if (id === 'brief') {
+        if (id === grouped[0]) {
           const selectors = grouped.map(id => byId(`stand-in-template-library-${id}`)).join(',')
           const rows = JSON.parse(
             await control.command('getElementMetrics', selectors, { value: 'includeText' })
@@ -348,19 +359,23 @@ export function createDesktopScenario(options) {
         examples.dingtalk_reply.prompt.replaceAll('\n', '')
       )
       await captureScreenshot(control, '02-dingtalk-editable-draft.png')
-      await control.command('fill', input, {
-        value:
-          examples.dingtalk_reply.prompt.replace('钉钉支持群', '钉钉「Scoped Group」') +
-          `\n\n我确认用这台设备。手册路径：${handbookPath}`,
-      })
       const before = await load(control)
       assert.equal(before.primary.model.model_id, model.model_id)
       activeStory = 'dingtalk'
+      await control.command('clickWhenEnabled', send)
+      await control.command('waitFor', `${STORY_CHAT} [data-testid="message-assistant"]`, {
+        text: supportSetupQuestion,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('fill', input, {
+        value: `使用 Fixture 工作账号，群是 Scoped Group，在这台设备运行。手册路径：${handbookPath}`,
+      })
       await control.command('clickWhenEnabled', send)
       await control.command('waitFor', proposal, {
         text: 'Scoped Group',
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', proposal, { text: supportName })
       await control.command('waitFor', proposal, { text: '每条新消息', timeoutMs: uiTimeoutMs })
       await control.command('waitFor', proposal, { text: 'Fixture · Fixture Organization' })
       await control.command('waitFor', proposal, { text: '自动帮我处理' })
@@ -400,6 +415,25 @@ export function createDesktopScenario(options) {
         createTime: new Date().toISOString(),
         sendType: 'user',
       })
+      const findWork = (question, failure) =>
+        storyUntil(
+          async () => {
+            const overview = await rpc(control, 'runtime.stand_in.work.list', {
+              userId: STORY_USER,
+            })
+            for (const work of overview.items.filter(row => row.roleId === roleId && row.task)) {
+              const { messages } = await rpc(control, 'runtime.stand_in.work.messages', {
+                userId: STORY_USER,
+                workId: work.id,
+              })
+              if (JSON.stringify(messages).includes(question)) return work
+            }
+            return undefined
+          },
+          Boolean,
+          modelResponseTimeoutMs,
+          failure
+        )
       const knownQuestion = groupMessage(handbookMessageId, handbookQuestion)
       await writeFile(messagesPath, dingTalkMessages([knownQuestion]))
       await storyUntil(
@@ -408,24 +442,25 @@ export function createDesktopScenario(options) {
         modelResponseTimeoutMs,
         'A question covered by the approved handbook must reach the DingTalk reply protocol'
       )
+      const replied = await findWork(
+        handbookQuestion,
+        'The handbook question must reach the scoped job'
+      )
+      await storyUntil(
+        () => rpc(control, 'runtime.tasks.transcript', { taskId: replied.taskId, limit: 20 }),
+        transcript =>
+          transcript.messages?.some(
+            message => message.role === 'assistant' && message.content?.includes(handbookResult)
+          ),
+        modelResponseTimeoutMs,
+        'Wait for the reply receipt before sending another message in the same chat'
+      )
       await writeFile(
         messagesPath,
         dingTalkMessages([knownQuestion, groupMessage(uncertainMessageId, sourceMessage)])
       )
-      const work = await storyUntil(
-        async () => {
-          const overview = await rpc(control, 'runtime.stand_in.work.list', { userId: STORY_USER })
-          for (const work of overview.items.filter(row => row.roleId === roleId && row.task)) {
-            const { messages } = await rpc(control, 'runtime.stand_in.work.messages', {
-              userId: STORY_USER,
-              workId: work.id,
-            })
-            if (JSON.stringify(messages).includes(sourceMessage)) return work
-          }
-          return undefined
-        },
-        Boolean,
-        modelResponseTimeoutMs,
+      const work = await findWork(
+        sourceMessage,
         'A group message without an @ must reach the configured assistant'
       )
       await storyUntil(
@@ -446,6 +481,11 @@ export function createDesktopScenario(options) {
       activeStory = undefined
 
       await meeting.verify(control, model)
+      await materialStories.verify(control, model, async (control, id) => {
+        await control.command('clickWhenEnabled', byId('stand-in-welcome-open'))
+        await control.command('waitFor', home)
+        await chooseExample(control, id)
+      })
       await control.command('fill', input, { value: '等会儿帮我核对会后的行动清单。' })
       await control.command('clickWhenEnabled', byId('stand-in-welcome-open'))
       await control.command('clickWhenEnabled', byId('stand-in-welcome-start'))

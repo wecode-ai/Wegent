@@ -3,7 +3,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import {
   ArrowRightLeft,
-  ArrowUpRight,
+  ChevronDown,
   CalendarDays,
   Check,
   CheckSquare,
@@ -12,6 +12,7 @@ import {
   Code2,
   FileCheck,
   FolderOpen,
+  HardDrive,
   LayoutGrid,
   ListTodo,
   MessageSquare,
@@ -33,6 +34,7 @@ const featuredExamples = [
 
 const exampleGroups = {
   daily: [
+    { id: 'disk_space', icon: HardDrive, shape: 'list' },
     { id: 'brief', icon: ListTodo, shape: 'list' },
     { id: 'project', icon: Route, shape: 'orbit' },
     { id: 'weekly', icon: ScrollText, shape: 'list' },
@@ -68,11 +70,11 @@ function StandInTemplateLibrary({
         <div
           aria-labelledby="stand-in-template-library-title"
           data-testid="stand-in-template-library"
-          className="w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-background p-5 shadow-xl"
+          className="w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-background px-5 pb-5 text-left shadow-[0_0_0_100vmax_rgb(0_0_0_/_0.16)]"
         />
       }
     >
-      <div className="mb-4 flex items-center justify-between gap-2">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-background py-3">
         <h2 id="stand-in-template-library-title" className="text-base font-semibold">
           {t('standIn.welcome.more_templates')}
         </h2>
@@ -237,14 +239,14 @@ export function StandInWelcome({
         <canvas
           ref={canvasRef}
           aria-hidden="true"
-          className="mx-auto aspect-[2/1] max-h-[min(42dvh,30rem)] w-full"
+          className={`mx-auto aspect-[2/1] w-full ${selected ? 'max-h-[min(30dvh,24rem)]' : 'max-h-[min(42dvh,30rem)]'}`}
         />
         <h1 className="heading-lg text-balance">{t('standIn.welcome.title')}</h1>
         <div className="mx-auto mt-6 max-w-[42rem] rounded-3xl border border-border bg-background p-2.5 text-left shadow-sm sm:p-3">
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,17rem),1fr))] gap-1.5">
             {featuredExamples.map(example => {
               const isSelected = selected?.id === example.id
-              const Indicator = isSelected ? Check : ArrowUpRight
+              const Indicator = isSelected ? Check : ChevronDown
               const copy = `standIn.welcome.examples.${example.id}`
               return (
                 <Button
@@ -292,6 +294,19 @@ export function StandInWelcome({
               {error}
             </p>
           )}
+          {key && (
+            <div
+              data-testid="stand-in-welcome-preview"
+              tabIndex={0}
+              aria-label={t(`${key}.title`)}
+              className="mt-3 mb-1 max-h-36 overflow-y-auto border-l-2 border-focus/40 py-2 pr-2 pl-3.5 sm:ml-2"
+            >
+              <p className="mb-1 text-xs font-semibold text-text-primary">{t(`${key}.title`)}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap text-text-secondary">
+                {t(`${key}.prompt`)}
+              </p>
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1.5 border-t border-border px-1 pt-2">
             <Button
               type="button"
@@ -316,17 +331,6 @@ export function StandInWelcome({
               {t('standIn.welcome.advanced')}
             </Button>
           </div>
-          {key && (
-            <div
-              data-testid="stand-in-welcome-preview"
-              className="mt-4 mb-1 border-l-2 border-focus/40 py-2 pr-2 pl-3.5 sm:ml-2"
-            >
-              <p className="mb-1 text-xs font-semibold text-text-primary">{t(`${key}.title`)}</p>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap text-text-secondary">
-                {t(`${key}.prompt`)}
-              </p>
-            </div>
-          )}
         </div>
         {libraryOpen && (
           <StandInTemplateLibrary close={() => setLibraryOpen(false)} onSelect={selectExample} />

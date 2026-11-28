@@ -128,15 +128,15 @@ export function createMeetingUserStory(options) {
         typeof latest?.content === 'string'
           ? latest.content
           : (latest?.content ?? []).map(part => part.text ?? '').join('')
-      let events = delegatedTaskResultEvents(body, {
-        includeExecutionMetadata: !options.openRequest,
-      })
-      if (events) {
-        const receipt = text.match(
-          /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=done,/
-        )
-        if (receipt?.[2] === workerTaskId && JSON.stringify(events).includes(RESULT))
-          reports.add(receipt[1])
+      const receipt = text.match(
+        /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=done,/
+      )
+      let events
+      if (receipt?.[2] && receipt[2] === workerTaskId) {
+        events = delegatedTaskResultEvents(body, {
+          includeExecutionMetadata: !options.openRequest,
+        })
+        if (JSON.stringify(events).includes(RESULT)) reports.add(receipt[1])
       } else if (text.includes(RECORD)) events = [assistantMessage('会议原始材料已记录。')]
       else if (text.includes(WORK)) events = readMaterials(body)
       else if (text.includes(request)) events = prepare(body)
