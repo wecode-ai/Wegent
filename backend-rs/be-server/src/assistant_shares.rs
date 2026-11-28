@@ -206,17 +206,14 @@ async fn list_shares(
                 (id,),
             )
              .await?;
-        let sources: Vec<ShareSource> = tx.fetch_all(
-            format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=?"), (id,)
-        ) .await?;
-        let publication_revisions = sources
-            .into_iter()
-            .map(|row| (format!("{}:{}", row.kind, row.source), row.revision))
-            .collect();
+        let revisions: Vec<(String, u64)> = tx.fetch_all(
+            format!("SELECT CONCAT(d.resource_kind, ':', d.source_id), d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=?"),
+            (id,),
+        ).await?;
         Ok(ShareList {
             received,
             sent,
-            publication_revisions,
+            publication_revisions: revisions.into_iter().collect(),
         })
     }).await.map_err(internal)
 }

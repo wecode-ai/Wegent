@@ -69,6 +69,18 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
         .unwrap();
     }
 
+    assert_eq!(
+        list_shares(&state, user(OWNER))
+            .await
+            .unwrap()
+            .publication_revisions,
+        BTreeMap::from([
+            ("assistant:data".into(), 1),
+            ("team:release".into(), 1),
+            ("team:weekly".into(), 1)
+        ])
+    );
+
     assert!(
         get_share(&state, user(RECIPIENT), OWNER, "team", "weekly")
             .await
