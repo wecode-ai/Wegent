@@ -527,6 +527,37 @@ async fn claude_approval_is_single_use_owner_and_turn_scoped() {
         "answered"
     );
 
+    for (id, answers, status) in [
+        (
+            "decline",
+            json!({"__mcp_approval":{"answers":["Decline"]}}),
+            "answered",
+        ),
+        ("dismiss", json!({}), "cancelled"),
+    ] {
+        let mut decision = sink.decide(id.into(), "Write".into(), json!({}));
+        assert!(futures_util::poll!(&mut decision).is_pending());
+        response["requestId"] = json!(id);
+        response["answers"] = answers.clone();
+        assert_eq!(
+            handler.respond_to_claude_approval("task", &response, true)["accepted"],
+            true
+        );
+        assert!(!decision.await);
+        let blocks = sink.transcript.lock().unwrap().blocks();
+        let payload = blocks
+            .iter()
+            .map(|block| &block["render_payload"])
+            .find(|payload| payload["requestId"] == id)
+            .unwrap();
+        assert_eq!(payload["interactionStatus"], status);
+        if status == "answered" {
+            assert_eq!(payload["response"]["answers"], answers);
+        } else {
+            assert!(payload.get("response").is_none());
+        }
+    }
+
     let mut expiring = sink.decide("second".into(), "Write".into(), json!({}));
     assert!(futures_util::poll!(&mut expiring).is_pending());
     tokio::time::advance(Duration::from_secs(301)).await;

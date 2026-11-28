@@ -10,7 +10,7 @@ pub(in crate::runtime_work::handler) struct PendingApproval {
     turn: String,
     deadline: i64,
     transcript: Arc<Mutex<TurnTranscript>>,
-    answer: Option<oneshot::Sender<bool>>,
+    answer: Option<oneshot::Sender<Option<bool>>>,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -59,13 +59,9 @@ impl RuntimeWorkRpcHandler {
             return rejected();
         }
         let allowed = match &response["answers"] {
-            answers if answers == &json!({"__mcp_approval":{"answers":["Allow"]}}) => true,
-            answers
-                if answers == &json!({"__mcp_approval":{"answers":["Decline"]}})
-                    || answers == &json!({}) =>
-            {
-                false
-            }
+            answers if answers == &json!({"__mcp_approval":{"answers":["Allow"]}}) => Some(true),
+            answers if answers == &json!({"__mcp_approval":{"answers":["Decline"]}}) => Some(false),
+            answers if answers == &json!({}) => None,
             _ => return rejected(),
         };
         if !pending
@@ -231,8 +227,8 @@ impl ToolApproval for ClaudeRuntimeEventSink {
                 lease.publish(true);
             }
             match tokio::time::timeout(APPROVAL_TIMEOUT, receiver).await {
-                Ok(Ok(decision)) => {
-                    lease.status = if decision { "answered" } else { "cancelled" };
+                Ok(Ok(Some(decision))) => {
+                    lease.status = "answered";
                     lease.item["renderPayload"]["response"] = json!({"requestId":lease.id,"interactionScope":turn,"answers":{"__mcp_approval":{"answers":[if decision {"Allow"} else {"Decline"}]}}});
                     decision
                 }
@@ -240,7 +236,7 @@ impl ToolApproval for ClaudeRuntimeEventSink {
                     lease.status = "expired";
                     false
                 }
-                Ok(Err(_)) => false,
+                Ok(Ok(None) | Err(_)) => false,
             }
         })
     }
