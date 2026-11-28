@@ -21,6 +21,7 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
   const create = async (name, teamId) => {
     const previous = new Set((await read()).map(role => role.id))
     await click('stand-in-create-role')
+    await click('stand-in-chat-advanced')
     if (teamId)
       await fill('stand-in-prompt', 'Discard this new-Team draft when referencing a Team.')
     await click('stand-in-create-team')
