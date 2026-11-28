@@ -179,11 +179,6 @@ fn main() {
                 && option(&arguments, "--conversation-ids") == Some("scoped-group") =>
         {
             record("selected-group-messages");
-            if let Some(path) = env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES") {
-                let payload = fs::read_to_string(path).unwrap();
-                print!("{payload}");
-                return;
-            }
             (EMPTY_MESSAGES, 0)
         }
         ["chat", "message", "search-advanced", ..]
@@ -195,6 +190,18 @@ fn main() {
             );
             assert_eq!(option(&arguments, "--sender-ids"), Some("scoped-contact"));
             read_scoped_messages("selected-direct-messages")
+        }
+        ["chat", "+messages-list", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES").is_some() =>
+        {
+            assert_eq!(option(&arguments, "--group"), Some("scoped-group"));
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            assert!(option(&arguments, "--time").is_some());
+            record("daily-group-read");
+            let path = env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES").unwrap();
+            let payload = fs::read_to_string(path).unwrap();
+            print!("{payload}");
+            return;
         }
         ["calendar", "event", "list", ..]
             if env::var_os("WEWORK_E2E_DINGTALK_CALENDAR").is_some() =>

@@ -33,6 +33,13 @@ const TITLE = '每天 17:00 检查漏事'
 const RESULT = '今天还有三项未完成'
 const MAIL_SUBJECT = 'DAILY_CHECK：采购审批等你确认'
 const GROUP_TEXT = 'DAILY_CHECK：请在下班前回复验收安排。'
+const groupPage = messages => ({
+  contractVersion: 'im.message-list.v1',
+  paginationKnown: true,
+  hasMore: false,
+  failedCount: 0,
+  messages,
+})
 const CALENDAR_EVENT = 'DAILY_CHECK：评审会后的动作尚未指定负责人'
 const byId = id => `[data-testid="${id}"]`
 const input = `${STORY_CHAT} ${byId('chat-message-input')}`
@@ -122,10 +129,7 @@ export function createWelcomeDailyCheck(options) {
       dws = context.appEnvironment.DWS_BINARY_PATH
       context.appEnvironment.WEWORK_E2E_DINGTALK_GROUP_MESSAGES = groupPath
       context.appEnvironment.WEWORK_E2E_DINGTALK_CALENDAR = '1'
-      await writeFile(
-        groupPath,
-        JSON.stringify({ success: true, result: { conversationMessagesList: [], hasMore: false } })
-      )
+      await writeFile(groupPath, JSON.stringify(groupPage([])))
     },
     async handleHttp(req, response, url) {
       if (
@@ -139,7 +143,12 @@ export function createWelcomeDailyCheck(options) {
       if (isReplyPredictionRequest(body)) return false
       const text = modelMessageText(body.input?.filter(item => item.role === 'user').at(-1))
       let events
-      if (text === prompt) events = [assistantMessage(SETUP)]
+      if (
+        text.startsWith('Handle only these newly received source events') &&
+        text.includes(MAIL_SUBJECT)
+      )
+        events = [assistantMessage('已收到采购审批邮件，留待每日检查汇总。')]
+      else if (text === prompt) events = [assistantMessage(SETUP)]
       else if (text.startsWith(CONFIRMED)) events = arrange(body)
       else if (text.includes(WORK) && schedule) events = getInputs(body)
       else if (text.startsWith('Wework delegated task result:') && schedule)
@@ -194,6 +203,7 @@ export function createWelcomeDailyCheck(options) {
             },
           },
         })
+        active = true
         await mail.append(
           MAIL_SUBJECT,
           '请在今天 17:00 前核对报价。',
@@ -202,31 +212,19 @@ export function createWelcomeDailyCheck(options) {
         )
         await writeFile(
           groupPath,
-          JSON.stringify({
-            success: true,
-            result: {
-              hasMore: false,
-              nextCursor: '0',
-              conversationMessagesList: [
-                {
-                  openConversationId: 'scoped-group',
-                  singleChat: false,
-                  messages: [
-                    {
-                      openMessageId: 'daily-check-group-message',
-                      senderOpenDingTalkId: 'fixture-colleague',
-                      sender: '测试同事',
-                      content: GROUP_TEXT,
-                      createTime: now.toISOString(),
-                      sendType: 'user',
-                    },
-                  ],
-                },
-              ],
-            },
-          })
+          JSON.stringify(
+            groupPage([
+              {
+                conversationId: 'scoped-group',
+                messageId: 'daily-check-group-message',
+                senderId: 'fixture-colleague',
+                sender: '测试同事',
+                text: GROUP_TEXT,
+                createTime: now.toISOString(),
+              },
+            ])
+          )
         )
-        active = true
         await control.command('clickWhenEnabled', byId('stand-in-welcome-open'))
         await control.command('clickWhenEnabled', byId('stand-in-welcome-example-daily_check'))
         await control.command('clickWhenEnabled', byId('stand-in-welcome-start'))
@@ -262,7 +260,9 @@ export function createWelcomeDailyCheck(options) {
             text,
             timeoutMs: options.modelResponseTimeoutMs,
           })
-        assert.ok(!(await fixture.operations()).includes('send'))
+        const operations = await fixture.operations()
+        assert.ok(operations.includes('daily-group-read') && operations.includes('calendar-read'))
+        assert.ok(!operations.includes('send'))
         console.info(
           '[assistant-home-story] daily_check: original template, Run now, actual email and DingTalk protocol reads'
         )

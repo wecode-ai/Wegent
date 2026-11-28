@@ -72,9 +72,11 @@ export function StandInProposalCard({
     >
       <header className="shrink-0 border-b border-border px-4 py-3">
         <h2 className="font-medium">{title}</h2>
-        <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{proposal.summary}</p>
       </header>
       <div className="min-h-0 overflow-y-auto px-4" data-testid="stand-in-proposal-details">
+        <p className="break-words border-b border-border py-3 text-sm leading-relaxed text-text-secondary">
+          {proposal.summary}
+        </p>
         {proposal.training ? (
           <StandInGhostEvidence training={proposal.training} resolved={!!result} />
         ) : (
