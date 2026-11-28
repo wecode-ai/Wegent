@@ -5,6 +5,7 @@
 from collections.abc import Mapping
 from typing import Any
 
+MODEL_INFERENCE_SCOPE = "model:inference"
 WEWORK_ACCESS_TOKEN_USE = "wework_access"
 WEWORK_REFRESH_TOKEN_USE = "wework_refresh"
 

@@ -21,17 +21,20 @@ pub trait PersonalModelKeyReader: Send + Sync {
 #[derive(Debug, PartialEq)]
 pub enum RuntimeModelIdentity {
     Session(String),
+    Inference(String, i64),
     PersonalKey(i32),
 }
 
 /// Model requests accept user sessions and personal device API keys.
-pub struct RuntimeModelUser(pub UserRow);
+pub struct RuntimeModelUser<const INFERENCE: bool = false>(pub UserRow, pub Option<i64>);
 
-impl brz_http_server::Authenticator<RuntimeModelUser> for AppAuthenticator {
+impl<const INFERENCE: bool> brz_http_server::Authenticator<RuntimeModelUser<INFERENCE>>
+    for AppAuthenticator
+{
     async fn authenticate<'a>(
         &'a self,
         request: brz_http_server::AuthRequest<'a>,
-    ) -> Result<RuntimeModelUser, brz_http_server::AuthFailure> {
+    ) -> Result<RuntimeModelUser<INFERENCE>, brz_http_server::AuthFailure> {
         let authorization = request
             .header("authorization")
             .and_then(|value| std::str::from_utf8(value).ok());
@@ -45,8 +48,17 @@ impl brz_http_server::Authenticator<RuntimeModelUser> for AppAuthenticator {
         )
         .await
         .map_err(crate::auth::session_auth_failure)?;
+        let binding = match &identity {
+            RuntimeModelIdentity::Inference(_, id) if INFERENCE => Some(*id),
+            RuntimeModelIdentity::Inference(..) => {
+                return Err(crate::auth::session_auth_failure(
+                    AuthFailure::InvalidCredentials,
+                ));
+            }
+            _ => None,
+        };
         let user = match identity {
-            RuntimeModelIdentity::Session(name) => {
+            RuntimeModelIdentity::Inference(name, _) | RuntimeModelIdentity::Session(name) => {
                 crate::auth::active_user_by_name(&self.state().mysql, &name).await
             }
             RuntimeModelIdentity::PersonalKey(id) => {
@@ -59,13 +71,13 @@ impl brz_http_server::Authenticator<RuntimeModelUser> for AppAuthenticator {
                 user.and_then(crate::auth::select_active_user)
             }
         };
-        user.map(RuntimeModelUser)
+        user.map(|user| RuntimeModelUser(user, binding))
             .map_err(crate::auth::session_auth_failure)
     }
 
     fn api_log_id<'a>(
         &'a self,
-        principal: &'a RuntimeModelUser,
+        principal: &'a RuntimeModelUser<INFERENCE>,
     ) -> Option<&'a dyn std::fmt::Display> {
         Some(&principal.0.user_name)
     }
@@ -92,17 +104,35 @@ pub async fn verify_runtime_model_token(
             .await
             .map(RuntimeModelIdentity::PersonalKey)
     } else {
-        let claims = crate::auth::decode_session_claims(config, token)
-            .ok_or(AuthFailure::InvalidCredentials)?;
-        let subject = if claims.scope.as_ref().and_then(serde_json::Value::as_str)
-            == Some(MODEL_INFERENCE_SCOPE)
+        #[derive(serde::Deserialize)]
+        struct ModelClaims {
+            #[serde(flatten)]
+            session: crate::auth::SessionClaims,
+            model_kind_id: Option<i64>,
+        }
+        let ModelClaims {
+            session: claims,
+            model_kind_id,
+        } = crate::jwt_compat::decode_jose(
+            token,
+            crate::auth::decoding_keys(config),
+            crate::auth::algorithm(config).ok_or(AuthFailure::InvalidCredentials)?,
+        )
+        .ok_or(AuthFailure::InvalidCredentials)?;
+        if claims.scope.as_ref().and_then(serde_json::Value::as_str) == Some(MODEL_INFERENCE_SCOPE)
             && claims.token_use.is_none()
         {
-            claims.sub.filter(|name| !name.is_empty())
-        } else {
-            claims.username()
-        };
-        subject
+            let id = model_kind_id
+                .filter(|id| *id > 0)
+                .ok_or(AuthFailure::InvalidCredentials)?;
+            return claims
+                .sub
+                .filter(|name| !name.is_empty())
+                .map(|name| RuntimeModelIdentity::Inference(name, id))
+                .ok_or(AuthFailure::InvalidCredentials);
+        }
+        claims
+            .username()
             .map(RuntimeModelIdentity::Session)
             .ok_or(AuthFailure::InvalidCredentials)
     }
@@ -165,6 +195,10 @@ mod tests {
             (serde_json::json!({"sub":"session-owner"}), true),
             (
                 serde_json::json!({"sub":"session-owner","scope":MODEL_INFERENCE_SCOPE}),
+                false,
+            ),
+            (
+                serde_json::json!({"sub":"session-owner","scope":MODEL_INFERENCE_SCOPE,"model_kind_id":7}),
                 true,
             ),
             (

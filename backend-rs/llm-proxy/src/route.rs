@@ -235,21 +235,22 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
             AuthRequest::from_request(&request),
             request.response_arena(),
         );
-        let user: RuntimeModelUser = match tokio::time::timeout_at(deadline, authentication).await {
-            Ok(Ok(user)) => user,
-            Ok(Err(response)) => return source_cors(response, origin.as_deref()),
-            Err(_) => {
-                return source_cors(
-                    super::httpx_request_error("authentication exceeded the request deadline")
-                        .into_http_error(request.response_arena()),
-                    origin.as_deref(),
-                );
-            }
-        };
+        let user: RuntimeModelUser<true> =
+            match tokio::time::timeout_at(deadline, authentication).await {
+                Ok(Ok(user)) => user,
+                Ok(Err(response)) => return source_cors(response, origin.as_deref()),
+                Err(_) => {
+                    return source_cors(
+                        super::httpx_request_error("authentication exceeded the request deadline")
+                            .into_http_error(request.response_arena()),
+                        origin.as_deref(),
+                    );
+                }
+            };
         match super::proxy_llm_responses(
             &self.state,
             &self.upstream_http,
-            &user.0,
+            &user,
             &headers,
             request.body(),
             request.path(),

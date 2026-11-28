@@ -239,7 +239,7 @@ pub(crate) async fn runtime_model_config(
         let owner = super::authority::integer(&options["weworkCloudModelResourceUserId"])
             .filter(|value| *value >= 0)
             .ok_or(IncompleteCloudModelIdentity)?;
-        let config = crate::llm_proxy::resolve_model_config(
+        let (config, _, model_kind_id) = crate::llm_proxy::resolve_model_config_with_spec(
             &state.llm_model_lookup(),
             user,
             model,
@@ -265,6 +265,7 @@ pub(crate) async fn runtime_model_config(
         }
         let mut claims = json!({"sub":user.user_name,"user_id":user.id,"exp":chrono::Utc::now().timestamp()+30*60});
         if project_group_execution {
+            claims["model_kind_id"] = json!(model_kind_id);
             claims["scope"] = json!(wegent_identity::runtime_model_auth::MODEL_INFERENCE_SCOPE);
         }
         let access = sign(state, &claims)?;

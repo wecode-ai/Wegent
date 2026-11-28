@@ -399,6 +399,7 @@ def resolve_llm_proxy_model_config(
     model_type: str,
     namespace: str,
     resource_user_id: int,
+    model_kind_id: int | None = None,
 ) -> dict[str, Any]:
     """Resolve and validate an authorized Model CRD by its complete identity."""
     if model_type not in SUPPORTED_MODEL_TYPES:
@@ -429,6 +430,10 @@ def resolve_llm_proxy_model_config(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
+        )
+    if model_kind_id is not None and kind.id != model_kind_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Cloud model access denied"
         )
     # `_validate_model_access` only proves the requested identity shape. The
     # public `allowedUsers` whitelist lives on the row, so the gateway applies
@@ -496,6 +501,8 @@ async def proxy_llm_responses(
     request: Request,
     db: Session,
     current_user: User,
+    *,
+    model_kind_id: int | None = None,
 ) -> Response:
     """Resolve a cloud model for the authenticated user and stream its response."""
     body_json, model_name = _parse_request_body(await request.body())
@@ -510,6 +517,7 @@ async def proxy_llm_responses(
         model_type=model_type,
         namespace=namespace,
         resource_user_id=resource_user_id,
+        model_kind_id=model_kind_id,
     )
 
     provider_base_url = str(model_config.get("base_url") or "").strip()

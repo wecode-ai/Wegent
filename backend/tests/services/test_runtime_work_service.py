@@ -5603,6 +5603,7 @@ def test_project_group_gateway_token_can_only_be_used_for_model_inference(
         config["api_key"], settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
     )
     assert claims["scope"] == "model:inference"
+    assert claims["model_kind_id"] == model.id
     assert not is_user_session_payload(claims)
 
 

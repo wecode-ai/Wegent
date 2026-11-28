@@ -151,6 +151,7 @@ pub async fn authenticate<M: brz_mysql::Mysql>(
                 _ => AuthError::InvalidCredentials,
             })?;
     let user = match identity {
+        RuntimeModelIdentity::Inference(..) => return Err(AuthError::InvalidCredentials),
         RuntimeModelIdentity::Session(username) => {
             mysql
                 .fetch_optional::<_, _, UserRow>(

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_model_inference_user
 from app.models.user import User
 from app.schemas.runtime_transcript_transport import RuntimeTranscriptChunkResponse
 from app.schemas.runtime_work import (
@@ -793,7 +793,7 @@ async def materialize_runtime_task_endpoint(
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    principal: tuple[User, int | None] = Depends(get_model_inference_user),
 ):
     """Proxy a native LLM request without exposing provider credentials.
 
@@ -804,7 +804,10 @@ async def llm_responses_proxy_endpoint(
     """
     from app.services.llm_proxy_service import proxy_llm_responses
 
-    return await proxy_llm_responses(fastapi_request, db, current_user)
+    user, model_kind_id = principal
+    return await proxy_llm_responses(
+        fastapi_request, db, user, model_kind_id=model_kind_id
+    )
 
 
 @router.post(

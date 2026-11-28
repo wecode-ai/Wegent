@@ -139,7 +139,6 @@ const MODEL_KIND_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS ki
 struct ModelKindRow {
     #[mysql(rename = "kinds_json")]
     json: brz_mysql::Json<brz_json::OpaqueJson>,
-    #[allow(dead_code, reason = "selected to match source column list")]
     #[mysql(rename = "kinds_id")]
     id: i64,
     #[allow(dead_code, reason = "selected to match source column list")]
@@ -244,12 +243,13 @@ pub fn validate_model_api_key(value: &str, required: bool) -> Option<String> {
 async fn proxy_llm_responses(
     state: &LlmProxyState,
     http: &brz_http::Client,
-    user: &UserRow,
+    principal: &wegent_identity::runtime_model_auth::RuntimeModelUser<true>,
     headers: &InboundHeaders<'_>,
     body: &[u8],
     path: &str,
     deadline: Instant,
 ) -> Result<HttpResponse<ProxyStream>, FastApiError> {
+    let user = &principal.0;
     let (mut body_json, model_name) = parse_request_body(body)?;
     let model_name = strip_long_context_suffix(&model_name);
     let model_type = required_header(headers.first(MODEL_TYPE_HEADER), MODEL_TYPE_HEADER)?;
@@ -258,9 +258,9 @@ async fn proxy_llm_responses(
         MODEL_NAMESPACE_HEADER,
     )?;
     let resource_user_id = resource_user_id(headers.first(MODEL_USER_ID_HEADER))?;
-    let model_config = timeout_at(
+    let (model_config, _, model_kind_id) = timeout_at(
         deadline,
-        resolve_model_config(
+        resolve_model_config_with_spec(
             &state.model_lookup(),
             user,
             &model_name,
@@ -272,6 +272,12 @@ async fn proxy_llm_responses(
     .await
     .map_err(|_| httpx_request_error("model lookup exceeded the request deadline"))??;
 
+    if principal.1.is_some_and(|bound| bound != model_kind_id) {
+        return Err(FastApiError::detail(
+            StatusCode::FORBIDDEN,
+            "Cloud model access denied",
+        ));
+    }
     let provider_base_url = model_config.base_url.trim().to_string();
     let provider_model_id = model_config.model_id.trim().to_string();
     if provider_base_url.is_empty() || provider_model_id.is_empty() {
@@ -410,7 +416,7 @@ pub async fn resolve_model_config_with_spec(
     model_type: &str,
     namespace: &str,
     resource_user_id: i64,
-) -> Result<(model_config::ModelConfig, Value), FastApiError> {
+) -> Result<(model_config::ModelConfig, Value, i64), FastApiError> {
     validate_model_access(state, user, model_type, namespace, resource_user_id).await?;
     let row: Option<ModelKindRow> = state
         .mysql
@@ -442,7 +448,7 @@ pub async fn resolve_model_config_with_spec(
     let config =
         model_config::extract_and_process_model_config(&spec, i64::from(user.id), &user.user_name)?;
     model_config::validate_wework_model_config_options(&spec, model_name, &config)?;
-    Ok((config, spec))
+    Ok((config, spec, row.id))
 }
 
 /// `forward_upstream`: send the native request and stream the upstream response.

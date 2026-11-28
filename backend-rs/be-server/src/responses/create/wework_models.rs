@@ -462,7 +462,7 @@ pub(super) async fn cloud_model_config(
         .get("weworkCloudModelResourceUserId")
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    let (config, spec) = crate::llm_proxy::resolve_model_config_with_spec(
+    let (config, spec, _) = crate::llm_proxy::resolve_model_config_with_spec(
         &state.llm_model_lookup(),
         &user,
         &selection.model_name,
