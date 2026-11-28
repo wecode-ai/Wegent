@@ -82,8 +82,8 @@ async function createScenario(request: APIRequestContext, page: Page) {
     expect(response.ok(), `${path}: ${await response.text()}`).toBe(true)
     return response.json() as Promise<T>
   }
-  const apiBot = (name: string, prompt: string, grants?: Record<string, unknown>) =>
-    apiRequest<{ id: number }>(request, '/api/bots', {
+  async function apiBot(name: string, prompt: string, grants?: Record<string, unknown>) {
+    const bot = await apiRequest<{ id: number }>(request, '/api/bots', {
       method: 'POST',
       data: {
         name,
@@ -94,6 +94,8 @@ async function createScenario(request: APIRequestContext, page: Page) {
         agent_config: { bind_model: modelName, bind_model_type: 'user' },
       },
     })
+    return { id: bot.id, name, system_prompt: prompt, shell_type: 'Chat' }
+  }
   async function createProject() {
     const workspace = await apiRequest<{ id: string }>(request, '/api/v1/workspaces', {
       method: 'POST',
@@ -257,7 +259,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
       await configureToolScenario(
         request,
         stage.prompt,
-        Array.from({ length: 3 }, () => [
+        Array.from({ length: 4 }, () => [
           {
             toolCalls: [
               { toolName: `${stage.grant.serverId}_${stage.grant.tool}`, arguments: stage.args },
@@ -473,127 +475,213 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     })
     const groupDetail = page.getByTestId(`collaboration-group-detail-${group}`)
     await capture(groupDetail, testInfo, '04a-group-configuration')
-    const title = `Sign off release ${suffix}`
-    const grouped = await apiRequest<{ id: string }>(
-      request,
-      `/api/v1/cloud-projects/${projectId}/loop-items`,
-      {
-        method: 'POST',
-        data: { title, description: title, status: 'pending', priority: 'high' },
-      }
-    )
-    configuredPrompts.add(title)
-    await configureToolScenario(request, title, [
-      {
-        toolCalls: [
-          {
-            toolName: 'wegent-wework-space_submit_workflow_plan',
-            arguments: {
-              plan: {
-                round_id: 'review',
-                summary: 'Request review',
-                items: [
-                  {
-                    assignment_id: 'review',
-                    title: memberWork,
-                    instructions: 'Run both review stages.',
-                    assignee_type: 'agent',
-                    assignee_id: agent.id,
-                  },
-                ],
+    async function verifyGroupDispatch(groupId: string, title: string, screenshotSuffix = '') {
+      const grouped = await apiRequest<{ id: string }>(
+        request,
+        `/api/v1/cloud-projects/${projectId}/loop-items`,
+        {
+          method: 'POST',
+          data: { title, description: title, status: 'pending', priority: 'high' },
+        }
+      )
+      configuredPrompts.add(title)
+      await configureToolScenario(request, title, [
+        {
+          toolCalls: [
+            {
+              toolName: 'wegent-wework-space_submit_workflow_plan',
+              arguments: {
+                plan: {
+                  round_id: 'review',
+                  summary: 'Request review',
+                  items: [
+                    {
+                      assignment_id: 'review',
+                      title: memberWork,
+                      instructions: 'Run both review stages.',
+                      assignee_type: 'agent',
+                      assignee_id: agent.id,
+                    },
+                  ],
+                },
               },
             },
-          },
-        ],
-      },
-      { responseContent: 'Waiting for the team.' },
-      {
-        toolCalls: [
-          {
-            toolName: 'wegent-wework-space_update_issue_status',
-            arguments: {
-              idempotency_key: 'release-review-accepted',
-              target_status: 'in_review',
-              reason: 'Member review completed',
-              comment: 'Release review accepted.',
+          ],
+        },
+        { responseContent: 'Waiting for the team.' },
+        {
+          toolCalls: [
+            {
+              toolName: 'wegent-wework-space_update_issue_status',
+              arguments: {
+                idempotency_key: 'release-review-accepted',
+                target_status: 'in_review',
+                reason: 'Member review completed',
+                comment: 'Release review accepted.',
+              },
             },
-          },
+          ],
+        },
+        { responseContent: 'Reviewed' },
+      ])
+      await assign(grouped.id, `group:${groupId}`)
+      await capture(page, testInfo, `05-group-issue-assigned${screenshotSuffix}`)
+      const dispatchCard = activityCards.filter({
+        has: page.locator('[data-testid^="cloud-task-manager-execution-"]'),
+        hasText: memberWork,
+      })
+      await expect(dispatchCard).toContainText(leaderName, { timeout: 60_000 })
+      const [dispatchingManager] = (await executions(grouped.id)).filter(
+        run => run.agentId === leader.id
+      )
+      expect(dispatchingManager.teamId).toBe(leaderTeam.id)
+      expect(dispatchingManager.backendTaskId).toBeGreaterThan(0)
+      await capture(page, testInfo, `05a-manager-dispatched-member${screenshotSuffix}`)
+      await expect
+        .poll(
+          async () =>
+            (await apiRequest<CollaborationIssue>(request, `/api/v1/loop-items/${grouped.id}`))
+              .status,
+          {
+            timeout: 90_000,
+            message: 'Coordinator must receive the member result and submit the Issue',
+          }
+        )
+        .toBe('in_review')
+      const members = (await executions(grouped.id)).filter(row => row.agentId === agent.id)
+      expect(members).toHaveLength(1)
+      expect(members[0]).toMatchObject({ teamId: team.id, status: 'completed' })
+      const memberPipeline = await verifyPipeline(members[0].backendTaskId!)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
+      const signoff = activityCards
+        .filter({ hasText: 'Release review accepted.' })
+        .filter({ hasText: leaderName })
+      await expect(signoff).toHaveCount(1)
+      await expect(signoff).toBeVisible()
+      await capture(page, testInfo, `06-group-issue-delivery${screenshotSuffix}`)
+      await capture(signoff, testInfo, `06a-manager-signoff${screenshotSuffix}`)
+      const managerRequests = await getScenarioModelBodies(request, title)
+      expect(modelRequestText(managerRequests.slice(2))).toContain(reviewAnswer)
+      await expect
+        .poll(
+          async () =>
+            (await executions(grouped.id))
+              .filter(run => run.agentId === leader.id)
+              .map(run => run.status),
+          {
+            timeout: 30_000,
+            message: 'The original manager Task must finish after accepting the member result',
+          }
+        )
+        .toEqual(['completed'])
+      const groupedRuns = (await executions(grouped.id)).map(
+        ({ id, agentId, teamId, backendTaskId, status }) => ({
+          id,
+          agentId,
+          teamId,
+          backendTaskId,
+          status,
+        })
+      )
+      expect(groupedRuns.filter(run => run.agentId === leader.id)).toEqual([
+        {
+          id: dispatchingManager.id,
+          agentId: leader.id,
+          teamId: leaderTeam.id,
+          backendTaskId: dispatchingManager.backendTaskId,
+          status: 'completed',
+        },
+      ])
+      const managerTask = await apiRequest<{
+        subtasks: Array<{ role: string; team_id: number; bot_ids: number[]; status: string }>
+      }>(request, `/api/tasks/${dispatchingManager.backendTaskId}`)
+      const turns = managerTask.subtasks.filter(row => row.role === 'ASSISTANT')
+      expect(turns.length).toBeGreaterThan(0)
+      for (const turn of turns) {
+        expect(turn).toMatchObject({
+          team_id: leaderTeam.id,
+          bot_ids: [coordinator.id, planner.id],
+          status: 'COMPLETED',
+        })
+      }
+      return {
+        groupId,
+        issueId: grouped.id,
+        status: 'in_review',
+        managerId: leader.id,
+        memberId: agent.id,
+        managerTeamId: leaderTeam.id,
+        managerBotIds: [coordinator.id, planner.id],
+        memberPipeline,
+        executions: groupedRuns,
+      }
+    }
+    const ordinaryGroup = await verifyGroupDispatch(group, `Sign off release ${suffix}`)
+    const sourceId = `release-source-${suffix}`
+    const adoptionPath = `/api/v1/cloud-projects/${projectId}/personal-team-bindings/${sourceId}`
+    const source = {
+      root: {
+        kind: 'team',
+        definition: {
+          id: sourceId,
+          name: `Adopted release ${suffix}`,
+          leadId: 'manager',
+          members: { manager: 'Coordinate the release', review: 'Run both review stages' },
+        },
+      },
+      member_agent_ids: { manager: leader.id, review: agent.id },
+      member_team_definitions: {
+        manager: {
+          name: leaderName,
+          collaboration_model: 'coordinate',
+          bot: [
+            { ...coordinator, role: 'leader' },
+            { ...planner, role: 'worker' },
+          ],
+        },
+        review: {
+          name: teamName,
+          collaboration_model: 'pipeline',
+          bot: [
+            { ...first, role: 'leader', context_passing: 'original_and_previous' },
+            { ...bot, role: 'worker', context_passing: 'original_and_previous' },
+          ],
+        },
+      },
+    }
+    const adopt = () =>
+      apiRequest<{ group_id: string; publication_id: string; revision: number }>(
+        request,
+        adoptionPath,
+        { method: 'PUT', data: source }
+      )
+    const adoption = await adopt()
+    expect(adoption.group_id).not.toBe(group)
+    expect(await adopt()).toEqual(adoption)
+    const roster = await apiRequest<{ items: Array<{ id: string }> }>(
+      request,
+      `/api/v1/cloud-projects/${projectId}/collaboration-groups`
+    )
+    expect(roster.items.filter(row => row.id === adoption.group_id)).toMatchObject([
+      {
+        personal_team_managed: true,
+        binding_required: false,
+        leader: { kind: 'agent', id: leader.id },
+        members: [
+          { kind: 'agent', id: leader.id },
+          { kind: 'agent', id: agent.id },
         ],
       },
-      { responseContent: 'Reviewed' },
     ])
-    await assign(grouped.id, `group:${group}`)
-    await capture(page, testInfo, '05-group-issue-assigned')
-    const dispatchCard = activityCards.filter({
-      has: page.locator('[data-testid^="cloud-task-manager-execution-"]'),
-      hasText: memberWork,
-    })
-    await expect(dispatchCard).toContainText(leaderName, { timeout: 60_000 })
-    const [dispatchingManager] = (await executions(grouped.id)).filter(
-      run => run.agentId === leader.id
+    const adoptedGroup = await verifyGroupDispatch(
+      adoption.group_id,
+      `Adopted signoff ${suffix}`,
+      '-adopted'
     )
-    expect(dispatchingManager.teamId).toBe(leaderTeam.id)
-    expect(dispatchingManager.backendTaskId).toBeGreaterThan(0)
-    await capture(page, testInfo, '05a-manager-dispatched-member')
-    await expect
-      .poll(
-        async () =>
-          (await apiRequest<CollaborationIssue>(request, `/api/v1/loop-items/${grouped.id}`))
-            .status,
-        {
-          timeout: 90_000,
-          message: 'Coordinator must receive the member result and submit the Issue',
-        }
-      )
-      .toBe('in_review')
-    const members = (await executions(grouped.id)).filter(row => row.agentId === agent.id)
-    expect(members).toHaveLength(1)
-    expect(members[0]).toMatchObject({ teamId: team.id, status: 'completed' })
-    const memberPipeline = await verifyPipeline(members[0].backendTaskId!)
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
-      'data-value',
-      'in_review'
-    )
-    const signoff = activityCards
-      .filter({ hasText: 'Release review accepted.' })
-      .filter({ hasText: leaderName })
-    await expect(signoff).toHaveCount(1)
-    await expect(signoff).toBeVisible()
-    await capture(page, testInfo, '06-group-issue-delivery')
-    await capture(signoff, testInfo, '06a-manager-signoff')
-    const managerRequests = await getScenarioModelBodies(request, title)
-    expect(modelRequestText(managerRequests.slice(2))).toContain(reviewAnswer)
-    await expect
-      .poll(
-        async () =>
-          (await executions(grouped.id))
-            .filter(run => run.agentId === leader.id)
-            .map(run => run.status),
-        {
-          timeout: 30_000,
-          message: 'The original manager Task must finish after accepting the member result',
-        }
-      )
-      .toEqual(['completed'])
-    const groupedRuns = (await executions(grouped.id)).map(
-      ({ id, agentId, teamId, backendTaskId, status }) => ({
-        id,
-        agentId,
-        teamId,
-        backendTaskId,
-        status,
-      })
-    )
-    expect(groupedRuns.filter(run => run.agentId === leader.id)).toEqual([
-      {
-        id: dispatchingManager.id,
-        agentId: leader.id,
-        teamId: leaderTeam.id,
-        backendTaskId: dispatchingManager.backendTaskId,
-        status: 'completed',
-      },
-    ])
     const evidencePath = testInfo.outputPath('team-execution-evidence.json')
     await writeFile(
       evidencePath,
@@ -608,17 +696,8 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
             ...issuePipeline,
             status: assigned.status,
           },
-          group: {
-            groupId: group,
-            issueId: grouped.id,
-            status: 'in_review',
-            managerId: leader.id,
-            memberId: agent.id,
-            managerTeamId: leaderTeam.id,
-            managerBotIds: [coordinator.id, planner.id],
-            memberPipeline,
-            executions: groupedRuns,
-          },
+          group: ordinaryGroup,
+          adoptedGroup: { sourceId, ...adoption, ...adoptedGroup },
         },
         null,
         2
