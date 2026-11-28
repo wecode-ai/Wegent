@@ -199,6 +199,14 @@ If a selected item is unavailable (for example, no task data in a new conversati
 
 Expand any entry to inspect its content before continuing. When a feedback service is configured, select **Submit feedback** to send the problem. Otherwise select **Confirm export** to save the bundle in the system Downloads directory. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.
 
+<a id="ai-troubleshooting"></a>
+
+### Ask the local AI to troubleshoot Wework
+
+On the affected device, open **Report a problem → Troubleshoot with AI** from the workbench. This opens a local chat draft with the `repair-wework` skill selected and carries over the problem description you entered. Review the draft before sending it. You can also type `$` in a Codex conversation and select `wework-runtime:repair-wework` from the suggestions. A working workbench conversation and local executor are required.
+
+The AI explains what it may inspect and confirms whether you want to **Report a bug** or **Try a fix**. Reporting uses the local evidence to prepare an issue. When attempting a fix, the AI clones Wegent if the source is missing and uses a separate worktree to reproduce, patch, and verify the problem. The AI previews what it will submit to Wegent before opening any issue or PR. Raw diagnostics stay on the device.
+
 ### Feedback submission failed
 
 When feedback is submitted, the native application log records these events with the report ID:

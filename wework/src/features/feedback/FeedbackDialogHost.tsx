@@ -17,6 +17,7 @@ export function FeedbackDialogHost() {
       hasActiveTask={request.hasActiveTask}
       getTaskContext={request.getTaskContext}
       feedbackApi={request.feedbackApi}
+      startRepairChat={request.startRepairChat}
       onClose={closeFeedbackDialog}
     />
   )

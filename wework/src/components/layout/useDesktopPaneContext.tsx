@@ -89,6 +89,7 @@ export function useDesktopPaneContext({
     listDeviceDirectories,
     createDeviceDirectory,
     startNewChat,
+    startNewSkillChat,
     services,
     openRuntimeTask,
     workspaceTabId,
@@ -167,6 +168,11 @@ export function useDesktopPaneContext({
     deviceId: currentRuntimeTask?.deviceId ?? null,
     taskId: currentRuntimeTask?.taskId ?? null,
     feedbackApi: services?.feedbackApi,
+    startRepairChat: note =>
+      startNewSkillChat(['wework-runtime:repair-wework'], {
+        localDeviceOnly: true,
+        initialText: note,
+      }),
     getTaskContext: async () => {
       if (!currentRuntimeTask) {
         return {
