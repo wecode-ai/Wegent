@@ -180,7 +180,7 @@ impl LocalTaskStore {
                  execution_device_id = COALESCE(NULLIF(execution_device_id, ''), ?4),
                  runtime_instance_id = ?6,
                  runtime_device_id = ?4, runtime_task_id = ?5,
-                 lease_expires_at = ?2, version = version + 1, updated_at = ?1
+                 lease_expires_at = ?2, execution_payload = ?7, version = version + 1, updated_at = ?1
              WHERE id = ?3 AND status = 'queued'",
             params![
                 now,
@@ -189,15 +189,12 @@ impl LocalTaskStore {
                 runtime_device_id,
                 runtime_task_id,
                 runtime_instance_id,
+                payload.to_string(),
             ],
         )?;
         if changed != 1 {
             return Ok(None);
         }
-        connection.execute(
-            "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
-            params![payload.to_string(), candidate_id],
-        )?;
         let mut execution = execution_row(&connection, candidate_id)?;
         drop(statement);
         connection.execute(
