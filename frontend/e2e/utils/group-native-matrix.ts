@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import { connectChat } from './project-mention-test-support'
+import { verifySameSourceTeams } from './same-source-team'
 import { scopedMockUrl } from './mock-scope'
 import { createCollaborationGroup } from './issue-dispatch-test-support'
 import { selectCollaborationProjectView } from './collaboration-test-support'
 import {
+  clearToolScenario,
   configureToolScenario,
   getScenarioModelBodies,
   modelRequestText,
@@ -30,6 +33,8 @@ interface Run {
 }
 
 interface Context {
+  token: string
+  put<T>(path: string, data: unknown): Promise<T>
   client: import('./api-client').ApiClient
   skillCleanup: number[]
   request: APIRequestContext
@@ -52,11 +57,13 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
   const cases = []
   const lead = await createGroupBotCapability(ctx.client, 'leader', suffix, ctx.skillCleanup)
   const worker = await createGroupBotCapability(ctx.client, 'worker', suffix, ctx.skillCleanup)
+  const scripts = new Map<string, { steps: ToolScenarioStep[]; headers?: Record<string, string> }>()
   async function scenario(
     key: string,
     steps: ToolScenarioStep[],
     headers?: Record<string, string>
   ) {
+    scripts.set(key, { steps, headers })
     ctx.configuredPrompts.add(key)
     await configureToolScenario(request, key, steps, { matchHeaders: headers })
   }
@@ -79,6 +86,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       metadata: { name: model, namespace: 'default' },
       spec: {
         protocol: claude ? 'claude' : 'openai-responses',
+        isWeworkAvailable: !claude,
         modelConfig: {
           env: {
             model: claude ? 'claude' : 'openai',
@@ -369,6 +377,229 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     contentType: 'application/json',
   })
 
+  const shared = cases.filter(cell => cell.shell === 'Codex' && cell.mode !== 'solo')
+  async function replay(cell: { leadPrompt: string; workerPrompt: string }) {
+    for (const action of [
+      {
+        arguments: { issue_number: 7, owner: 'group', repo: 'release' },
+        server: lead.serverId,
+        tool: 'mcp_tool_call',
+        tool_name: lead.tool,
+      },
+      {
+        arguments: { code: '6 * 14' },
+        server: worker.serverId,
+        tool: 'mcp_tool_call',
+        tool_name: worker.tool,
+      },
+    ]) {
+      const responseContent = JSON.stringify({
+        risk_level: 'low',
+        user_authorization: 'high',
+        outcome: 'allow',
+        rationale: 'Run the assigned isolated fixture tool with the specified test arguments.',
+      })
+      await scenario(JSON.stringify(action, null, 2), [{ responseContent }, { responseContent }], {
+        'x-openai-subagent': 'guardian',
+      })
+    }
+    for (const key of [cell.leadPrompt, cell.workerPrompt]) {
+      const script = scripts.get(key)!
+      await configureToolScenario(request, key, script.steps, { matchHeaders: script.headers })
+    }
+  }
+  const sharedResult = await verifySameSourceTeams(shared, {
+    page,
+    projectId,
+    token: ctx.token,
+    model: 'group-codex-' + suffix,
+    grants: [lead.config, worker.config],
+    api,
+    put: ctx.put,
+    prepare: replay,
+    async receipts(cell) {
+      return Promise.all(
+        [cell.leadPrompt, cell.workerPrompt].map(async (key, index) => {
+          const second = cell.mode === 'pipeline' && index === 1
+          return verifyGroupBotProbe(
+            await getScenarioModelBodies(request, key),
+            second ? worker : lead,
+            second ? lead : worker
+          ).receipt
+        })
+      )
+    },
+  })
+  const executions = []
+  for (const delivery of sharedResult.deliveries) {
+    const project = evidence.find(row => row.teamId === delivery.teamId)!
+    expect(
+      new Set([
+        ...delivery.personalReceipts,
+        ...delivery.platformReceipts,
+        ...project.capabilities.map(bot => bot.receipt),
+      ]).size
+    ).toBe(6)
+    expect(project.taskId).not.toBe(delivery.platformTaskId)
+    executions.push({ ...delivery, ordinaryGroup: { groupId, issueId: issue.id, ...project } })
+  }
+  const adopter = shared.find(cell => cell.mode === 'coordinate')!
+  const reviewer = shared.find(cell => cell.mode === 'pipeline')!
+  const adoptedTitle = 'Verify adopted release ' + sharedResult.sourceId
+  const adoptedIssue = await api<{ id: string }>(`/api/v1/cloud-projects/${projectId}/loop-items`, {
+    title: adoptedTitle,
+    status: 'pending',
+    priority: 'high',
+  })
+  await clearToolScenario(request, adopter.leadPrompt)
+  await clearToolScenario(request, adopter.workerPrompt)
+  await replay(reviewer)
+  await scenario(adoptedTitle, [
+    {
+      toolCalls: [
+        {
+          toolName: 'wework_space__submit_workflow_plan',
+          arguments: {
+            plan: {
+              round_id: 'adopted',
+              summary: 'Review both release stages',
+              items: [
+                {
+                  assignment_id: reviewer.name,
+                  title: reviewer.name,
+                  instructions: reviewer.instructions,
+                  assignee_type: 'agent',
+                  assignee_id: reviewer.agentId,
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    { responseContent: 'Waiting for both release stages.' },
+    {
+      toolCalls: [
+        {
+          toolName: 'wework_space__update_issue_status',
+          arguments: {
+            idempotency_key: 'accept-adopted',
+            target_status: 'in_review',
+            reason: 'Both stages delivered',
+            comment: 'Accepted ' + sharedResult.sourceId,
+          },
+        },
+      ],
+    },
+    { responseContent: 'Accepted.' },
+  ])
+  const adoptedId = sharedResult.adoption.group_id
+  await ctx.assign(adoptedIssue.id, 'group:' + adoptedId)
+  await expect
+    .poll(
+      async () => {
+        const runs = await ctx.executions(adoptedIssue.id)
+        const failure = runs.find(run => ['cancelled', 'failed'].includes(run.status))
+        if (failure)
+          throw Error(
+            'Adopted group ' + adoptedId + ' execution ' + failure.id + ' ' + failure.errorMessage
+          )
+        return runs
+          .filter(r => r.status === 'completed')
+          .map(r => r.teamId)
+          .sort()
+      },
+      { timeout: 120000, message: 'Adopted group manager and Pipeline must finish ' + adoptedId }
+    )
+    .toEqual([adopter.teamId, reviewer.teamId].sort())
+  await expect
+    .poll(
+      async () => (await api<{ status: string }>('/api/v1/loop-items/' + adoptedIssue.id)).status
+    )
+    .toBe('in_review')
+  const accepted = modelRequestText((await getScenarioModelBodies(request, adoptedTitle)).slice(2))
+  expect(accepted).toContain(reviewer.workerResult)
+  const adoptedRuns = await ctx.executions(adoptedIssue.id)
+  const member = adoptedRuns.find(r => r.agentId === reviewer.agentId)!
+  const managerRun = adoptedRuns.find(r => r.agentId === adopter.agentId)!
+  expect(member.backendTaskId).toBeGreaterThan(0)
+  expect(managerRun.backendTaskId).toBeGreaterThan(0)
+  const task = await api<{
+    subtasks: { role: string; team_id: number; bot_ids: number[]; status: string }[]
+  }>('/api/tasks/' + member.backendTaskId)
+  expect(task.subtasks.filter(t => t.role === 'ASSISTANT')).toMatchObject(
+    reviewer.bots.map(b => ({ team_id: reviewer.teamId, bot_ids: [b.bot_id], status: 'COMPLETED' }))
+  )
+  const adoptedCapabilities = await Promise.all(
+    [reviewer.leadPrompt, reviewer.workerPrompt].map(async (key, index) => ({
+      botId: reviewer.bots[index].bot_id,
+      ...verifyGroupBotProbe(
+        await getScenarioModelBodies(request, key),
+        index ? worker : lead,
+        index ? lead : worker
+      ),
+    }))
+  )
+  const earlier = executions.find(row => row.teamId === reviewer.teamId)!
+  expect(
+    new Set([
+      ...earlier.personalReceipts,
+      ...earlier.platformReceipts,
+      ...earlier.ordinaryGroup.capabilities.map(bot => bot.receipt),
+      ...adoptedCapabilities.map(bot => bot.receipt),
+    ]).size
+  ).toBe(8)
+  const chat = connectChat(ctx.token)
+  let signoffActivity
+  try {
+    const { snapshot } = await chat.subscribe(projectId, adoptedIssue.id, 0, () => {})
+    const signed = snapshot.messages.filter(
+      message =>
+        message.metadata.activity_type === 'manager_status_comment' &&
+        message.content.includes('Accepted ' + sharedResult.sourceId)
+    )
+    expect(signed).toHaveLength(1)
+    const [message] = signed
+    expect(message.sender).toMatchObject({ type: 'agent', id: adopter.agentId })
+    expect(message.taskId).toBe(adoptedIssue.id)
+    const dispatchId = String(message.metadata.dispatch_id)
+    expect(dispatchId.startsWith('collaboration-group:' + adoptedId + ':')).toBe(true)
+    expect(message.metadata.target_status).toBe('in_review')
+    signoffActivity = {
+      messageId: message.messageId,
+      senderId: message.sender.id,
+      dispatchId,
+      executionId: managerRun.id,
+      content: message.content,
+    }
+  } finally {
+    chat.dispose()
+  }
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const signoffCard = page
+    .locator('[data-testid^="cloud-task-activity-card-"]')
+    .filter({ hasText: signoffActivity.content })
+  await expect(signoffCard).toHaveCount(1)
+  await expect(signoffCard).toContainText(adopter.name)
+  await expect(signoffCard).toBeVisible()
+  await info.attach('same-source-team-signoff', {
+    body: await signoffCard.screenshot(),
+    contentType: 'image/png',
+  })
+  await info.attach('same-source-team-executions', {
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ...sharedResult,
+      groupId: adoptedId,
+      issueId: adoptedIssue.id,
+      managerRun,
+      signoffActivity,
+      member: { ...member, capabilities: adoptedCapabilities },
+      executions,
+    }),
+  })
+  await replay(adopter)
+  await page.goto(projectPath)
   const native = cases.filter(cell => cell.mode === 'coordinate')
   const nativeCaptures = async () =>
     Promise.all(

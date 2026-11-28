@@ -187,6 +187,7 @@ async function createScenario(request: APIRequestContext, page: Page) {
   }
   return {
     suffix,
+    token,
     client,
     skillCleanup,
     configuredPrompts,
@@ -724,6 +725,8 @@ test('dispatches six native Team configurations in one collaboration group', asy
   await initializeProjectExecutionEnvironment(page)
   const { leader } = await createLeader(projectId)
   await verifyGroupNativeMatrix({
+    token: scenario.token,
+    put: (path, data) => apiRequest(request, path, { method: 'PUT', data }),
     client: scenario.client,
     skillCleanup: scenario.skillCleanup,
     leaderName,
