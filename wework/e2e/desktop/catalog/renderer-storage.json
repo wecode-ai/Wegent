@@ -8,5 +8,11 @@
       "shard": 4,
       "position": 13000
     }
-  }
+  },
+  "paths": [
+    "wework/e2e/desktop/modules/repair-wework.mjs",
+    "wework/electron/src/host/diagnostics-mcp.ts",
+    "wework/electron/src/host/live-*-diagnostics.ts",
+    "executor/src/runtime_work/handler/live_diagnostics.rs"
+  ]
 }

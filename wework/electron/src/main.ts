@@ -587,6 +587,7 @@ app.on('web-contents-created', (_event, contents) => {
         ? {
             pathname: route.pathname,
             projectId: route.searchParams.get('projectId'),
+            hasIssueFocus: route.searchParams.has('focusRequest'),
             projectStore: route.searchParams.get('projectStore'),
             workspaceTab: route.searchParams.get('workspaceTab'),
           }
@@ -625,6 +626,7 @@ app.on('web-contents-created', (_event, contents) => {
     if (
       process.env.VITE_WEWORK_E2E === 'true' &&
       (message.startsWith('[interaction-focus-state]') ||
+        message.startsWith('[wework-scheme]') ||
         message.startsWith('[desktop-e2e-drag-start] '))
     )
       console.info(redactLog(message).slice(0, 4096))

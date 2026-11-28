@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { contentTracing, type WebContents } from 'electron'
+import type { Debugger, WebContents } from 'electron'
 import { redactLog } from '../runtime/rotating-log.js'
 import { profileHotFrames } from './diagnostic-profile-summary.js'
 
@@ -68,8 +68,6 @@ async function record(target: Target, directory: string, durationMs: number) {
   if (debug.isAttached()) throw new Error('The renderer already has an attached debugger')
   const events: Record<string, unknown>[] = []
   let dropped = 0
-  let tracing = false
-  let profiling = false
   const tracePath = join(directory, 'renderer.trace.json')
   const profilePath = join(directory, 'renderer.cpuprofile')
   const consolePath = join(directory, 'renderer.console.json')
@@ -87,18 +85,17 @@ async function record(target: Target, directory: string, durationMs: number) {
     await debug.sendCommand('Runtime.enable')
     await debug.sendCommand('Profiler.enable')
     await debug.sendCommand('Profiler.start')
-    profiling = true
-    await contentTracing.startRecording({
-      included_categories: TRACE_CATEGORIES,
-      recording_mode: 'record-continuously',
-      trace_buffer_size_in_kb: 32 * 1024,
+    await debug.sendCommand('Tracing.start', {
+      transferMode: 'ReturnAsStream',
+      traceConfig: {
+        includedCategories: TRACE_CATEGORIES,
+        recordMode: 'recordContinuously',
+        traceBufferSizeInKb: 32 * 1024,
+      },
     })
-    tracing = true
     await delay(durationMs)
     const { profile } = await debug.sendCommand('Profiler.stop')
-    profiling = false
-    await contentTracing.stopRecording(tracePath)
-    tracing = false
+    const traceDataLoss = await exportTrace(debug, tracePath)
     await Promise.all([
       writeFile(profilePath, JSON.stringify(profile), { mode: 0o600 }),
       writeFile(consolePath, JSON.stringify({ events, dropped }), { mode: 0o600 }),
@@ -107,6 +104,7 @@ async function record(target: Target, directory: string, durationMs: number) {
       profilePath,
       tracePath,
       consolePath,
+      traceDataLoss,
       dropped,
       durationMs,
       hotFrames: profileHotFrames(profile),
@@ -117,10 +115,54 @@ async function record(target: Target, directory: string, durationMs: number) {
       })),
     }
   } finally {
-    if (profiling && debug.isAttached()) await debug.sendCommand('Profiler.stop').catch(() => {})
-    if (tracing) await contentTracing.stopRecording(tracePath).catch(() => {})
     debug.removeListener('message', onMessage)
     if (debug.isAttached()) debug.detach()
+  }
+}
+
+async function exportTrace(debug: Debugger, path: string) {
+  let cleanup = () => {}
+  const completion = new Promise<{ stream: string; dataLoss: boolean }>((resolve, reject) => {
+    const onMessage = (_event: unknown, method: string, params: Record<string, unknown>) => {
+      if (method !== 'Tracing.tracingComplete') return
+      if (typeof params.stream !== 'string') {
+        reject(new Error('Chromium completed tracing without an export stream'))
+        return
+      }
+      resolve({ stream: params.stream, dataLoss: params.dataLossOccurred === true })
+    }
+    const onDetach = () => reject(new Error('The renderer detached during trace export'))
+    const timeout = setTimeout(() => reject(new Error('Chromium trace export timed out')), 15_000)
+    debug.on('message', onMessage)
+    debug.once('detach', onDetach)
+    cleanup = () => {
+      clearTimeout(timeout)
+      debug.removeListener('message', onMessage)
+      debug.removeListener('detach', onDetach)
+    }
+  })
+  try {
+    const [{ stream, dataLoss }] = await Promise.all([completion, debug.sendCommand('Tracing.end')])
+    try {
+      const file = await open(path, 'wx', 0o600)
+      try {
+        for (;;) {
+          const { data, base64Encoded, eof } = await debug.sendCommand('IO.read', {
+            handle: stream,
+            size: 1024 * 1024,
+          })
+          await file.writeFile(data, base64Encoded ? 'base64' : 'utf8')
+          if (eof) return dataLoss
+        }
+      } finally {
+        await file.close()
+      }
+    } finally {
+      if (debug.isAttached())
+        await debug.sendCommand('IO.close', { handle: stream }).catch(() => {})
+    }
+  } finally {
+    cleanup()
   }
 }
 
