@@ -38,6 +38,7 @@ import {
   FRESH_CHAT_PROMPT,
   selectE2EModel,
 } from '../modules/shared.mjs'
+import { verifyEmbeddedBrowserClickCursor } from '../modules/embedded-browser-visibility.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -1876,39 +1877,16 @@ export function createDesktopScenario({
       })
       assert.ok(afterFillInspect.inspectText.includes(DIRECT_FILLED_TEXT))
 
-      const clickPromise = bridgeCall({
-        action: 'click',
-        ref: buttonNode.ref,
-        timeoutMs: 5_000,
-      })
-      await control.command('waitFor', BROWSER_AGENT_CURSOR_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', BROWSER_AGENT_TAB_ICON_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
-      const cursorStyle = await control.command('getAttribute', BROWSER_AGENT_CURSOR_SELECTOR, {
-        value: 'style',
-      })
-      assert.ok(
-        cursorStyle.includes('translate3d'),
-        `The host AI cursor did not move to the click target: ${cursorStyle}`
+      const cursorEvidence = await verifyEmbeddedBrowserClickCursor(
+        control,
+        bridgeCall,
+        browserLabel,
+        buttonNode.ref,
+        uiTimeoutMs
       )
-      const clickResult = await clickPromise
-      assert.equal(clickResult.ok, true, `Click failed: ${JSON.stringify(clickResult)}`)
-      assert.equal(clickResult.effect.domChanged, true)
-      await new Promise(resolve => setTimeout(resolve, 1_000))
-      const cursorVisibleAfterClick = await control.command(
-        'getAttribute',
-        BROWSER_AGENT_CURSOR_SELECTOR,
-        {
-          value: 'data-visible',
-        }
-      )
-      assert.equal(
-        cursorVisibleAfterClick,
-        'true',
-        'The host AI cursor disappeared immediately after the click'
+      await writeFile(
+        join(resultDir, 'embedded-browser-click-cursor.json'),
+        JSON.stringify(cursorEvidence, null, 2)
       )
       const finalInspect = await bridgeCall({
         action: 'inspect',
@@ -2240,7 +2218,7 @@ export function createDesktopScenario({
             buttonRef: buttonNode.ref,
             deleteRef: deleteNode.ref,
             fillEffect: fillResult.effect,
-            clickEffect: clickResult.effect,
+            clickEffect: cursorEvidence.clickResult.effect,
             approvalId: deleteApprovalId,
             deleteEffect: approvedDeleteResult.effect,
             waitReason: waitResult.reason,

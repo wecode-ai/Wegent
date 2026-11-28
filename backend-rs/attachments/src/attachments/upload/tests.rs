@@ -155,6 +155,9 @@ async fn hosted_materials_persist_ready_references_without_binary_storage_or_par
                 "temporary-key",
             );
             metadata.insert("lifecycle_owner".to_owned(), Value::from("upload-test"));
+            let prepared =
+                prepare_upload_parse(&backend, mime_type, purpose, b"original media", extension)
+                    .await;
             let outcome = store_and_parse(
                 &mut transaction,
                 &backend,
@@ -165,7 +168,7 @@ async fn hosted_materials_persist_ready_references_without_binary_storage_or_par
                 b"original media",
                 "temporary-key".to_owned(),
                 metadata,
-                purpose,
+                prepared,
                 &mut None,
             )
             .await
@@ -199,12 +202,21 @@ async fn hosted_materials_persist_ready_references_without_binary_storage_or_par
 #[tokio::test]
 async fn hosting_failure_propagates_before_any_ready_or_binary_write() {
     let mut transaction = StatementLog::default();
+    let backend = HostingBackend {
+        fail: true,
+        invalid: false,
+    };
+    let prepared = prepare_upload_parse(
+        &backend,
+        "video/mp4",
+        "video_reference",
+        b"original media",
+        ".mp4",
+    )
+    .await;
     let result = store_and_parse(
         &mut transaction,
-        &HostingBackend {
-            fail: true,
-            invalid: false,
-        },
+        &backend,
         73,
         7,
         "reference.mp4",
@@ -212,7 +224,7 @@ async fn hosting_failure_propagates_before_any_ready_or_binary_write() {
         b"original media",
         "key".to_owned(),
         Map::new(),
-        "video_reference",
+        prepared,
         &mut None,
     )
     .await;
@@ -227,12 +239,21 @@ async fn hosting_failure_propagates_before_any_ready_or_binary_write() {
 async fn hosting_validation_is_rolled_back_and_keeps_the_upload_bad_request_contract() {
     let mut transaction = StatementLog::default();
     let mut validation_error = None;
+    let backend = HostingBackend {
+        fail: false,
+        invalid: true,
+    };
+    let prepared = prepare_upload_parse(
+        &backend,
+        "video/mp4",
+        "video_reference",
+        b"original media",
+        ".mp4",
+    )
+    .await;
     let error = store_and_parse(
         &mut transaction,
-        &HostingBackend {
-            fail: false,
-            invalid: true,
-        },
+        &backend,
         73,
         7,
         "reference.mp4",
@@ -240,7 +261,7 @@ async fn hosting_validation_is_rolled_back_and_keeps_the_upload_bad_request_cont
         b"original media",
         "key".to_owned(),
         Map::new(),
-        "video_reference",
+        prepared,
         &mut validation_error,
     )
     .await
@@ -273,6 +294,14 @@ async fn public_default_keeps_media_in_the_configured_binary_backend() {
         "mysql"
     );
     let mut transaction = StatementLog::default();
+    let prepared = prepare_upload_parse(
+        &FailingStorageBackend,
+        "video/mp4",
+        "video_reference",
+        b"original media",
+        ".mp4",
+    )
+    .await;
     let result = store_and_parse(
         &mut transaction,
         &FailingStorageBackend,
@@ -283,7 +312,7 @@ async fn public_default_keeps_media_in_the_configured_binary_backend() {
         b"original media",
         "key".to_owned(),
         Map::new(),
-        "video_reference",
+        prepared,
         &mut None,
     )
     .await;
@@ -432,6 +461,14 @@ fn the_upload_route_is_registered_once() {
 #[tokio::test]
 async fn a_failed_storage_write_aborts_before_any_column_write() {
     let mut transaction = StatementLog::default();
+    let prepared = prepare_upload_parse(
+        &FailingStorageBackend,
+        "text/markdown",
+        "default",
+        b"## title\n\nbody",
+        ".md",
+    )
+    .await;
     let result = store_and_parse(
         &mut transaction,
         &FailingStorageBackend,
@@ -442,7 +479,7 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
         b"## title\n\nbody",
         "attachments/0123456789ab_20261009000000_157_1364828".to_string(),
         Map::new(),
-        "default",
+        prepared,
         &mut None,
     )
     .await;
@@ -603,4 +640,119 @@ async fn the_parsed_upload_tail_refreshes_the_context_after_commit() {
         .is_err()
     );
     assert!(failed.statements().is_empty());
+}
+
+#[tokio::test]
+async fn pre_parsed_upload_records_parsing_then_ready_in_transaction() {
+    let body = b"# Weekly Report\n\nAll checks passed.";
+    let prepared = prepare_upload_parse(
+        &MySqlStorageBackend,
+        "text/markdown",
+        "default",
+        body,
+        ".md",
+    )
+    .await;
+    assert!(matches!(prepared, PreparedUpload::Parsed(Ok(_))));
+
+    let mut transaction = StatementLog::default();
+    let outcome = store_and_parse(
+        &mut transaction,
+        &MySqlStorageBackend,
+        901,
+        12,
+        "report.md",
+        ".md",
+        body,
+        "attachments/key_901".to_string(),
+        Map::new(),
+        prepared,
+        &mut None,
+    )
+    .await
+    .expect("pre-parsed upload succeeds");
+
+    assert!(matches!(
+        outcome,
+        UploadOutcome::Parsed {
+            context_id: 901,
+            truncation_info: None
+        }
+    ));
+    assert_eq!(transaction.statements.len(), 4);
+    assert!(transaction.statements[0].starts_with("SELECT subtask_contexts.id"));
+    assert!(transaction.statements[1].contains("SET binary_data=?, type_data=?"));
+    assert!(transaction.statements[2].contains("SET status='parsing', type_data=?"));
+    assert!(
+        transaction.statements[3]
+            .contains("SET status='ready', extracted_text=?, text_length=?, type_data=?")
+    );
+}
+
+#[tokio::test]
+async fn pre_parsed_failure_still_commits_failed_status_after_storage_and_parsing_flushes() {
+    let prepared = prepare_upload_parse(
+        &MySqlStorageBackend,
+        "application/msword",
+        "default",
+        b"legacy binary doc",
+        ".doc",
+    )
+    .await;
+    assert!(matches!(prepared, PreparedUpload::Parsed(Err(_))));
+
+    let mut transaction = StatementLog::default();
+    let outcome = store_and_parse(
+        &mut transaction,
+        &MySqlStorageBackend,
+        902,
+        12,
+        "legacy.doc",
+        ".doc",
+        b"legacy binary doc",
+        "attachments/key_902".to_string(),
+        Map::new(),
+        prepared,
+        &mut None,
+    )
+    .await
+    .expect("parse failure still commits the failed row");
+
+    match outcome {
+        UploadOutcome::ParseFailed { body } => {
+            assert_eq!(body["error_code"], "legacy_doc");
+        }
+        _ => panic!("expected ParseFailed"),
+    }
+    assert_eq!(transaction.statements.len(), 4);
+    assert!(transaction.statements[0].starts_with("SELECT subtask_contexts.id"));
+    assert!(transaction.statements[1].contains("SET binary_data=?, type_data=?"));
+    assert!(transaction.statements[2].contains("SET status='parsing', type_data=?"));
+    assert!(transaction.statements[3].contains("SET status='failed', error_message=?"));
+
+    let prepared_fail_storage = prepare_upload_parse(
+        &FailingStorageBackend,
+        "application/msword",
+        "default",
+        b"legacy binary doc",
+        ".doc",
+    )
+    .await;
+    let mut failed_storage_tx = StatementLog::default();
+    let storage_err = store_and_parse(
+        &mut failed_storage_tx,
+        &FailingStorageBackend,
+        903,
+        12,
+        "legacy.doc",
+        ".doc",
+        b"legacy binary doc",
+        "attachments/key_903".to_string(),
+        Map::new(),
+        prepared_fail_storage,
+        &mut None,
+    )
+    .await;
+    assert!(storage_err.is_err());
+    assert!(failed_storage_tx.statements.is_empty());
 }

@@ -14,7 +14,8 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { applyLocalExecutorCloudConnection } from '@/features/cloud-connection/localExecutorCloudConnection'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { createEmbeddedBrowserCursorObservation } from './embedded-browser-cursor-observation'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { createInteractionDraftStore } from '@/features/notifications/useInteractionDrafts'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -50,6 +51,11 @@ interface VerificationControlDependencies {
 }
 
 type InteractionDraftStore = ReturnType<typeof createInteractionDraftStore>
+
+let browserCursorObservation: {
+  id: string
+  observation: ReturnType<typeof createEmbeddedBrowserCursorObservation>
+} | null = null
 
 const interactionDraftStores = new Map<string, InteractionDraftStore>()
 
@@ -318,6 +324,37 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'startBrowserCursorObservation': {
+      if (browserCursorObservation)
+        throw new Error('A browser cursor observation is already registered')
+      browserCursorObservation = {
+        id: command.id,
+        observation: createEmbeddedBrowserCursorObservation(
+          command.value ?? '',
+          command.timeoutMs ?? 10_000,
+          {
+            subscribe: subscribeDesktopHostEvents,
+          }
+        ),
+      }
+      return { handled: true, value: command.id }
+    }
+    case 'finishBrowserCursorObservation':
+    case 'cancelBrowserCursorObservation': {
+      const current = browserCursorObservation
+      if (!current || current.id !== command.value)
+        throw new Error('Browser cursor observation is not registered')
+      try {
+        if (command.action === 'cancelBrowserCursorObservation') {
+          current.observation.cancel()
+          return { handled: true, value: '' }
+        }
+        return { handled: true, value: await current.observation.result }
+      } finally {
+        current.observation.cancel()
+        browserCursorObservation = null
+      }
+    }
     case 'enqueueNativeNotificationReply':
       return {
         handled: true,

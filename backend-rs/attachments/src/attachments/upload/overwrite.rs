@@ -21,9 +21,10 @@
 //! 6. `_parse_and_update_context` then the `READY` flush;
 //! 7. `db.commit()` + `db.refresh(context)`.
 //!
-//! SQLAlchemy writes only the attributes whose value changed, so every
-//! statement is built from the desired attribute values compared with the
-//! values last loaded or written ([`OverwriteState`]).
+//! Later flushes compare the desired values with those last loaded or written
+//! ([`OverwriteState`]), matching SQLAlchemy's dirty-attribute checks. The reset
+//! writes every overwrite-owned value because parsing precedes the transaction
+//! and a competing overwrite can change the loaded row in the meantime.
 
 use std::sync::Arc;
 
@@ -131,46 +132,47 @@ impl OverwriteState {
         }
     }
 
-    /// The changed attributes in mapper order, as `(column, value)` pairs.
-    fn changes(&self) -> Vec<(&'static str, Param)> {
+    /// Attribute values in mapper order, forcing all reset-owned columns when
+    /// requested; ordinary flushes include only changed attributes.
+    fn changes(&self, force_all: bool) -> Vec<(&'static str, Param)> {
         let mut changes = Vec::new();
-        if self.current.name != self.flushed.name {
+        if force_all || self.current.name != self.flushed.name {
             changes.push(("name", Param::Text(self.current.name.clone())));
         }
-        if self.current.status != self.flushed.status {
+        if force_all || self.current.status != self.flushed.status {
             changes.push(("status", Param::Text(self.current.status.clone())));
         }
-        if self.current.error_message != self.flushed.error_message {
+        if force_all || self.current.error_message != self.flushed.error_message {
             changes.push((
                 "error_message",
                 Param::Text(self.current.error_message.clone().unwrap_or_default()),
             ));
         }
-        if self.current.binary_data != self.flushed.binary_data {
+        if force_all || self.current.binary_data != self.flushed.binary_data {
             changes.push((
                 "binary_data",
                 Param::Bytes(self.current.binary_data.clone()),
             ));
         }
-        if self.current.image_base64 != self.flushed.image_base64 {
+        if force_all || self.current.image_base64 != self.flushed.image_base64 {
             changes.push((
                 "image_base64",
                 Param::Text(self.current.image_base64.clone().unwrap_or_default()),
             ));
         }
-        if self.current.extracted_text != self.flushed.extracted_text {
+        if force_all || self.current.extracted_text != self.flushed.extracted_text {
             changes.push((
                 "extracted_text",
                 Param::Text(self.current.extracted_text.clone().unwrap_or_default()),
             ));
         }
-        if self.current.text_length != self.flushed.text_length {
+        if force_all || self.current.text_length != self.flushed.text_length {
             changes.push((
                 "text_length",
                 Param::Int(i64::from(self.current.text_length)),
             ));
         }
-        if self.current.type_data != self.flushed.type_data {
+        if force_all || self.current.type_data != self.flushed.type_data {
             let empty = Map::new();
             changes.push((
                 "type_data",
@@ -190,7 +192,27 @@ impl OverwriteState {
         transaction: &mut T,
         context_id: i64,
     ) -> MysqlResult<()> {
-        let changes = self.changes();
+        let changes = self.changes(false);
+        self.write(transaction, context_id, changes).await
+    }
+
+    /// Assert every reset value: a competing overwrite can change any of these
+    /// columns after this upload loaded its baseline and before its transaction.
+    async fn flush_reset<T: MysqlTransaction>(
+        &mut self,
+        transaction: &mut T,
+        context_id: i64,
+    ) -> MysqlResult<()> {
+        let changes = self.changes(true);
+        self.write(transaction, context_id, changes).await
+    }
+
+    async fn write<T: MysqlTransaction>(
+        &mut self,
+        transaction: &mut T,
+        context_id: i64,
+        changes: Vec<(&'static str, Param)>,
+    ) -> MysqlResult<()> {
         if changes.is_empty() {
             return Ok(());
         }
@@ -370,6 +392,7 @@ pub async fn overwrite_attachment_internal(
     };
     let reset_type_data = attributes.current.type_data.clone().unwrap_or_default();
     let stored_type_data = with_encryption(reset_type_data.clone(), encrypt);
+    let parsed = document::parse_async(binary_data, &extension).await;
     let mut parse_failure: Option<Value> = None;
     let mut truncation_info: Option<Value> = None;
 
@@ -383,7 +406,7 @@ pub async fn overwrite_attachment_internal(
                 transaction.execute(preflush.sql, preflush.params).await?;
             }
             // `_reset_attachment_context` + `db.flush()`.
-            attributes.flush(transaction, context_id).await?;
+            attributes.flush_reset(transaction, context_id).await?;
 
             // `StorageBackend.save`: the object write.
             let external = match backend
@@ -426,7 +449,7 @@ pub async fn overwrite_attachment_internal(
             attributes.flush(transaction, context_id).await?;
 
             // `_parse_and_update_context` + the `READY` flush.
-            match document::parse_async(binary_data, &extension).await {
+            match parsed {
                 Ok(parsed) => {
                     let mut type_data = attributes.current.type_data.clone().unwrap_or_default();
                     type_data.insert(
@@ -516,13 +539,106 @@ fn mysql_failure(error: MysqlError) -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
 
-    /// The recorded reset flush for a stored (`ready`) attachment:
+    /// A competing overwrite can commit while this upload parses. The reset
+    /// must write even unchanged reset values: a parse failure will not clear
+    /// the competing upload's text, image or error in a later dirty flush.
+    #[tokio::test]
+    async fn reset_flush_replaces_all_reset_owned_columns_before_a_parse_failure() {
+        let metadata = type_data_json(&super::super::store::build_type_data(
+            "notes.doc",
+            ".doc",
+            6,
+            "application/msword",
+            "mysql",
+            "attachments/test_7_42",
+        ));
+        // Every loaded value already equals its reset value, including metadata.
+        let fixture = MysqlRows::start(move |sql| {
+            if sql.starts_with("UPDATE ") {
+                return Vec::new();
+            }
+            assert!(sql.contains("FROM subtask_contexts"), "{sql}");
+            vec![
+                ("subtask_contexts_id", SqlValue::I64(42)),
+                ("subtask_contexts_subtask_id", SqlValue::I64(0)),
+                ("subtask_contexts_user_id", SqlValue::I32(7)),
+                (
+                    "subtask_contexts_context_type",
+                    SqlValue::Text("attachment".into()),
+                ),
+                ("subtask_contexts_name", SqlValue::Text("notes.doc".into())),
+                (
+                    "subtask_contexts_status",
+                    SqlValue::Text("uploading".into()),
+                ),
+                (
+                    "subtask_contexts_error_message",
+                    SqlValue::Text(String::new()),
+                ),
+                ("subtask_contexts_binary_data", SqlValue::Bytes(Vec::new())),
+                (
+                    "subtask_contexts_image_base64",
+                    SqlValue::Text(String::new()),
+                ),
+                (
+                    "subtask_contexts_extracted_text",
+                    SqlValue::Text(String::new()),
+                ),
+                ("subtask_contexts_text_length", SqlValue::I32(0)),
+                (
+                    "subtask_contexts_type_data",
+                    SqlValue::Text(metadata.clone()),
+                ),
+                ("subtask_contexts_created_at", SqlValue::Null),
+                ("subtask_contexts_updated_at", SqlValue::Null),
+            ]
+        })
+        .await;
+        let state = crate::test_support::state(fixture.mysql.clone());
+        let outcome = overwrite_attachment_internal(
+            state.upload_services(),
+            Some(7),
+            42,
+            "notes.doc",
+            b"legacy",
+            &Map::new(),
+            None,
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            Err(OverwriteError::Parse(body)) if body["error_code"] == "legacy_doc"
+        ));
+        let updates: Vec<_> = fixture
+            .queries()
+            .into_iter()
+            .filter(|sql| sql.starts_with("UPDATE "))
+            .collect();
+
+        assert_eq!(
+            updates,
+            [
+                "UPDATE subtask_contexts SET name=?, status=?, error_message=?, binary_data=?, \
+                 image_base64=?, extracted_text=?, text_length=?, type_data=?, updated_at=now() \
+                 WHERE subtask_contexts.id = ?",
+                "UPDATE subtask_contexts SET binary_data=?, type_data=?, updated_at=now() \
+                 WHERE subtask_contexts.id = ?",
+                "UPDATE subtask_contexts SET status=?, updated_at=now() WHERE subtask_contexts.id = ?",
+                "UPDATE subtask_contexts SET status=?, error_message=?, updated_at=now() \
+                 WHERE subtask_contexts.id = ?",
+            ]
+        );
+    }
+
+    /// Ordinary dirty tracking retains SQLAlchemy's changed-column behavior:
     /// `status='uploading', extracted_text='', text_length=0, type_data=?` with
     /// `updated_at=now()` last. `name`, `error_message`, `binary_data` and
     /// `image_base64` are unchanged, so SQLAlchemy omits them.
     #[test]
-    fn reset_flush_writes_only_the_changed_columns() {
+    fn dirty_flush_writes_only_the_changed_columns() {
         let loaded = Columns {
             name: "notes.md".to_string(),
             status: "ready".to_string(),
@@ -540,7 +656,7 @@ mod tests {
         state.current.type_data = Some(Map::new());
 
         let names: Vec<&str> = state
-            .changes()
+            .changes(false)
             .into_iter()
             .map(|(column, _)| column)
             .collect();
@@ -567,7 +683,7 @@ mod tests {
         let mut state = OverwriteState::new(loaded);
         state.current.status = "parsing".to_string();
         let parsing: Vec<&str> = state
-            .changes()
+            .changes(false)
             .into_iter()
             .map(|(column, _)| column)
             .collect();
@@ -578,7 +694,7 @@ mod tests {
         state.current.extracted_text = Some("# body".to_string());
         state.current.text_length = 6;
         let ready: Vec<&str> = state
-            .changes()
+            .changes(false)
             .into_iter()
             .map(|(column, _)| column)
             .collect();
