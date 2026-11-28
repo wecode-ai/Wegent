@@ -452,6 +452,7 @@ impl RuntimeWorkRpcHandler {
         };
         if delegation["roleDelegation"].is_object() {
             let request = &mut payload["executionRequest"];
+            request["task_id"] = json!(id);
             let delegation_instruction = if delegation["roleDelegation"]["team"] == true {
                 "The team lead coordinates the other members' work."
             } else {

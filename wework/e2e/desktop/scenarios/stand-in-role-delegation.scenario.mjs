@@ -113,10 +113,10 @@ export function createDesktopScenario({
     response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
     response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
   }
-  const tool = (body, name, id, args = {}) =>
+  const tool = (body, name, id, args = {}, server = 'wework_stand_in') =>
     mcpToolRequestEvents(body, {
       toolName: name,
-      directToolName: `mcp__wework_stand_in__${name}`,
+      directToolName: `mcp__${server}__${name}`,
       argumentsValue: args,
       searchCallId: `${id}-discovery`,
       toolCallId: id,
@@ -270,7 +270,7 @@ export function createDesktopScenario({
         return true
       }
       if (rework.handleRequest(body, response, latest)) return true
-      if (ownerFollowup.handleRequest(body, response, latest)) return true
+      if (ownerFollowup.handleRequest(body, response, latest, url.origin)) return true
       for (const [index, item] of RETRY_WORK.entries()) {
         if (!latest.includes(item.message)) continue
         retryRuns[index] += 1
