@@ -1,10 +1,20 @@
+import { LOCAL_USER } from '@/api/local/localSession'
+import { ApiError } from '@/api/http'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
 import {
+  isStandInBindingOwner,
   type StandInBindingTarget,
   type StandInExecutorApi,
   type StandInProposal,
 } from '@/api/standIn'
+import {
+  configuredPrimaryStandInDevice,
+  getStandInAccountStopIntent,
+  resolvePrimaryStandInDevice,
+} from '@/features/todo/standInInstanceSource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { DeviceInfo } from '@/types/api'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
 export interface AssistantSourceData {
@@ -26,6 +36,13 @@ interface SourceSnapshot {
 const locationsKey = (source: AssistantSourceData) =>
   JSON.stringify(source.settings.roles.map(role => [role.id, role.executionDeviceId]))
 
+function accountReadUnavailable(cause: unknown): boolean {
+  if (invalidatesExperienceRead(cause)) return false
+  return cause instanceof ApiError
+    ? cause.status === 408 || cause.status === 429 || cause.status >= 500
+    : cause instanceof TypeError || (cause instanceof DOMException && cause.name === 'TimeoutError')
+}
+
 /** Account-bound settings and proposals share identity validation, but independent failures. */
 export function createAssistantSourcesModel(
   services: WorkbenchServices,
@@ -39,6 +56,8 @@ export function createAssistantSourcesModel(
   let sourceRevision = 0
   let proposalRevision = 0
   let includeProposals = false
+  let devices: DeviceInfo[] = []
+  let connected = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let unsubscribe: (() => void) | undefined
   const publish = (next: SourceSnapshot) => {
@@ -102,17 +121,78 @@ export function createAssistantSourcesModel(
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
       if (snapshot.source && snapshot.source.localDeviceId !== identity.deviceId) clearSource()
-      const account = configuredTarget
-        ? undefined
-        : await services.personalAssistantAccountApi?.get()
-      if (!current()) return
       if (configuredTarget && configuredTarget.userId !== userId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
-      const ownerId = userId
-      const deviceId =
-        configuredTarget?.deviceId ??
-        account?.definitions.find(definition => definition.roleId === '@primary')?.bot.spec
-          ?.execution_policy?.environment_id
+      let account: PersonalAssistantAccount | undefined
+      let accountFailure: SourceSnapshot['failure']
+      const cloud = userId !== LOCAL_USER.id ? services.personalAssistantAccountApi : undefined
+      if (cloud) {
+        try {
+          account = (await cloud.get()) ?? undefined
+        } catch (cause) {
+          if (!accountReadUnavailable(cause)) throw cause
+          accountFailure = { cause }
+        }
+      }
+      if (!current()) return
+      let ownerId = userId
+      let deviceId: string
+      if (account) {
+        if (!configuredPrimaryStandInDevice(account)) {
+          clearSource()
+          throw Object.assign(new Error(), { code: 'executor_unavailable' })
+        }
+        deviceId = await resolvePrimaryStandInDevice({
+          api,
+          account,
+          userId,
+          localDeviceId: identity.deviceId,
+          devices,
+          connected,
+        })
+        if (getStandInAccountStopIntent(account, deviceId, devices)) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+      } else if (accountFailure) {
+        const previous = snapshot.source
+        const confirmedTarget =
+          configuredTarget ??
+          (previous && { userId: previous.ownerId, deviceId: previous.deviceId })
+        if (confirmedTarget && confirmedTarget.deviceId !== identity.deviceId)
+          throw accountFailure.cause
+        const binding = await api.binding(identity.deviceId)
+        if (!current()) return
+        const target = binding.target
+        if (target && !isStandInBindingOwner(target.userId, userId)) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+        // Only a verified local source may continue independently of the cloud account.
+        // A remembered remote target must not silently turn into a local one.
+        const localTarget = confirmedTarget ?? (binding.status === 'active' ? target : undefined)
+        if (!localTarget || localTarget.deviceId !== identity.deviceId) throw accountFailure.cause
+        if (
+          !isStandInBindingOwner(localTarget.userId, userId) ||
+          (target?.userId === localTarget.userId &&
+            target.deviceId === localTarget.deviceId &&
+            binding.status !== 'active') ||
+          binding.stoppingTargets?.includes(`${localTarget.userId}:${localTarget.deviceId}`)
+        ) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+        ownerId = localTarget.userId
+        deviceId = localTarget.deviceId
+      } else if (!cloud && configuredTarget) {
+        deviceId = configuredTarget.deviceId
+      } else {
+        clearSource()
+        throw Object.assign(new Error(), { code: 'executor_unavailable' })
+      }
+      if (!current()) return
+      if (
+        configuredTarget &&
+        (ownerId !== configuredTarget.userId || deviceId !== configuredTarget.deviceId)
+      )
+        throw Object.assign(new Error(), { code: 'permission_denied' })
       if (!deviceId) {
         clearSource()
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
@@ -126,6 +206,9 @@ export function createAssistantSourcesModel(
       if (!current()) return
       if (settings.userId !== ownerId || settings.executionDeviceId !== deviceId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
+      if (settings.lifecycle?.status) {
+        throw Object.assign(new Error(), { code: 'permission_denied' })
+      }
       const previous = snapshot.source
       const next: AssistantSourceData = {
         api,
@@ -142,7 +225,7 @@ export function createAssistantSourcesModel(
         next.proposals = previous.proposals
         next.proposalsReady = previous.proposalsReady
       }
-      publish({ ...snapshot, source: next, failure: undefined })
+      publish({ ...snapshot, source: next, failure: accountFailure })
       if (!sameLocations) await poll()
     } catch (cause) {
       if (!current()) return
@@ -158,7 +241,16 @@ export function createAssistantSourcesModel(
     refresh() {
       void refresh()
     },
-    subscribe(listener: () => void, proposals: boolean) {
+    subscribe(
+      listener: () => void,
+      proposals: boolean,
+      nextDevices: DeviceInfo[],
+      nextConnected: boolean
+    ) {
+      const inputsChanged =
+        devices !== nextDevices || connected !== nextConnected || includeProposals !== proposals
+      devices = nextDevices
+      connected = nextConnected
       listeners.add(listener)
       includeProposals = proposals
       if (listeners.size === 1) {
@@ -169,9 +261,18 @@ export function createAssistantSourcesModel(
             source &&
             settings.userId === source.ownerId &&
             settings.executionDeviceId === source.deviceId
-          )
+          ) {
             void refresh()
+          } else if (
+            services.personalAssistantAccountApi &&
+            userId !== LOCAL_USER.id &&
+            settings.userId === userId
+          ) {
+            void load()
+          }
         })
+        void refresh()
+      } else if (inputsChanged) {
         void refresh()
       }
       return () => {

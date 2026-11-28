@@ -50,7 +50,7 @@ async function selectPortrait(invoke, prompt) {
   const state = await invoke('browser_evaluate', {
     expression: `({
       prompt: document.querySelector('#prompt').value,
-      open: document.querySelector('#video-settings').matches(':popover-open'),
+      open: document.querySelector('#video-settings:popover-open') !== null,
       selected: document.querySelector('#portrait').getAttribute('aria-pressed'),
       settingsClicks: Number(document.querySelector('#settings').dataset.clicks),
       optionClicks: Number(document.querySelector('#portrait').dataset.clicks)

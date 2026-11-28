@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { Button } from '@/components/ui/button'
 import type { CollaborationProject } from '@wegent/collaboration'
@@ -37,6 +37,7 @@ interface AssistantWorkspaceProps {
   devices: DeviceInfo[]
   onSelectDevice(deviceId: string): Promise<void>
   onOpenWelcome?(): void
+  headerActions?: ReactNode
   onClose(): void
 }
 
@@ -112,6 +113,7 @@ function AssistantWorkspaceContent({
   conversation,
   onOpenWelcome,
   services: assistantServices,
+  headerActions,
 }: AssistantWorkspaceProps) {
   const { state, services } = useWorkbench()
   const tabs = useOptionalWorkspaceTabs()
@@ -176,6 +178,7 @@ function AssistantWorkspaceContent({
             </Button>
           )}
           <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />
+          {headerActions}
         </>
       ),
       content: (

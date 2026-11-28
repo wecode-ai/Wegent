@@ -13,7 +13,10 @@ import {
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { fetchJson, selectE2EModel } from '../modules/shared.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
-import { readStandInBinding } from '../modules/stand-in-instance-flows.mjs'
+import {
+  assertStandInAccountDevice,
+  readStandInBinding,
+} from '../modules/stand-in-instance-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 
@@ -262,36 +265,68 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
             JSON.stringify({ enabled: false })
           ),
       })
+      const deviceDeadline = performance.now() + uiTimeoutMs
+      const deviceSignal = AbortSignal.timeout(uiTimeoutMs)
+      await until(
+        async () => {
+          const catalog = await fetchJson(cloud.backendUrl + '/api/devices', {
+            headers: { Authorization: 'Bearer ' + cloud.authToken },
+            signal: deviceSignal,
+          })
+          return catalog.items?.find(item => item.execution_target_id === peerDevice)
+        },
+        item =>
+          performance.now() < deviceDeadline &&
+          item?.status === 'online' &&
+          item.runtime_features?.remoteTaskAccess?.enabled === false,
+        'Device A must finish registering with remote task access disabled',
+        uiTimeoutMs
+      )
       await reloadMainWindow(control)
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('waitFor', '[data-testid="stand-in-overview-retry"]', {
+      await control.command('waitFor', '[data-testid="stand-in-project-catalog-retry"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await openStandInSettings(control)
-      const executionDevice = '[data-testid="personal-assistant-execution-device"]'
-      await control.command('waitFor', executionDevice, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', '[data-testid="stand-in-instance-recovery"]', {
+        text: '已有对话和连接范围留在原设备',
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         (await readCloudAssistant()).definitions.find(role => role.roleId === '@primary').bot.spec
           .execution_policy.environment_id,
         peerDevice
       )
-      await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
-        text: '已有对话和连接范围留在原设备',
+      assert.equal(
+        await control.command('getElementCount', peerConversation),
+        '0',
+        'The inaccessible executor must not expose a conversation'
+      )
+      const localChoice = '[data-testid="stand-in-instance-bind-1-' + deviceId + '"]'
+      await control.command('clickWhenEnabled', localChoice, { timeoutMs: uiTimeoutMs })
+      await assertStandInAccountDevice(1, deviceId, uiTimeoutMs, cloud)
+      await control.command('waitFor', peerConversation, {
+        text: modelReply,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('clickWhenEnabled', executionDevice, { timeoutMs: uiTimeoutMs })
-      await control.command(
-        'clickWhenEnabled',
-        '[role="listbox"] [role="option"][data-value=' + JSON.stringify(deviceId) + ']',
-        { timeoutMs: uiTimeoutMs }
+      const recovered = await readCloudAssistant()
+      for (const role of entries.slice(1)) {
+        assert.equal(
+          recovered.definitions.find(definition => definition.roleId === role.roleId).bot.spec
+            .execution_policy.environment_id,
+          peerDevice,
+          'Recovery changes only the primary assistant execution device'
+        )
+      }
+      assert.deepEqual(await readStandInBinding(control, uiTimeoutMs), before)
+      assert.equal(
+        await waitForCompletedRuntimeTaskThread(control, primaryTask, uiTimeoutMs),
+        threadOnB,
+        'Device B must retain its original conversation after recovery'
       )
-      await until(
-        readCloudAssistant,
-        account =>
-          account?.definitions.find(role => role.roleId === '@primary')?.bot.spec.execution_policy
-            .environment_id === deviceId,
-        'Device B could not update the cloud execution device with Device A access disabled',
-        uiTimeoutMs
+      assert.equal(
+        JSON.parse(await readFile(peerIndex, 'utf8')).tasks[primaryTask]?.thread_id,
+        threadOnA,
+        'Device A must retain its original conversation'
       )
     },
   }

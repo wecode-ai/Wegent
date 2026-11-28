@@ -3,6 +3,52 @@ import { expect, test } from 'vitest'
 import { FakeWebContents } from '../../test-fixtures/embedded-browser.js'
 import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
 
+test('read-only diagnostics use the engine side-effect check and never retry without it', async () => {
+  const contents = new FakeWebContents()
+  contents.debugger.sendCommand.mockResolvedValue({
+    exceptionDetails: {
+      text: 'Uncaught',
+      exception: { description: 'EvalError: Possible side-effect in debug-evaluate' },
+    },
+  })
+  const scripts = new BrowserScriptEvaluator(contents as unknown as WebContents)
+  await expect(scripts.evaluate('fixtureExpression', { readOnly: true })).rejects.toMatchObject({
+    kind: 'read_only_rejected',
+    message: 'Read-only browser evaluation rejected',
+  })
+  expect(contents.debugger.sendCommand).toHaveBeenCalledExactlyOnceWith('Runtime.evaluate', {
+    expression: 'fixtureExpression',
+    returnByValue: true,
+    awaitPromise: false,
+    userGesture: false,
+    throwOnSideEffect: true,
+  })
+})
+
+test('keeps ordinary JavaScript exceptions and Chromium transport failures distinct from safety rejection', async () => {
+  const contents = new FakeWebContents()
+  const transportFailure = new Error('Inspected target navigated or closed')
+  contents.debugger.sendCommand
+    .mockResolvedValueOnce({
+      exceptionDetails: {
+        text: 'Uncaught',
+        exception: { description: 'TypeError: Cannot read properties of null' },
+      },
+    })
+    .mockRejectedValueOnce(transportFailure)
+  const scripts = new BrowserScriptEvaluator(contents as unknown as WebContents)
+  await expect(scripts.evaluate('fixtureExpression', { readOnly: true })).rejects.toMatchObject({
+    kind: 'javascript_exception',
+    message: 'Browser expression evaluation failed',
+  })
+  await expect(scripts.evaluate('fixtureExpression', { readOnly: true })).rejects.toBe(
+    transportFailure
+  )
+  expect(
+    contents.debugger.sendCommand.mock.calls.every(([, input]) => input.throwOnSideEffect === true)
+  ).toBe(true)
+})
+
 test.each([undefined, true, false])(
   'only waits for synchronous actions before navigation: awaitPromise=%s',
   async awaitPromise => {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Agent, request } from 'node:http'
@@ -10,11 +10,15 @@ import {
 } from './embedded-browser-bridge.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import { BrowserAgentApprovals } from './browser-agent-approvals.js'
+import { BrowserExpressionError } from './browser-script-evaluator.js'
+import { BrowserApprovedUploads } from './browser-approved-uploads.js'
 
 const bridges: EmbeddedBrowserBridge[] = []
+const uploadStores: BrowserApprovedUploads[] = []
 
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map(bridge => bridge.stop()))
+  await Promise.all(uploadStores.splice(0).map(store => store.stop()))
 })
 
 describe('EmbeddedBrowserBridge', () => {
@@ -70,14 +74,14 @@ describe('EmbeddedBrowserBridge', () => {
     bridges.push(bridge)
     await bridge.start()
     const env = bridge.environment()
-    const fill = async () => {
+    const fill = async (options?: Record<string, unknown>) => {
       const response = await fetch(env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL + '/browser', {
         method: 'POST',
         headers: {
           authorization: 'Bearer ' + env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ action: 'fill', selector: '#editor', text: 'edit' }),
+        body: JSON.stringify({ action: 'fill', selector: '#editor', text: 'edit', options }),
       })
       return response.json()
     }
@@ -87,8 +91,8 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.manager.registerAgentApproval).not.toHaveBeenCalled()
     expect(browser.manager.waitForAgentApproval).not.toHaveBeenCalled()
     enabled = false
-    await fill()
-    expect(browser.evaluate.mock.calls[1]?.[1]).not.toContain('"riskApproved":true')
+    await fill({ riskApproved: true })
+    expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"riskApproved":false')
     enabled = true
     vi.mocked(browser.manager.isAgentControlPaused).mockReturnValue(true)
     await expect(fill()).resolves.toMatchObject({ data: { error: { code: 'user_control' } } })
@@ -353,70 +357,90 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.navigate).toHaveBeenCalledWith('workspace-browser-2', 'https://example.test/')
   })
 
-  test('waits for the host cursor to arrive before dispatching a click', async () => {
-    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
-    const browser = fakeBrowser()
-    let resolveArrival: (arrived: boolean) => void = () => undefined
-    const arrival = new Promise<boolean>(resolve => {
-      resolveArrival = resolve
-    })
-    browser.evaluate.mockImplementation(async (_label, expression) => {
-      if (expression.includes('"previewOnly":true')) {
-        return {
-          ok: true,
-          target: {
-            rect: { x: 40, y: 30, width: 120, height: 40 },
-            viewportRect: { x: 200, y: 100, width: 50, height: 20 },
-          },
+  test.each(['unchanged', 'revoked', 'tabChanged'] as const)(
+    'checks host cursor arrival and current browser before a click (%s)',
+    async change => {
+      const revoked = change === 'revoked'
+      const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+      const browser = fakeBrowser()
+      let resolveArrival: (arrived: boolean) => void = () => undefined
+      const arrival = new Promise<boolean>(resolve => {
+        resolveArrival = resolve
+      })
+      browser.evaluate.mockImplementation(async (_label, expression) => {
+        if (expression.includes('"previewOnly":true')) {
+          return {
+            ok: true,
+            target: {
+              rect: { x: 40, y: 30, width: 120, height: 40 },
+              viewportRect: { x: 200, y: 100, width: 50, height: 20 },
+            },
+          }
         }
+        return { ok: true, action: 'click' }
+      })
+      browser.waitForAgentCursorArrival.mockReturnValue(arrival)
+      let enabled = revoked
+      const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => enabled)
+      bridges.push(bridge)
+      const runtimePath = await bridge.start()
+      const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+        address: string
+        token: string
       }
-      return { ok: true, action: 'click' }
-    })
-    browser.waitForAgentCursorArrival.mockReturnValue(arrival)
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
-    bridges.push(bridge)
-    const runtimePath = await bridge.start()
-    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
-      address: string
-      token: string
+
+      const responsePromise = fetch(`http://${identity.address}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${identity.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'click',
+          label: 'workspace-browser',
+          selector: '#run-agent',
+          timeoutMs: 5_000,
+        }),
+      })
+
+      try {
+        await vi.waitFor(() => {
+          expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 225, 110)
+        })
+        expect(browser.waitForAgentCursorArrival).toHaveBeenCalledWith(
+          'workspace-browser',
+          expect.any(Number),
+          5_000
+        )
+        expect(browser.evaluate).toHaveBeenCalledOnce()
+        if (revoked) enabled = false
+        if (change === 'tabChanged') browser.activeLabel.mockReturnValue('workspace-browser-2')
+        resolveArrival(true)
+
+        const response = await responsePromise
+        if (change !== 'unchanged') {
+          await expect(response.json()).resolves.toMatchObject({
+            ok: true,
+            data: { ok: false, error: { code: 'approval_target_changed' } },
+          })
+        } else {
+          await expect(response.json()).resolves.toEqual({
+            ok: true,
+            data: { ok: true, action: 'click' },
+          })
+        }
+        expect(browser.evaluate).toHaveBeenCalledTimes(change === 'unchanged' ? 2 : 1)
+        for (const call of browser.evaluate.mock.calls) {
+          expect(call[2]).toEqual({ awaitPromise: false })
+        }
+        expect(browser.hideAgentCursor).not.toHaveBeenCalled()
+      } finally {
+        resolveArrival(false)
+        await bridge.stop()
+        await rm(executorHome, { recursive: true, force: true })
+      }
     }
-
-    const responsePromise = fetch(`http://${identity.address}/browser`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${identity.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'click',
-        label: 'workspace-browser',
-        selector: '#run-agent',
-        timeoutMs: 5_000,
-      }),
-    })
-
-    await vi.waitFor(() => {
-      expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 225, 110)
-    })
-    expect(browser.waitForAgentCursorArrival).toHaveBeenCalledWith(
-      'workspace-browser',
-      expect.any(Number),
-      5_000
-    )
-    expect(browser.evaluate).toHaveBeenCalledOnce()
-    resolveArrival(true)
-
-    const response = await responsePromise
-    await expect(response.json()).resolves.toEqual({
-      ok: true,
-      data: { ok: true, action: 'click' },
-    })
-    expect(browser.evaluate).toHaveBeenCalledTimes(2)
-    for (const call of browser.evaluate.mock.calls) {
-      expect(call[2]).toEqual({ awaitPromise: false })
-    }
-    expect(browser.hideAgentCursor).not.toHaveBeenCalled()
-  })
+  )
 
   test('does not dispatch a click when the host cursor does not arrive', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
@@ -627,11 +651,230 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.evaluate).toHaveBeenCalledTimes(2)
   })
 
+  test.each(['evaluate', 'waitFor'] as const)(
+    'fails closed when the browser rejects a read-only expression (%s)',
+    async action => {
+      const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-readonly-'))
+      const browser = fakeBrowser()
+      browser.has.mockReturnValue(true)
+      browser.evaluate.mockRejectedValue(
+        new BrowserExpressionError('read_only_rejected', 'Read-only evaluation rejected')
+      )
+      if (action === 'waitFor') {
+        browser.evaluate.mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
+      }
+      const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+      bridges.push(bridge)
+      try {
+        await bridge.start()
+        const env = bridge.environment()
+        const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ action, expression: 'fixtureExpression' }),
+        })
+        await expect(response.json()).resolves.toMatchObject({
+          ok: true,
+          data: { ok: false, error: { code: 'read_only_expression_rejected' } },
+        })
+        if (action === 'evaluate') {
+          expect(browser.evaluate).toHaveBeenCalledExactlyOnceWith(
+            'workspace-browser',
+            '(fixtureExpression)',
+            { readOnly: true }
+          )
+        } else {
+          expect(browser.evaluate.mock.calls[0]?.[1]).not.toContain('fixtureExpression')
+          expect(browser.evaluate.mock.calls[1]?.[1]).toContain('fixtureExpression')
+          expect(browser.evaluate.mock.calls[1]?.[2]).toEqual({ readOnly: true })
+          expect(browser.evaluate).toHaveBeenCalledTimes(2)
+        }
+      } finally {
+        await bridge.stop()
+        await rm(executorHome, { recursive: true, force: true })
+      }
+    }
+  )
+
+  test('evaluates a guarded wait coherently across ordinary predicate errors and document replacement', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-readonly-wait-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    browser.evaluate
+      .mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
+      .mockRejectedValueOnce(
+        new BrowserExpressionError('javascript_exception', 'Browser expression evaluation failed')
+      )
+      .mockResolvedValueOnce({ ok: false, reason: 'observation_unavailable' })
+      .mockResolvedValueOnce({ documentId: 'replacement', initial: {}, startedAt: 0 })
+      .mockResolvedValueOnce({ ok: true, kind: 'browser.wait' })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    try {
+      await bridge.start()
+      const env = bridge.environment()
+      const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'waitFor',
+          options: {
+            condition: { expression: 'fixtureExpression === "$&"', textVisible: 'fixture' },
+          },
+        }),
+      })
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, kind: 'browser.wait' },
+      })
+      expect(browser.evaluate.mock.calls[0]?.[1]).toContain('"probeMode":"prepare"')
+      expect(browser.evaluate.mock.calls[0]?.[1]).not.toContain('fixtureExpression')
+      expect(browser.evaluate.mock.calls[0]?.[2]).toBeUndefined()
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"probeMode":"guarded"')
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain(
+        '"evaluateExpression":() => (fixtureExpression === "$&")'
+      )
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"textVisible":"fixture"')
+      expect(browser.evaluate.mock.calls[1]?.[2]).toEqual({ readOnly: true })
+      expect(browser.evaluate.mock.calls[2]?.[1]).toContain('"documentId":"fixture"')
+      expect(browser.evaluate.mock.calls[3]?.[1]).toContain('"probeMode":"prepare"')
+      expect(browser.evaluate.mock.calls[3]?.[1]).not.toContain('fixtureExpression')
+      expect(browser.evaluate.mock.calls[4]?.[1]).toContain('"documentId":"replacement"')
+      expect(browser.evaluate).toHaveBeenCalledTimes(5)
+    } finally {
+      await bridge.stop()
+      await rm(executorHome, { recursive: true, force: true })
+    }
+  })
+
+  test('reports browser availability errors distinctly from read-only rejection', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-evaluate-unavailable-'))
+    const browser = fakeBrowser()
+    browser.evaluate.mockRejectedValue(
+      new Error('Embedded browser is unavailable: workspace-browser')
+    )
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    try {
+      await bridge.start()
+      const env = bridge.environment()
+      const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'evaluate', expression: 'fixtureExpression' }),
+      })
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'Embedded browser is unavailable: workspace-browser',
+      })
+    } finally {
+      await bridge.stop()
+      await rm(executorHome, { recursive: true, force: true })
+    }
+  })
+
+  test('stopping the bridge cancels an in-flight wait probe without awaiting Chromium', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-wait-cancel-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const pending = Promise.withResolvers<unknown>()
+    browser.evaluate.mockReturnValueOnce(pending.promise)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    let timer: NodeJS.Timeout | undefined
+    try {
+      await bridge.start()
+      const env = bridge.environment()
+      const response = fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'waitFor',
+          expression: 'fixtureExpression',
+          timeoutMs: 60_000,
+        }),
+      }).then(response => response.json())
+      await vi.waitFor(() => expect(browser.evaluate).toHaveBeenCalledOnce())
+      const stopping = bridge.stop()
+      await Promise.race([
+        stopping,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Wait probe blocked shutdown')), 1_000)
+        }),
+      ])
+      await expect(response).resolves.toEqual({ ok: false, error: 'Browser operation cancelled' })
+      pending.resolve({ ok: true })
+      expect(browser.evaluate).toHaveBeenCalledOnce()
+    } finally {
+      if (timer) clearTimeout(timer)
+      pending.resolve({ ok: true })
+      await bridge.stop()
+      await rm(executorHome, { recursive: true, force: true })
+    }
+  })
+
+  test.each(['prepare', 'guarded'] as const)(
+    'enforces one wait deadline even during %s evaluation',
+    async phase => {
+      const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-wait-deadline-'))
+      const browser = fakeBrowser()
+      browser.has.mockReturnValue(true)
+      let release!: () => void
+      const delayed = new Promise(resolve => {
+        release = () => resolve({ ok: true, documentId: 'fixture', initial: {}, startedAt: 0 })
+      })
+      if (phase === 'guarded') {
+        browser.evaluate.mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
+      }
+      browser.evaluate.mockReturnValueOnce(delayed)
+      const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+      bridges.push(bridge)
+      try {
+        await bridge.start()
+        const env = bridge.environment()
+        const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'waitFor',
+            expression: 'fixtureExpression',
+            timeoutMs: 500,
+          }),
+        })
+        await expect(response.json()).resolves.toMatchObject({
+          ok: true,
+          data: { ok: false, error: { code: 'wait_timeout' } },
+        })
+        release()
+        expect(browser.evaluate).toHaveBeenCalledTimes(phase === 'prepare' ? 1 : 2)
+      } finally {
+        release()
+        await bridge.stop()
+        await rm(executorHome, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('routes native clicks through Electron input events', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
     browser.has.mockReturnValue(true)
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => true)
     bridges.push(bridge)
     const runtimePath = await bridge.start()
     const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
@@ -663,7 +906,13 @@ describe('EmbeddedBrowserBridge', () => {
         synthetic: false,
       },
     })
-    expect(browser.clickAt).toHaveBeenCalledWith('workspace-browser', 120.4, 48.6)
+    expect(browser.clickAt).toHaveBeenCalledWith(
+      'workspace-browser',
+      120.4,
+      48.6,
+      undefined,
+      expect.any(Function)
+    )
   })
 
   test('uploads a local file through the CDP file-input bridge', async () => {
@@ -672,7 +921,18 @@ describe('EmbeddedBrowserBridge', () => {
     await writeFile(uploadPath, 'png-bytes')
     const browser = fakeBrowser()
     browser.has.mockReturnValue(true)
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    let enabled = true
+    let revokeBeforeCommit = false
+    let completedUploads = 0
+    browser.uploadFiles.mockImplementation(
+      async (_label, _selector, _files, _target, beforeCommit) => {
+        if (revokeBeforeCommit) enabled = false
+        await beforeCommit?.()
+        completedUploads += 1
+        return { selector: 'input[type="file"]' }
+      }
+    )
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => enabled)
     bridges.push(bridge)
     const runtimePath = await bridge.start()
     const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
@@ -680,19 +940,17 @@ describe('EmbeddedBrowserBridge', () => {
       token: string
     }
 
-    const response = await fetch(`http://${identity.address}/browser`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${identity.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'uploadFile',
-        path: uploadPath,
-      }),
-    })
+    const upload = () =>
+      fetch(`http://${identity.address}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${identity.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'uploadFile', path: uploadPath }),
+      }).then(response => response.json())
 
-    await expect(response.json()).resolves.toEqual({
+    await expect(upload()).resolves.toEqual({
       ok: true,
       data: {
         ok: true,
@@ -703,7 +961,20 @@ describe('EmbeddedBrowserBridge', () => {
         fileCount: 1,
       },
     })
-    expect(browser.uploadFiles).toHaveBeenCalledWith('workspace-browser', null, [uploadPath])
+    expect(browser.uploadFiles).toHaveBeenCalledWith(
+      'workspace-browser',
+      null,
+      [uploadPath],
+      undefined,
+      expect.any(Function)
+    )
+    expect(completedUploads).toBe(1)
+    revokeBeforeCommit = true
+    await expect(upload()).resolves.toMatchObject({
+      ok: true,
+      data: { ok: false, error: { code: 'approval_target_changed' } },
+    })
+    expect(completedUploads).toBe(1)
   })
 
   test('rejects upload paths that are not absolute existing files', async () => {
@@ -741,7 +1012,7 @@ describe('EmbeddedBrowserBridge', () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
     browser.has.mockReturnValue(true)
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => true)
     bridges.push(bridge)
     const runtimePath = await bridge.start()
     const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
@@ -783,9 +1054,283 @@ describe('EmbeddedBrowserBridge', () => {
     })
     expect((await invalid.json()).ok).toBe(false)
   })
+
+  test.each(['uploadFile', 'clearData', 'nativeClick'] as const)(
+    'requires approval for %s when browser full control is disabled',
+    async action => {
+      const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+      const browser = fakeBrowser()
+      const approvals = new BrowserAgentApprovals(() => undefined)
+      vi.mocked(browser.manager.registerAgentApproval).mockImplementation((label, kind, result) =>
+        approvals.register(label, kind, result)
+      )
+      vi.mocked(browser.manager.waitForAgentApproval).mockImplementation((label, id, signal) =>
+        approvals.wait(label, id, signal)
+      )
+      let enabled = false
+      const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => enabled)
+      bridges.push(bridge)
+      const path = join(executorHome, 'upload.txt')
+      try {
+        if (action === 'uploadFile') await writeFile(path, 'test fixture')
+        await bridge.start()
+        const env = bridge.environment()
+        const body = {
+          uploadFile: { action, path },
+          clearData: { action, kinds: ['cache'] },
+          nativeClick: { action, x: 100, y: 100 },
+        }[action]
+        const effect = {
+          uploadFile: browser.uploadFiles,
+          clearData: browser.clearData,
+          nativeClick: browser.clickAt,
+        }[action]
+        const requestAction = () =>
+          fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          }).then(response => response.json())
+
+        await expect(requestAction()).resolves.toMatchObject({
+          ok: false,
+          error: 'Embedded browser is unavailable: workspace-browser',
+        })
+        expect(browser.manager.registerAgentApproval).not.toHaveBeenCalled()
+        expect(effect).not.toHaveBeenCalled()
+        browser.has.mockReturnValue(true)
+
+        for (const { approved, takeover } of [
+          { approved: false, takeover: false },
+          { approved: true, takeover: true },
+          { approved: true, takeover: false },
+        ]) {
+          const pending = requestAction()
+          await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+          expect(effect).not.toHaveBeenCalled()
+          expect(browser.stageApprovedUpload).not.toHaveBeenCalled()
+          const approval = approvals.latest('workspace-browser')!
+          expect(approval.actionKind).toBe(action)
+          vi.mocked(browser.manager.isAgentControlPaused).mockReturnValue(takeover)
+          approvals.resolve('workspace-browser', approval.approvalId, approved)
+          await expect(pending).resolves.toMatchObject({
+            ok: true,
+            data: !approved
+              ? { ok: false, error: { code: 'approval_rejected' } }
+              : takeover
+                ? { ok: false, error: { code: 'user_control' } }
+                : { ok: true },
+          })
+          expect(effect).toHaveBeenCalledTimes(approved && !takeover ? 1 : 0)
+          vi.mocked(browser.manager.isAgentControlPaused).mockReturnValue(false)
+        }
+
+        enabled = true
+        await expect(requestAction()).resolves.toMatchObject({ ok: true, data: { ok: true } })
+        expect(effect).toHaveBeenCalledTimes(2)
+        expect(approvals.latest('workspace-browser')).toBeNull()
+      } finally {
+        await bridge.stop()
+        await rm(executorHome, { recursive: true, force: true })
+      }
+    }
+  )
+
+  test('binds approved uploads to the destination and the bytes selected by the user', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-upload-target-'))
+    const browser = fakeBrowser()
+    const approvals = new BrowserAgentApprovals(() => undefined)
+    vi.mocked(browser.manager.registerAgentApproval).mockImplementation((label, kind, result) =>
+      approvals.register(label, kind, result)
+    )
+    vi.mocked(browser.manager.waitForAgentApproval).mockImplementation((label, id, signal) =>
+      approvals.wait(label, id, signal)
+    )
+    let currentUrl = 'https://trusted.example/upload'
+    let currentBackendNodeId = 41
+    let changeBeforeCommit = false
+    let changeAfterSnapshot = false
+    let completedUploads = 0
+    let uploadedContent: string | undefined
+    browser.has.mockReturnValue(true)
+    browser.state.mockImplementation(() => ({
+      label: 'workspace-browser',
+      nativeLabel: 'workspace-browser',
+      title: 'Upload',
+      url: currentUrl,
+      isLoading: false,
+      navigationError: null,
+    }))
+    browser.inspectUploadTarget.mockImplementation(async (_label, selector) => ({
+      url: currentUrl,
+      selector: selector?.trim() || 'input[type="file"]',
+      backendNodeId: currentBackendNodeId,
+      contentsId: 1,
+      navigationRevision: 0,
+    }))
+    browser.uploadFiles.mockImplementation(
+      async (_label, _selector, files, expectedTarget, beforeCommit, beforeDispatch) => {
+        if (
+          expectedTarget &&
+          (expectedTarget.url !== currentUrl ||
+            expectedTarget.backendNodeId !== currentBackendNodeId)
+        ) {
+          throw Object.assign(new Error('Target changed'), { code: 'approval_target_changed' })
+        }
+        if (changeBeforeCommit) await writeFile(files[0]!, 'updated before upload')
+        const committedFiles = (await beforeCommit?.()) ?? files
+        if (changeAfterSnapshot) await writeFile(files[0]!, 'updated after snapshot')
+        beforeDispatch?.()
+        uploadedContent = await readFile(committedFiles[0]!, 'utf8')
+        completedUploads += 1
+        return { selector: expectedTarget?.selector ?? 'input[type="file"]' }
+      }
+    )
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => false)
+    bridges.push(bridge)
+    try {
+      const safeFile = join(executorHome, 'safe.txt')
+      const secretFile = join(executorHome, 'secret.txt')
+      const linkPath = join(executorHome, 'selected.txt')
+      await writeFile(safeFile, 'safe')
+      await writeFile(secretFile, 'secret')
+      await symlink(safeFile, linkPath)
+      await bridge.start()
+      const env = bridge.environment()
+      const callUpload = (path: string) =>
+        fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ action: 'uploadFile', path, selector: '#resume' }),
+        }).then(response => response.json())
+
+      // 1. Page navigates to another URL while awaiting approval.
+      const navPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      currentUrl = 'https://evil.example/collect'
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(navPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: false, error: { code: 'approval_target_changed' } },
+      })
+
+      // 2. Same URL, but the file input DOM node is replaced while awaiting approval.
+      currentUrl = 'https://trusted.example/upload'
+      const domPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      currentBackendNodeId = 99
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(domPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: false, error: { code: 'approval_target_changed' } },
+      })
+
+      // 3. Symlink is retargeted to another file while awaiting approval.
+      const symlinkPending = callUpload(linkPath)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      await rm(linkPath)
+      await symlink(secretFile, linkPath)
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(symlinkPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: false, error: { code: 'approval_target_changed' } },
+      })
+      expect(browser.uploadFiles).toHaveBeenCalledTimes(2)
+
+      // 4. A modification at the same path still invalidates the original approval.
+      const modifiedPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      await writeFile(safeFile, 'changed content')
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(modifiedPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: false, error: { code: 'approval_target_changed' } },
+      })
+      expect(browser.uploadFiles).toHaveBeenCalledTimes(2)
+
+      // 5. Recheck the approved file at the commit boundary after asynchronous DOM lookup.
+      changeBeforeCommit = true
+      const commitPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(commitPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: false, error: { code: 'approval_target_changed' } },
+      })
+      expect(completedUploads).toBe(0)
+      changeBeforeCommit = false
+
+      // 6. The original source may change after staging, but Chromium must
+      // receive the approved bytes from the private retained snapshot.
+      changeAfterSnapshot = true
+      const stagedPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(stagedPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, fileCount: 1 },
+      })
+      expect(uploadedContent).toBe('updated before upload')
+      expect(await readFile(safeFile, 'utf8')).toBe('updated after snapshot')
+      changeAfterSnapshot = false
+
+      // 7. Unchanged page, DOM node, and file succeed cleanly.
+      const validPending = callUpload(safeFile)
+      await vi.waitFor(() => expect(approvals.latest('workspace-browser')).not.toBeNull())
+      approvals.resolve(
+        'workspace-browser',
+        approvals.latest('workspace-browser')!.approvalId,
+        true
+      )
+      await expect(validPending).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, selector: '#resume', fileCount: 1 },
+      })
+      expect(browser.uploadFiles).toHaveBeenCalledTimes(5)
+      expect(completedUploads).toBe(2)
+    } finally {
+      await bridge.stop()
+      await rm(executorHome, { recursive: true, force: true })
+    }
+  })
 })
 
 function fakeBrowser() {
+  const uploadedSnapshots = new BrowserApprovedUploads()
+  uploadStores.push(uploadedSnapshots)
+  const stageApprovedUpload = vi.fn<EmbeddedBrowserManager['stageApprovedUpload']>((file, signal) =>
+    uploadedSnapshots.create(file, signal)
+  )
   const activeLabel = vi.fn((label: string) => label)
   const has = vi.fn(() => false)
   const requestOpen = vi.fn()
@@ -800,8 +1345,39 @@ function fakeBrowser() {
   const navigate = vi.fn(async () => undefined)
   const waitForNavigation = vi.fn(async () => undefined)
   const evaluate = vi.fn()
-  const clickAt = vi.fn()
-  const uploadFiles = vi.fn(async () => ({ selector: 'input[type="file"]' }))
+  const clickAt = vi.fn<EmbeddedBrowserManager['clickAt']>(
+    async (_label, _x, _y, _expected, beforeDispatch) => {
+      beforeDispatch?.()
+    }
+  )
+  const inspectNativeClickTarget = vi.fn<EmbeddedBrowserManager['inspectNativeClickTarget']>(
+    async () => ({
+      contentsId: 1,
+      url: 'https://example.test/',
+      frameId: 'fixture-frame',
+      backendNodeId: 42,
+      navigationRevision: 0,
+      scale: 1,
+      metricsRevision: 0,
+      emulated: false,
+    })
+  )
+  const inspectUploadTarget = vi.fn<EmbeddedBrowserManager['inspectUploadTarget']>(
+    async (_label, selector) => ({
+      url: 'https://example.test/',
+      selector: selector ?? 'input[type="file"]',
+      backendNodeId: 43,
+      contentsId: 1,
+      navigationRevision: 0,
+    })
+  )
+  const uploadFiles = vi.fn<EmbeddedBrowserManager['uploadFiles']>(
+    async (_label, _selector, _files, _expectedTarget, beforeCommit, beforeDispatch) => {
+      await beforeCommit?.()
+      beforeDispatch?.()
+      return { selector: 'input[type="file"]' }
+    }
+  )
   const clearData = vi.fn(async () => 1)
   const hideAgentCursor = vi.fn()
   const showAgentCursor = vi.fn(() => 1)
@@ -819,6 +1395,7 @@ function fakeBrowser() {
     goForward: vi.fn(),
     evaluate,
     clickAt,
+    inspectNativeClickTarget,
     isAgentControlPaused: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),
     waitForAgentApproval: vi.fn(),
@@ -826,16 +1403,20 @@ function fakeBrowser() {
     hideAgentCursor,
     showAgentCursor,
     waitForAgentCursorArrival,
+    inspectUploadTarget,
     uploadFiles,
+    stageApprovedUpload,
     clearData,
   } as unknown as EmbeddedBrowserManager
   return {
     activeLabel,
     clearData,
     clickAt,
+    inspectNativeClickTarget,
     evaluate,
     has,
     hideAgentCursor,
+    inspectUploadTarget,
     manager,
     navigate,
     waitForNavigation,
@@ -843,6 +1424,7 @@ function fakeBrowser() {
     showAgentCursor,
     state,
     uploadFiles,
+    stageApprovedUpload,
     waitForAgentCursorArrival,
   }
 }

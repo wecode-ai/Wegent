@@ -19,6 +19,10 @@ import {
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
+  createNativeProfileWaiter,
+  createStandInRoleBrowserChecks,
+} from '../modules/stand-in-role-browser-checks.mjs'
+import {
   assistantMessage,
   codexRequestKind,
   createSse,
@@ -121,6 +125,7 @@ export function createDesktopScenario({
       searchCallId: `${id}-discovery`,
       toolCallId: id,
     }).events
+  const browserChecks = createStandInRoleBrowserChecks(reply)
 
   const rework = createRoleReworkStory({
     roles,
@@ -176,6 +181,7 @@ export function createDesktopScenario({
     // Windows backend, Codex asks for approval before running the probe.
     codexConfigToml: process.platform === 'win32' ? '[windows]\nsandbox = "unelevated"\n' : '',
     async handleHttp(request, response, url) {
+      if (browserChecks.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) {
         return false
       }
@@ -189,6 +195,7 @@ export function createDesktopScenario({
       const latest = JSON.stringify(
         (body.input ?? []).filter(item => item.role === 'user').at(-1) ?? ''
       )
+      if (browserChecks.handleModel(body, latest, response)) return true
       if (latest.includes(READ_ONLY_FOLLOW_UP)) {
         const result = accountCommandResult(body.input, READ_ONLY_WRITE_CALL)
         if (!result) {
@@ -257,6 +264,18 @@ export function createDesktopScenario({
             reply(response, [])
             return true
           }
+          if (
+            browserChecks.handleDelegatedResult({
+              child,
+              writingTaskId: taskIds.get(roles[1].id),
+              resultId,
+              reported,
+              results,
+              latest,
+              response,
+            })
+          )
+            return true
           assert.equal(
             reported.has(child),
             false,
@@ -401,6 +420,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+      browserChecks.prepare(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -486,22 +506,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR)
         const executorLog = join(resultDir, 'executor.log')
-        const waitForNativeProfile = (taskId, profile, fromOffset = 0) =>
-          storyUntil(
-            async () =>
-              (await readFile(executorLog, 'utf8'))
-                .slice(fromOffset)
-                .split('\n')
-                .filter(line => line.includes(`codex source sandbox applied task_id=${taskId} `)),
-            lines =>
-              lines.some(
-                line =>
-                  line.includes(String.raw`\"id\":\"${profile}\"`) &&
-                  line.includes(String.raw`reviewer="\"user\""`)
-              ),
-            uiTimeoutMs,
-            `Task ${taskId} must run with native profile ${profile} and the human reviewer`
-          )
+        const waitForNativeProfile = createNativeProfileWaiter(executorLog, uiTimeoutMs)
         const ordinaryTaskId = 'stand-in-delegation-story-ordinary-task'
         const origin = {
           type: 'stand_in_task',
@@ -890,58 +895,37 @@ export function createDesktopScenario({
         })
         await captureScreenshot(control, '16-ordinary-task-open.png')
 
-        await control.command('navigate', 'body', { value: '/stand-in' })
-        await control.command('clickWhenEnabled', PRIMARY)
-        await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
-        await control.command(
-          'scrollToRatioAsUser',
-          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
-          { value: '0' }
-        )
-        await selectDelegation(writingTaskId)
-        await expandDelegation()
-        await control.command('clickElementWithText', row, {
-          text: '起草公告',
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          {
-            text: '面向内部团队的公告草稿已就绪。',
-          }
-        )
-        const taskMode = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="permission-mode-menu-button"]`
-        await control.command('clickWhenEnabled', `${taskMode}[aria-label*="工作区"]`)
-        await control.command('clickWhenEnabled', '[data-testid="permission-mode-read-only"]')
-        await control.command('waitFor', `${taskMode}[aria-label*="只读"]`)
-        const fromOffset = (await readFile(executorLog, 'utf8')).length
-        await control.command(
-          'fill',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-          { value: READ_ONLY_FOLLOW_UP }
-        )
-        await control.command(
-          'clickWhenEnabled',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-        )
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          {
-            text: READ_ONLY_RESULT,
-            timeoutMs: modelResponseTimeoutMs,
-          }
-        )
-        await waitForNativeProfile(writingTaskId, 'wework-source-read', fromOffset)
-        await assert.rejects(readFile(join(writingWorkspace, READ_ONLY_FILE)), { code: 'ENOENT' })
-        await storyUntil(
-          () => Promise.resolve(readOnlyFollowUpReported),
-          Boolean,
+        await browserChecks.verify({
+          control,
+          uiTimeoutMs,
           modelResponseTimeoutMs,
-          'The read-only follow-up must deliver its distinct result to the original conversation'
-        )
+          writingTaskId,
+          executorLog,
+          waitForNativeProfile,
+          readOnlyWorkspace: {
+            prompt: READ_ONLY_FOLLOW_UP,
+            result: READ_ONLY_RESULT,
+            file: join(writingWorkspace, READ_ONLY_FILE),
+            reported: () => readOnlyFollowUpReported,
+          },
+          reopenDelegatedTask: async () => {
+            await control.command('navigate', 'body', { value: '/stand-in' })
+            await control.command('clickWhenEnabled', PRIMARY)
+            await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
+            await control.command(
+              'scrollToRatioAsUser',
+              `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
+              { value: '0' }
+            )
+            await selectDelegation(writingTaskId)
+            await expandDelegation()
+            await control.command('clickElementWithText', row, {
+              text: '起草公告',
+              visible: true,
+              timeoutMs: uiTimeoutMs,
+            })
+          },
+        })
         const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
         assert.equal(
           saved.roles.find(role => role.id === roles[1].id)?.taskPermissions?.permissionMode,

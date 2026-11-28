@@ -155,6 +155,97 @@ describe('stand-in entry links', () => {
     expect(api.personalGet).not.toHaveBeenCalled()
   })
 
+  it('resolves only the exact authorized active role while the primary is stopped', async () => {
+    const api = fixture([profile('primary', 'reviewer'), profile('remote', 'reviewer')])
+    const verifyIndependentDevice = vi.fn(async () => true)
+    const entry = parseStandInEntry('/stand-in?deviceId=remote&profileId=reviewer')
+    if (entry.kind !== 'identity') throw new Error('Expected an identity link')
+    const resolveIndependent = () =>
+      resolveStandInEntry(api, entry, binding, new Set(['remote']), { verifyIndependentDevice })
+    await expect(resolveIndependent()).resolves.toEqual({
+      kind: 'ready',
+      deviceId: 'remote',
+      profileId: 'reviewer',
+    })
+    expect(api.personalGet).toHaveBeenCalledExactlyOnceWith(7, 'remote')
+    expect(verifyIndependentDevice).toHaveBeenCalledExactlyOnceWith('remote', 'reviewer')
+
+    verifyIndependentDevice.mockResolvedValueOnce(false)
+    await expect(resolveIndependent()).resolves.toEqual({ kind: 'error', error: 'not_found' })
+    for (const status of ['stopping', 'stopped'] as const) {
+      api.personalGet.mockResolvedValueOnce({
+        ...profile('remote', 'reviewer'),
+        lifecycle: { status },
+      })
+      await expect(resolveIndependent()).resolves.toEqual({ kind: 'error', error: 'not_found' })
+    }
+    api.personalGet.mockResolvedValueOnce({ ...profile('remote', 'reviewer'), userId: 8 })
+    await expect(resolveIndependent()).resolves.toEqual({ kind: 'error', error: 'forbidden' })
+    expect(api.personalGet.mock.calls.every(([, device]) => device === 'remote')).toBe(true)
+  })
+
+  it('does not fall back to any other device for an incomplete or mismatched independent role link', async () => {
+    const api = fixture()
+    const verifyIndependentDevice = vi.fn(async () => true)
+    for (const query of [
+      'profileId=reviewer',
+      'deviceId=remote',
+      'deviceId=primary&profileId=reviewer',
+      'deviceId=primary&profileId=%40primary',
+    ]) {
+      const entry = parseStandInEntry('/stand-in?' + query)
+      if (entry.kind !== 'identity') throw new Error('Expected an identity link')
+      await expect(
+        resolveStandInEntry(api, entry, binding, new Set(['remote']), { verifyIndependentDevice })
+      ).resolves.toEqual({ kind: 'error', error: 'not_found' })
+    }
+    const unknown = parseStandInEntry('/stand-in?deviceId=unknown&profileId=reviewer')
+    if (unknown.kind !== 'identity') throw new Error('Expected an identity link')
+    await expect(
+      resolveStandInEntry(api, unknown, binding, new Set(['remote']), { verifyIndependentDevice })
+    ).resolves.toEqual({ kind: 'error', error: 'forbidden' })
+    expect(api.personalGet).not.toHaveBeenCalled()
+    const missing = parseStandInEntry('/stand-in?deviceId=remote&profileId=missing')
+    if (missing.kind !== 'identity') throw new Error('Expected an identity link')
+    await expect(
+      resolveStandInEntry(api, missing, binding, new Set(['remote']), { verifyIndependentDevice })
+    ).resolves.toEqual({ kind: 'error', error: 'not_found' })
+    expect(api.personalGet).toHaveBeenCalledExactlyOnceWith(7, 'remote')
+  })
+
+  it('invalidates a verified independent link when its stop state changes', async () => {
+    const api = fixture()
+    const verifyIndependentDevice = vi.fn(async () => true)
+    const route = '/stand-in?deviceId=remote&profileId=reviewer'
+    const { result, rerender } = renderHook(
+      ({ scope }) =>
+        useStandInEntry(
+          route,
+          api,
+          binding,
+          new Set(['remote']),
+          true,
+          1,
+          verifyIndependentDevice,
+          scope
+        ),
+      { initialProps: { scope: 'clear' } }
+    )
+    await waitFor(() =>
+      expect(result.current.result).toEqual({
+        kind: 'ready',
+        deviceId: 'remote',
+        profileId: 'reviewer',
+      })
+    )
+    verifyIndependentDevice.mockResolvedValueOnce(false)
+    rerender({ scope: 'pending' })
+    expect(result.current.result).toBeUndefined()
+    await waitFor(() =>
+      expect(result.current.result).toEqual({ kind: 'error', error: 'not_found' })
+    )
+  })
+
   it('handles incomplete and unauthorized lookups without using the successful response', async () => {
     const api = fixture()
     api.personalGet.mockRejectedValueOnce(new Error('offline'))

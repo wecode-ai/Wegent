@@ -23,10 +23,18 @@ export type PersonalAssistantAccount = {
   revision: string
   retiredRoleIds: string[]
   definitions: PersonalAssistantDefinition[]
+  stopIntents?: PersonalAssistantStopIntent[]
+  stopIntentGenerations?: Record<string, string>
 } & (
   | { defaultTeamRef: ResourceRef; defaultBotRef?: never }
   | { defaultBotRef: ResourceRef; defaultTeamRef?: never }
 )
+
+export interface PersonalAssistantStopIntent {
+  deviceId: string
+  requestId: string
+  expectedVersion?: number
+}
 
 interface AccountResponse {
   assistant: PersonalAssistantAccount | null
@@ -57,7 +65,7 @@ function readAssistantAccount(response: AccountResponse): PersonalAssistantAccou
 }
 
 export function assistantDefinitionName(definition: PersonalAssistantDefinition) {
-  return (definition.team ?? definition.bot).metadata.displayName
+  return definition.team?.metadata.displayName ?? definition.bot.metadata.displayName
 }
 
 export function assistantDefinitionInputs(
@@ -110,6 +118,26 @@ export function createPersonalAssistantAccountApi(client: HttpClient) {
         })
       )
       if (!assistant) throw new Error('Personal assistant definition was not returned')
+      return assistant
+    },
+    async updateStopIntent(
+      deviceId: string,
+      operation: 'mark' | 'clear',
+      requestId: string,
+      expectedRequestId?: string | null,
+      expectedVersion?: number
+    ) {
+      const { assistant } = await client.patch<AccountResponse>('/v1/personal-assistant', {
+        stopIntent: {
+          deviceId,
+          operation,
+          requestId,
+          ...(operation === 'mark'
+            ? { expectedRequestId: expectedRequestId ?? null, expectedVersion }
+            : {}),
+        },
+      })
+      if (!assistant) throw new Error('Personal assistant stop state was not returned')
       return assistant
     },
   }

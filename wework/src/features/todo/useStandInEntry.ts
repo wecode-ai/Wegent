@@ -14,26 +14,32 @@ export function useStandInEntry(
   binding: StandInBindingTarget | undefined,
   devices: ReadonlySet<string>,
   active: boolean,
-  entryRequestKey?: number
+  entryRequestKey?: number,
+  verifyIndependentDevice?: (deviceId: string, profileId: string) => Promise<boolean>,
+  independentScope?: string
 ) {
   const entry = useMemo(() => parseStandInEntry(route), [route])
   const userId = binding?.userId
   const deviceId = binding?.deviceId
   // Inventory refreshes can replace the rows without changing the authorized devices.
   const deviceScope = JSON.stringify([...devices].sort())
+  const resourceKey = verifyIndependentDevice
+    ? JSON.stringify([route, independentScope, entryRequestKey, active])
+    : route
   const resource = useMemo(
     () =>
       api && userId !== undefined && deviceId && entry.kind === 'identity'
-        ? createAsyncResource(route, () =>
+        ? createAsyncResource(resourceKey, () =>
             resolveStandInEntry(
               api,
               entry,
               { userId, deviceId },
-              new Set<string>(JSON.parse(deviceScope))
+              new Set<string>(JSON.parse(deviceScope)),
+              { verifyIndependentDevice }
             )
           )
         : null,
-    [api, userId, deviceId, route, entry, deviceScope]
+    [api, userId, deviceId, resourceKey, entry, deviceScope, verifyIndependentDevice]
   )
   const subscribe = useCallback(
     (listener: () => void) => resource?.subscribe(listener, entryRequestKey) ?? (() => {}),
