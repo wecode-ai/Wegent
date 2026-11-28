@@ -84,10 +84,9 @@ export function createTelemetryConsentSource() {
       })
     }
   }
-  let chosenDetails: boolean | undefined
-  const saveChoice = async (enabled: boolean, expectedRevision: number) => {
+  const saveChoice = async (enabled: boolean, expectedRevision: number, details?: boolean) => {
     try {
-      await saveTelemetryConsent(enabled, expectedRevision, chosenDetails)
+      await saveTelemetryConsent(enabled, expectedRevision, details)
       if (snapshot.failedChoice === enabled) publish({ failedChoice: null })
     } catch (error) {
       if (isLatestTelemetryConsentChoice(enabled)) publish({ failedChoice: enabled })
@@ -109,8 +108,7 @@ export function createTelemetryConsentSource() {
       }
     },
     choose(enabled: boolean, details?: boolean) {
-      chosenDetails = details
-      if (input) void saveChoice(enabled, input.consentRevision)
+      if (input) void saveChoice(enabled, input.consentRevision, details)
     },
     clearFailure() {
       publish({ failedChoice: null })
@@ -121,7 +119,7 @@ export function createTelemetryConsentSource() {
       publish({ retrying: true })
       try {
         const current = await getAppPreferences()
-        // Reading a host revision does not authorize reasserting a superseded choice.
+        // Retry general telemetry only. Sharing response bodies requires a fresh opt-in.
         if (isLatestTelemetryConsentChoice(choice))
           await saveChoice(choice, current.telemetryConsentRevision)
       } catch (error) {

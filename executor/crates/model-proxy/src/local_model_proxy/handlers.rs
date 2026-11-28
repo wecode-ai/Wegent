@@ -116,8 +116,8 @@ pub(super) async fn handle_harness_messages(
         })?;
         crate::detailed_telemetry::capture_model_http_error(
             status,
-            response_body.clone(),
-            upstream.model_id.clone(),
+            &response_body,
+            upstream.model_id.as_deref(),
         );
         if let Some(normalized) = long_context::normalize_context_overflow(
             status.as_u16(),
@@ -509,8 +509,8 @@ pub(super) async fn handle_for_token(
         })?;
         crate::detailed_telemetry::capture_model_http_error(
             status,
-            response_body.clone(),
-            upstream.model_id.clone(),
+            &response_body,
+            upstream.model_id.as_deref(),
         );
         log_executor_event(
             "local model proxy upstream rejected request",

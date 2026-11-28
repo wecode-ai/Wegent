@@ -5,11 +5,13 @@ export class PreferencesStore {
   private operation = Promise.resolve()
   private closed = false
   private readFailure: unknown = null
+  private diagnosticsConsent = new AbortController()
 
   constructor(private readonly dataDirectory: string) {}
 
   close(): Promise<void> {
     this.closed = true
+    this.diagnosticsConsent.abort()
     return this.operation
   }
 
@@ -28,6 +30,13 @@ export class PreferencesStore {
     patch: Record<string, unknown>,
     expectedTelemetryConsentRevision?: number
   ): Promise<Record<string, unknown>> {
+    const revoking = patch.telemetryEnabled === false || patch.detailedTelemetryEnabled === false
+    const consent = this.diagnosticsConsent
+    if (revoking) {
+      consent.abort()
+      this.diagnosticsConsent = new AbortController()
+      this.diagnosticsConsent.abort()
+    }
     return this.serial(async () => {
       const current = await this.readFile()
       if (this.readFailure) throw this.readFailure
@@ -44,7 +53,7 @@ export class PreferencesStore {
         throw new Error('Telemetry preference changed in another window; refresh and retry')
       const preferences = { ...current, ...patch }
       delete preferences.telemetryConsentRevision
-      if (patch.telemetryEnabled === false || patch.detailedTelemetryEnabled === false) {
+      if (revoking) {
         preferences.detailedTelemetryEnabled = false
         delete preferences.detailedTelemetryDestination
       }
@@ -63,11 +72,34 @@ export class PreferencesStore {
         mode: 0o600,
       })
       await rename(temporary, path)
+      if (
+        !this.closed &&
+        consent === this.diagnosticsConsent &&
+        patch.detailedTelemetryEnabled === true &&
+        preferences.telemetryEnabled === true
+      ) {
+        this.diagnosticsConsent = new AbortController()
+        consent.abort()
+      }
       return preferences
     })
   }
 
+  async readDiagnosticsConsent() {
+    const { signal } = this.diagnosticsConsent
+    if (signal.aborted) return
+    const preferences = await this.read()
+    if (
+      signal.aborted ||
+      preferences.telemetryEnabled !== true ||
+      preferences.detailedTelemetryEnabled !== true
+    )
+      return
+    return { signal, destination: preferences.detailedTelemetryDestination }
+  }
+
   clear(): Promise<void> {
+    this.diagnosticsConsent.abort()
     return this.serial(() => rm(this.path(), { force: true }))
   }
 

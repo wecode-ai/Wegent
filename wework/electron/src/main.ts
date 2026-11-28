@@ -78,6 +78,7 @@ import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-mana
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { DownloadTargetPolicy } from './host/download-target-policy.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
+import { ModelDiagnosticsServer } from './host/model-diagnostics-server.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import { DesktopAppearanceController } from './host/appearance-theme.js'
 import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
@@ -416,6 +417,7 @@ let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let modelDiagnosticsServer: ModelDiagnosticsServer | null = null
 let desktopPreferences: DesktopPreferencesController | null = null
 let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
@@ -2378,6 +2380,7 @@ async function shutdown(): Promise<void> {
   pluginDevelopment = null
   const stoppedServices = await Promise.allSettled([
     browserManagerStop,
+    traceShutdownStep('model-diagnostics', () => modelDiagnosticsServer?.stop()),
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),
@@ -3477,10 +3480,15 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       .join(delimiter)
   startupProgress.report('workspace')
   logStartupStep('workbench-environment', 'started')
+  modelDiagnosticsServer ??= new ModelDiagnosticsServer(requiredPreferences())
+  const diagnosticsEnvironment = await modelDiagnosticsServer.start().catch(() => {
+    console.warn('[telemetry] Local model diagnostics are unavailable')
+    return {}
+  })
   const environment = prepareWorkbenchEnvironment({
     environment: {
       ...runtimeEnvironment,
-      WEWORK_DETAILED_TELEMETRY_PREFERENCES: join(app.getPath('userData'), 'app-preferences.json'),
+      ...diagnosticsEnvironment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT:
         components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),

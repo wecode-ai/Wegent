@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ShieldCheck } from 'lucide-react'
@@ -53,13 +54,13 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
         <TelemetryCollectionNotice />
         {config.posthogKey && (
           <label className="mt-3 flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
+              aria-labelledby="telemetry-consent-details-label"
               data-testid="telemetry-consent-details"
               checked={details}
-              onChange={event => setDetails(event.currentTarget.checked)}
+              onCheckedChange={checked => setDetails(checked === true)}
             />
-            <span>
+            <span id="telemetry-consent-details-label">
               {t('workbench.detailed_telemetry_enabled')} —{' '}
               {t('workbench.detailed_telemetry_description', { host: config.posthogHost })}
             </span>
