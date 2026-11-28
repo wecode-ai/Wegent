@@ -143,7 +143,7 @@ export default function SkillAutocomplete({
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [placement, setPlacement] = useState<ReturnType<typeof getMenuPlacement>>()
+  const [menuPositioned, setMenuPositioned] = useState(false)
 
   // Group and filter skills
   const groupedSkills = useMemo<GroupedSkill[]>(() => {
@@ -179,17 +179,29 @@ export default function SkillAutocomplete({
 
   const hasResults = filteredSkills.length > 0
   const showMenu = showEmptyResults || hasResults
-  const visible = showMenu && Boolean(placement)
+  const visible = showMenu && menuPositioned
   useLayoutEffect(() => {
     const menu = menuRef.current
-    if (!menu) return
+    if (!menu) {
+      setMenuPositioned(false)
+      return
+    }
 
     const editorViewport = editorViewportRef?.current
     let lastCaret = anchor.getBoundingClientRect()
     let frame = 0
     const positionMenu = (caret: CaretBounds) => {
       lastCaret = caret
-      setPlacement(getMenuPlacement(caret, menu, editorViewport))
+      const placement = getMenuPlacement(caret, menu, editorViewport)
+      if (placement) {
+        // Geometry updates write to the menu only. React owns its visibility and rows.
+        menu.style.top = `${placement.top}px`
+        menu.style.left = `${placement.left}px`
+        menu.style.width = `${placement.width}px`
+        menu.style.maxHeight = `${placement.maxHeight}px`
+        menu.style.transform = placement.transform ?? ''
+      }
+      setMenuPositioned(placement !== null)
     }
     const updatePlacement = () => positionMenu(anchor.getBoundingClientRect())
     const trackCaretPosition = () => {
@@ -401,6 +413,7 @@ export default function SkillAutocomplete({
   let currentGroup: 'team' | 'personal' | 'group' | 'public' | null = null
   let currentNamespace: string | null = null
   const renderItems: React.ReactNode[] = []
+  const selectedIds = new Set(selectedSkillIds)
   let itemIndex = 0
 
   for (const { skill, group, groupNamespace } of filteredSkills) {
@@ -432,7 +445,7 @@ export default function SkillAutocomplete({
       )
     }
 
-    const isSelected = selectedSkillIds.includes(skill.id)
+    const isSelected = selectedIds.has(skill.id)
     const displayIndex = itemIndex
     itemIndex++
 
@@ -471,7 +484,7 @@ export default function SkillAutocomplete({
       ref={menuRef}
       data-testid="slash-skill-menu"
       className="fixed z-50 overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-lg"
-      style={placement ?? { visibility: 'hidden' }}
+      style={{ visibility: visible ? undefined : 'hidden' }}
     >
       {hasResults ? (
         <>

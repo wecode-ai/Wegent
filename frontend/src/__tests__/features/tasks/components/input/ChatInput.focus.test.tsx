@@ -233,12 +233,17 @@ test.each([
       const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
       const editingCommand = method === 'paste within command'
       const draft = 'Check ' + command + (editingCommand ? 'pdf' : '') + suffix
+      const onRender = jest.fn()
+      const renderInput = (message: string, availableSkills: (typeof skill)[]) => (
+        <Profiler id="skill-autocomplete" onRender={onRender}>
+          <ChatInput {...props} message={message} availableSkills={availableSkills} />
+        </Profiler>
+      )
       const { rerender } = render(
-        <ChatInput
-          {...props}
-          message={'Check ' + (editingCommand ? '/pdf' : '') + suffix}
-          availableSkills={pendingCatalog ? [] : [skill]}
-        />
+        renderInput(
+          'Check ' + (editingCommand ? '/pdf' : '') + suffix,
+          pendingCatalog ? [] : [skill]
+        )
       )
       const input = screen.getByTestId('message-input')
       input.focus()
@@ -267,7 +272,7 @@ test.each([
         if (method === 'paste query') await user.paste('docs/pdf')
         else typeCommand(command)
       }
-      rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
+      rerender(renderInput(draft, [skill]))
 
       if (action === 'send unmatched path') {
         const pasted = method === 'paste command'
@@ -310,8 +315,10 @@ test.each([
         expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
         expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
 
+        onRender.mockClear()
         caretTop = 135
         await waitFor(() => expect(menu).toHaveStyle({ top: '169px' }))
+        expect(onRender).not.toHaveBeenCalled()
 
         editorBottom = 100
         fireEvent.scroll(editorViewport)
