@@ -57,8 +57,7 @@ const call = (body, id, tool, args) =>
   }).events
 
 export function createWelcomeDailyCheck(options) {
-  const fixture = createStandInDingTalkFixture(options)
-  const groupPath = join(options.resultDir, 'daily-check-dingtalk-messages.json')
+  let fixture, groupPath
   let active = false
   let schedule, selected, since, start, dws
 
@@ -125,6 +124,8 @@ export function createWelcomeDailyCheck(options) {
 
   return {
     async prepareApp(context) {
+      fixture = createStandInDingTalkFixture(options)
+      groupPath = join(options.resultDir, 'daily-check-dingtalk-messages.json')
       await fixture.prepareApp(context)
       dws = context.appEnvironment.DWS_BINARY_PATH
       context.appEnvironment.WEWORK_E2E_DINGTALK_GROUP_MESSAGES = groupPath
