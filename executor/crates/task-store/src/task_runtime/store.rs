@@ -29,6 +29,7 @@ mod issue_badges;
 pub mod milestones;
 mod my_work;
 mod ordering;
+mod personal_team_project;
 #[path = "project_coordination.rs"]
 mod project_coordination;
 #[path = "project_coordination_commands.rs"]

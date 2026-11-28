@@ -268,6 +268,16 @@ function ScopedProjectCollaborationGroups({
           </ControlButton>
         </div>
       ) : null}
+      {canManage && api.projects.adoptPersonalTeam &&
+        agentConfiguration?.renderPersonalTeamAdoption?.({
+          projectId, location,
+          agents: availableAgents,
+          adopt: async input => {
+            requireActive()
+            await api.projects.adoptPersonalTeam!(projectId, input)
+            await reloadAfterMutation()
+          },
+        })}
       <WorkspaceCollaborationGroupsConfiguration
         groups={groups}
         collectionState={collectionState}

@@ -144,9 +144,20 @@ export function useCloudTodoWorkspaceBase({
         services.localProjectChatAgentApi,
         services.modelApi,
         services.pluginApi,
-        services.deviceApi
+        services.deviceApi,
+        undefined,
+        {
+          userId: Number(user.id),
+          standInApi: services.standInApi,
+          personalAssistantAccountApi: services.personalAssistantAccountApi,
+          getLocalRuntimeSidebarIdentity: services.getLocalRuntimeSidebarIdentity,
+        }
       ),
     [
+      user.id,
+      services.standInApi,
+      services.personalAssistantAccountApi,
+      services.getLocalRuntimeSidebarIdentity,
       services.agentResourceApi,
       services.deviceApi,
       services.localProjectChatAgentApi,

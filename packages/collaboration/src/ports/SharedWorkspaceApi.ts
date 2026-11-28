@@ -270,6 +270,14 @@ export interface WorkspaceAgentCreateInput {
   teamId: number;
 }
 
+export interface PersonalTeamAdoptionInput {
+  sourceOwnerId?: number
+  definition: { id: string; name: string; leadId: string; members: Record<string, string> }
+  memberAgentIds: Record<string, string>
+  memberSourceTeamIds?: Record<string, number>
+  memberTeamDefinitions: Record<string, { name: string; collaboration_model: string; bot: Record<string, unknown>[] }>
+}
+
 export interface CollaborationGroupCreateInput {
   name: string;
   description?: string;
@@ -570,6 +578,10 @@ export interface SharedWorkspaceProjectsApi {
   listCollaborationGroups?(
     projectId: string,
   ): Promise<import("../types").CollaborationGroup[]>;
+  adoptPersonalTeam?(
+    projectId: string,
+    input: PersonalTeamAdoptionInput,
+  ): Promise<void>;
   addCollaborationGroup?(
     projectId: string,
     groupId: string,

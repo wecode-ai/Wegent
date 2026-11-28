@@ -5779,6 +5779,20 @@
     "connect": "连接云端后查看通知"
   },
   "standIn": {
+    "adoption": {
+      "localGrant": "请先在项目智能体设置中授权 {{reference}}，然后重新打开此表单。",
+      "localSource": "此设备没有该岗位的本地 Team 引用。请先将岗位团队导入本设备，再在个人团队中选择本地岗位。",
+      "localHelp": "为本设备上的每个岗位选择已授权的本地项目智能体。工作区 Team 使用其已有项目绑定；设备私有 Team 通过所选项目智能体执行。",
+      "matchUnavailable": "部分 Team 身份未能读取，请手动选择使用对应 Team 的项目智能体。",
+      "changed": "团队已修改，请取消后重新选择。",
+      "exportFailed": "无法从本人设备导出「{{name}}」的 Team，请检查成员的设备绑定和连接。",
+      "bindingHelp": "为每个岗位选择运行相同 Team 的项目智能体。缺少对应智能体时，请先在项目的智能体设置中添加并授权。保存时会将成员的可移植执行定义（含 Bot 提示词）发送至云端，核验项目智能体配置。新增岗位后可再次采用原团队，补齐绑定。",
+      "open": "采用我的助理团队",
+      "select": "选择本人团队",
+      "empty": "当前设备绑定的个人助理没有团队。",
+      "agent": "选择项目智能体",
+      "unavailable": "无法读取本人助理团队。"
+    },
     "pipeline_confirmation_failed": "未能确认当前阶段。",
     "confirm_pipeline_stage": "确认并开始下一阶段",
     "preference_loading": "正在读取助理偏好…",

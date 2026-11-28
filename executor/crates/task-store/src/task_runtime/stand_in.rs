@@ -156,6 +156,11 @@ impl LocalTaskStore {
             &personal,
         )?;
         let personal = write_personal(&connection, &personal)?;
+        super::personal_team_project::refresh_changed_sources(
+            &connection,
+            &previous_personal,
+            &personal,
+        )?;
         super::stand_in_telemetry::configuration_changes(
             &connection,
             user_id,

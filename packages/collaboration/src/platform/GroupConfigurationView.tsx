@@ -85,6 +85,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
     workspace,
   } = model
 
+  const sourceManaged = Boolean(selectedGroup?.personal_team_managed || selectedGroup?.binding_required)
   const [pendingDraftExit, setPendingDraftExit] = useState(false)
   const closeGroup = () => (onDetailClose ? onDetailClose() : setSelectedGroupId(null))
   const copyDialogRef = useRef<HTMLElement>(null)
@@ -177,41 +178,35 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
             className="collaboration-group-detail-form"
             onSubmit={event => {
               event.preventDefault()
+              const leader = draftMembers.find(member => member.kind + ':' + member.id === draftLeader)
               if (
                 !commands.updateCollaborationGroup ||
                 !draftName.trim() ||
-                !draftLeader ||
-                draftMembers.length === 0
+                !leader
               ) {
                 return
               }
-              const [leaderKind, leaderId] = draftLeader.split(':')
+              const previousLeader =
+                selectedGroup.leader.kind === leader.kind && selectedGroup.leader.id === leader.id
+                  ? selectedGroup.leader
+                  : undefined
               setSaving(true)
               setError(null)
               void commands
                 .updateCollaborationGroup(selectedGroup.id, {
                   version: selectedGroup.version,
-                  name: draftName.trim(),
                   description: draftDescription.trim(),
                   instructions: draftInstructions.trim(),
-                  leader: {
-                    kind: leaderKind as 'human' | 'agent',
-                    id: leaderId,
-                    name: persistedMemberName(
-                      leaderKind as 'human' | 'agent',
-                      leaderId,
-                      selectedGroup.leader.kind === leaderKind &&
-                        selectedGroup.leader.id === leaderId
-                        ? selectedGroup.leader.name
-                        : undefined
-                    ),
-                    responsibility: '',
-                  },
-                  members: draftMembers.map(member =>
-                    member.kind === leaderKind && member.id === leaderId
-                      ? withCandidateName({ ...member, responsibility: '' })
-                      : withCandidateName(member)
-                  ),
+                  ...(!sourceManaged && {
+                    name: draftName.trim(),
+                    leader: {
+                      kind: leader.kind,
+                      id: leader.id,
+                      name: persistedMemberName(leader.kind, leader.id, previousLeader?.name),
+                      responsibility: previousLeader?.responsibility ?? '',
+                    },
+                    members: draftMembers.map(withCandidateName),
+                  }),
                   coordinationMode: 'manager',
                   stages: draftStages.map(stage => ({
                     ...stage,
@@ -246,7 +241,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                   <ControlInput
                     data-testid="collaboration-group-detail-name"
                     value={draftName}
-                    disabled={!canManage}
+                    disabled={!canManage || sourceManaged}
                     onChange={event => setDraftName(event.target.value)}
                   />
                 </label>
@@ -269,14 +264,19 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 summary={draftMembers.length + (locale === 'zh-CN' ? ' 位参与者' : ' participants')}
                 defaultOpen
               >
+                {sourceManaged && <p data-testid="collaboration-group-source-roster">
+                  {locale === 'zh-CN'
+                    ? '名称、负责人、成员和职责由来源助理团队维护。需要更换项目智能体时，请由团队所有者重新绑定。'
+                    : 'Edit the name, lead, members and duties in the source assistant team. The team owner can rebind its project Agents.'}
+                </p>}
                 <GroupParticipantsEditor
                   inline
-                  readOnly={!canManage}
+                  readOnly={!canManage || sourceManaged}
                   candidates={candidates}
                   leader={draftLeader}
                   members={draftMembers}
                   locale={locale}
-                  agentActions={canManage && !agentActionBusy ? groupAgentActions : []}
+                  agentActions={canManage && !sourceManaged && !agentActionBusy ? groupAgentActions : []}
                   onLeaderChange={candidate => {
                     updateMemberSelection(candidate, true)
                     setDraftMembers(current =>
@@ -513,6 +513,13 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                           </span>
                         </div>
                         <div className="collaboration-group-card-summary">
+                          {group.binding_required && (
+                            <p role="status" data-testid={`collaboration-group-binding-needed-${group.id}`}>
+                            {locale === 'zh-CN'
+                              ? '此小组需要重新绑定。请由来源团队所有者在桌面的「采用我的助理团队」中检查名称冲突或补齐项目智能体后重新保存。'
+                              : 'This group needs rebinding. The source team owner can use Adopt my assistant team on desktop to resolve a name conflict or map missing project Agents, then save again.'}
+                            </p>
+                          )}
                           <p>
                             {group.description ||
                               (locale === 'zh-CN'

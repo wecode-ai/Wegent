@@ -66,16 +66,11 @@ pub(super) fn dispatch_collaboration_group_assignment(
     );
     execution_payload.insert(
         "projectInstructions".to_owned(),
-        json!([
+        json!(manager_system_prompt(
             leader_agent.metadata["system_prompt"]
                 .as_str()
-                .unwrap_or_default(),
-            COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS,
-        ]
-        .into_iter()
-        .filter(|instruction| !instruction.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")),
+                .unwrap_or_default()
+        )),
     );
     execution_payload.insert("dispatch_id".to_owned(), json!(Uuid::new_v4().to_string()));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
@@ -102,6 +97,14 @@ pub(super) fn dispatch_collaboration_group_assignment(
     .map(Some)
 }
 
+pub(super) fn manager_system_prompt(prompt: &str) -> String {
+    [prompt, COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS]
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 pub(super) fn has_active_project_team_binding(
     connection: &Connection,
     project: &str,
@@ -126,7 +129,7 @@ pub(super) fn collaboration_group(
     project: &LoopItem,
     group_id: &str,
 ) -> Result<Value, TaskRuntimeError> {
-    project
+    let group = project
         .metadata
         .get("collaboration_groups")
         .and_then(Value::as_array)
@@ -135,8 +138,13 @@ pub(super) fn collaboration_group(
                 .iter()
                 .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
         })
-        .cloned()
-        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))
+        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))?;
+    if group["binding_required"] == true {
+        return Err(TaskRuntimeError::Invalid(
+            "Source team requires new project bindings".into(),
+        ));
+    }
+    Ok(group.clone())
 }
 
 pub(super) fn record_assignment_change(

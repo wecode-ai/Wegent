@@ -107,7 +107,7 @@ fn write_definition(
     Ok(())
 }
 
-fn definition(
+pub(in crate::task_runtime::store) fn definition(
     connection: &Connection,
     user: i64,
     reference: &str,
@@ -401,6 +401,92 @@ pub(super) fn import_transfer(
     }
     metadata["imported"] = json!(true);
     write_definition(connection, user, &reference, &metadata)
+}
+
+/// Project execution uses the source topology and the project's live Bot grants.
+pub(in crate::task_runtime::store) fn project_definition(
+    connection: &Connection,
+    user: i64,
+    reference: &str,
+    project_agent: &Value,
+) -> Result<Value, TaskRuntimeError> {
+    let source = definition(connection, user, reference)?;
+    let project_bots = project_agent["bot"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let by_id: std::collections::HashMap<_, _> = project_bots
+        .iter()
+        .map(|bot| (bot["id"].to_string(), bot))
+        .collect();
+    let mut bots = source["bot"].clone();
+    for bot in bots.as_array_mut().into_iter().flatten() {
+        if let Some(fields) = bot.as_object_mut() {
+            fields.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "id" | "name"
+                        | "shell_type"
+                        | "system_prompt"
+                        | "description"
+                        | "role"
+                        | "prompt"
+                        | "requireConfirmation"
+                        | "require_confirmation"
+                        | "contextPassing"
+                        | "context_passing"
+                )
+            });
+        }
+    }
+    let mut result = portable(
+        &json!({"name":source["name"],"system_prompt":source["system_prompt"],"collaboration_model":source["collaboration_model"],"bot":bots}),
+    )?;
+    let runtime = if result["bot"][0]["shell_type"] == "ClaudeCode" {
+        "claude_code"
+    } else {
+        "codex"
+    };
+    if project_agent["runtime"] != runtime {
+        return Err(TaskRuntimeError::Invalid(
+            "Choose a project Agent with the source Team runtime".into(),
+        ));
+    }
+    for (index, bot) in result["bot"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        // A solo project Agent owns its lead Bot's grants. Additional Bots can
+        // only receive grants already belonging to their exact project Bot.
+        let authorized =
+            by_id
+                .get(&bot["id"].to_string())
+                .copied()
+                .or_else(|| match project_bots {
+                    [lead] if index == 0 => Some(lead),
+                    _ => None,
+                });
+        if let Some(grants) = authorized {
+            bot["native_capability_scope"] = json!("bot");
+            for key in [
+                "mcp_servers",
+                "mcpServers",
+                "plugins",
+                "skills",
+                "preload_skills",
+                "skill_refs",
+                "capability_mode",
+                "native_capability_scope",
+            ] {
+                if let Some(value) = grants.get(key) {
+                    bot[key] = value.clone()
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
 impl LocalTaskStore {

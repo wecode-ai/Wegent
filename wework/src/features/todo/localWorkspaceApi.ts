@@ -770,6 +770,12 @@ export function createLocalWorkspaceApi(
       initializeExecutionEnvironment: initializeProjectExecutionEnvironment,
       importMessages: unavailable,
       listCollaborationGroups: projectCollaborationGroups,
+      ...(deliveryApi.adoptPersonalTeam && {
+        adoptPersonalTeam: (
+          projectId: string,
+          input: import('@wegent/collaboration').PersonalTeamAdoptionInput
+        ) => deliveryApi.adoptPersonalTeam!(input.sourceOwnerId ?? userId, projectId, input),
+      }),
       createCollaborationGroup,
       updateCollaborationGroup,
       removeCollaborationGroup,

@@ -256,9 +256,21 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
         props.services.pluginApi,
-        props.services.deviceApi
+        props.services.deviceApi,
+        undefined,
+        {
+          userId: Number(cloudConnection.user?.id ?? props.user.id),
+          standInApi: props.services.standInApi,
+          personalAssistantAccountApi: props.services.personalAssistantAccountApi,
+          getLocalRuntimeSidebarIdentity: props.services.getLocalRuntimeSidebarIdentity,
+        }
       ),
     [
+      cloudConnection.user?.id,
+      props.user.id,
+      props.services.standInApi,
+      props.services.personalAssistantAccountApi,
+      props.services.getLocalRuntimeSidebarIdentity,
       props.services.agentResourceApi,
       props.services.deviceApi,
       props.services.projectSpaceDetailServices?.local?.modelApi,

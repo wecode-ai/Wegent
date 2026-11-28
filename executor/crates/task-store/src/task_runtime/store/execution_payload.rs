@@ -95,6 +95,10 @@ fn agent_team_mode(mode: &Value) -> Value {
 }
 
 pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
+    runtime_payload_with_team(execution, None)
+}
+
+pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option<&Value>) -> Value {
     let mut stored = execution
         .execution_payload
         .as_ref()
@@ -150,6 +154,13 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         },
         "run_id": stored.get("automation_run_id"),
     });
+    if dispatch_id.is_some()
+        && stored
+            .get("collaboration_group")
+            .is_some_and(Value::is_object)
+    {
+        origin["dispatch_kind"] = json!("collaboration_group");
+    }
     if let Some(context) = stored.get("project_coordination") {
         origin["project_coordination"] = context.clone();
         origin["userId"] = json!(execution.assigner_user_id);
@@ -227,10 +238,41 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
     } else {
         "execution_request"
     };
+    if let Some(team) = team {
+        // Keep project routing, model, grants, and the manager/member dispatch instructions.
+        let prompt = team["system_prompt"].as_str().unwrap_or_default();
+        let instructions = match dispatch_role.as_ref().and_then(Value::as_str) {
+            Some("manager") => collaboration::manager_system_prompt(prompt),
+            Some("member") => crate::task_runtime::collaboration_member_system_prompt(prompt),
+            _ => prompt.to_owned(),
+        };
+        let projection = [
+            ("teamRef", "team_ref", json!(execution.agent_id)),
+            ("bot", "bot", team["bot"].clone()),
+            (
+                "collaboration_model",
+                "collaboration_model",
+                agent_team_mode(&team["collaboration_model"]),
+            ),
+            ("projectInstructions", "system_prompt", json!(instructions)),
+        ];
+        for (field, request_field, value) in projection {
+            if let Some(request) = payload_object
+                .get_mut(execution_request_key)
+                .and_then(Value::as_object_mut)
+            {
+                request.insert(request_field.into(), value.clone());
+            }
+            payload_object.insert(field.into(), value);
+        }
+    }
     if let Some(request) = payload_object
         .get_mut(execution_request_key)
         .and_then(Value::as_object_mut)
     {
+        if origin["dispatch_kind"] == "collaboration_group" {
+            request.insert("origin".into(), origin.clone());
+        }
         request.insert("task_id".to_owned(), json!(runtime_task_id));
         request.insert(
             "subtask_id".to_owned(),
@@ -242,10 +284,9 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
-        if let Some(instructions) = stored
-            .get("projectInstructions")
-            .filter(|_| stored.get("dispatch_role").and_then(Value::as_str) == Some("manager"))
-        {
+        if let Some(instructions) = stored.get("projectInstructions").filter(|_| {
+            team.is_none() && stored.get("dispatch_role").and_then(Value::as_str) == Some("manager")
+        }) {
             request.insert("system_prompt".to_owned(), instructions.clone());
         }
         if stored.contains_key("project_coordination") {

@@ -5789,6 +5789,20 @@
     "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
+    "adoption": {
+      "localGrant": "Authorize {{reference}} in the project Agent settings, then reopen this form.",
+      "localSource": "Only a remote role route is available. Import this role’s Team onto this device and select its local reference in your team.",
+      "localHelp": "Choose an authorized local project Agent for each role on this device. A workspace Team uses its existing project binding. A device-private Team supplies its executable definition to the selected project Agent.",
+      "matchUnavailable": "Some Team identities could not be read. Select the corresponding project Agents manually.",
+      "changed": "The team has changed. Cancel and select it again.",
+      "exportFailed": "Could not export the Team for {{name}}. Check the member’s device binding and connection.",
+      "bindingHelp": "Select a project Agent running the same Team for each role. If it is missing, add and authorize it in project Agent settings first. Saving sends the portable execution definitions, including Bot prompts, to the server to verify the project Agents. To bind a new role, adopt the same team again.",
+      "open": "Adopt my assistant team",
+      "select": "Select your team",
+      "empty": "The personal assistant on the bound device has no teams.",
+      "agent": "Select a project agent",
+      "unavailable": "Your assistant teams could not be loaded."
+    },
     "pipeline_confirmation_failed": "Could not confirm the current stage.",
     "confirm_pipeline_stage": "Confirm and start the next stage",
     "preference_loading": "Loading assistant preferences…",

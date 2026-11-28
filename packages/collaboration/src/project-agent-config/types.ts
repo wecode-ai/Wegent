@@ -12,6 +12,12 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  renderPersonalTeamAdoption?(props: {
+    location: "cloud" | "local"
+    projectId: string
+    agents: import("../types").CollaborationAgent[]
+    adopt(input: import("../ports/SharedWorkspaceApi").PersonalTeamAdoptionInput): Promise<void>
+  }): ReactNode
   listTemplateAgentModels?(
     runtime: "codex" | "claude_code",
     context?: {

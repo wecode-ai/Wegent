@@ -9,6 +9,7 @@ mod connections;
 #[path = "personal_execution_team.rs"]
 mod execution_team;
 use connections::validate_connections;
+pub(super) use execution_team::{definition, project_definition};
 #[path = "personal_stand_in_share_copy.rs"]
 mod share_copy;
 #[path = "personal_stand_in_share_sync.rs"]
@@ -714,7 +715,8 @@ impl LocalTaskStore {
         // Persist the UI's implicit default without editing any identity or its version.
         let mut initialized = previous.clone();
         initialized["primary"] = implicit_primary();
-        write_personal(&connection, &initialized)?;
+        let saved = write_personal(&connection, &initialized)?;
+        super::personal_team_project::refresh_changed_sources(&connection, &previous, &saved)?;
         connection.commit()?;
         Ok(Some(previous))
     }
@@ -736,6 +738,7 @@ impl LocalTaskStore {
         }
         // Compare the entire snapshot so compensation never overwrites a concurrent edit.
         write_personal(&connection, previous)?;
+        super::personal_team_project::refresh_changed_sources(&connection, &current, previous)?;
         connection.commit()?;
         Ok(())
     }
@@ -776,7 +779,13 @@ impl LocalTaskStore {
         // Re-read under the writer reservation so a concurrent save is never overwritten.
         let (settings, needs_persistence) = personal_snapshot(&transaction, user, device)?;
         if needs_persistence {
+            let previous = read_personal(&transaction, user, device)?;
             write_personal(&transaction, &settings)?;
+            super::personal_team_project::refresh_changed_sources(
+                &transaction,
+                &previous,
+                &settings,
+            )?;
         }
         transaction.commit()?;
         Ok(settings)
@@ -1066,6 +1075,7 @@ impl LocalTaskStore {
         execution_team::bind(&mut value, user)?;
         execution_team::import_transfer(connection, user, &mut value)?;
         write_personal(connection, &value)?;
+        super::personal_team_project::refresh_changed_sources(connection, &previous, &value)?;
         if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
         }) {

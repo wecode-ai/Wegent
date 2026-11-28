@@ -88,6 +88,9 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.project_coordinator_conversation(payload).await },
                 )
             }
+            "runtime.project_coordinator.adopt_personal_team" => {
+                boxed_rpc(move || async move { self.adopt_local_personal_team(payload).await })
+            }
             "runtime.issue_coordination.get"
             | "runtime.issue_coordination.submit"
             | "runtime.issue_coordination.decide" => {

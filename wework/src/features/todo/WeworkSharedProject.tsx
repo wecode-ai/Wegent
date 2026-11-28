@@ -213,9 +213,20 @@ export function WeworkSharedProject({
         services.deviceApi,
         project.project_store !== 'local' && detailServices
           ? { agents: api.agents, modelApi: detailServices.modelApi, name: project.name }
-          : undefined
+          : undefined,
+        {
+          userId: Number(cloudConnection.user?.id ?? userId),
+          standInApi: services.standInApi,
+          personalAssistantAccountApi: services.personalAssistantAccountApi,
+          getLocalRuntimeSidebarIdentity: services.getLocalRuntimeSidebarIdentity,
+        }
       ),
     [
+      cloudConnection.user?.id,
+      userId,
+      services.standInApi,
+      services.personalAssistantAccountApi,
+      services.getLocalRuntimeSidebarIdentity,
       services.agentResourceApi,
       services.localProjectChatAgentApi,
       project.project_store,

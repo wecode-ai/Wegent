@@ -93,6 +93,11 @@ export interface LocalProjectMigrationSnapshot {
   migration_fingerprint: string | null
 }
 export type LocalProjectSpaceApi = DeliveryApi & {
+  adoptPersonalTeam?(
+    userId: number,
+    projectId: string,
+    input: import('@wegent/collaboration').PersonalTeamAdoptionInput
+  ): Promise<void>
   issueCoordination?: {
     get(
       userId: number,

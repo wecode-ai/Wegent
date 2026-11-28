@@ -1103,6 +1103,19 @@ export function createLocalDeliveryApi(
   }
 
   const api = {
+    async adoptPersonalTeam(
+      userId: number,
+      projectId: string,
+      { definition, memberAgentIds }: import('@wegent/collaboration').PersonalTeamAdoptionInput
+    ) {
+      await request('runtime.project_coordinator.adopt_personal_team', {
+        userId,
+        projectId,
+        definition,
+        memberAgentIds,
+      })
+      invalidateProjectRecords()
+    },
     issueCoordination: {
       get(userId: number, projectId: string, loopItemId: string) {
         return request<import('@wegent/collaboration').IssueCoordination | null>(

@@ -258,6 +258,12 @@ export function createWeworkPlatformApi(
           ? (localApi.projects.listCollaborationGroups?.(projectId) ?? [])
           : (cloudApi.projects.listCollaborationGroups?.(projectId) ?? [])
       },
+      async adoptPersonalTeam(projectId, input) {
+        const target =
+          (await projectLocation(projectId)) === 'local' ? localApi.projects : cloudApi.projects
+        if (!target.adoptPersonalTeam) throw new Error('Personal team binding API is unavailable')
+        await target.adoptPersonalTeam(projectId, input)
+      },
       async addCollaborationGroup(projectId, groupId) {
         const target =
           (await projectLocation(projectId)) === 'local' ? localApi.projects : cloudApi.projects

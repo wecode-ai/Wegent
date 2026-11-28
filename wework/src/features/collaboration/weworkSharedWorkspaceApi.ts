@@ -907,6 +907,20 @@ export function createWeworkSharedWorkspaceApi<
     projects: {
       ...delivery.projects,
       ...sharedHttpApi.projects,
+      async adoptPersonalTeam(
+        projectId,
+        { definition, memberAgentIds, memberTeamDefinitions, memberSourceTeamIds }
+      ) {
+        await client.put(
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/personal-team-bindings/${encodeURIComponent(definition.id)}`,
+          {
+            root: { kind: 'team', definition },
+            member_agent_ids: memberAgentIds,
+            member_team_definitions: memberTeamDefinitions,
+            ...(memberSourceTeamIds && { member_source_team_ids: memberSourceTeamIds }),
+          }
+        )
+      },
       async list(workspaceId) {
         if (!workspaceId) return delivery.projects.list()
         const response = await client.get<{ items: CloudProject[] }>(

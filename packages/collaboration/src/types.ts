@@ -375,6 +375,8 @@ export interface CollaborationGroupStage {
 }
 
 export interface CollaborationGroup {
+  binding_required?: boolean;
+  personal_team_managed?: boolean;
   id: string;
   workspace_id: string;
   owner_type: "workspace" | "project";
