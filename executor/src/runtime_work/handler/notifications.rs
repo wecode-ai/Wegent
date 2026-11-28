@@ -299,16 +299,22 @@ impl RuntimeWorkRpcHandler {
                 {
                     crate::agents::restrict_stand_in_approval(&mut message);
                 }
-                if !route_nested && is_root_codex_turn_event(codex_notification(&message).params) {
+                let root_turn =
+                    !route_nested && is_root_codex_turn_event(codex_notification(&message).params);
+                // Native Goal turns and their children may outlive the local execution listener.
+                if stop_requested.is_none()
+                    && (root_turn || route_nested)
+                    && self
+                        .codex_app_server
+                        .answer_detached_command_approval(&route_request, &message)
+                {
+                    return;
+                }
+                if root_turn {
                     if !crate::agents::prepare_codex_runtime_notification(
                         &route_request,
                         &mut message,
                     ) {
-                        // Native Goal turns may outlive the local execution listener.
-                        if stop_requested.is_none() {
-                            self.codex_app_server
-                                .answer_detached_command_approval(&route_request, &message);
-                        }
                         return;
                     }
                     let native = codex_notification(&message);

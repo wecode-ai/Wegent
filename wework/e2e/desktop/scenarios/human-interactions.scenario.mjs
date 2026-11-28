@@ -663,6 +663,11 @@ export function createDesktopScenario({
       await verifyPendingInteractionsTab(control, 1, { expectedProjectCount: 0 })
       await verifyInteractionTime(control, page, { expected: questionTime })
       await openPendingContext()
+      if (issueFixture) {
+        // The restored reading position can leave the Issue's in-flow composer below the viewport.
+        await control.command('waitFor', `${submit}:not(:disabled)`)
+        await control.command('scrollIntoView', submit)
+      }
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
       await captureScreenshot(control, '06-draft-survives-reload.png')

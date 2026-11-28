@@ -75,6 +75,17 @@ async fn execute_inner<T: super::PluginAuthTransport>(
             Duration::from_secs(60),
         )
         .await?;
+    wegent_runtime_logging::log_executor_event(
+        "plugin account command completed",
+        &[
+            (
+                "installed_plugin_id",
+                request.installed_plugin_id.to_string(),
+            ),
+            ("connector_slug", request.connector_slug),
+            ("stdout_bytes", output.len().to_string()),
+        ],
+    );
     String::from_utf8(output).map_err(|_| AuthError("plugin_auth_invalid_output"))
 }
 

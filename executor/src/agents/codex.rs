@@ -1023,10 +1023,10 @@ impl CodexAppServerClient {
         &self,
         request: &ExecutionRequest,
         message: &CodexNotification,
-    ) {
+    ) -> bool {
         let Some(id) = automatic_command_approval_id(message, codex_auto_approve_commands(request))
         else {
-            return;
+            return false;
         };
         let client = self.clone();
         let generation = message.process_generation();
@@ -1041,6 +1041,7 @@ impl CodexAppServerClient {
                 );
             }
         });
+        true
     }
 
     async fn answer_automatic_command_approval(

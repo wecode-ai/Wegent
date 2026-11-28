@@ -12,6 +12,7 @@ import {
   responseCreated,
   selectedToolCall,
   selectTool,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   shellCommandPollResponse,
@@ -22,6 +23,7 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   selectE2EModel,
 } from '../modules/shared.mjs'
+import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const GOAL = 'Run native diagnostics in a continuation turn'
@@ -29,6 +31,12 @@ const PROMPT = 'Prepare to run native diagnostics'
 const FIRST_REPLY = 'The diagnostic command will run on the next turn.'
 const CALL = 'sample-isolated-process'
 const DONE = 'Native diagnostic command completed'
+const CHILD_PROMPT = 'Run the separate native shell diagnostic probe'
+const CHILD_CALL = 'child-native-diagnostics'
+const CHILD_DONE = 'Child native diagnostic probe completed'
+const SPAWN = 'spawn-native-diagnostics-probe'
+const COMPLETE = 'complete-native-diagnostics-goal'
+const GOAL_DONE = 'Native diagnostic Goal completed'
 const FIXTURE = 'isolated-diagnostic-probe.tmp'
 const MACOS_COMMAND = String.raw`set -eu
 tmp=$(mktemp -d)
@@ -49,41 +57,69 @@ const PLATFORM_COMMAND = {
 
 export function createDesktopScenario({ workspacePath }) {
   let requests = 0
+  let waits = 0
   let commandCompleted = false
+  let childCompleted = false
+
+  function runDiagnostic(body, callId) {
+    const result = accountCommandResult(body.input, callId)
+    if (!result) {
+      return shellCommandResponse(body, callId, PLATFORM_COMMAND[process.platform], workspacePath, {
+        yield_time_ms: 10_000,
+      })
+    }
+    if (result.sessionId) return shellCommandPollResponse(body, result.pollId, result.sessionId)
+    assert.ok(result.output.includes(DONE), result.output)
+    return null
+  }
+
+  function childEvents(body) {
+    const events = runDiagnostic(body, CHILD_CALL)
+    if (events) return events
+    childCompleted = true
+    return [assistantMessage(CHILD_DONE)]
+  }
+
+  function goalEvents(body, input) {
+    if (!commandCompleted) {
+      const events = runDiagnostic(body, CALL)
+      if (events) return events
+      commandCompleted = true
+    }
+    if (toolOutputText(body, COMPLETE) != null) return [assistantMessage(GOAL_DONE)]
+    if (input.includes(CHILD_DONE)) {
+      return selectedToolCall(COMPLETE, selectTool(body, 'update_goal', { status: 'complete' }))
+    }
+    if (toolOutputText(body, SPAWN) == null) {
+      return selectedToolCall(
+        SPAWN,
+        selectTool(body, 'spawn_agent', { task_name: 'diagnostic_probe', message: CHILD_PROMPT })
+      )
+    }
+    assert.ok(++waits <= 3, 'The native Goal did not receive the child diagnostic result')
+    return selectedToolCall(
+      `wait-diagnostic-probe-${waits}`,
+      selectTool(body, 'wait_agent', { timeout_ms: 10_000 })
+    )
+  }
+
   return {
+    codexConfigToml: '[features.multi_agent_v2]\nenabled = true\n',
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
-      if (!JSON.stringify(body.input).includes(PROMPT)) return false
+      const input = JSON.stringify(body.input)
+      const isChild =
+        isCollaborationSubagentRequest(request.headers) && input.includes(CHILD_PROMPT)
+      if (!isChild && !input.includes(PROMPT)) return false
       const id = `goal-native-command-${++requests}`
-      const result = accountCommandResult(body.input, CALL)
-      let events
-      if (requests === 1) {
-        events = [assistantMessage(FIRST_REPLY)]
-      } else if (!result) {
-        events = shellCommandResponse(
-          body,
-          CALL,
-          PLATFORM_COMMAND[process.platform],
-          workspacePath,
-          {
-            yield_time_ms: 10_000,
-          }
-        )
-      } else if (result.sessionId) {
-        events = shellCommandPollResponse(body, result.pollId, result.sessionId)
-      } else if (commandCompleted) {
-        events = [assistantMessage(DONE)]
-      } else {
-        assert.ok(result.output.includes(DONE), result.output)
-        commandCompleted = true
-        events = selectedToolCall(
-          'complete-native-diagnostics-goal',
-          selectTool(body, 'update_goal', { status: 'complete' })
-        )
-      }
+      const events = isChild
+        ? childEvents(body)
+        : requests === 1
+          ? [assistantMessage(FIRST_REPLY)]
+          : goalEvents(body, input)
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
@@ -131,10 +167,11 @@ export function createDesktopScenario({ workspacePath }) {
       )
       assert.equal(activation.goal?.status, 'active', JSON.stringify(activation))
       await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: DONE,
-        timeoutMs: 15000,
+        text: GOAL_DONE,
+        timeoutMs: 20_000,
       })
       assert.ok(commandCompleted, 'Codex did not receive successful native command output')
+      assert.ok(childCompleted, 'The child command did not receive automatic approval')
       await waitForWorkbenchDebugState(
         control,
         snapshot =>
@@ -143,6 +180,6 @@ export function createDesktopScenario({ workspacePath }) {
         'The Goal remained busy after receiving the native command result'
       )
     },
-    diagnostics: () => ({ requests, commandCompleted }),
+    diagnostics: () => ({ requests, commandCompleted, childCompleted }),
   }
 }
