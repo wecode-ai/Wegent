@@ -42,7 +42,7 @@ fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String
         request.model_config["model_provider"] = json!(provider);
     }
     request.bot = json!([bot]);
-    request.system_prompt = super::stand_in_agent::bot_instructions(
+    request.system_prompt = crate::task_runtime::runner_routing::bot_instructions(
         state["instructions"].as_str().unwrap_or_default(),
         bot,
     );
@@ -345,30 +345,9 @@ impl RuntimeWorkRpcHandler {
             .get("team_ref")
             .and_then(Value::as_str)
             .ok_or_else(|| AppIpcError::new("not_found", "Personal Team binding is unavailable"))?;
-        let current = LocalTaskStore::open(self.task_store_path.as_ref())
+        LocalTaskStore::open(self.task_store_path.as_ref())
             .and_then(|store| store.personal_execution_team(user, reference))
             .map_err(super::stand_in::settings_error)?;
-        if let Some(role_id) = current["accountRoleId"].as_str() {
-            let account = self
-                .runtime_http(reqwest::Method::GET, "/v1/personal-assistant", None)
-                .await?;
-            if !account["assistant"]["definitions"]
-                .as_array()
-                .is_some_and(|defs| {
-                    defs.iter().any(|d| {
-                        d["roleId"] == role_id
-                            && d["team"]["metadata"]["name"] == current["accountTeam"]["name"]
-                            && d["team"]["metadata"]["namespace"]
-                                == current["accountTeam"]["namespace"]
-                    })
-                })
-            {
-                return Err(AppIpcError::new(
-                    "permission_denied",
-                    "Account Team binding is no longer available",
-                ));
-            }
-        }
         if let Some(model) = self.runtime_model_config(task) {
             request.model_config = model;
         }
@@ -440,7 +419,7 @@ mod tests {
             "collaboration":{"enabled":false,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}}]);
         settings["transferredTeamDefinition"] = json!({"roleId":"copied","definition":{
         "name":"Reviewer","collaboration_model":"pipeline","bot":[
-            {"id":"a","shell_type":"Codex","contextPassing":"previous_bot","requireConfirmation":confirm},
+            {"id":"a","shell_type":"Codex","system_prompt":"prepare","prompt":"draft","contextPassing":"previous_bot","requireConfirmation":confirm},
             {"id":"b","shell_type":"ClaudeCode","system_prompt":"review"}
         ]}});
         let saved = store
@@ -468,7 +447,7 @@ mod tests {
         let origin = json!({"type":"stand_in_identity","deviceId":"device-1","userId":7,"standInId":"copied"});
         let request:ExecutionRequest = serde_json::from_value(json!({
             "task_id":"personal","subtask_id":"root","user_id":7,"origin":origin,
-            "team_ref":reference,"collaboration_model":team["collaboration_model"],"prompt":"original",
+            "team_ref":reference,"collaboration_model":team["collaboration_model"],"prompt":"original","system_prompt":"shared",
             "bot":team["bot"]
         })).unwrap();
         let mut link = RuntimeTaskLink::new_pending(
@@ -489,6 +468,7 @@ mod tests {
         first.bind_task_kind(&handler.store);
         handler.begin_personal_pipeline(&mut first).unwrap();
         assert_eq!(first.request.bot.as_array().unwrap().len(), 1);
+        assert_eq!(first.request.system_prompt, "shared\n\nprepare\n\ndraft");
         handler
             .restore_personal_bot_grants("personal", &mut first.request)
             .unwrap();
@@ -556,7 +536,7 @@ mod tests {
             next.request.bot[0]["mcp_servers"]["probe"]["headers"]["X-Test-Token"],
             "second"
         );
-        assert_eq!(next.request.system_prompt, "review");
+        assert_eq!(next.request.system_prompt, "shared\n\nreview");
         assert!(!handler.settle_personal_pipeline(
             "personal",
             &next.request,
@@ -567,6 +547,80 @@ mod tests {
         assert_eq!(
             handler.local_task_link("personal").unwrap().runtime_handle[STATE]["phase"],
             "finished"
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn account_team_handoff_uses_the_started_definition_offline() {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("offline-account-pipeline");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let member = |name: &str| {
+            json!({
+                "member": {"requireConfirmation":true,"contextPassing":"previous_bot"},
+                "bot": {"metadata":{"name":name,"displayName":name},"spec":{"shellRef":{"name":"Codex"}}},
+                "ghost": {"spec":{"systemPrompt":name}}
+            })
+        };
+        let mut source = json!({
+            "roleId":"review", "team":{"metadata":{"name":"review","namespace":"personal-assistant","displayName":"Review"},"spec":{"collaborationModel":"pipeline"}},
+            "members":[member("draft"),member("verify")]
+        });
+        let reference = store.import_account_execution_team(7, &source).unwrap();
+        let team = store.personal_execution_team(7, &reference).unwrap();
+        let origin = json!({"type":"stand_in_identity","userId":7,"deviceId":"device-1","standInId":"review"});
+        let request = serde_json::from_value(json!({
+            "task_id":"offline", "subtask_id":"root", "user_id":7, "origin":origin,
+            "team_ref":reference, "collaboration_model":"pipeline", "bot":team["bot"]
+        }))
+        .unwrap();
+        let mut link = RuntimeTaskLink::new_pending(
+            "offline".into(),
+            root.to_string_lossy().into_owned(),
+            "Review".into(),
+        );
+        link.runtime_handle["origin"] = origin;
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+        handler.store.upsert_task(link);
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .settings
+            .max_concurrent_stand_in_tasks = 0;
+        let mut turn = SpawnTurnRequest::new("offline".into(), "codex".into(), request);
+        turn.bind_task_kind(&handler.store);
+        handler.begin_personal_pipeline(&mut turn).unwrap();
+        source["members"][1] = member("replacement");
+        assert_eq!(
+            store.import_account_execution_team(7, &source).unwrap(),
+            reference
+        );
+        assert!(handler.settle_personal_pipeline(
+            "offline",
+            &turn.request,
+            &ExecutionOutcome::Completed {
+                content: "draft output".into()
+            }
+        ));
+        handler
+            .advance_personal_pipeline("offline", Some(&json!(["root", 0])))
+            .await
+            .unwrap();
+        let queued = handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .front()
+            .unwrap()
+            .clone();
+        assert_eq!(queued.request.bot[0]["id"], "verify");
+        assert_eq!(
+            queued.request.prompt,
+            "Previous stage output:\ndraft output"
         );
         drop(store);
         fs::remove_dir_all(root).unwrap();
