@@ -240,11 +240,15 @@ pub(super) fn runtime_payload_with_team(execution: &LocalExecution, team: Option
     };
     if let Some(team) = team {
         // Keep project routing, model, grants, and the manager/member dispatch instructions.
-        let prompt = team["system_prompt"].as_str().unwrap_or_default();
+        let prompt = crate::task_runtime::runner_routing::lead_instructions(
+            team["system_prompt"].as_str().unwrap_or_default(),
+            team["collaboration_model"].as_str(),
+            &team["bot"],
+        );
         let instructions = match dispatch_role.as_ref().and_then(Value::as_str) {
-            Some("manager") => collaboration::manager_system_prompt(prompt),
-            Some("member") => crate::task_runtime::collaboration_member_system_prompt(prompt),
-            _ => prompt.to_owned(),
+            Some("manager") => collaboration::manager_system_prompt(&prompt),
+            Some("member") => crate::task_runtime::collaboration_member_system_prompt(&prompt),
+            _ => prompt,
         };
         let projection = [
             ("teamRef", "team_ref", json!(execution.agent_id)),

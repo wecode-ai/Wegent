@@ -3,6 +3,28 @@ use super::TaskRuntimeError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+pub fn bot_instructions(base: &str, bot: &Value) -> String {
+    [
+        Some(base),
+        bot["system_prompt"].as_str(),
+        bot["prompt"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|text| !text.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+pub fn lead_instructions(base: &str, mode: Option<&str>, bots: &Value) -> String {
+    if mode == Some("pipeline") {
+        // The stage compiler adds only the currently executing member's instructions.
+        base.to_owned()
+    } else {
+        bot_instructions(base, &bots[0])
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum ExecutionPolicy {

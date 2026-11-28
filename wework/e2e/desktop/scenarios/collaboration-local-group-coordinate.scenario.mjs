@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  adoptedIssue,
+  adoptedReceipt,
+  sourceInstructions,
+  verifyLocalPersonalTeamAdoption,
+} from '../modules/local-personal-team-adoption.mjs'
 
 import {
   assistantMessage,
@@ -294,14 +300,20 @@ async function createCoordinateGroup(control, timeoutMs) {
   }
 }
 
-async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
+async function createIssueAndAssignGroup(
+  control,
+  timeoutMs,
+  title = ISSUE,
+  groupName = GROUP,
+  description = `${MARKER}。负责人必须并发分配两个子任务，等待结果后显式更新 Issue 状态。`
+) {
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: title,
   })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
-    value: `${MARKER}。负责人必须并发分配两个子任务，等待结果后显式更新 Issue 状态。`,
+    value: description,
   })
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs,
@@ -315,12 +327,12 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
     control,
     'body',
     'cloud-todo-detail-assignee-option-group:',
-    GROUP,
+    groupName,
     timeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
-    text: GROUP,
+    text: groupName,
     timeoutMs,
   })
 }
@@ -414,6 +426,7 @@ async function waitForHumanNotification(control, timeoutMs) {
 
 export async function createDesktopScenario({
   captureScreenshot,
+  resultDir,
   modelResponseTimeoutMs,
   uiTimeoutMs,
 }) {
@@ -462,6 +475,22 @@ export async function createDesktopScenario({
       const kind = codexRequestKind(body)
       if (kind === 'prewarm' || kind === 'compaction') {
         writeEvents(response, responseId, [assistantMessage('Ready')])
+        return true
+      }
+      if (requestText.includes(adoptedIssue)) {
+        assert.ok(
+          requestText.includes(sourceInstructions),
+          'The project did not run the adopted Bot instructions'
+        )
+        const callId = 'adopted-project-agent-signoff'
+        const events = requestContainsToolOutput(body, callId)
+          ? [assistantMessage(adoptedReceipt)]
+          : managerToolEvents(body, 'update_issue_status', callId, {
+              status: 'in_review',
+              reason: '交付已核验',
+              comment: adoptedReceipt,
+            }).events
+        writeEvents(response, responseId, events)
         return true
       }
       if (!requestText.includes(MARKER)) {
@@ -751,6 +780,17 @@ export async function createDesktopScenario({
         'local-coordinate-07-human-notification-opened-issue.png',
         CONTENT
       )
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await verifyLocalPersonalTeamAdoption(control, {
+        content: CONTENT,
+        projectName: PROJECT,
+        agentId: group.leaderId,
+        captureScreenshot,
+        resultDir,
+        assignIssue: (...args) => createIssueAndAssignGroup(control, uiTimeoutMs, ...args),
+        uiTimeoutMs,
+        modelResponseTimeoutMs,
+      })
     },
 
     diagnostics() {

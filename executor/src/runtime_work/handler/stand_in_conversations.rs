@@ -176,7 +176,7 @@ impl RuntimeWorkRpcHandler {
             None
         };
         request.system_prompt = identity_system_prompt(
-            &super::stand_in_agent::lead_instructions(
+            &crate::task_runtime::runner_routing::lead_instructions(
                 "",
                 request
                     .extra
