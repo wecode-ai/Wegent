@@ -3,6 +3,10 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   adoptedIssue,
   adoptedReceipt,
+  pipelineHandoff,
+  pipelineIssue,
+  pipelineReceipt,
+  pipelineReview,
   sourceInstructions,
   verifyLocalPersonalTeamAdoption,
 } from '../modules/local-personal-team-adoption.mjs'
@@ -430,6 +434,18 @@ export async function createDesktopScenario({
   modelResponseTimeoutMs,
   uiTimeoutMs,
 }) {
+  const reviewerStarted = Promise.withResolvers()
+  const reviewerRelease = Promise.withResolvers()
+  const pipeline = {
+    stages: [],
+    waitForReviewer: () =>
+      waitForPromise(
+        reviewerStarted.promise,
+        modelResponseTimeoutMs,
+        'The claimed project Pipeline did not reach its second Bot'
+      ),
+    releaseReviewer: reviewerRelease.resolve,
+  }
   let active = false
   let parentStage = 'initial'
   let collectorAgentId = ''
@@ -477,18 +493,38 @@ export async function createDesktopScenario({
         writeEvents(response, responseId, [assistantMessage('Ready')])
         return true
       }
-      if (requestText.includes(adoptedIssue)) {
+      const pipelineRequest =
+        requestText.includes(pipelineIssue) || requestText.includes(pipelineReview)
+      if (pipelineRequest && !requestText.includes(pipelineReview)) {
+        assert.ok(requestText.includes(sourceInstructions))
+        pipeline.stages.push(sourceInstructions)
+        writeEvents(response, responseId, [assistantMessage(pipelineHandoff)])
+        return true
+      }
+      if (pipelineRequest || requestText.includes(adoptedIssue)) {
+        if (pipelineRequest) {
+          assert.ok(
+            requestText.includes(pipelineHandoff),
+            'The second Bot did not receive the first Bot output'
+          )
+          if (!pipeline.stages.includes(pipelineReview)) pipeline.stages.push(pipelineReview)
+          reviewerStarted.resolve()
+          await reviewerRelease.promise
+        }
+        const receipt = pipelineRequest ? pipelineReceipt : adoptedReceipt
         assert.ok(
-          requestText.includes(sourceInstructions),
+          requestText.includes(pipelineRequest ? pipelineReview : sourceInstructions),
           'The project did not run the adopted Bot instructions'
         )
-        const callId = 'adopted-project-agent-signoff'
+        const callId = pipelineRequest
+          ? 'pipeline-project-agent-signoff'
+          : 'adopted-project-agent-signoff'
         const events = requestContainsToolOutput(body, callId)
-          ? [assistantMessage(adoptedReceipt)]
+          ? [assistantMessage(receipt)]
           : managerToolEvents(body, 'update_issue_status', callId, {
               status: 'in_review',
               reason: '交付已核验',
-              comment: adoptedReceipt,
+              comment: receipt,
             }).events
         writeEvents(response, responseId, events)
         return true
@@ -781,15 +817,24 @@ export async function createDesktopScenario({
         CONTENT
       )
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-      await verifyLocalPersonalTeamAdoption(control, {
+      const adoptionOptions = {
         content: CONTENT,
         projectName: PROJECT,
-        agentId: group.leaderId,
         captureScreenshot,
         resultDir,
         assignIssue: (...args) => createIssueAndAssignGroup(control, uiTimeoutMs, ...args),
         uiTimeoutMs,
         modelResponseTimeoutMs,
+      }
+      await verifyLocalPersonalTeamAdoption(control, {
+        ...adoptionOptions,
+        agentId: group.leaderId,
+      })
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await verifyLocalPersonalTeamAdoption(control, {
+        ...adoptionOptions,
+        agentId: group.collectorId,
+        pipeline,
       })
     },
 

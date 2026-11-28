@@ -8,11 +8,15 @@ import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
-const roleId = 'release-review'
 const privateSkill = 'personal-release-approval'
 export const adoptedIssue = '核验本地采用团队的签收'
 export const sourceInstructions = '核验本地采用来源的签收编号'
 export const adoptedReceipt = '项目虚拟成员已核验采用团队的签收编号'
+
+export const pipelineIssue = '核验本地采用流水线的双人签收'
+export const pipelineReview = '请复核上一位机器人提供的签收编号'
+export const pipelineHandoff = '交接编号 LOCAL-PIPELINE-51'
+export const pipelineReceipt = '项目虚拟成员已复核 LOCAL-PIPELINE-51 并签收'
 
 export async function verifyLocalPersonalTeamAdoption(
   control,
@@ -20,6 +24,7 @@ export async function verifyLocalPersonalTeamAdoption(
     content,
     projectName,
     agentId,
+    pipeline,
     assignIssue,
     uiTimeoutMs,
     modelResponseTimeoutMs,
@@ -31,20 +36,33 @@ export async function verifyLocalPersonalTeamAdoption(
   const click = id =>
     control.command('clickWhenEnabled', `[data-testid="${id}"]`, { timeoutMs: uiTimeoutMs })
   // Complete the project flow under the installation identity, with its cloud session disconnected.
-  await disconnectDesktopCloud(control)
-  await click('settings-back-button')
-  await click('workspace-tab-select-fixed-board')
+  if (!pipeline) {
+    await disconnectDesktopCloud(control)
+    await click('settings-back-button')
+    await click('workspace-tab-select-fixed-board')
+  }
+  const roleId = pipeline ? 'pipeline-review' : 'release-review'
+  const title = pipeline ? pipelineIssue : adoptedIssue
+  const expectedReceipt = pipeline ? pipelineReceipt : adoptedReceipt
+  const prefix = pipeline ? 'local-pipeline' : 'local-coordinate'
+  const bots = [
+    { id: 51, name: 'Reviewer', shell_type: 'Codex', system_prompt: sourceInstructions },
+  ]
+  if (pipeline) {
+    bots[0].context_passing = 'previous_bot'
+    bots.push({ id: 52, name: 'Auditor', shell_type: 'Codex', system_prompt: pipelineReview })
+  }
   const owner = 0
   const profile = await rpc('runtime.stand_in.personal.get', { userId: owner })
   const source = {
     id: randomUUID(),
-    name: '本地采用验收团队',
+    name: pipeline ? '本地流水线验收团队' : '本地采用验收团队',
     leadId: roleId,
     members: { [roleId]: '核验交付' },
   }
   const role = {
     ...standInRoleFixture(profile.executionDeviceId, roleId),
-    name: '签收助理',
+    name: pipeline ? '流水线签收助理' : '签收助理',
     enabled: true,
     migrationSource: JSON.stringify(['source-device', owner, roleId]),
   }
@@ -53,8 +71,8 @@ export async function verifyLocalPersonalTeamAdoption(
     transferRoleId: roleId,
     portableTeam: {
       name: role.name,
-      collaboration_model: 'solo',
-      bot: [{ id: 51, name: 'Reviewer', shell_type: 'Codex', system_prompt: sourceInstructions }],
+      collaboration_model: pipeline ? 'pipeline' : 'solo',
+      bot: bots,
     },
     settings: {
       ...profile,
@@ -67,7 +85,7 @@ export async function verifyLocalPersonalTeamAdoption(
   await rpc('runtime.stand_in.personal.save', {
     userId: owner,
     settings,
-    ownedTeam: { roleId, botGrants: [{ id: 51, skills: [privateSkill] }] },
+    ownedTeam: { roleId, botGrants: bots.map(({ id }) => ({ id, skills: [privateSkill] })) },
   })
 
   const project = (await rpc('projects.list', {})).find(item => item.name === projectName)
@@ -80,14 +98,14 @@ export async function verifyLocalPersonalTeamAdoption(
   await selectCollaborationProjectView(control, content, 'manage')
   await click('collaboration-project-settings-groups')
   let group
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < (pipeline ? 1 : 2); attempt++) {
     await click('project-personal-team-open')
     await click('project-personal-team-select')
     await click(`project-personal-team-select-option-${source.id}`)
     await click(`project-personal-team-member-${roleId}`)
     await click(`project-personal-team-member-${roleId}-option-${agentId}`)
     if (attempt === 0)
-      await captureScreenshot(control, 'local-coordinate-08-personal-team-mapping.png', content)
+      await captureScreenshot(control, `${prefix}-08-personal-team-mapping.png`, content)
     await click('project-personal-team-adopt')
     await control.command('waitFor', '[data-testid="project-personal-team-open"]', {
       timeoutMs: uiTimeoutMs,
@@ -102,14 +120,48 @@ export async function verifyLocalPersonalTeamAdoption(
     if (group) assert.deepEqual(groups[0], group, 'Repeated adoption changed the project group')
     group = groups[0]
   }
-  await assignIssue(adoptedIssue, source.name, '请核验项目交付并回复签收编号。')
-  await captureScreenshot(control, 'local-coordinate-09-adopted-group-assignee.png', content)
+  await assignIssue(title, source.name, '请核验项目交付并回复签收编号。')
+  await captureScreenshot(control, `${prefix}-09-adopted-group-assignee.png`, content)
+  let beforeSignoff
+  if (pipeline) {
+    try {
+      await pipeline.waitForReviewer()
+      const item = (await rpc('todos.list', { project_id: project.id })).find(
+        row => row.title === title
+      )
+      assert.equal(item.status, 'in_progress')
+      const claims = (
+        await rpc('executions.list', { project_id: project.id, include_terminal: true })
+      ).filter(row => row.loop_item_id === item.id)
+      assert.equal(claims.length, 1)
+      const [claim] = claims
+      assert.equal(claim.agent_id, agentId)
+      assert.ok(claim.claimed_at && claim.runtime_task_id)
+      assert.equal(claim.status, 'running')
+      const comments = await rpc('todos.comment.list', { project_id: project.id, task_id: item.id })
+      const receipts = comments.filter(
+        row =>
+          row.metadata.execution_id === claim.id &&
+          row.metadata.activity_type === 'manager_status_comment'
+      )
+      assert.equal(receipts.length, 0)
+      beforeSignoff = {
+        issueStatus: item.status,
+        executionId: claim.id,
+        executionStatus: claim.status,
+        runtimeTaskId: claim.runtime_task_id,
+        receipts: receipts.length,
+      }
+    } finally {
+      pipeline.releaseReviewer()
+    }
+  }
   await control.command('waitFor', `${content} [data-testid="cloud-task-activity-list"]`, {
-    text: adoptedReceipt,
+    text: expectedReceipt,
     timeoutMs: modelResponseTimeoutMs,
   })
   const issue = (await rpc('todos.list', { project_id: project.id })).find(
-    row => row.title === adoptedIssue
+    row => row.title === title
   )
   assert.ok(issue)
   assert.equal(issue.status, 'in_review')
@@ -129,7 +181,15 @@ export async function verifyLocalPersonalTeamAdoption(
   assert.ok(run.claimed_at && run.runtime_device_id && run.runtime_task_id)
   const request = run.runtime_payload.executionRequest
   assert.equal(request.team_ref, agentId)
-  assert.equal(request.bot[0].id, 51)
+  assert.deepEqual(
+    request.bot.map(bot => bot.id),
+    bots.map(bot => bot.id)
+  )
+  if (pipeline) {
+    assert.equal(run.id, beforeSignoff.executionId)
+    assert.equal(run.runtime_task_id, beforeSignoff.runtimeTaskId)
+    assert.deepEqual(pipeline.stages, [sourceInstructions, pipelineReview])
+  }
   assert.ok(
     !JSON.stringify(request).includes(privateSkill),
     'Personal Bot grants reached the project request'
@@ -144,20 +204,25 @@ export async function verifyLocalPersonalTeamAdoption(
   assert.equal(receipts[0].sender_type, 'agent')
   assert.equal(receipts[0].sender_id, agentId)
   assert.equal(receipts[0].metadata.runtime_address.taskId, run.runtime_task_id)
-  assert.ok(receipts[0].content.includes(adoptedReceipt))
+  assert.ok(receipts[0].content.includes(expectedReceipt))
   const receiptRow = `${content} [data-message-id="${receipts[0].message_id}"]`
   await control.command('scrollIntoView', receiptRow)
-  await control.command('waitFor', receiptRow, { text: adoptedReceipt, timeoutMs: uiTimeoutMs })
+  await control.command('waitFor', receiptRow, { text: expectedReceipt, timeoutMs: uiTimeoutMs })
   await control.command('waitFor', receiptRow, {
     text: group.members[0].name,
     timeoutMs: uiTimeoutMs,
   })
-  await captureScreenshot(control, 'local-coordinate-10-project-agent-receipt.png', content)
+  await captureScreenshot(control, `${prefix}-10-project-agent-receipt.png`, content)
   await writeFile(
-    join(resultDir, 'local-personal-team-adoption.json'),
+    join(
+      resultDir,
+      pipeline ? 'local-personal-team-pipeline.json' : 'local-personal-team-adoption.json'
+    ),
     JSON.stringify(
       {
         source: { teamId: source.id, roleId, teamRef: sourceRef, ownerUserId: owner },
+        beforeSignoff,
+        modelStages: pipeline?.stages,
         projectId: project.id,
         groupId: group.id,
         groupVersion: group.version,
