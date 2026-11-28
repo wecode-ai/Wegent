@@ -5,6 +5,7 @@
   "ci": { "core": { "order": 144050, "shard": 5, "position": 1050 } },
   "paths": [
     "wework/e2e/desktop/modules/personal-native-matrix.mjs",
+    "wework/e2e/desktop/modules/personal-team-cloud-adoption.mjs",
     "wework/e2e/desktop/modules/personal-bot-capabilities.mjs",
     "executor/crates/task-store/src/task_runtime/personal_execution_team.rs",
     "executor/src/runtime_work/handler/personal_stand_in.rs"

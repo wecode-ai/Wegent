@@ -12,6 +12,7 @@ import {
   handleNegativeProbe,
   verifyNegativeProbes,
 } from './personal-claude-approvals.mjs'
+import { createPersonalTeamCloudAdoption } from './personal-team-cloud-adoption.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
@@ -76,14 +77,14 @@ export function personalNativeMatrix({
         assert.ok(name, 'Claude must advertise the native delegation tool')
         writeToolCall(response, cell.id, cell.id + '-delegate', name, {
           description: 'Review delivery',
-          subagent_type: 'reviewer-2',
+          subagent_type: cell.boundBots[1].name + '-' + cell.boundBots[1].id,
           prompt: cell.assignment,
         })
       } else {
         const tool = spawn
           ? selectTool(body, 'spawn_agent', {
               task_name: 'review',
-              agent_type: 'reviewer-2',
+              agent_type: cell.boundBots[1].name + '-' + cell.boundBots[1].id,
               fork_turns: 'none',
               message: cell.assignment,
             })
@@ -155,6 +156,7 @@ export function personalNativeMatrix({
     assert.equal(candidates.length, 1, 'Expected one seeded public Responses model')
     const [model] = candidates
     assert.ok(model.namespace && model.resourceUserId != null && model.isActive !== false)
+    const adoption = await createPersonalTeamCloudAdoption(cloud, userId, model)
     const profile = await rpc('runtime.stand_in.personal.get', { userId })
     const deviceId = profile.executionDeviceId
     const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
@@ -217,10 +219,12 @@ export function personalNativeMatrix({
             system_prompt: definition.second,
             description: 'Check the delivery',
           })
+        const source =
+          runtime === 'codex' && !denied && mode !== 'solo'
+            ? await adoption.createSource(id, mode, bots)
+            : { name: id, bot: bots, collaboration_model: mode }
         const team = {
-          name: id,
-          bot: bots,
-          collaboration_model: mode,
+          ...source,
           model_policy: {
             mode: 'fixed',
             model: {
@@ -252,14 +256,14 @@ export function personalNativeMatrix({
         const boundBots = portableTeam.bot.map(({ id, name, role }) => ({ id, name, role }))
         assert.deepEqual(
           boundBots,
-          bots.map(({ id, name, role }) => ({ id, name, role }))
+          team.bot.map(({ id, name, role }) => ({ id, name, role }))
         )
         const provisioned = await rpc('runtime.stand_in.personal.save', {
           userId,
           settings: saved,
           ownedTeam: {
             roleId: id,
-            botGrants: bots.map((bot, index) => ({
+            botGrants: team.bot.map((bot, index) => ({
               id: bot.id,
               ...capabilities[mode === 'pipeline' || denied ? index : 0].grants,
             })),
@@ -269,6 +273,12 @@ export function personalNativeMatrix({
         cells.push({ ...definition, teamRef, boundBots })
       }
     }
+    const settings = await rpc('runtime.stand_in.personal.get', { userId })
+    await rpc('runtime.stand_in.personal.save', {
+      userId,
+      settings: { ...settings, teams: [...(settings.teams ?? []), adoption.root] },
+    })
+    const adopted = await adoption.adopt(cells)
     await control.command('navigate', 'body', {
       value: '/stand-in?view=messages',
     })
@@ -347,7 +357,10 @@ export function personalNativeMatrix({
       const { task } = await rpc('runtime.tasks.get', { taskId })
       assert.equal(task.taskId, taskId)
       assert.equal(task.runtime, runtime)
-      assert.deepEqual(Object.keys(cell.observed), mode === 'solo' ? ['1'] : ['1', '2'])
+      assert.deepEqual(
+        Object.keys(cell.observed).sort(),
+        cell.boundBots.map(bot => String(bot.id)).sort()
+      )
       const observed = Object.values(cell.observed)
       assert.deepEqual(
         observed.map(row => row.receipt).sort(),
@@ -376,6 +389,30 @@ export function personalNativeMatrix({
       )
       cell = null
     }
+    const deliveries = Object.keys(adopted.sources).map(id => {
+      const cell = cells.find(cell => cell.id === id)
+      const run = evidence.find(run => run.teamRef === cell.teamRef)
+      assert.equal(run.result, cell.result)
+      assert.deepEqual(
+        run.botCapabilities.map(row => row.botId),
+        adopted.sources[id].definition.bot.map(bot => bot.id)
+      )
+      return {
+        roleId: id,
+        taskId: run.taskId,
+        teamRef: run.teamRef,
+        result: run.result,
+        botReceipts: run.botCapabilities.map(({ botId, receipt }) => ({ botId, receipt })),
+      }
+    })
+    assert.equal(
+      new Set(deliveries.flatMap(row => row.botReceipts.map(bot => bot.receipt))).size,
+      4
+    )
+    await writeFile(
+      join(resultDir, 'personal-team-cloud-adoption.json'),
+      JSON.stringify({ ...adopted, deliveries }, null, 2)
+    )
   }
   return { handleModel, verify }
 }

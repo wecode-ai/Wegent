@@ -61,7 +61,7 @@ export function startPersonalBotProbe(resultDir) {
 }
 
 export function checkPersonalBotTurn({ cell, reviewer, body, headers, response, writeToolCall }) {
-  const botId = reviewer ? 2 : 1
+  const botId = cell.boundBots[reviewer ? 1 : 0].id
   const capability = cell.capabilities[reviewer && cell.mode === 'pipeline' ? 1 : 0]
   const key = cell.id + '-bot-' + botId
   if (cell.observed[botId]) return false
