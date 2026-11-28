@@ -21,7 +21,7 @@ fn rewrite_value(value: &mut Value, expanded: &HashSet<String>) {
                     if expanded.contains(name)
                         && map
                             .get("namespace")
-                            .map_or(true, |namespace| namespace.is_null())
+                            .is_none_or(|namespace| namespace.is_null())
                     {
                         map.insert(
                             "namespace".to_owned(),

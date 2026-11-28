@@ -31,11 +31,11 @@ fn personal_runtime_scope(request: &ExecutionRequest, runtime_handle: &Value) ->
     let is_empty_origin = |origin: &Value| {
         origin.is_null() || origin.as_object().is_some_and(|object| object.is_empty())
     };
-    request.extra.get("origin").map_or(true, is_empty_origin)
+    request.extra.get("origin").is_none_or(is_empty_origin)
         && cloud_project_id(request).is_none()
         && !request.extra.contains_key("standInDelegation")
         && !request.extra.contains_key("standInSchedule")
-        && super::super::util::runtime_origin(runtime_handle).map_or(true, is_empty_origin)
+        && super::super::util::runtime_origin(runtime_handle).is_none_or(is_empty_origin)
         && ["cloudProjectId", "cloud_project_id", "wegentTeam"]
             .iter()
             .all(|key| runtime_handle[*key].is_null())
@@ -1911,7 +1911,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("preparation map poisoned");
             if preparing
                 .get(&local_task_id)
-                .map_or(true, |preparation| preparation.cancellation_requested)
+                .is_none_or(|preparation| preparation.cancellation_requested)
             {
                 preparing.remove(&local_task_id);
                 drop(preparing);
@@ -2614,7 +2614,7 @@ impl RuntimeWorkRpcHandler {
                             == Some(session)
                     });
                 (turn.local_task_id == session || bound)
-                    && command_id.map_or(true, |id| {
+                    && command_id.is_none_or(|id| {
                         turn.request
                             .extra
                             .get("runtime_command_id")

@@ -414,7 +414,7 @@ fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Val
         let token_start = find_complete_presentation_token(tail, &token);
         let rich_reference = format!("[{token}]({href})");
         if let Some(rich_start) = tail.find(&rich_reference) {
-            if token_start.map_or(true, |start| rich_start <= start) {
+            if token_start.is_none_or(|start| rich_start <= start) {
                 offset += rich_start + rich_reference.len();
                 continue;
             }

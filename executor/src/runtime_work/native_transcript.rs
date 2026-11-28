@@ -1154,8 +1154,7 @@ fn insert_row(
         .filter(|column| available_columns.contains(*column))
         .cloned()
         .collect::<Vec<_>>();
-    let placeholders = std::iter::repeat("?")
-        .take(columns.len())
+    let placeholders = std::iter::repeat_n("?", columns.len())
         .collect::<Vec<_>>()
         .join(",");
     let values = columns

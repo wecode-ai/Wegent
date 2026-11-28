@@ -411,7 +411,7 @@ fn marketplace_write_conflicts(
             .as_str()
             .is_some_and(plugin_market_is_cleaning),
         "marketplace/remove" => params["marketplaceName"].as_str().is_some_and(is_cleaning),
-        "marketplace/upgrade" => params["marketplaceName"].as_str().map_or(true, is_cleaning),
+        "marketplace/upgrade" => params["marketplaceName"].as_str().is_none_or(is_cleaning),
         "config/value/write" => {
             let Some(path) = params["keyPath"].as_str() else {
                 return false;
@@ -428,7 +428,7 @@ fn marketplace_write_conflicts(
                 params["mergeStrategy"] != "upsert"
                     || params["value"]
                         .as_object()
-                        .map_or(true, |entries| entries.keys().any(|key| conflicts(key)))
+                        .is_none_or(|entries| entries.keys().any(|key| conflicts(key)))
             };
             if let Ok(keys) = toml_edit::Key::parse(path) {
                 return keys.first().is_some_and(|section| {

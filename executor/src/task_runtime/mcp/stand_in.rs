@@ -57,7 +57,7 @@ impl DeliveryContext {
     }
 
     fn remember_page(&self, page: &Value) {
-        if page["items"].as_array().map_or(true, Vec::is_empty) && page["itemChunk"].is_null() {
+        if page["items"].as_array().is_none_or(Vec::is_empty) && page["itemChunk"].is_null() {
             return;
         }
         if let Ok(mut memory) = self.memory.lock() {

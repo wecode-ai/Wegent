@@ -54,6 +54,7 @@ describe('bundled plugin resources', () => {
         'connector-auth',
         'conversations',
         'github',
+        'repair-wework',
         'visualize',
       ])
     )

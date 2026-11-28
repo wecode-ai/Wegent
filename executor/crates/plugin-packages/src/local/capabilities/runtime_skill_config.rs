@@ -274,7 +274,7 @@ fn relocated_skill_path(
         .map(|part| part.as_os_str())
         .collect::<PathBuf>();
     if relative.components().count() < 2
-        || relative.file_name().map_or(true, |name| name != "SKILL.md")
+        || relative.file_name().is_none_or(|name| name != "SKILL.md")
     {
         return Ok(None);
     }

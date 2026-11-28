@@ -40,8 +40,7 @@ pub(super) fn binding(link: &RuntimeTaskLink) -> Result<Value, AppIpcError> {
 
 pub(super) fn validate(record: &Value, link: &RuntimeTaskLink) -> Result<(), AppIpcError> {
     let expected = &record["session"];
-    if expected["engine"].as_str().is_none() || expected["id"].as_str().map_or(true, str::is_empty)
-    {
+    if expected["engine"].as_str().is_none() || expected["id"].as_str().is_none_or(str::is_empty) {
         return Err(invalid("Event wait has no original native session binding"));
     }
     if expected["engine"].as_str() != engine(link) {

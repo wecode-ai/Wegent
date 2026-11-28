@@ -201,7 +201,7 @@ impl RuntimeWorkRpcHandler {
                     || (route_nested
                         && super::super::conversation_sessions::is_identity_conversation(link)
                         && link.thread_id.as_ref().is_some_and(|current| {
-                            routing.routes.get(current).map_or(true, |current| {
+                            routing.routes.get(current).is_none_or(|current| {
                                 !Arc::ptr_eq(&current.event_mapper, &event_mapper)
                             })
                         }))

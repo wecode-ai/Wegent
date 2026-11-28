@@ -130,10 +130,8 @@ impl RuntimeWorkRpcHandler {
             || binding["commandId"] != command_id
             || config["wework_model_kind"] != "model-interface"
             || binding["modelConfig"] != *config
-            || config["model_id"].as_str().map_or(true, str::is_empty)
-            || config["model_provider"]
-                .as_str()
-                .map_or(true, str::is_empty)
+            || config["model_id"].as_str().is_none_or(str::is_empty)
+            || config["model_provider"].as_str().is_none_or(str::is_empty)
         {
             return Err(binding_error(
                 "Submitted interface actor, device, task, command or configuration does not match",

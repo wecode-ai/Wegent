@@ -430,7 +430,7 @@ fn task_snapshots(
             Err(_) if !entry.path().join("execution.json").exists() => continue,
             result => result?,
         };
-        if scope.map_or(true, |scope| scope.matches(&record)) && record["ready"] == true {
+        if scope.is_none_or(|scope| scope.matches(&record)) && record["ready"] == true {
             found.push(entry.path());
         }
     }

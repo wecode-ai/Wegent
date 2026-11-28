@@ -96,6 +96,7 @@ interface TaskFeedbackDialogProps {
   hasActiveTask: boolean
   getTaskContext: () => Promise<Record<string, unknown>>
   feedbackApi?: FeedbackApi
+  startRepairChat?: (note: string) => Promise<boolean>
   onClose: () => void
 }
 
@@ -135,6 +136,7 @@ export function TaskFeedbackDialog({
   hasActiveTask,
   getTaskContext,
   feedbackApi,
+  startRepairChat,
   onClose,
 }: TaskFeedbackDialogProps) {
   if (!open) return null
@@ -143,6 +145,7 @@ export function TaskFeedbackDialog({
       hasActiveTask={hasActiveTask}
       getTaskContext={getTaskContext}
       feedbackApi={feedbackApi}
+      startRepairChat={startRepairChat}
       onClose={onClose}
     />
   )
@@ -152,6 +155,7 @@ function TaskFeedbackDialogContent({
   hasActiveTask,
   getTaskContext,
   feedbackApi,
+  startRepairChat,
   onClose,
 }: Omit<TaskFeedbackDialogProps, 'open'>) {
   const { t, i18n } = useTranslation('common')
@@ -159,6 +163,7 @@ function TaskFeedbackDialogContent({
   const [note, setNote] = useState('')
   const [attachments, setAttachments] = useState<File[]>([])
   const [exporting, setExporting] = useState(false)
+  const [openingRepairChat, setOpeningRepairChat] = useState(false)
   const [capturingScreenshot, setCapturingScreenshot] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [phase, setPhase] = useState<DialogPhase>('configure')
@@ -216,8 +221,26 @@ function TaskFeedbackDialogContent({
   }
 
   const handleClose = () => {
+    if (openingRepairChat) return
     if (phase === 'preview') void discardPreview()
     onClose()
+  }
+
+  const openRepairChat = async () => {
+    if (!startRepairChat) return
+    setOpeningRepairChat(true)
+    setError(null)
+    try {
+      if (await startRepairChat(note.trim())) {
+        onClose()
+        return
+      }
+      setError(t('workbench.feedback_repair_unavailable'))
+    } catch {
+      setError(t('workbench.feedback_repair_unavailable'))
+    } finally {
+      setOpeningRepairChat(false)
+    }
   }
 
   const buildPreview = async () => {
@@ -520,7 +543,7 @@ function TaskFeedbackDialogContent({
             type="button"
             data-testid="task-feedback-close-button"
             onClick={handleClose}
-            disabled={exporting}
+            disabled={exporting || openingRepairChat}
             className="flex h-8 min-w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
             aria-label={t('workbench.close_dialog')}
           >
@@ -568,6 +591,23 @@ function TaskFeedbackDialogContent({
         ) : (
           <>
             <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto">
+              {startRepairChat ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+                  <p className="min-w-0 flex-1 text-sm text-text-secondary">
+                    {t('workbench.feedback_repair_description')}
+                  </p>
+                  <ControlButton
+                    variant="unstyled"
+                    type="button"
+                    data-testid="task-feedback-repair-button"
+                    onClick={() => void openRepairChat()}
+                    disabled={openingRepairChat || exporting}
+                    className="h-9 shrink-0 rounded-md px-3 text-sm font-medium hover:bg-muted"
+                  >
+                    {t('workbench.feedback_repair_button')}
+                  </ControlButton>
+                </div>
+              ) : null}
               <label className="block text-sm font-medium">
                 {t('workbench.feedback_note')}
                 <ControlTextarea
@@ -734,7 +774,7 @@ function TaskFeedbackDialogContent({
               type="button"
               data-testid="task-feedback-cancel-button"
               onClick={handleClose}
-              disabled={exporting}
+              disabled={exporting || openingRepairChat}
               className="h-9 rounded-md px-3 text-sm font-medium hover:bg-muted"
             >
               {phase === 'done' ? t('workbench.feedback_close') : t('workbench.cancel')}
@@ -746,7 +786,7 @@ function TaskFeedbackDialogContent({
               size="sm"
               type="button"
               data-testid="task-feedback-export-button"
-              disabled={!hasProblem || exporting}
+              disabled={!hasProblem || exporting || openingRepairChat}
               onClick={() => void buildPreview()}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
             >

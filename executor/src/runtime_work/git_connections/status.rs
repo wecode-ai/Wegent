@@ -223,7 +223,7 @@ fn checked_pull_request(
         .filter(|_| {
             response["errors"]
                 .as_array()
-                .map_or(true, |errors| errors.is_empty())
+                .is_none_or(|errors| errors.is_empty())
         })
         .cloned()
         .ok_or_else(|| {

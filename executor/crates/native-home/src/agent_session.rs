@@ -434,7 +434,7 @@ mod tests {
         assert!(candidates.iter().all(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .map_or(true, |name| !name.starts_with(CLAUDE_SESSION_MARKER))
+                .is_none_or(|name| !name.starts_with(CLAUDE_SESSION_MARKER))
         }));
     }
 }

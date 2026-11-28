@@ -34,7 +34,7 @@ fn merge_snapshot(
     let cloud = &record["cloud_subscription"];
     let subscription = &snapshot["subscription"];
     if !cloud.is_object()
-        || cloud["owner_id"].as_i64().map_or(true, |owner| owner <= 0)
+        || cloud["owner_id"].as_i64().is_none_or(|owner| owner <= 0)
         || snapshot["ownerId"] != cloud["owner_id"]
         || subscription["id"] != cloud["id"]
         || subscription["intent"] != cloud["intent"]
@@ -81,7 +81,7 @@ fn merge_snapshot(
         || delivery["intent"] != cloud["intent"]
         || delivery["source"] != record["source"]
         || delivery["status"] != "pending"
-        || delivery["lease"]["id"].as_str().map_or(true, str::is_empty)
+        || delivery["lease"]["id"].as_str().is_none_or(str::is_empty)
         || delivery["lease"]["id"] != signal["leaseId"]
         || delivery["lease"]["expiresAt"].as_i64().unwrap_or_default() <= now
     {

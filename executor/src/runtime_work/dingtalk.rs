@@ -128,7 +128,7 @@ pub(crate) fn runtime_work_summaries(user: i64, role: Option<&str>) -> Vec<Value
             let origin = &task.runtime_handle["origin"];
             origin["initiatedBy"] == "stand_in"
                 && origin["userId"] == user
-                && role.map_or(true, |role| origin["standInId"] == role)
+                && role.is_none_or(|role| origin["standInId"] == role)
         })
         .map(super::response::local_task_json)
         .collect()

@@ -117,6 +117,8 @@ Prepare a voice input model: **bottom-left account menu → Settings → Persona
 
 To report a problem or export runtime logs, select **Report a problem** in the upper-right corner of any Wework desktop page. Plugins, My assistants, Scheduled and Settings use the same entry; task pages can also include task context. See [Getting help](./troubleshooting.md#getting-help).
 
+To troubleshoot with the local AI from the feedback dialog, select **Troubleshoot with AI**. See [Ask the local AI to troubleshoot Wework](./troubleshooting.md#ai-troubleshooting).
+
 If the page error or startup error screen appears, select **Copy debug info** next to **Refresh page**. See [Getting help](./troubleshooting.md#getting-help).
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.

@@ -268,8 +268,7 @@ pub(super) fn latest_executions_for_items(
     if item_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = std::iter::repeat("?")
-        .take(item_ids.len())
+    let placeholders = std::iter::repeat_n("?", item_ids.len())
         .collect::<Vec<_>>()
         .join(",");
     let mut statement = connection.prepare(&format!(

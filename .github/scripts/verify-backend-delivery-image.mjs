@@ -20,6 +20,7 @@ export function deliveryImageRequired(paths) {
       [
         "docker/backend/Dockerfile",
         ".dockerignore",
+        ".github/ci/rust-toolchain",
         ".github/workflows/e2e-tests.yml",
         ".github/scripts/verify-backend-delivery-image.mjs",
         ".github/scripts/backend-delivery-image.test.mjs",

@@ -196,7 +196,7 @@ pub(crate) async fn load_codex_transcript(
             && !request.full_content
             && request
                 .cursor
-                .map_or(true, super::codex_rollout_page::is_cursor)
+                .is_none_or(super::codex_rollout_page::is_cursor)
         {
             if let Some(page) = super::codex_rollout_page::load(
                 thread.clone(),

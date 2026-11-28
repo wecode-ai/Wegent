@@ -184,7 +184,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
             registry
                 .routes
                 .get(*token)
-                .map_or(true, |route| route.gateway_credentials.is_none())
+                .is_none_or(|route| route.gateway_credentials.is_none())
         })
         .cloned()
         .unwrap_or_else(|| {
@@ -357,7 +357,7 @@ pub fn upstream_from_model_config(
         codex_request_mode,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
-            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom")),
+            .is_none_or(|profile| !profile.eq_ignore_ascii_case("custom")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
             .unwrap_or(false),
@@ -539,7 +539,7 @@ pub fn register_codex_route(
         .get(route_scope)
         .filter(|token| {
             // A route token cannot change the credential source of a concurrent turn.
-            registry.routes.get(*token).map_or(true, |route| {
+            registry.routes.get(*token).is_none_or(|route| {
                 match (&route.gateway_credentials, &gateway_credentials) {
                     (Some(previous), Some(current)) => previous.same_connection(current),
                     (None, None) => true,

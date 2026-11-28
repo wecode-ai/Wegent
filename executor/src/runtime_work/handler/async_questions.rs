@@ -344,7 +344,7 @@ fn pending_async_question(transcript: &Value, response: &Value) -> bool {
             && question["response"].is_null()
             && question["expiresAtUnixMs"]
                 .as_i64()
-                .map_or(true, |deadline| deadline > now_ms())
+                .is_none_or(|deadline| deadline > now_ms())
             && !matches!(
                 question["interactionStatus"].as_str(),
                 Some("answered" | "cancelled" | "expired")

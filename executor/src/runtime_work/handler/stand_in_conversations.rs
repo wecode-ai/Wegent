@@ -119,7 +119,7 @@ fn validate_team_lead(
             settings["lifecycle"]["status"].is_null() && team.lead_id == role.unwrap_or("@primary")
         })
         .filter(|_| {
-            role.map_or(true, |id| {
+            role.is_none_or(|id| {
                 settings["roles"].as_array().is_some_and(|roles| {
                     roles
                         .iter()
@@ -601,7 +601,7 @@ impl RuntimeWorkRpcHandler {
                         model["runtime"] == "codex"
                             && (model["local_model_id"] == model_id
                                 || model["model_id"] == model_id)
-                            && provider.map_or(true, |provider| model["provider"] == provider)
+                            && provider.is_none_or(|provider| model["provider"] == provider)
                     })
                     .collect::<Vec<_>>();
                 if models.len() != 1 {

@@ -119,6 +119,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 需要反馈问题或导出运行日志时，打开任意 Wework 桌面页面右上角的 **反馈问题** 图标。插件、我的助理、已安排和设置页面都提供同一入口；任务页面还可以附加当前任务上下文。详见[获取帮助](./troubleshooting.md#getting-help)。
 
+要从反馈对话框启动本机 AI 排障，选择 **让 AI 排查**。详见[让本机 AI 排查 Wework](./troubleshooting.md#ai-troubleshooting)。
+
 如果看到页面错误或启动失败界面，可在 **刷新页面** 旁选择 **复制调试信息**。详见[获取帮助](./troubleshooting.md#getting-help)。
 
 待回答的业务问题提供 **先聊聊** 入口：从任务问题卡片或 **待你处理** 的问题详情进入，会在原任务右侧栏打开讨论标签页，与浏览器、文件并列。用途与限制见[处理 AI 的提问](./workbench.md#ai-questions)。

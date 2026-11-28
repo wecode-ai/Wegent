@@ -171,9 +171,9 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
         Some("active") => Activity::Active,
         Some("idle") if awaiting_next_turn => Activity::Active,
         Some("idle")
-            if owned.as_ref().map_or(true, |owned| {
-                owned.turn_id.is_some() && owned.turn_id == latest_turn_id
-            }) =>
+            if owned
+                .as_ref()
+                .is_none_or(|owned| owned.turn_id.is_some() && owned.turn_id == latest_turn_id) =>
         {
             Activity::Idle
         }

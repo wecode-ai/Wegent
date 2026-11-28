@@ -50,7 +50,7 @@ impl RuntimeWorkRpcHandler {
             loop {
                 interval.tick().await;
                 ticks = ticks.wrapping_add(1);
-                if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
+                if ticks.is_multiple_of(LOCAL_ISSUE_HEARTBEAT_TICKS) {
                     handler.heartbeat_local_issue_executions();
                     for link in handler.local_task_links(false) {
                         handler.sync_public_issue_replies(&link.local_task_id);

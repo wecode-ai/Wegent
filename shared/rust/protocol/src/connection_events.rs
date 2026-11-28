@@ -53,7 +53,7 @@ pub fn initialized_source(source: &Value, initialized: &Value) -> Result<Value, 
         .ok_or("invalid_observation_activation")?;
     if let Some(boundary) = initialized["source"].get("boundary") {
         if !boundary.is_null()
-            && (boundary["partition"].as_str().map_or(true, str::is_empty)
+            && (boundary["partition"].as_str().is_none_or(str::is_empty)
                 || boundary["sequence"].as_u64().is_none())
         {
             return Err("invalid_observation_activation");

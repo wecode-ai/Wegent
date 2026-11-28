@@ -257,7 +257,7 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         task: &str,
     ) -> bool {
-        request.extra.get(EXPECTED).map_or(true, |expected| {
+        request.extra.get(EXPECTED).is_none_or(|expected| {
             self.current_stand_in_owner_request(task).as_ref() == Some(expected)
                 && expected["cancelled"] != true
         })

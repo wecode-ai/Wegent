@@ -281,7 +281,7 @@ impl RuntimeWorkRpcHandler {
         let source_parent = saved["standInDelegation"]["sourceMessageId"].is_string();
         if source_parent {
             self.source_task_parent(child).ok()?;
-            if parent.as_ref().map_or(true, |parent| {
+            if parent.as_ref().is_none_or(|parent| {
                 parent.thread_id.is_none() || parent.interaction_status.is_some()
             }) {
                 return None;

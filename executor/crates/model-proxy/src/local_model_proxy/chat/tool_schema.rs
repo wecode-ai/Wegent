@@ -403,7 +403,7 @@ pub(super) fn move_compatible_parent_type_to_any_of(schema: &mut Map<String, Val
                     branch.as_object().is_some_and(|branch| {
                         branch
                             .get("type")
-                            .map_or(true, |branch_type| branch_type == &parent_type)
+                            .is_none_or(|branch_type| branch_type == &parent_type)
                     })
                 })
         });

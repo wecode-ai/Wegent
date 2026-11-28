@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { verifyPerformanceRecording } from '../modules/performance-recording.mjs'
+import { createRepairWeWorkFlow } from '../modules/repair-wework.mjs'
 
 import { verifyWorkbenchBackgroundSurfaces } from '../modules/appearance-flows.mjs'
 import { ACTIVE_COMPOSER_SELECTOR } from '../modules/shared.mjs'
@@ -43,12 +44,15 @@ async function verifyComposerDraftRecovery({ control, restartDesktopApp, uiTimeo
 
 export async function createDesktopScenario({
   electronUserDataDirectory,
+  workspacePath,
   restartDesktopApp,
   uiTimeoutMs,
 }) {
+  const repairFlow = createRepairWeWorkFlow(workspacePath)
   const originStatePath = join(electronUserDataDirectory, 'renderer-local-storage-origins.json')
 
   return {
+    handleHttp: repairFlow.handleHttp,
     async verify(control) {
       await control.command('snapshot', 'body')
       await verifyWorkbenchBackgroundSurfaces({ control })
@@ -116,6 +120,7 @@ export async function createDesktopScenario({
         restartDesktopApp,
         uiTimeoutMs,
       })
+      await repairFlow.verify(control)
     },
 
     diagnostics() {

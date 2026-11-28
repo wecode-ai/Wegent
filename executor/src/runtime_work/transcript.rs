@@ -1102,7 +1102,7 @@ fn is_root_transcript_item(item: &Value) -> bool {
     }
     transcript_agent_path(item)
         .or_else(|| codex_wrapped_item_payload(item).and_then(transcript_agent_path))
-        .map_or(true, |agent_path| agent_path == "/root")
+        .is_none_or(|agent_path| agent_path == "/root")
 }
 
 fn transcript_agent_path(value: &Value) -> Option<String> {
@@ -1115,7 +1115,7 @@ fn is_root_thread_transcript_item(item: &Value, root_thread_id: Option<&str>) ->
     };
     transcript_thread_id(item)
         .or_else(|| codex_wrapped_item_payload(item).and_then(transcript_thread_id))
-        .map_or(true, |thread_id| thread_id == root_thread_id)
+        .is_none_or(|thread_id| thread_id == root_thread_id)
 }
 
 fn transcript_thread_id(value: &Value) -> Option<String> {

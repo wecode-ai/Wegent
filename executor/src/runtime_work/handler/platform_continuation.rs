@@ -233,12 +233,12 @@ impl RuntimeWorkRpcHandler {
             if !context.messages.is_empty()
                 && existing.runtime_handle["messages"]
                     .as_array()
-                    .map_or(true, Vec::is_empty)
+                    .is_none_or(Vec::is_empty)
             {
                 self.store.update_task_without_snapshot(&local_id, |link| {
                     if link.runtime_handle["messages"]
                         .as_array()
-                        .map_or(true, Vec::is_empty)
+                        .is_none_or(Vec::is_empty)
                     {
                         set_runtime_handle_messages(&mut link.runtime_handle, context.messages);
                     }

@@ -108,9 +108,10 @@ fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCo
         if !entry.file_type()?.is_dir() || !native_cache_segment(&version) {
             continue;
         }
-        if selected.as_ref().map_or(true, |(current, _)| {
-            preferred_native_version(&version, current)
-        }) {
+        if selected
+            .as_ref()
+            .is_none_or(|(current, _)| preferred_native_version(&version, current))
+        {
             selected = Some((version, entry.path()));
         }
     }

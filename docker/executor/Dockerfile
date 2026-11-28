@@ -6,9 +6,11 @@
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder-base
 WORKDIR /app
 
+COPY .github/ci/rust-toolchain /tmp/rust-toolchain
+
 RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain stable \
+        | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

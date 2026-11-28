@@ -454,9 +454,9 @@ impl RuntimeWorkRpcHandler {
         let mut response = self.read_transcript(payload).await?;
         if presentation_read {
             if let Some(link) = self.store.get_task_summary(&task_id).filter(|link| {
-                requested_session_id.as_ref().map_or(true, |id| {
-                    runtime_session_id_from_link(link).as_ref() == Some(id)
-                })
+                requested_session_id
+                    .as_ref()
+                    .is_none_or(|id| runtime_session_id_from_link(link).as_ref() == Some(id))
             }) {
                 append_preparation_failure(&mut response, &link);
             }
@@ -509,7 +509,7 @@ impl RuntimeWorkRpcHandler {
                 .clone()
                 .or_else(|| self.store.get_task_summary(&local_task_id));
             after_cursor = Some(
-                if link.as_ref().map_or(true, |link| link.runtime == "codex") {
+                if link.as_ref().is_none_or(|link| link.runtime == "codex") {
                     crate::runtime_work::codex_transcript_search::first_history_cursor()
                         .map_err(|error| AppIpcError::new("history_cursor_invalid", error))?
                 } else {

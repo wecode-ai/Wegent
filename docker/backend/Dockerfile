@@ -6,11 +6,13 @@
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS rust-builder-base
 WORKDIR /app/backend-rs
 
+COPY .github/ci/rust-toolchain /tmp/rust-toolchain
+
 # NASM is provided by CRB, which is disabled in the base image.
 RUN dnf install -y gcc gcc-c++ make cmake zlib-devel ca-certificates openssl-devel pkgconf-pkg-config \
     && if [ "$(uname -m)" = x86_64 ]; then dnf --enablerepo=crb install -y nasm; fi \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain stable \
+        | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 ENV PATH=/root/.cargo/bin:${PATH}

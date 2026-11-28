@@ -3727,9 +3727,7 @@ fn is_executor_context(grant: Option<&SpaceContextGrant>) -> bool {
 }
 
 fn grant_allows(grant: Option<&SpaceContextGrant>, category: BoardToolCategory) -> bool {
-    grant.map_or(true, |grant| {
-        grant.categories.is_empty() || grant.categories.contains(&category)
-    })
+    grant.is_none_or(|grant| grant.categories.is_empty() || grant.categories.contains(&category))
 }
 
 fn board_tool_category(name: &str) -> Option<BoardToolCategory> {

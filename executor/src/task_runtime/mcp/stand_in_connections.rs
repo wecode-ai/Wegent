@@ -96,7 +96,7 @@ fn query_setup_required(schema: &Value, query: &str) -> Option<Value> {
         .filter(|field| {
             object
                 .and_then(|object| object.get(*field))
-                .map_or(true, |value| {
+                .is_none_or(|value| {
                     value.is_null() || value.as_str().is_some_and(|text| text.trim().is_empty())
                 })
         })

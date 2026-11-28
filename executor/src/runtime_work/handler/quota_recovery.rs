@@ -26,7 +26,7 @@ pub(super) fn wait(turn: &SpawnTurnRequest) -> Option<QuotaWait> {
 pub(super) fn is_ready(turn: &SpawnTurnRequest, now: i64) -> bool {
     // Malformed records never become an ordinary prompt submission.
     !turn.request.extra.contains_key(MARKER)
-        || wait(turn).map_or(true, |wait| wait.next_check_at <= now)
+        || wait(turn).is_none_or(|wait| wait.next_check_at <= now)
 }
 
 pub(super) fn restore_dispatches(state: &mut turns::RuntimeTurnQueueState) {
@@ -392,7 +392,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("preparation map poisoned");
             if preparing
                 .get(&turn.local_task_id)
-                .map_or(true, |preparation| preparation.cancellation_requested)
+                .is_none_or(|preparation| preparation.cancellation_requested)
             {
                 None
             } else {
@@ -570,7 +570,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(quota_error)?;
         let (blocked, reset_at) = quota_deadline(&limits, &turn.request.model_config);
-        if blocked && reset_at.map_or(true, |at| at > now_ms()) {
+        if blocked && reset_at.is_none_or(|at| at > now_ms()) {
             return Ok(Some(reset_at));
         }
         Ok(None)

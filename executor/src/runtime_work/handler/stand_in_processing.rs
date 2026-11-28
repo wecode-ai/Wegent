@@ -140,7 +140,7 @@ fn due(event: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
         && event["notBefore"]
             .as_str()
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-            .map_or(true, |at| at <= now)
+            .is_none_or(|at| at <= now)
 }
 
 impl RuntimeWorkRpcHandler {

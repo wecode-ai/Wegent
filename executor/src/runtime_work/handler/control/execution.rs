@@ -239,7 +239,7 @@ impl RuntimeWorkRpcHandler {
         })?;
         let task = if receipt["device_id"]
             .as_str()
-            .map_or(true, |device| device == self.device_id)
+            .is_none_or(|device| device == self.device_id)
         {
             receipt["task_id"]
                 .as_str()

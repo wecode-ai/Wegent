@@ -99,7 +99,7 @@ fn summarize_plugin(plugin: &mut Value) {
     if interface
         .get("shortDescription")
         .and_then(Value::as_str)
-        .map_or(true, |text| text.trim().is_empty())
+        .is_none_or(|text| text.trim().is_empty())
     {
         if let Some(description) = interface.get("longDescription").and_then(Value::as_str) {
             interface.insert(

@@ -135,7 +135,7 @@ impl RuntimeWorkRpcHandler {
             && request
                 .backend_url
                 .as_ref()
-                .map_or(true, |url| url.trim_end_matches('/') == local_origin);
+                .is_none_or(|url| url.trim_end_matches('/') == local_origin);
         let same_shell = request
             .resolved_shell_type()
             .is_some_and(|shell| shell.eq_ignore_ascii_case(&local.runtime.replace('_', "")));

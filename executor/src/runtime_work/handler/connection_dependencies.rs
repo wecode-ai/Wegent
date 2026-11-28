@@ -33,7 +33,7 @@ fn native_install_params(catalog: &Value, target: &Value) -> Result<Value, AppIp
         || plugin["installed"] == true
         || plugin["availability"] == "DISABLED_BY_ADMIN"
         || version != &target["version"]
-        || plugin["name"].as_str().map_or(true, str::is_empty)
+        || plugin["name"].as_str().is_none_or(str::is_empty)
     {
         return Err(denied());
     }
@@ -59,7 +59,7 @@ impl RuntimeWorkRpcHandler {
         let aliases = payload["aliases"].as_array().ok_or_else(denied)?;
         if aliases
             .iter()
-            .any(|alias| alias.as_str().map_or(true, str::is_empty))
+            .any(|alias| alias.as_str().is_none_or(str::is_empty))
         {
             return Err(denied());
         }

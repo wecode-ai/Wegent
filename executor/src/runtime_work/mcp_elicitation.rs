@@ -77,7 +77,7 @@ pub(super) fn accepts_response(item: &Value, response: &Value) -> Option<bool> {
             && payload["interactionStatus"] == "pending"
             && payload["expiresAtUnixMs"]
                 .as_i64()
-                .map_or(true, |deadline| deadline > now_ms()),
+                .is_none_or(|deadline| deadline > now_ms()),
     )
 }
 
