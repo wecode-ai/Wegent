@@ -12,7 +12,10 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { fetchJson, selectE2EModel } from '../modules/shared.mjs'
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInConversationFromHome,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import {
   assertStandInAccountDevice,
   readStandInBinding,
@@ -304,6 +307,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const localChoice = '[data-testid="stand-in-instance-bind-1-' + deviceId + '"]'
       await control.command('clickWhenEnabled', localChoice, { timeoutMs: uiTimeoutMs })
       await assertStandInAccountDevice(1, deviceId, uiTimeoutMs, cloud)
+      await openStandInConversationFromHome(control, peerConversation, uiTimeoutMs)
       await control.command('waitFor', peerConversation, {
         text: modelReply,
         timeoutMs: uiTimeoutMs,
