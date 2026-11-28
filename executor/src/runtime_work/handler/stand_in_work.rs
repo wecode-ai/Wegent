@@ -208,7 +208,7 @@ impl RuntimeWorkRpcHandler {
             }
             return Ok(());
         }
-        let confirm = role.map_or(true, |role| {
+        let confirm = role.is_none_or(|role| {
             crate::task_runtime::personal_stand_in::project_policy(
                 role,
                 origin["cloudProjectId"].as_str().unwrap_or_default(),
@@ -834,7 +834,7 @@ fn selected_pending_connection_messages(
     let pending = messages
         .into_iter()
         .filter(|message| {
-            selected.as_ref().map_or(true, |ids| {
+            selected.as_ref().is_none_or(|ids| {
                 message["recordId"]
                     .as_str()
                     .is_some_and(|id| ids.contains(id))

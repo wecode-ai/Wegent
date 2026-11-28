@@ -133,9 +133,7 @@ pub(super) async fn discovery(
             && arguments
                 .get("workspace_id")
                 .filter(|value| !value.is_null())
-                .map_or(true, |workspace| {
-                    item.get("workspace_id") == Some(workspace)
-                })
+                .is_none_or(|workspace| item.get("workspace_id") == Some(workspace))
     });
     items.sort_by_key(|item| hash(&item["space"]));
     Ok(

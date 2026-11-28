@@ -339,7 +339,7 @@ impl IssueIntakeTrigger {
     pub fn matches(self, role: &Value, scope: &str) -> bool {
         role["collaboration"]
             .get(scope)
-            .map_or(true, |mode| mode == "both" || mode == self.key())
+            .is_none_or(|mode| mode == "both" || mode == self.key())
     }
 }
 
@@ -439,10 +439,10 @@ fn validate_task_permissions(identity: &Value) -> Result<(), TaskRuntimeError> {
 fn validate_policy(policy: &Value) -> bool {
     policy["automatic"].is_boolean()
         && policy["askBeforeAct"].is_boolean()
-        && policy.get("immediate").map_or(true, Value::is_boolean)
-        && policy.get("sessionStrategy").map_or(true, |strategy| {
-            matches!(strategy.as_str(), Some("independent" | "reuse"))
-        })
+        && policy.get("immediate").is_none_or(Value::is_boolean)
+        && policy
+            .get("sessionStrategy")
+            .is_none_or(|strategy| matches!(strategy.as_str(), Some("independent" | "reuse")))
 }
 
 #[cfg(test)]
@@ -519,21 +519,21 @@ fn valid_collaboration(source: &Value) -> bool {
         && source["allProjects"].is_boolean()
         && source
             .get("includeIndependentIssues")
-            .map_or(true, Value::is_boolean)
+            .is_none_or(Value::is_boolean)
         && source
             .get("includeParticipatingIssues")
-            .map_or(true, Value::is_boolean)
+            .is_none_or(Value::is_boolean)
         && ["projectTrigger", "participatingTrigger"]
             .iter()
             .all(|key| {
-                source.get(key).map_or(true, |value| {
+                source.get(key).is_none_or(|value| {
                     matches!(value.as_str(), Some("both" | "assignment" | "mention"))
                 })
             })
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
         && valid_tags(&source["tags"])
-        && source.get("tagFilters").map_or(true, |filters| {
+        && source.get("tagFilters").is_none_or(|filters| {
             filters.as_object().is_some_and(|filters| {
                 filters.iter().all(|(key, tags)| {
                     matches!(key.as_str(), "projects" | "participating" | "independent")
@@ -541,7 +541,7 @@ fn valid_collaboration(source: &Value) -> bool {
                 })
             })
         })
-        && source.get("projectTagFilters").map_or(true, |filters| {
+        && source.get("projectTagFilters").is_none_or(|filters| {
             filters.as_array().is_some_and(|filters| {
                 filters
                     .iter()

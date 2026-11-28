@@ -579,7 +579,7 @@ fn save_plugin_example_from_source(source: &Path, destination: &Path) -> Result<
     if destination
         .extension()
         .and_then(|extension| extension.to_str())
-        .map_or(true, |extension| !extension.eq_ignore_ascii_case("zip"))
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("zip"))
     {
         return Err("Plugin example destination must use the .zip extension".to_owned());
     }

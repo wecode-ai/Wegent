@@ -16,9 +16,7 @@ impl LocalTaskStore {
         Ok(self.stand_in_role_request(id, user)?.filter(|row| {
             row["intent"] == *intent
                 && row["terminalError"].is_null()
-                && cancelling.map_or(true, |expected| {
-                    (row["cancelRequested"] == true) == expected
-                })
+                && cancelling.is_none_or(|expected| (row["cancelRequested"] == true) == expected)
         }))
     }
 

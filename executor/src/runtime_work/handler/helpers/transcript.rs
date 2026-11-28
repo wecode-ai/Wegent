@@ -126,7 +126,7 @@ pub(super) fn remove_superseded_transcript_turns(
 
     messages.retain(|message| {
         transcript_message_turn_id(message)
-            .map_or(true, |turn_id| !superseded_turn_ids.contains(&turn_id))
+            .is_none_or(|turn_id| !superseded_turn_ids.contains(&turn_id))
     });
 }
 

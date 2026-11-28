@@ -1934,10 +1934,10 @@ where
         after_sequence: request.as_ref().map_or(0, |request| request.after_sequence),
         replay_existing: request
             .as_ref()
-            .map_or(true, |request| request.replay_existing),
+            .is_none_or(|request| request.replay_existing),
         receive_events: request
             .as_ref()
-            .map_or(true, |request| request.receive_events),
+            .is_none_or(|request| request.receive_events),
     }))
 }
 
@@ -3527,7 +3527,7 @@ fn app_ipc_request_metadata(line: &str) -> AppIpcRequestMetadata {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned);
             let admissible = message.get("type").and_then(Value::as_str) == Some("request")
-                && message.get("params").map_or(true, Value::is_object);
+                && message.get("params").is_none_or(Value::is_object);
             AppIpcRequestMetadata {
                 request_id,
                 method,

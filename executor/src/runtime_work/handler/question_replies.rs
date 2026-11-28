@@ -140,7 +140,7 @@ impl RuntimeWorkRpcHandler {
         let scoped_to_other_turn = response.get("interactionScope").is_some_and(|scope| {
             active_turn
                 .as_ref()
-                .map_or(true, |turn| scope.as_str() != Some(turn.turn_id.as_str()))
+                .is_none_or(|turn| scope.as_str() != Some(turn.turn_id.as_str()))
         }) || active_turn
             .as_ref()
             .is_some_and(|turn| turn.execution_id != pending_request.execution_id);

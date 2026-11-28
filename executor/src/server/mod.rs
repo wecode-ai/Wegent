@@ -1498,7 +1498,7 @@ impl EnvdState {
     fn init(&mut self, request: InitRequest) -> Result<(), HttpError> {
         let request_time = request.timestamp.as_deref().and_then(parse_envd_timestamp);
         let should_update = request_time
-            .map(|time| self.last_set_time.map_or(true, |last| time > last))
+            .map(|time| self.last_set_time.is_none_or(|last| time > last))
             .unwrap_or(true);
         if !should_update {
             return Ok(());

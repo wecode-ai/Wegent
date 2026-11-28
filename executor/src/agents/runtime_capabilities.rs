@@ -1715,7 +1715,7 @@ fn setup_coordinate_subagents(request: &ExecutionRequest, home: &Path) -> Result
         .bot
         .as_array()
         .filter(|_| request_mode(request).as_deref() == Some("coordinate"));
-    if bots.map_or(true, |bots| bots.len() <= 1) && !agents_dir.join(".wegent-managed").exists() {
+    if bots.is_none_or(|bots| bots.len() <= 1) && !agents_dir.join(".wegent-managed").exists() {
         return Ok(());
     }
     if agents_dir.exists() && !agents_dir.join(".wegent-managed").is_file() {

@@ -46,7 +46,7 @@ fn command_path(context: &Value) -> Result<String, String> {
         if id
             .parse::<i64>()
             .ok()
-            .map_or(true, |number| number <= 0 || number.to_string() != id)
+            .is_none_or(|number| number <= 0 || number.to_string() != id)
         {
             return Err("Invalid coordination target".into());
         }
@@ -62,7 +62,7 @@ fn command_path(context: &Value) -> Result<String, String> {
     {
         return Err("Invalid coordination command".into());
     }
-    if context["userId"].as_i64().map_or(true, |user| user <= 0)
+    if context["userId"].as_i64().is_none_or(|user| user <= 0)
         || ["deviceId", "generation", "inputDigest"].iter().any(|key| {
             !context[*key]
                 .as_str()

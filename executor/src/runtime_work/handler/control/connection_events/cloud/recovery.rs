@@ -22,9 +22,7 @@ fn recovered_record(
         "{:x}",
         Sha256::digest(canonical_json(&json!([cloud_device, task, key])))
     );
-    if snapshot["ownerId"]
-        .as_i64()
-        .map_or(true, |owner| owner <= 0)
+    if snapshot["ownerId"].as_i64().is_none_or(|owner| owner <= 0)
         || target["deviceId"] != cloud_device
         || subscription["id"] != cloud_id
         || observation_identity(&subscription["activation"]) != intent["source"]

@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["protocol", "crypto", "filesystem"]
+
+[workspace.package]
+rust-version = "1.100.1"

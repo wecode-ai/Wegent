@@ -74,7 +74,7 @@ pub(super) fn apply_round_assignee(
     let group_cleared = current
         .metadata
         .get("collaboration_group")
-        .map_or(true, Value::is_null);
+        .is_none_or(Value::is_null);
     if assignee_matches && group_cleared && to_type != "user" {
         return Ok(());
     }

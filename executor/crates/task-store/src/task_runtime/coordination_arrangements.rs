@@ -94,7 +94,7 @@ impl LocalTaskStore {
         let mut action_ids = Vec::new();
         for action in actions {
             if action["kind"] != "dispatch_arrangement"
-                || action.as_object().map_or(true, |fields| {
+                || action.as_object().is_none_or(|fields| {
                     fields.keys().any(|key| key != "kind" && key != "eventIds")
                 })
             {

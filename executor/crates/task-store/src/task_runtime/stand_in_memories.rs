@@ -69,7 +69,7 @@ impl LocalTaskStore {
                 })
             })
             .flatten();
-        let primary = role.map_or(true, |id| id == "@primary") && source.is_none();
+        let primary = role.is_none_or(|id| id == "@primary") && source.is_none();
         if !primary {
             if let Some(role) = role.filter(|id| *id != "@primary") {
                 settings["roles"] = json!(settings["roles"]
@@ -341,7 +341,7 @@ impl LocalTaskStore {
                 "Training evidence must be verified by the host".into(),
             ));
         }
-        if !id.is_empty() && previous.as_ref().map_or(true, |row| row["userId"] != user) {
+        if !id.is_empty() && previous.as_ref().is_none_or(|row| row["userId"] != user) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         let mut version = previous

@@ -14,7 +14,6 @@ fn allocate_ack_id(counter: &AtomicI32) -> Result<i32> {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
         let next = current.checked_add(1).ok_or(Error::AckIdExhausted)?;
-        // Unlike try_update, this supports the Executor's Rust 1.77 minimum.
         match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return Ok(current),
             Err(updated) => current = updated,

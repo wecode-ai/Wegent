@@ -171,7 +171,7 @@ pub(super) fn matches_schema(schema: &Value, value: &Value) -> bool {
                 && items.iter().all(|item| {
                     schema
                         .get("items")
-                        .map_or(true, |spec| matches_schema(spec, item))
+                        .is_none_or(|spec| matches_schema(spec, item))
                 })
         }),
         Some("integer") => value.as_u64().is_some_and(|n| {

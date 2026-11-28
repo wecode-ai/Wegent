@@ -467,7 +467,7 @@ impl RuntimeWorkRpcHandler {
         let session = session::binding(link)?;
         let mut source = intent["source"].clone();
         for field in ["providerId", "profile", "kind", "id", "name"] {
-            if source[field].as_str().map_or(true, |v| v.trim().is_empty()) {
+            if source[field].as_str().is_none_or(|v| v.trim().is_empty()) {
                 return Err(invalid(
                     "Use an exact discovered connection resource as source",
                 ));

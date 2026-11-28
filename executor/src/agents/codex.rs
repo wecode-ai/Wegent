@@ -5375,7 +5375,7 @@ pub(crate) fn codex_request_inherits_wework_default(request: &ExecutionRequest) 
     codex_request_model(request).is_none()
         && super::instance_home::request_home(request).is_none()
         && explicit_model_provider(&request.model_config)
-            .map_or(true, |provider| provider == "openai")
+            .is_none_or(|provider| provider == "openai")
         && (use_user_runtime_config(&request.model_config)
             || (api_key(&request.model_config).is_none()
                 && matches!(
@@ -5519,7 +5519,7 @@ fn configured_codex_provider(
             .get("tool_profile")
             .or_else(|| provider_config.get("toolProfile"))
             .and_then(|value| value.as_str())
-            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom"));
+            .is_none_or(|profile| !profile.eq_ignore_ascii_case("custom"));
     let native_tool_search = provider_config
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
@@ -7110,9 +7110,7 @@ fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value
         && params["proposedNetworkPolicyAmendments"].is_null()
         && params["availableDecisions"]
             .as_array()
-            .map_or(true, |decisions| {
-                decisions.iter().any(|decision| decision == "accept")
-            })
+            .is_none_or(|decisions| decisions.iter().any(|decision| decision == "accept"))
     {
         json_rpc_request_id(message)
     } else {
@@ -8167,7 +8165,7 @@ fn mcp_server_elicitation_result(params: &Value, response: &Value) -> Value {
         return url_elicitation::response_result(response);
     }
     let answers = response.get("answers").and_then(Value::as_object);
-    if answers.map_or(true, serde_json::Map::is_empty) {
+    if answers.is_none_or(serde_json::Map::is_empty) {
         return mcp_server_elicitation_cancel_result();
     }
     let approval = answers

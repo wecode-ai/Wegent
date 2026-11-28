@@ -109,7 +109,7 @@ async fn prepare_single_git_workspace(
         && request
             .project_workspace_path
             .as_deref()
-            .map_or(true, |path| path.trim().is_empty())
+            .is_none_or(|path| path.trim().is_empty())
     {
         return managed::prepare(request, &git_url, &repo_name).await;
     }

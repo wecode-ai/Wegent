@@ -348,7 +348,7 @@ impl LocalTaskStore {
         if super::personal_stand_in::read_personal(&connection, user, device)?["primary"]["enabled"]
             == false
             || get_item_from(&connection, &format!("stand-in-processing:{user}"), STATE)?
-                .map_or(true, |row| row.metadata["batchId"] != batch)
+                .is_none_or(|row| row.metadata["batchId"] != batch)
         {
             return Err(TaskRuntimeError::Invalid(
                 "Coordinator configuration changed".into(),

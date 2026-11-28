@@ -17,9 +17,9 @@ pub(super) fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError>
         ));
     }
     let source = &role["collaboration"];
-    let valid = role.get("collaboration").map_or(true, valid_collaboration)
-        && source.get("policy").map_or(true, validate_policy)
-        && source.get("projectPolicies").map_or(true, |rows| {
+    let valid = role.get("collaboration").is_none_or(valid_collaboration)
+        && source.get("policy").is_none_or(validate_policy)
+        && source.get("projectPolicies").is_none_or(|rows| {
             rows.as_array().is_some_and(|rows| {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
@@ -30,7 +30,7 @@ pub(super) fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError>
                     })
             })
         })
-        && role.get("connections").map_or(true, |rows| {
+        && role.get("connections").is_none_or(|rows| {
             rows.as_array().is_some_and(|rows| {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
@@ -51,12 +51,12 @@ pub(super) fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError>
                             && row["kind"]
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
-                            && row.get("collectionKey").map_or(true, |key| {
+                            && row.get("collectionKey").is_none_or(|key| {
                                 key.as_str().is_some_and(|key| {
                                     !key.is_empty() && key.trim() == key && key.len() <= 256
                                 })
                             })
-                            && row.get("configurationSummary").map_or(true, |summary| {
+                            && row.get("configurationSummary").is_none_or(|summary| {
                                 summary.as_str().is_some_and(|text| {
                                     !text.trim().is_empty() && text.len() <= 4096
                                 })
@@ -120,7 +120,7 @@ pub fn stand_in_collection_connection<'a>(
 }
 
 fn valid_exclusions(source: &Value) -> bool {
-    source.get("excludedResources").map_or(true, |value| {
+    source.get("excludedResources").is_none_or(|value| {
         source_provider(source) == DINGTALK_PROVIDER
             && source["scope"] == "all"
             && ["group", "direct"].contains(&source["kind"].as_str().unwrap_or_default())

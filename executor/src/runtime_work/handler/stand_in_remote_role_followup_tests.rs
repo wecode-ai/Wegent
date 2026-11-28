@@ -233,7 +233,7 @@ async fn remote_role_followup_recovers_only_after_the_parent_accepts_the_result(
     assert_eq!(separate["tasks"], json!([]));
     assert!(separate["previousAssignments"]["tasks"]
         .as_array()
-        .map_or(true, Vec::is_empty));
+        .is_none_or(Vec::is_empty));
     let error = handler
         .role_delegation_operation(
             &primary,

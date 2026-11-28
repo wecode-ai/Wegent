@@ -393,7 +393,7 @@ impl StreamingEventDispatcher {
         compactable: bool,
     ) {
         let depth = self.pending.fetch_add(1, Ordering::Relaxed) + 1;
-        if depth % 100 == 0 {
+        if depth.is_multiple_of(100) {
             let mut queue_fields = fields.clone();
             queue_fields.push(("pending_depth", depth.to_string()));
             queue_fields.push(("event_type", event.event_type.clone()));

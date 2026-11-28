@@ -61,9 +61,7 @@ fn prediction_parent_resume_params(
 fn prediction_turn_is_eligible(turn: Option<&Value>, expected_turn_id: Option<&str>) -> bool {
     let Some(turn) = turn else { return false };
     turn.get("status").and_then(Value::as_str) == Some("completed")
-        && expected_turn_id.map_or(true, |id| {
-            turn.get("id").and_then(Value::as_str) == Some(id)
-        })
+        && expected_turn_id.is_none_or(|id| turn.get("id").and_then(Value::as_str) == Some(id))
 }
 
 impl CodexAppServerClient {

@@ -154,7 +154,7 @@ where
             let mut handles = self.handles.lock().expect("managed task lock");
             let matches_turn = handles
                 .get(&task_id)
-                .is_some_and(|state| subtask_id.map_or(true, |id| id == state.subtask_id));
+                .is_some_and(|state| subtask_id.is_none_or(|id| id == state.subtask_id));
             let state = if matches_turn {
                 handles.remove(&task_id)
             } else {

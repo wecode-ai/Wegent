@@ -14,7 +14,7 @@ pub(super) fn issue_role_config(
     participant: bool,
     trigger: Option<IssueIntakeTrigger>,
 ) -> Option<Value> {
-    let allows = |scope| trigger.map_or(true, |trigger| trigger.matches(role, scope));
+    let allows = |scope| trigger.is_none_or(|trigger| trigger.matches(role, scope));
     let project_matches = role_project_matches(role, project, kind) && allows("projectTrigger");
     let participation = participant
         && role_receives_participating_issues(role)
@@ -79,7 +79,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Vec<Value>, AppIpcError> {
         let participant = if roles.iter().any(|role| {
             role_receives_participating_issues(role)
-                && trigger.map_or(true, |event| event.matches(role, "participatingTrigger"))
+                && trigger.is_none_or(|event| event.matches(role, "participatingTrigger"))
         }) {
             if kind == "local" {
                 let store =
@@ -685,7 +685,7 @@ pub(super) fn matching_personal_roles<'a>(configs: &'a [Value], issue: &Value) -
 }
 
 pub(super) fn issue_tags_match(config: &Value, issue: &Value) -> bool {
-    config["tags"].as_array().map_or(true, |wanted| {
+    config["tags"].as_array().is_none_or(|wanted| {
         wanted.is_empty()
             || issue["tags"]
                 .as_array()
