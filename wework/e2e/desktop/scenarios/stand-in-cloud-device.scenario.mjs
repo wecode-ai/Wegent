@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
+  assertStandInAccountDevice,
   bindStoppedStandIn,
   finishStandInOnboarding,
   readStandInBinding,
@@ -531,6 +532,20 @@ export function createDesktopScenario({
         await openStandInSettings(control)
         await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
       }
+      async function reopenExecutionSettings(deviceId) {
+        await assertStandInAccountDevice(USER, deviceId, uiTimeoutMs, cloud)
+        // Account navigation remounts the overview when its execution device changes.
+        await control.command('waitFor', testId('stand-in-profile-panel'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+        await openExecutionSettings()
+        await control.command('waitFor', `${executionDevice}:not(:disabled)`, {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(await control.command('getValue', executionDevice), deviceId)
+      }
       assert.equal(await control.command('getElementCount', executionDevice), '0')
       await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await openExecutionSettings()
@@ -544,17 +559,12 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[role="listbox"] [role="option"][data-value=${JSON.stringify(localDevice)}]`
       )
+      await reopenExecutionSettings(localDevice)
       await control.command('waitFor', executionDevice, {
         text: '当前设备',
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
-      await until(
-        readPrimaryDevice,
-        device => device === localDevice,
-        'The account must record the local execution choice',
-        uiTimeoutMs
-      )
       await reloadMainWindow(control)
       await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await control.command('waitFor', testId('stand-in-conversation'))
@@ -581,15 +591,7 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[role="listbox"] [role="option"][data-value=${JSON.stringify(firstUseDevice)}]`
       )
-      await control.command('waitFor', `${executionDevice}:not(:disabled)`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await until(
-        readPrimaryDevice,
-        device => device === firstUseDevice,
-        'The account must record the remote execution choice',
-        uiTimeoutMs
-      )
+      await reopenExecutionSettings(firstUseDevice)
       await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
       await stop(control)
       if (firstUseDevice !== CLOUD_DEVICE_ID) {
@@ -759,6 +761,17 @@ export function createDesktopScenario({
         'Ordinary identity conversation and cancellation must not create a business Issue'
       )
 
+      // The stopped UI precedes the asynchronous shared marker clear. Wait for
+      // its acknowledgement before restarting directly through the Executor RPC.
+      await until(
+        async () => (await readCloudAssistant()).assistant,
+        account =>
+          Boolean(
+            account && !account.stopIntents?.some(intent => intent.deviceId === CLOUD_DEVICE_ID)
+          ),
+        'The completed cloud stop must clear its marker before restart',
+        uiTimeoutMs
+      )
       const staleBinding = await rpc(control, 'runtime.stand_in.binding', {
         operation: 'bind',
         version: (await readStandInBinding(control, uiTimeoutMs)).version,

@@ -390,13 +390,14 @@ export function createStandInCloudPeerClient({
         await control.command('waitFor', testId('stand-in-instance-stop-confirm'), {
           visible: false,
         })
-        await control.command('waitFor', testId('stand-in-overview'))
-        if (
-          Number(await control.command('getElementCount', testId('stand-in-profile-panel'))) === 0
-        ) {
-          await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
-          await openStandInSettings(control)
-        }
+        // The rejected stale confirmation refreshes the account onto another device.
+        // Wait for the old settings panel to unmount before opening the new profile.
+        await control.command('waitFor', testId('stand-in-profile-panel'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+        await openStandInSettings(control)
         await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
         await control.command('waitFor', testId('personal-assistant-execution-device'), {
           text: '当前设备',

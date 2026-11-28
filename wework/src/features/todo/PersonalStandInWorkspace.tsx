@@ -727,9 +727,16 @@ function AccountStandInWorkspace({
           {alternateDevices.length > 0 && renderBindChoices(alternateDevices)}
         </section>
       ) : binding.status === 'unavailable' || binding.status === 'activating' ? (
-        <section className="space-y-4 p-5">
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-recovery">
           {actions}
-          {alternateDevices.length > 0 && renderBindChoices(alternateDevices)}
+          {alternateDevices.length > 0 && (
+            <>
+              <p className="text-sm text-text-secondary">
+                {t('standIn.workspace.execution_device_help')}
+              </p>
+              {renderBindChoices(alternateDevices)}
+            </>
+          )}
         </section>
       ) : embedded ? (
         <StandInHomeSetup
