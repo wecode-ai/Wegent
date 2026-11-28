@@ -1,6 +1,6 @@
 import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
-import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import { assistantDefinitionName, type PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { isStandInBindingOwner } from '@/api/standIn'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { Button } from '@/components/ui/button'
@@ -631,7 +631,7 @@ function AccountStandInWorkspace({
                 ? async (roleId, device) => {
                     const definitions = account.definitions.map(entry => ({
                       roleId: entry.roleId,
-                      name: entry.team.metadata.displayName ?? '',
+                      name: assistantDefinitionName(entry) ?? '',
                       prompt: entry.ghost.spec.systemPrompt,
                       executionDeviceId: entry.roleId === roleId ? device : undefined,
                     }))

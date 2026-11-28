@@ -36,7 +36,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSettingsError, StandInSettingsHeader } from './StandInSettingsLayout'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
-import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import { assistantDefinitionName, type PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding, type StandInLaunch } from './StandInOnboarding'
@@ -355,7 +355,7 @@ export function StandInOverviewPage({
       )
       rolesById.set(roleId, {
         ...role,
-        name: definition.team.metadata.displayName ?? role.name,
+        name: assistantDefinitionName(definition) ?? role.name,
         prompt: definition.ghost.spec.systemPrompt,
       })
     }
@@ -1087,7 +1087,7 @@ export function StandInOverviewPage({
                   <section className="space-y-4 px-5">
                     <StandInSettingsHeader
                       title={
-                        definition.team.metadata.displayName || t('standIn.personal.default_role')
+                        assistantDefinitionName(definition) || t('standIn.personal.default_role')
                       }
                       disabled={bindingPending}
                       close={{ testId: 'stand-in-primary-profile-close', onClick: closeProfile }}

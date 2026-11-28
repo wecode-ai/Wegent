@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import { ApiError } from '@/api/http'
+import { ApiError, type HttpClient } from '@/api/http'
 import {
   assistantDefinitionInputs,
+  assistantDefinitionName,
+  createPersonalAssistantAccountApi,
   type PersonalAssistantAccount,
 } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
@@ -66,7 +68,7 @@ function setup(
       active
       preferredDevice={preferredDevice}
     >
-      {assistant => <p>{assistant?.defaultTeamRef.name ?? 'local workspace'}</p>}
+      {assistant => <p>{assistant?.defaultTeamRef?.name ?? 'local workspace'}</p>}
     </PersonalAssistantAccountSetup>
   )
   const { rerender } = render(workspace())
@@ -385,4 +387,59 @@ test('applying a conversation proposal publishes only the changed shared definit
       executionDeviceId: 'mac',
     },
   ])
+})
+
+test('an incomplete cloud assistant definition shows an account error without mounting the workspace', async () => {
+  const get = vi.fn().mockResolvedValue({
+    assistant: {
+      ...account,
+      definitions: [{ roleId: 'support', bot: { metadata: { name: 'bot' } } }],
+    },
+  })
+  const services = {
+    personalAssistantAccountApi: createPersonalAssistantAccountApi({
+      get,
+    } as unknown as HttpClient),
+  } as WorkbenchServices
+  const workspace = vi.fn(() => <p>Assistant workspace</p>)
+
+  render(
+    <PersonalAssistantAccountSetup services={services} userId={7} active>
+      {workspace}
+    </PersonalAssistantAccountSetup>
+  )
+
+  expect(await screen.findByTestId('personal-assistant-account-retry')).toBeEnabled()
+  expect(workspace).not.toHaveBeenCalled()
+})
+
+test('opens the workspace with the original Bot-based cloud assistant response', async () => {
+  const get = vi.fn().mockResolvedValue({
+    assistant: {
+      defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
+      revision: 'original',
+      retiredRoleIds: [],
+      definitions: [
+        {
+          roleId: '@primary',
+          bot: { metadata: { name: 'primary', displayName: 'My existing assistant' } },
+          ghost: { spec: { systemPrompt: 'Keep my existing responsibilities' } },
+        },
+      ],
+    },
+  })
+  const services = {
+    personalAssistantAccountApi: createPersonalAssistantAccountApi({
+      get,
+    } as unknown as HttpClient),
+  } as WorkbenchServices
+
+  render(
+    <PersonalAssistantAccountSetup services={services} userId={7} active>
+      {assistant => <p>{assistant && assistantDefinitionName(assistant.definitions[0])}</p>}
+    </PersonalAssistantAccountSetup>
+  )
+
+  expect(await screen.findByText('My existing assistant')).toBeInTheDocument()
+  expect(screen.queryByTestId('personal-assistant-account-setup')).not.toBeInTheDocument()
 })
