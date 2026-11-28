@@ -31,8 +31,11 @@ export interface StandInBindingTarget {
 
 export interface StandInInstanceBinding {
   version: number
-  status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped'
+  // Account-backed workspaces also use unavailable when no lifecycle read has succeeded.
+  status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped' | 'unavailable'
   target: StandInBindingTarget | null
+  stoppingTargets?: string[]
+  stoppingTargetGenerations?: Record<string, number>
 }
 
 export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
@@ -415,14 +418,20 @@ export interface StandInExecutorApi {
       | 'completeStop'
       | 'prepareBind'
       | 'prepareReplacement'
-      | 'completeActivation',
+      | 'completeActivation'
+      | 'cancelActivation'
+      | 'markStopping'
+      | 'clearStopping'
+      | 'markStoppingWithGeneration'
+      | 'clearStoppingIfGeneration',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>
   lifecycle(
     userId: number,
     deviceId: string,
-    operation: 'start' | 'stop'
+    operation: 'start' | 'stop',
+    expectedVersion?: number
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
   setTaskPermissions(
@@ -1004,10 +1013,16 @@ export function createStandInExecutorApi(
     },
     binding: (deviceId, operation = 'get', version, target) =>
       request('runtime.stand_in.binding', { operation, version, target }, deviceId),
-    lifecycle: async (userId, deviceId, operation) => {
+    lifecycle: async (userId, deviceId, operation, expectedVersion) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.lifecycle',
-        { userId, operation },
+        expectedVersion === undefined
+          ? { userId, operation }
+          : {
+              userId,
+              operation: operation === 'stop' ? 'stopIfVersion' : 'startIfVersion',
+              expectedVersion,
+            },
         deviceId
       )
       publishPersonalStandIn(saved)

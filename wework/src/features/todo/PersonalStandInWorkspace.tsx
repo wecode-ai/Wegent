@@ -1,12 +1,17 @@
 import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
-import { isStandInBindingOwner } from '@/api/standIn'
+import { isStandInBindingOwner, type StandInBindingTarget } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
+import { CircleStop } from 'lucide-react'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { CollaborationExpErrorBoundary } from '@/features/collaboration-exp/CollaborationExpRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   navigateTo,
@@ -20,6 +25,7 @@ import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
 import {
   lazy,
   Suspense,
@@ -41,7 +47,8 @@ import {
 } from './personalAssistantDeviceSettings'
 import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
 import { availableStandInDevices } from './standInDevices'
-import { type StandInEntryError } from './standInEntry'
+import { getStandInAccountStopIntent, localStopGeneration } from './standInLocalInstanceSource'
+import { parseStandInEntry, type StandInEntryError } from './standInEntry'
 import { StandInHomeSetup } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 import { StandInMigration } from './StandInMigration'
@@ -74,6 +81,7 @@ const loadAssistantWorkspace = () =>
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
+  const workbench = useContext(WorkbenchContext)
   if (!cloud?.isConnected || !cloud.user) return <StandInCloudConnectionPrompt />
   const key = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
   if (
@@ -86,6 +94,9 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
     return (
       <PersonalAssistantAccountSetup
         preferredDevice={(available.find(device => device.is_default) ?? available[0])?.device_id}
+        initialEntry={parseStandInEntry(props.contentRoute)}
+        devices={props.devices}
+        deviceCatalogStatus={workbench?.cloudWorkStatus?.checks.devices ?? 'unavailable'}
         key={key}
         services={props.services}
         userId={Number(props.user.id)}
@@ -95,10 +106,6 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
           <AccountStandInWorkspace
             {...props}
             account={account}
-            deviceId={
-              account?.definitions.find(entry => entry.roleId === '@primary')?.bot.spec
-                ?.execution_policy?.environment_id
-            }
             publishAccount={publishAccount}
             readAccount={readAccount}
           />
@@ -124,12 +131,10 @@ function AccountStandInWorkspace({
   collaborationWork,
   experienceEnabled = false,
   account,
-  deviceId,
   publishAccount,
   readAccount,
 }: PersonalStandInWorkspaceProps & {
   account?: PersonalAssistantAccount
-  deviceId?: string
   publishAccount?: (account: PersonalAssistantAccount) => void
   readAccount?: () => PersonalAssistantAccount | undefined
 }) {
@@ -149,18 +154,24 @@ function AccountStandInWorkspace({
   const [workspaceSource] = useState(createPersonalStandInWorkspaceSource)
   const userId = Number(user.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
-  const instance = useStandInInstance(services, userId, devices, true, active, backendUrl, {
+  const legacyInstance = useStandInInstance(services, userId, devices, true, active, backendUrl, {
     entryRequestKey: refreshKey,
     legacyOnly: true,
   })
-  const { localDeviceId, busy } = instance
-  const legacyBinding = instance.binding
+  const instance = useStandInInstance(services, userId, devices, true, active, backendUrl, {
+    entryRequestKey: refreshKey,
+    accountNavigationOnly: true,
+    account,
+    publishAccount,
+    readAccount,
+  })
+  const { binding, busy } = instance
+  const localDeviceId = instance.localDeviceId || legacyInstance.localDeviceId
+  const legacyBinding = legacyInstance.binding
   const legacyTarget = legacyBinding?.target
   const ownerId = userId
-  const target = useMemo(
-    () => (deviceId ? { userId, backendUrl, deviceId } : undefined),
-    [userId, backendUrl, deviceId]
-  )
+  const target = binding?.target ?? undefined
+  const deviceId = target?.deviceId
   const accountScope = JSON.stringify([userId, backendUrl, deviceId])
   const assistantDeviceKey = JSON.stringify(
     [
@@ -209,28 +220,90 @@ function AccountStandInWorkspace({
     if (localDeviceId) ids.add(localDeviceId)
     return ids
   }, [availableDeviceIds, localDeviceId])
+  const verifiedStoppedPrimary =
+    !embedded &&
+    binding?.status === 'stopped' &&
+    instance.stoppedProfile?.lifecycle?.status === 'stopped' &&
+    instance.stoppedProfile.userId === ownerId &&
+    instance.stoppedProfile.executionDeviceId === deviceId &&
+    !instance.error
+  const verifyIndependentDevice = useStableEvent(async (roleDeviceId: string, roleId: string) => {
+    const cloudApi = services.personalAssistantAccountApi
+    const executor = services.standInApi
+    const observed = readAccount?.()
+    if (!cloudApi || !executor || !localDeviceId || !connected || !observed) return false
+    const [latest, native] = await Promise.all([
+      cloudApi.get(),
+      executor.binding(localDeviceId, 'get'),
+    ])
+    if (!latest || !dequal(readAccount?.(), observed)) return false
+    if (
+      latest.revision !== observed.revision ||
+      !dequal(latest.stopIntents, observed.stopIntents) ||
+      !dequal(latest.stopIntentGenerations, observed.stopIntentGenerations)
+    ) {
+      publishAccount?.(latest)
+      return false
+    }
+    if (latest.retiredRoleIds.includes(roleId) || !deviceId) return false
+    const definition = latest.definitions.find(value => value.roleId === roleId)
+    if (
+      definition &&
+      resolveAssistantExecutionDevice(
+        definition.bot.spec?.execution_policy?.environment_id,
+        deviceId,
+        deviceId,
+        isKnownAssistantDevice
+      ) !== roleDeviceId
+    )
+      return false
+    return (
+      !getStandInAccountStopIntent(latest, roleDeviceId, devices) &&
+      localStopGeneration(native, { userId: ownerId, deviceId: roleDeviceId, backendUrl }) ===
+        undefined
+    )
+  })
+  const independentScope = verifiedStoppedPrimary
+    ? JSON.stringify([
+        binding.version,
+        account?.revision,
+        account?.stopIntents,
+        account?.stopIntentGenerations,
+      ])
+    : undefined
   const {
     entry,
     result,
     retry: retryEntry,
   } = useStandInEntry(
     contentRoute,
-    assistantServices.standInApi,
-    target,
+    verifiedStoppedPrimary ? services.standInApi : assistantServices.standInApi,
+    binding?.status === 'active' || verifiedStoppedPrimary ? target : undefined,
     authorizedDeviceIds,
     active && !embedded,
-    entryRequestKey
+    entryRequestKey,
+    verifiedStoppedPrimary ? verifyIndependentDevice : undefined,
+    independentScope
   )
   let entryError: StandInEntryError | undefined
   if (entry.kind === 'error') entryError = entry.error
   else if (entry.kind !== 'home') {
     if (entry.userId && entry.userId !== String(ownerId)) entryError = 'forbidden'
-    else if (!target) entryError = 'not_found'
+    else if (instance.error && (!binding || binding.status === 'unavailable'))
+      entryError = 'lookup_failed'
+    else if (
+      binding &&
+      (!target ||
+        (binding.status !== 'active' && !(verifiedStoppedPrimary && entry.kind === 'identity')))
+    )
+      entryError = 'not_found'
     else if (entry.kind === 'conversation' && !experienceEnabled) entryError = 'unsupported'
     else if (result?.kind === 'error') entryError = result.error
   }
-  const entryLoading = entry.kind === 'identity' && result?.kind !== 'ready'
+  const entryLoading =
+    entry.kind !== 'home' && (!binding || (entry.kind === 'identity' && result?.kind !== 'ready'))
   const verifiedRole = result?.kind === 'ready' ? result : undefined
+  const independentRole = verifiedStoppedPrimary ? verifiedRole : undefined
   const settingsRequest = entry.kind === 'identity' ? entry.settingsRequest : undefined
   const scheduled = 'scheduled' in entry && entry.scheduled
   const routeLocation = useMemo(
@@ -303,7 +376,7 @@ function AccountStandInWorkspace({
     workspaceSource.getSnapshot
   )
   const requestedRoleLocation =
-    view.entryKey === routeLocation?.key && view.selectionScope === accountScope
+    !independentRole && view.entryKey === routeLocation?.key && view.selectionScope === accountScope
       ? view.roleLocation
       : routeLocation?.location
   const selectedDefinition = account?.definitions.find(
@@ -315,8 +388,9 @@ function AccountStandInWorkspace({
     isKnownAssistantDevice(requestedRoleLocation.deviceId)
       ? requestedRoleLocation
       : undefined
-  const selectedDevice =
-    roleLocation?.roleId && roleLocation.roleId !== '@primary'
+  const selectedDevice = independentRole
+    ? independentRole.deviceId
+    : roleLocation?.roleId && roleLocation.roleId !== '@primary'
       ? selectedDefinition && deviceId
         ? resolveAssistantExecutionDevice(
             selectedDefinition.bot.spec?.execution_policy?.environment_id,
@@ -342,15 +416,65 @@ function AccountStandInWorkspace({
       active &&
       !entryError &&
       !entryLoading &&
+      !!binding &&
       (!showAssistantExperience || Boolean(readLegacyRoles)),
     localDeviceId,
     refreshKey,
     availableDeviceIds
   )
+  const [confirmStop, setConfirmStop] = useState<{
+    target: StandInBindingTarget
+    version: number
+  } | null>(null)
+  const requestStop = () => {
+    if (!target || !binding) return
+    const confirm = () => setConfirmStop({ target, version: binding.version })
+    if (overview.current) overview.current.requestLeave(confirm)
+    else confirm()
+  }
+  const actions =
+    target && binding ? (
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid="stand-in-instance-stop"
+        disabled={busy}
+        className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:min-h-8"
+        onClick={requestStop}
+      >
+        {t(binding.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
+      </ControlButton>
+    ) : undefined
+  const deviceChoices = [
+    ...(localDeviceId
+      ? [{ userId, deviceId: localDeviceId, name: t('standIn.account_local_profile') }]
+      : []),
+    ...availableDevices.map(device => ({ userId, deviceId: device.device_id, name: device.name })),
+  ]
+  const alternateDevices = deviceChoices.filter(value => value.deviceId !== deviceId)
+  const bindDevice = (device: string) => instance.bind({ userId, backendUrl, deviceId: device })
+  const renderBindChoices = (choices: typeof deviceChoices) => (
+    <div className="flex flex-wrap gap-2">
+      {choices.map(value => (
+        <ControlButton
+          variant="outline"
+          size="sm"
+          key={`${value.userId}:${value.deviceId}`}
+          type="button"
+          data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
+          disabled={busy}
+          className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+          onClick={() => void bindDevice(value.deviceId).catch(() => {})}
+        >
+          {value.name}
+        </ControlButton>
+      ))}
+    </div>
+  )
   const [noDefinitionBackups, setNoDefinitionBackups] = useState(false)
-  const [destinationReady, setDestinationReady] = useState(false)
+  const [migrationNotice, setMigrationNotice] = useState<'destination_ready' | 'copy_complete'>()
   const [deviceRecovery, setDeviceRecovery] = useState<{ pending: boolean; error?: unknown }>()
-  const clearDestinationNotice = useCallback(() => setDestinationReady(false), [])
+  const clearMigrationNotice = useCallback(() => setMigrationNotice(undefined), [])
   const definitionBackupAction = account ? (
     <div className="flex flex-wrap items-center gap-2">
       <ControlButton
@@ -374,9 +498,6 @@ function AccountStandInWorkspace({
     </div>
   ) : undefined
   const [dismissedMigrationScope, setDismissedMigrationScope] = useState<string>()
-  const legacyScope = legacyTarget
-    ? JSON.stringify([legacyTarget.userId, legacyTarget.deviceId])
-    : undefined
   const ownsLegacyTarget = !!legacyTarget && isStandInBindingOwner(legacyTarget.userId, userId)
   const staleLegacyDevice =
     !!legacyTarget &&
@@ -384,15 +505,30 @@ function AccountStandInWorkspace({
       ? legacyTarget.deviceId !== deviceId
       : legacyBinding?.status === 'stopping' ||
         (legacyTarget.deviceId === deviceId &&
-          instance.stoppedProfile?.lifecycle?.status === 'stopped') ||
+          legacyInstance.stoppedProfile?.lifecycle?.status === 'stopped') ||
         (legacyTarget.deviceId === deviceId &&
           (configuredDeviceOffline || directory?.rootUnavailable)))
+  const accountRecovery =
+    !!target &&
+    (binding?.status === 'stopped' ||
+      binding?.status === 'stopping' ||
+      binding?.status === 'unavailable' ||
+      directory?.rootUnavailable)
+  const migrationTarget = accountRecovery
+    ? target
+    : ownsLegacyTarget && staleLegacyDevice
+      ? legacyTarget
+      : undefined
+  const migrationInstance = accountRecovery ? instance : legacyInstance
+  const migrationScope = migrationTarget
+    ? JSON.stringify([migrationTarget.userId, migrationTarget.deviceId])
+    : undefined
   const showMigration =
     !embedded &&
-    ownsLegacyTarget &&
-    staleLegacyDevice &&
-    dismissedMigrationScope !== legacyScope &&
-    availableDevices.some(device => device.device_id !== legacyTarget?.deviceId)
+    !!binding &&
+    !!migrationTarget &&
+    dismissedMigrationScope !== migrationScope &&
+    availableDevices.some(device => device.device_id !== migrationTarget.deviceId)
   const configureCloudDestination = async (device: string) => {
     const configured = await initializePersonalAssistantOnDevice(
       services.personalAssistantAccountApi!,
@@ -407,15 +543,20 @@ function AccountStandInWorkspace({
       await operation()
       setDeviceRecovery(undefined)
       instance.reload()
+      legacyInstance.reload()
       setReentry(current => current + 1)
     } catch (error) {
       setDeviceRecovery({ pending: false, error })
     }
   }
-  const cause = deviceRecovery?.error ?? projectError?.cause
-  const failure = cause ? getStandInErrorMessage(cause, 'load_projects_failed') : null
+  const cause = instance.errorCause ?? deviceRecovery?.error ?? projectError?.cause
+  const failure =
+    instance.error ?? (cause ? getStandInErrorMessage(cause, 'load_projects_failed') : null)
   const upgradeRequired = requiresStandInUpgrade(cause)
   const returnToAssistant = () => navigateTo('/stand-in')
+  const returnAfterStop = useStableEvent((route: string) => {
+    if (active && contentRoute === route && entry.kind !== 'home') returnToAssistant()
+  })
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
       {failure && !entryError && (
@@ -439,12 +580,17 @@ function AccountStandInWorkspace({
             variant="unstyled"
             type="button"
             data-testid="stand-in-project-catalog-retry"
-            aria-busy={view.loadingProjects}
+            aria-busy={
+              instance.error ? busy : projectError ? view.loadingProjects : deviceRecovery?.pending
+            }
             className="min-h-11 px-2 underline md:min-h-8"
             onClick={() => {
-              setDeviceRecovery(undefined)
-              instance.reload()
-              workspaceSource.reloadProjects()
+              if (instance.error) {
+                instance.reload()
+              } else if (deviceRecovery?.error) {
+                setDeviceRecovery(undefined)
+                instance.reload()
+              } else if (projectError) workspaceSource.reloadProjects()
             }}
           >
             {t('standIn.reload')}
@@ -452,45 +598,63 @@ function AccountStandInWorkspace({
         </div>
       )}
       <TransientNotice
-        message={destinationReady ? t('standIn.migration.destination_ready') : null}
-        onClear={clearDestinationNotice}
+        message={migrationNotice ? t(`standIn.migration.${migrationNotice}`) : null}
+        onClear={clearMigrationNotice}
         tone="success"
         visible={active}
       />
-      {showMigration && legacyTarget && legacyScope && (
+      {showMigration && migrationTarget && migrationScope && (
         <StandInMigration
-          key={legacyScope}
+          key={migrationScope}
           devices={devices}
-          sourceDevice={legacyTarget.deviceId}
+          sourceDevice={migrationTarget.deviceId}
           roles={
-            instance.stoppedProfile?.roles ??
+            migrationInstance.stoppedProfile?.roles ??
             directory?.roles
-              .filter(role => role.deviceId === legacyTarget.deviceId)
+              .filter(role => role.deviceId === migrationTarget.deviceId)
               .map(role => role.role) ??
             []
           }
-          busy={busy}
-          onDismiss={() => setDismissedMigrationScope(legacyScope)}
+          busy={migrationInstance.busy}
+          onDismiss={() => setDismissedMigrationScope(migrationScope)}
           requestLeave={action =>
             overview.current ? overview.current.requestLeave(action) : action()
           }
           onMigrate={async (deviceId, roleId) => {
-            const role = await instance.migrate(
+            const role = await migrationInstance.migrate(
               { userId, backendUrl, deviceId },
               roleId,
               t('standIn.title'),
               cloudAssistantServices.standInApi,
-              () => configureCloudDestination(deviceId)
+              !roleId || roleId === '@primary'
+                ? () => configureCloudDestination(deviceId)
+                : undefined
             )
             if (role === 'initialized') {
-              setDismissedMigrationScope(legacyScope)
-              setDestinationReady(true)
+              setDismissedMigrationScope(migrationScope)
+              setMigrationNotice('destination_ready')
               navigateTo('/stand-in')
               return
             }
             if (!role) throw new StandInMigrationError('not_stopped')
-            if (!roleId || roleId === '@primary') await configureCloudDestination(deviceId)
-            setDismissedMigrationScope(legacyScope)
+            if (!accountRecovery && (!roleId || roleId === '@primary'))
+              await configureCloudDestination(deviceId)
+            setDismissedMigrationScope(migrationScope)
+            if (roleId && roleId !== '@primary') {
+              const destination = await services.standInApi
+                ?.personalGet(userId, deviceId, { deviceSettingsOnly: true })
+                .catch(() => undefined)
+              if (
+                !destination ||
+                destination.userId !== userId ||
+                destination.executionDeviceId !== deviceId ||
+                destination.lifecycle?.status
+              ) {
+                setMigrationNotice('copy_complete')
+                navigateTo('/stand-in')
+                return
+              }
+            }
             navigateTo(
               `/stand-in?${new URLSearchParams({ deviceId, profileId: role.id, settingsRequest: crypto.randomUUID() })}`
             )
@@ -510,6 +674,7 @@ function AccountStandInWorkspace({
           >
             {t('standIn.view_devices')}
           </Button>
+          {binding?.status === 'active' && actions}
         </div>
       )}
       {entryError ? (
@@ -528,6 +693,8 @@ function AccountStandInWorkspace({
         />
       ) : entryLoading ? (
         <StandInRouteLoading />
+      ) : !binding ? (
+        !failure && <StandInRouteLoading />
       ) : !target ? (
         <section className="space-y-3 p-5">
           <p>{t('standIn.account.choose_execution_device')}</p>
@@ -537,11 +704,39 @@ function AccountStandInWorkspace({
               variant="outline"
               disabled={deviceRecovery?.pending}
               data-testid={'stand-in-choose-device-' + device}
-              onClick={() => void recoverDevice(() => configureCloudDestination(device))}
+              onClick={() => void recoverDevice(() => bindDevice(device))}
             >
               {findWorkbenchDevice(devices, device)?.name ?? t('standIn.account_local_profile')}
             </Button>
           ))}
+        </section>
+      ) : binding.status === 'stopped' && !independentRole ? (
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
+          <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
+          <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
+          {renderBindChoices(deviceChoices)}
+        </section>
+      ) : binding.status === 'stopping' ? (
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-stopping">
+          <div className="flex items-center gap-2">
+            <p role="status" className="text-sm">
+              {t(busy ? 'standIn.instance.stopping' : 'standIn.instance.stop_pending')}
+            </p>
+            {actions}
+          </div>
+          {alternateDevices.length > 0 && renderBindChoices(alternateDevices)}
+        </section>
+      ) : binding.status === 'unavailable' || binding.status === 'activating' ? (
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-recovery">
+          {actions}
+          {alternateDevices.length > 0 && (
+            <>
+              <p className="text-sm text-text-secondary">
+                {t('standIn.workspace.execution_device_help')}
+              </p>
+              {renderBindChoices(alternateDevices)}
+            </>
+          )}
         </section>
       ) : embedded ? (
         <StandInHomeSetup
@@ -592,7 +787,25 @@ function AccountStandInWorkspace({
               projects={projects}
               localDeviceId={localDeviceId}
               devices={devices}
-              onSelectDevice={configureCloudDestination}
+              onSelectDevice={bindDevice}
+              headerActions={
+                !configuredDeviceOffline && binding.status === 'active' ? (
+                  <Tooltip label={t('standIn.instance.stop')}>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="experience-header-tool"
+                      data-testid="stand-in-instance-stop"
+                      aria-label={t('standIn.instance.stop')}
+                      disabled={busy}
+                      onClick={requestStop}
+                    >
+                      <CircleStop size={16} aria-hidden="true" />
+                    </Button>
+                  </Tooltip>
+                ) : undefined
+              }
               onClose={onClose}
             />
           </Suspense>
@@ -617,6 +830,8 @@ function AccountStandInWorkspace({
           <StandInOverviewPage
             key={JSON.stringify([ownerId, selectedDevice, contentRoute])}
             ref={overview}
+            headerActions={configuredDeviceOffline || independentRole ? undefined : actions}
+            linkedRole={independentRole?.profileId}
             directoryError={directory?.error === failure ? undefined : directory?.error}
             primarySettingsActions={definitionBackupAction}
             isKnownAssistantDevice={isKnownAssistantDevice}
@@ -624,22 +839,38 @@ function AccountStandInWorkspace({
             onBindDevice={
               account && publishAccount && services.personalAssistantAccountApi
                 ? async (roleId, device) => {
-                    const definitions = account.definitions.map(entry => ({
+                    if (roleId === '@primary') return bindDevice(device)
+                    const currentAccount = readAccount?.() ?? account
+                    const definitions = currentAccount.definitions.map(entry => ({
                       roleId: entry.roleId,
                       name: entry.team.metadata.displayName ?? '',
                       prompt: entry.ghost.spec.systemPrompt,
-                      executionDeviceId: entry.roleId === roleId ? device : undefined,
+                      executionDeviceId:
+                        entry.roleId === roleId
+                          ? device
+                          : entry.bot.spec?.execution_policy?.environment_id,
                     }))
-                    publishAccount(
-                      await services.personalAssistantAccountApi!.updateDefinitions(
-                        account.revision,
-                        definitions
+                    const cloudApi = services.personalAssistantAccountApi!
+                    try {
+                      publishAccount(
+                        await cloudApi.updateDefinitions(currentAccount.revision, definitions)
                       )
-                    )
+                    } catch (cause) {
+                      const latest = await cloudApi.get().catch(() => null)
+                      if (latest) {
+                        publishAccount(latest)
+                        if (
+                          latest.definitions.find(entry => entry.roleId === roleId)?.bot.spec
+                            ?.execution_policy?.environment_id === device
+                        )
+                          return
+                      }
+                      throw cause
+                    }
                   }
                 : undefined
             }
-            onSelectAssistantDevice={configureCloudDestination}
+            onSelectAssistantDevice={independentRole ? undefined : bindDevice}
             initialProfileId={roleLocation?.settings ? roleLocation.roleId : undefined}
             initialSelectedRoleId={roleLocation?.roleId}
             initialDeviceId={selectedDevice}
@@ -650,7 +881,18 @@ function AccountStandInWorkspace({
             entryRoute={contentRoute}
             settingsRequestKey={roleLocation?.settings ? settingsRequest : undefined}
             initialWorkView={scheduled ? 'scheduled' : 'work'}
-            onSelectLocation={workspaceSource.selectLocation}
+            onSelectLocation={
+              independentRole
+                ? (device, role, openSettings) => {
+                    if (!role || role === '@primary') returnToAssistant()
+                    else {
+                      const params = new URLSearchParams({ deviceId: device, profileId: role })
+                      if (openSettings) params.set('settingsRequest', crypto.randomUUID())
+                      navigateTo('/stand-in?' + params.toString())
+                    }
+                  }
+                : workspaceSource.selectLocation
+            }
             api={api}
             projects={projects}
             services={assistantServices}
@@ -666,6 +908,31 @@ function AccountStandInWorkspace({
           {t('standIn.errors.backend_connection_unavailable')}
         </p>
       )}
+      <ConfirmDialog
+        open={
+          active &&
+          confirmStop !== null &&
+          target?.userId === confirmStop.target.userId &&
+          target?.deviceId === confirmStop.target.deviceId
+        }
+        title={t('standIn.instance.stop')}
+        description={t('standIn.instance.stop_description')}
+        cancelLabel={t('standIn.cancel')}
+        confirmLabel={t('standIn.instance.stop')}
+        confirmTestId="stand-in-instance-stop-confirm"
+        cancelTestId="stand-in-instance-stop-cancel"
+        pending={busy}
+        destructive
+        onClose={() => setConfirmStop(null)}
+        onConfirm={() => {
+          const request = confirmStop
+          setConfirmStop(null)
+          if (!request) return
+          void instance.stop(request.target, request.version).then(accepted => {
+            if (accepted) returnAfterStop(contentRoute)
+          })
+        }}
+      />
     </div>
   )
 }

@@ -414,7 +414,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       })
       expect(contents.loadURL).toHaveBeenCalledOnce()
     } finally {
-      manager.stop()
+      await manager.stop()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -444,7 +444,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://apps/wegent')
         expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/')
       } finally {
-        manager.stop()
+        await manager.stop()
         await rm(directory, { recursive: true, force: true })
       }
     }
@@ -468,7 +468,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(handler({ url: 'wework://smart-apps/42' })).toEqual({ action: 'deny' })
       expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://smart-apps/42')
     } finally {
-      manager.stop()
+      await manager.stop()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -705,7 +705,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(reopenedState.url).toBe('https://reopened.example.test/')
       expect(reopenedState.nativeLabel).not.toBe(initialState.nativeLabel)
     } finally {
-      manager.stop()
+      await manager.stop()
       await closeRequest.catch(() => {})
       await reopen?.catch(() => {})
       await rm(directory, { recursive: true, force: true })
@@ -1352,7 +1352,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       navigateExisting: true,
     })
 
-    manager.clickAt('workspace-browser', 120.4, 48.6)
+    await manager.clickAt('workspace-browser', 120.4, 48.6)
 
     expect(contents.focus).toHaveBeenCalledOnce()
     expect(contents.sendInputEvent.mock.calls).toEqual([
@@ -1362,6 +1362,121 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     ])
     await rm(directory, { recursive: true, force: true })
   })
+
+  test.each(['beforeDispatch', 'afterMove', 'unchanged'] as const)(
+    'rechecks the hit target for an approved native click (%s)',
+    async change => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-native-approval-'))
+      try {
+        const manager = new EmbeddedBrowserManager(directory)
+        const contents = new FakeWebContents()
+        contents.loadURL.mockImplementation(async url => contents.commitUrl(url))
+        manager.attach('workspace-browser', contents as unknown as WebContents)
+        await manager.open({
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          visible: true,
+          navigateExisting: true,
+        })
+        let node = 1
+        contents.getZoomFactor.mockReturnValue(2)
+        contents.debugger.sendCommand.mockImplementation(async method => {
+          if (method === 'DOM.getNodeForLocation')
+            return { backendNodeId: node, frameId: 'fixture-frame' }
+          return {}
+        })
+        const expected = await manager.inspectNativeClickTarget('workspace-browser', 160, 80)
+        expect(contents.debugger.sendCommand).toHaveBeenCalledWith('DOM.getNodeForLocation', {
+          x: 80,
+          y: 40,
+        })
+        if (change === 'beforeDispatch') node = 2
+        if (change === 'afterMove') {
+          contents.sendInputEvent.mockImplementation(event => {
+            if (event.type === 'mouseMove') node = 2
+          })
+        }
+        const click = manager.clickAt('workspace-browser', 160, 80, expected)
+        if (change === 'unchanged') {
+          await click
+          expect(contents.sendInputEvent.mock.calls.map(([event]) => event.type)).toEqual([
+            'mouseMove',
+            'mouseDown',
+            'mouseUp',
+          ])
+        } else {
+          await expect(click).rejects.toMatchObject({ code: 'approval_target_changed' })
+          expect(
+            contents.sendInputEvent.mock.calls.some(
+              ([event]) => event.type === 'mouseDown' || event.type === 'mouseUp'
+            )
+          ).toBe(false)
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  test.each(['missing', 'changedDuringCommit', 'unchanged'] as const)(
+    'validates the approved file input at the actual upload boundary (%s)',
+    async change => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-upload-approval-'))
+      try {
+        const manager = new EmbeddedBrowserManager(directory)
+        const contents = new FakeWebContents()
+        contents.loadURL.mockImplementation(async url => contents.commitUrl(url))
+        manager.attach('workspace-browser', contents as unknown as WebContents)
+        await manager.open({
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          visible: true,
+          navigateExisting: true,
+        })
+        let node = 2
+        let backendNodeId = 41
+        contents.debugger.sendCommand.mockImplementation(async method => {
+          if (method === 'DOM.getDocument') return { root: { nodeId: 1 } }
+          if (method === 'DOM.querySelector') return { nodeId: node }
+          if (method === 'DOM.describeNode')
+            return { node: { nodeName: 'INPUT', attributes: ['type', 'file'], backendNodeId } }
+          return {}
+        })
+        const expected = await manager.inspectUploadTarget('workspace-browser', '#fixture')
+        if (change === 'missing') node = 0
+        const files = [join(directory, 'fixture.txt')]
+        const upload = manager.uploadFiles(
+          'workspace-browser',
+          '#fixture',
+          files,
+          expected,
+          async () => {
+            // A fresh frontend node ID may refer to the same backend node.
+            node = 3
+            if (change === 'changedDuringCommit') backendNodeId = 42
+          }
+        )
+        if (change === 'unchanged') {
+          await expect(upload).resolves.toEqual({ selector: '#fixture' })
+          expect(contents.debugger.sendCommand).toHaveBeenCalledWith('DOM.setFileInputFiles', {
+            files,
+            nodeId: 3,
+          })
+        } else {
+          await expect(upload).rejects.toMatchObject({ code: 'approval_target_changed' })
+          expect(
+            contents.debugger.sendCommand.mock.calls.some(
+              ([method]) => method === 'DOM.setFileInputFiles'
+            )
+          ).toBe(false)
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   test('waits for browser layout to settle before verifying a detached Inspector', async () => {
     vi.useFakeTimers()
@@ -1542,7 +1657,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         false
       )
       expect(preventedItem.on).not.toHaveBeenCalled()
-      manager.stop()
+      await manager.stop()
 
       const restored = new EmbeddedBrowserManager(directory)
       try {
@@ -1586,7 +1701,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         expect((await restored.downloads.list()).downloads).toEqual([])
         expect(await readFile(moved, 'utf8')).toBe('downloaded file')
       } finally {
-        restored.stop()
+        await restored.stop()
       }
     } finally {
       await rm(directory, { recursive: true, force: true })

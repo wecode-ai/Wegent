@@ -70,7 +70,7 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({"items":items}))
     }
 
-    fn accepted_local_role_branch(
+    pub(super) fn accepted_local_role_branch(
         &self,
         user: i64,
         task_id: &str,
@@ -147,7 +147,7 @@ mod tests {
             .reserve_stand_in_role_request("specialist", user, "request", &intent, 1)
             .unwrap();
         store
-            .record_stand_in_role_task_address("specialist", user, "desktop")
+            .record_stand_in_role_task_address("specialist", user, 0, "desktop")
             .unwrap();
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "specialist".into(),

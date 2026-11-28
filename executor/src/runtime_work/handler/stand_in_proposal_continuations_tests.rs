@@ -2,7 +2,14 @@ use super::*;
 
 fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
     let root = tempfile::tempdir().unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let mut handler = {
+        let _env = crate::test_env::lock();
+        let _home = super::super::tests::ScalarEnv::set(
+            "WEGENT_EXECUTOR_HOME",
+            root.path().to_str().unwrap(),
+        );
+        RuntimeWorkRpcHandler::new("mac", "unused")
+    };
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
@@ -46,6 +53,96 @@ fn im_followup_payload(handler: &RuntimeWorkRpcHandler, task: &str, callback: &s
         "source": {"source":"im","callback_id":callback},
         "executionRequest": handler.local_task_link(task).unwrap().runtime_handle["executionRequest"]
     })
+}
+
+#[tokio::test]
+async fn first_and_recovered_owner_inputs_can_read_their_delegation_history() {
+    for failed_start in [false, true] {
+        for explicit_command in [None, Some("owner-command")] {
+            let (root, handler, identity) = fixture();
+            let task = &identity.task_id;
+            let mut payload = json!({"taskId":task,"message":"Continue the earlier assignment",
+                "workspacePath":root.path(),"clientUserMessageId":"owner-input",
+                "executionRequest":handler.local_task_link(task).unwrap().runtime_handle["executionRequest"]});
+            if let Some(command) = explicit_command {
+                payload["commandId"] = json!(command);
+            }
+            if failed_start {
+                handler.store.update_task(task, |link| {
+                    link.status = "failed".into();
+                    link.thread_id = None;
+                });
+            } else {
+                handler.store.delete_task(task).unwrap();
+            }
+            handler
+                .dispatch_stand_in_conversation(payload, false)
+                .await
+                .unwrap();
+            let command = handler.turn_scheduler.lock().unwrap().queued_turns[0]
+                .request
+                .extra["runtime_command_id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            if let Some(expected) = explicit_command {
+                assert_eq!(command, expected);
+            }
+            let history = handler
+                .role_delegation_operation(
+                    &identity,
+                    "list_role_tasks",
+                    &json!({"scope":"conversation"}),
+                    Some(&command),
+                )
+                .await
+                .unwrap();
+            assert_eq!(history["tasks"], json!([]));
+        }
+    }
+}
+
+#[tokio::test]
+async fn generic_creates_and_automatic_or_external_first_inputs_cannot_read_delegation_history() {
+    for kind in ["generic", "activity", "resource-event", "im"] {
+        let (root, handler, identity) = fixture();
+        let task = &identity.task_id;
+        let mut payload = json!({"taskId":task,"message":"Read an assignment",
+            "workspacePath":root.path(),"commandId":"caller-command",
+            "executionRequest":handler.local_task_link(task).unwrap().runtime_handle["executionRequest"]});
+        payload["executionRequest"][OWNER] = json!({"commandId":"caller-command"});
+        handler.store.delete_task(task).unwrap();
+        if kind == "generic" {
+            handler.create_task(payload).await.unwrap();
+        } else {
+            if kind == "resource-event" {
+                let keys = json!(["a".repeat(64)]);
+                let path = root.path().join("conversation-event-subscriptions.sqlite");
+                super::super::control::connection_events::store::transact(&path, |state| {
+                    state["operations"]["source"] = json!({"task_id":task,"operation_id":"caller-command",
+                        "resource_event_keys":keys,"events":[{"id":"source-event"}],"source":{"name":"Review"}});
+                    Ok(())
+                }).unwrap();
+                payload["resourceEventKeys"] = keys;
+            } else if kind == "im" {
+                payload["source"] = json!({"source":"im","callback_id":"test"});
+            }
+            handler
+                .dispatch_stand_in_conversation(payload, kind == "activity")
+                .await
+                .unwrap();
+        }
+        let denied = handler
+            .role_delegation_operation(
+                &identity,
+                "list_role_tasks",
+                &json!({"scope":"conversation"}),
+                Some("caller-command"),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "permission_denied", "{kind}");
+    }
 }
 
 #[tokio::test]
@@ -608,7 +705,7 @@ async fn immediate_owner_admission_survives_crash_before_link_generation_write()
         &json!({"commandId":"immediate-owner","message":"A new explicit owner request"}),
     );
     handler
-        .stamp_stand_in_owner_request(&identity.task_id, &mut immediate.request, false)
+        .stamp_stand_in_owner_request(&identity.task_id, &mut immediate.request, false, true)
         .unwrap();
     let new_owner = immediate.request.extra[OWNER].clone();
     assert_ne!(new_owner, old);
@@ -649,7 +746,7 @@ fn stamped_replacement(
         &json!({"commandId":"replacement-owner","message":"A replacement owner request"}),
     );
     handler
-        .stamp_stand_in_owner_request(&identity.task_id, &mut turn.request, false)
+        .stamp_stand_in_owner_request(&identity.task_id, &mut turn.request, false, true)
         .unwrap();
     turn
 }

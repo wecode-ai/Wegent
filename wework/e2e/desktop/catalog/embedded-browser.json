@@ -1,6 +1,11 @@
 {
   "order": 205000,
   "scenario": "./scenarios/embedded-browser-agent.scenario.mjs",
+  "paths": [
+    "wework/e2e/desktop/modules/browser-full-control.mjs",
+    "wework/e2e/desktop/scenarios/browser-chrome-focus.mjs",
+    "wework/e2e/desktop/scenarios/browser-video-settings-regression.mjs"
+  ],
   "ci": {
     "core": {
       "order": 151000,

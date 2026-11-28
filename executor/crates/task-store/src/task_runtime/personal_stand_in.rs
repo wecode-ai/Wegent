@@ -214,7 +214,7 @@ pub(super) fn read_personal(
     read_personal_state(connection, user, device).map(|(settings, _)| settings)
 }
 
-fn personal_snapshot(
+pub(super) fn personal_snapshot(
     connection: &Connection,
     user: i64,
     device: &str,

@@ -4061,6 +4061,49 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         config["mcp_servers"]["wework_browser"]["default_tools_approval_mode"],
         "approve"
     );
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let runtime_file = runtime_dir.path().join("embedded-browser-bridge.json");
+    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE", &runtime_file);
+    // The environment-backed bridge must preserve restricted task approval.
+    for profile in [":read-only", ":workspace"] {
+        let mut restricted = ExecutionRequest::default();
+        restricted
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        let (restricted_overrides, _) = cdp_browser_mcp_config_overrides(&restricted).unwrap();
+        assert!(restricted_overrides.contains(
+            &"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".to_owned()
+        ));
+    }
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    assert!(!crate::browser_mcp::bridge_is_available());
+    fs::write(
+        &runtime_file,
+        format!(
+            r#"{{"schemaVersion":1,"pid":{},"address":"127.0.0.1:43127","token":"runtime-token","startedAtUnixMs":123,"fullControl":true}}"#,
+            std::process::id()
+        ),
+    )
+    .unwrap();
+    assert!(crate::browser_mcp::bridge_is_available());
+    // Only the authenticated runtime-file identity supplies the bridge here.
+    for profile in [":read-only", ":workspace"] {
+        let mut restricted = ExecutionRequest::default();
+        restricted
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        let (restricted_overrides, _) = cdp_browser_mcp_config_overrides(&restricted).unwrap();
+        assert!(restricted_overrides.contains(
+            &"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".to_owned()
+        ));
+    }
+    if let Some(value) = old_runtime_file {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    }
     assert_eq!(
         config["mcp_servers"]["wework_browser"]["http_headers"]["X-Wework-Browser-Label"],
         "workspace-browser-task-123"

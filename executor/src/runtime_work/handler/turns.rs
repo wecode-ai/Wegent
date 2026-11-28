@@ -480,6 +480,20 @@ impl RuntimeWorkRpcHandler {
             .filter(|turn| turn.platform_command.is_none())
         {
             self.store.update_task(&turn.local_task_id, |link| {
+                if let Some(next) = turn
+                    .request
+                    .extra
+                    .get("standInDelegation")
+                    .filter(|delegation| delegation["roleDelegation"].is_object())
+                    .and_then(|delegation| delegation["attempt"].as_u64())
+                {
+                    if next > super::stand_in_role_delegation::role_attempt(link) {
+                        if let Some(handle) = link.runtime_handle.as_object_mut() {
+                            handle.remove("standInResult");
+                            handle.remove("standInResultReceipt");
+                        }
+                    }
+                }
                 // Admission owns capacity before preparation or the native RPC starts.
                 crate::runtime_work::lifecycle::begin_native_request(link);
                 store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
@@ -709,7 +723,11 @@ impl RuntimeWorkRpcHandler {
         if resolved_default {
             self.retain_runtime_model_config(&local_task_id, &turn.request.model_config);
             self.store.update_task(&local_task_id, |link| {
-                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+                if let Some(request) = link.runtime_handle["executionRequest"].as_object_mut() {
+                    let mut model = turn.request.model_config.clone();
+                    redact_execution_profile_secrets(&mut model);
+                    request.insert("model_config".into(), model);
+                }
             });
         }
         if turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true)) {
@@ -3207,6 +3225,149 @@ mod tests {
             "codex".to_owned(),
             ExecutionRequest::default(),
         )
+    }
+
+    #[tokio::test]
+    async fn stand_in_role_followup_survives_delayed_stop_and_replays_visible_message() {
+        let home = tempfile::tempdir().unwrap();
+        let (handler, root) = {
+            let _lock = crate::test_env::lock();
+            let _home = super::super::tests::ScalarEnv::set(
+                "WEGENT_EXECUTOR_HOME",
+                home.path().to_str().unwrap(),
+            );
+            super::super::tests::isolated_runtime_work_handler("role-followup-replay")
+        };
+        let task = "specialist";
+        let branch = json!({"root":"request","ancestors":["parent"]});
+        let delegation =
+            json!({"sourceTaskId":"parent","userId":7,"roleDelegation":branch,"attempt":1});
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: task.into(),
+            runtime_handle: json!({"origin":{"sourceTaskId":"parent","userId":7,"roleDelegation":branch}}),
+            ..Default::default()
+        });
+
+        let gate = handler.task_send_gate(task);
+        let guard = gate.lock().await;
+        let mut stop = Box::pin(handler.cancel_task_with_stop_policy(
+            json!({"taskId":task}),
+            Duration::from_secs(1),
+            true,
+            Some(0),
+        ));
+        assert!(futures_util::poll!(stop.as_mut()).is_pending());
+        let mut payload = json!({
+            "taskId":task, "commandId":super::super::stand_in_tasks::role_attempt_command(task, 1),
+            "runtime":"claude_code", "message":"Native instructions", "clientUserMessageId":"message",
+            "userMessagePresentation":{"content":"Visible message"},
+            "executionRequest":ExecutionRequest::default()
+        });
+        payload["executionRequest"]["user_id"] = json!(7);
+        payload["executionRequest"]["standInDelegation"] = delegation;
+        let mut first = payload.clone();
+        normalize_user_message_presentation(&mut first).unwrap();
+        let mut turn = scheduled_turn(task);
+        turn.runtime = "claude_code".into();
+        turn.request = execution_request(&first).unwrap();
+        apply_runtime_payload_metadata(&mut turn.request, &first);
+        turn.send_payload = Some(first);
+        handler.queue_turn(turn).await.unwrap();
+        drop(guard);
+        assert_eq!(stop.await.unwrap_err().code, "permission_denied");
+
+        let intent = json!({"followupRequestId":"followup"});
+        let receipt = handler
+            .send_stand_in_role_retry(&intent, payload.clone(), 1)
+            .await
+            .unwrap();
+        assert_eq!(receipt["commandId"], payload["commandId"]);
+        assert_eq!(receipt["state"], "queued");
+        payload["userMessagePresentation"]["content"] = json!("Changed message");
+        assert_eq!(
+            handler
+                .send_stand_in_role_retry(&intent, payload, 1)
+                .await
+                .unwrap_err()
+                .code,
+            "command_conflict"
+        );
+        assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Isolate the native model catalog and account settings.
+    async fn stand_in_role_retired_default_keeps_previous_attempt_until_admission() {
+        use super::super::tests::{
+            install_native_history, isolated_runtime_work_handler, ScalarEnv,
+        };
+
+        let _lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        let _executor = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+        let _codex = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
+        fs::write(home.path().join("config.toml"), "model = \"gpt-5.5\"\n").unwrap();
+        fs::write(home.path().join("auth.json"), r#"{"auth_mode":"chatgpt"}"#).unwrap();
+        let (mut handler, root) = isolated_runtime_work_handler("role-followup-model");
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(
+            root.join("config_read.json"),
+            json!({"config":{"model":"gpt-5.5"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("model_list.json"),
+            json!({"data":[{"id":"available","model":"available","isDefault":true}]}).to_string(),
+        )
+        .unwrap();
+        let task = "specialist";
+        let mut delegation = json!({"roleDelegation":{},"attempt":0});
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: task.into(),
+            runtime_handle: json!({"executionRequest":{"standInDelegation":delegation},
+                "standInResult":{"status":"done"},"standInResultReceipt":"receipt"}),
+            ..Default::default()
+        });
+        let mut turn = scheduled_turn(task);
+        // Verified role retries reach the scheduler with the task kind already bound.
+        turn.task_kind = Some(RuntimeTaskKind::StandIn);
+        delegation["attempt"] = json!(1);
+        turn.request
+            .extra
+            .insert("standInDelegation".into(), delegation);
+        handler.queue_turn(turn).await.unwrap();
+        let queued = handler.local_task_link(task).unwrap();
+        assert_eq!(
+            queued.runtime_handle["executionRequest"]["model_config"]["model_id"],
+            "available"
+        );
+        assert_eq!(
+            queued.runtime_handle["executionRequest"]["standInDelegation"]["attempt"],
+            0
+        );
+        assert_eq!(queued.runtime_handle["standInResultReceipt"], "receipt");
+
+        let turn = handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .pop_front()
+            .unwrap();
+        handler
+            .persist_turn_queue(VecDeque::new(), None, &[turn])
+            .await
+            .unwrap();
+        let started = handler.local_task_link(task).unwrap();
+        assert_eq!(
+            started.runtime_handle["executionRequest"]["standInDelegation"]["attempt"],
+            1
+        );
+        assert!(started.runtime_handle["standInResult"].is_null());
+        assert!(started.runtime_handle["standInResultReceipt"].is_null());
+        handler.codex_app_server.restart().await;
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

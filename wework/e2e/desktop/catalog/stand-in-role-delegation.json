@@ -1,6 +1,7 @@
 {
   "order": 49100,
   "scenario": "./scenarios/stand-in-role-delegation.scenario.mjs",
+  "paths": ["wework/e2e/desktop/modules/stand-in-role-browser-checks.mjs"],
   "scenarioOnly": true,
   "ci": {
     "core": {

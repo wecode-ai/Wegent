@@ -2366,7 +2366,7 @@ async function shutdown(): Promise<void> {
   popoutShortcut = null
   const appshotsService = appshots
   appshots = null
-  embeddedBrowser?.stop()
+  const browserManagerStop = traceShutdownStep('browser-manager', () => embeddedBrowser?.stop())
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
@@ -2377,6 +2377,7 @@ async function shutdown(): Promise<void> {
   const development = pluginDevelopment
   pluginDevelopment = null
   const stoppedServices = await Promise.allSettled([
+    browserManagerStop,
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),

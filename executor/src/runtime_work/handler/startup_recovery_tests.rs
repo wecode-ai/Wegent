@@ -166,6 +166,13 @@ async fn failed_start_recovers_native_sessions_without_replaying_unconfirmed_com
             );
             let scheduler = handler.turn_scheduler.lock().unwrap();
             assert_eq!(scheduler.queued_turns.len(), 1);
+            assert!(
+                !scheduler.queued_turns[0]
+                    .request
+                    .extra
+                    .contains_key("standInOwnerRequest"),
+                "Issue wakeups must not grant personal conversation history access"
+            );
             assert_eq!(
                 scheduler.queued_turns[0].resume_thread_id.as_deref(),
                 native.then_some("native-thread")
