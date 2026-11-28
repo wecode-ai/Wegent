@@ -94,6 +94,7 @@ impl RuntimeWorkRpcHandler {
         task: &str,
         request: &mut ExecutionRequest,
         activity: bool,
+        direct_owner_input: bool,
     ) -> Result<(), AppIpcError> {
         let expected = request.extra.remove(EXPECTED);
         request.extra.remove(OWNER);
@@ -141,7 +142,23 @@ impl RuntimeWorkRpcHandler {
                 .and_then(|value| value["revision"].as_u64())
                 .unwrap_or(0)
                 + 1;
-            request.extra.insert(OWNER.into(), json!({"id":uuid::Uuid::new_v4().to_string(),"revision":revision,"taskId":task,"userId":user,"deviceId":self.device_id,"roleId":role,"cancelled":false}));
+            let mut owner = json!({"id":uuid::Uuid::new_v4().to_string(),"revision":revision,"taskId":task,"userId":user,"deviceId":self.device_id,"roleId":role,"cancelled":false});
+            if direct_owner_input
+                && !super::automatic_turns::is_automatic_input(request)
+                && !request
+                    .extra
+                    .get("source")
+                    .is_some_and(|source| source["source"] == "im")
+            {
+                if let Some(command) = request
+                    .extra
+                    .get("runtime_command_id")
+                    .and_then(Value::as_str)
+                {
+                    owner["commandId"] = json!(command);
+                }
+            }
+            request.extra.insert(OWNER.into(), owner);
         }
         Ok(())
     }

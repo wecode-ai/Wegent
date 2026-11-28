@@ -122,7 +122,7 @@ impl RuntimeWorkRpcHandler {
         // Cancellation uses the normal Runtime path, including queued turns and approvals.
         let results = stream::iter(tasks.into_iter().map(|task| async move {
             let result = self
-                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true)
+                .cancel_task_with_stop_policy(json!({"taskId":task}), stop_timeout, true, None)
                 .await;
             (task, result)
         }))

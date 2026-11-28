@@ -285,7 +285,7 @@ mod tests {
         request.extra.insert("origin".into(), origin.clone());
         request.extra.insert("user_id".into(), json!(7));
         handler
-            .stamp_stand_in_owner_request(parent, &mut request, false)
+            .stamp_stand_in_owner_request(parent, &mut request, false, true)
             .unwrap();
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: parent.into(),

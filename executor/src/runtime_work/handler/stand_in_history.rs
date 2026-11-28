@@ -714,7 +714,7 @@ impl RuntimeWorkRpcHandler {
         Ok(
             json!({"items":page.iter().map(|link|json!({"taskId":link.local_task_id,"title":self.conversation_title(link,identity,&scope,&store),"status":link.status,
             "interactionStatus":link.interaction_status,"createdAt":link.created_at,"updatedAt":link.updated_at,"kind":if link.runtime_handle["origin"]["type"]=="stand_in_identity" {"identity"} else {"task"},
-            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && link.status!="archived" && link.interaction_status.is_none() && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
+            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && super::stand_in_tasks::allows_ordinary_followup(link) && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
         )
     }
 }
@@ -754,7 +754,14 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
         let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        let mut handler = {
+            let _guard = crate::test_env::lock();
+            let _home = super::super::tests::ScalarEnv::set(
+                "WEGENT_EXECUTOR_HOME",
+                root.path().to_str().unwrap(),
+            );
+            RuntimeWorkRpcHandler::new("mac", "unused")
+        };
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
@@ -904,6 +911,38 @@ mod tests {
                 .code,
             "permission_denied"
         );
+    }
+
+    #[tokio::test]
+    async fn primary_lists_specialist_branches_without_offering_ordinary_continuation() {
+        let (_root, handler, mut identity) = fixture();
+        identity.role = Some("@primary".into());
+        handler.upsert_local_task(link(
+            &identity.task_id,
+            7,
+            json!({
+                "type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"@primary"
+            }),
+        ));
+        handler.upsert_local_task(link("ordinary", 7, json!({})));
+        handler.upsert_local_task(link(
+            "specialist",
+            7,
+            json!({
+                "type":"stand_in_task","userId":7,"deviceId":"mac",
+                "standInId":"default","sourceTaskId":identity.task_id,
+                "roleDelegation":{"root":"request","ancestors":[identity.task_id]}
+            }),
+        ));
+        let page = handler
+            .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
+            .await
+            .unwrap();
+        let rows = page["items"].as_array().unwrap();
+        for (id, expected) in [("ordinary", true), ("specialist", false)] {
+            let row = rows.iter().find(|row| row["taskId"] == id).unwrap();
+            assert_eq!(row["canContinue"], expected);
+        }
     }
 
     #[tokio::test]
