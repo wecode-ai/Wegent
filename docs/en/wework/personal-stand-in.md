@@ -58,9 +58,17 @@ Open a saved team from **Teams** to give it work. The lead delegates based on th
 
 From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
 
-<a id="assistant-sharing"></a>
+### Adopt your assistant team in a project
 
-You can assign work in a personal team conversation using your own account. When a cloud project adopts the team, its virtual members handle Issue assignments. The project can reuse team duties. Your personal connections and approval permissions stay with your account. [Adopt an assistant team in a project](./projects.md#agent-capabilities)
+1. In Wework desktop, open a project you can manage. Go to **Project settings → AI configuration → Collaboration groups** and click **Adopt my assistant team**. Under **Select your team**, choose one of your own teams.
+2. Use **Select a project agent** to assign a distinct project Agent to the lead and each member. In cloud projects, the form preselects an Agent when it can identify a unique match for the same Team. When choosing manually, check the ID beside the Agent name. If the Agent is missing, add and authorize it in the project’s Agent settings, then reopen the form.
+3. Click **Adopt my assistant team** again to confirm. You can now assign a project Issue to the collaboration group. Your personal team conversations use your account. Project Issues run through the bound virtual members with project permissions. Your personal connections and approval permissions stay with your account.
+
+**Editing and rebinding.** Edit the name, lead, members, and duties under **My assistants → Teams**. Edit the description, stages, and execution requirements in the project group. When you add a source role or the project reports that the group needs rebinding, the source team owner can reopen **Adopt my assistant team**, select the original team, map the missing Agents or resolve a name conflict, and confirm again. This updates the existing project group.
+
+**Offline use.** A local project can adopt a team stored on this device while offline. A role that references a workspace Agent requires an existing project grant for that Agent. A device-private Team runs through the selected project Agent. If this device has only a remote role’s name and device route, import the role onto this device and select the local role in your source team first. Saving a cloud project binding requires a cloud connection. When the device hosting a member must export its execution definition, that device must also be reachable. The export includes Bot prompts. [Project Agents and collaboration groups](./projects.md#agent-capabilities)
+
+<a id="assistant-sharing"></a>
 
 ## Share an assistant or team
 
