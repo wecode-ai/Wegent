@@ -60,6 +60,8 @@ From **Teams**, edit or delete a team. Its assistants remain available individua
 
 <a id="assistant-sharing"></a>
 
+You can assign work in a personal team conversation using your own account. When a cloud project adopts the team, its virtual members handle Issue assignments. The project can reuse team duties. Your personal connections and approval permissions stay with your account. [Adopt an assistant team in a project](./projects.md#agent-capabilities)
+
 ## Share an assistant or team
 
 Open **My assistants → Sharing → Share an assistant or team**. Choose what to share, search for and select a recipient, then select **Send share**. Select **Allow recipient to copy** to enable **Copy to my assistants** for the recipient under **My assistants → Sharing → Shared with me**. The recipient configures connections, execution devices, and workspaces for their own assistants.
