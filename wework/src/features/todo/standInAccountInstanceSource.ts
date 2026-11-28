@@ -390,6 +390,7 @@ export function createAccountStandInInstanceSource({
         return
       }
       const scope = selectionScope(configured, identity.deviceId, owner.devices, owner.connected)
+      const selectionChanged = pinnedSelection?.scope !== scope
       let targetDeviceId: string
       if (pinnedSelection?.userId === userId && pinnedSelection.scope === scope) {
         targetDeviceId = pinnedSelection.deviceId
@@ -450,6 +451,7 @@ export function createAccountStandInInstanceSource({
         return
       }
       if (!current()) return
+      const previousProfileVersion = profileFor(target)?.version
       verifiedProfile = { target, profile }
       const lifecycleStatus = profile.lifecycle?.status
       if (lifecycleStatus === 'stopped') {
@@ -555,7 +557,15 @@ export function createAccountStandInInstanceSource({
       }
       setupSelection = undefined
       const status = lifecycleStatus === 'stopping' || pendingStop ? 'stopping' : 'active'
-      publishBinding({ version: ++version, status, target })
+      // A read of the same binding and profile does not stale an open Stop confirmation.
+      if (
+        selectionChanged ||
+        snapshot.binding?.status !== status ||
+        !sameTarget(snapshot.binding.target, target) ||
+        previousProfileVersion !== profile.version
+      ) {
+        publishBinding({ version: ++version, status, target })
+      }
       publish({ error: accountError ?? mutationError })
     } catch (cause) {
       if (current()) publish({ error: { cause, fallback: 'load_settings_failed' } })
