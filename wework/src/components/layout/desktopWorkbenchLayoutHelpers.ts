@@ -1,13 +1,5 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 
-export function getPermanentWorktreeError(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim()) return error.message
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = String(error.message).trim()
-    if (message) return message
-  }
-  return fallback
-}
 export function isSameRuntimeTask(
   current: RuntimeTaskAddress | null | undefined,
   next: RuntimeTaskAddress

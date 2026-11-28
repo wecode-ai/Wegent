@@ -2,6 +2,7 @@ import { createCloudWorkSource } from './cloudWorkSource'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
+import { useCreatePermanentWorktree } from '@/components/layout/useCreatePermanentWorktree'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
@@ -73,12 +74,18 @@ export function CloudWorkPage() {
     listGitBranches,
     updateProjectName,
     removeProject,
+    setRuntimeProjectPinned,
+    setRuntimeProjectAppearance,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
     cloneGitRepository,
   } = useWorkbench()
+  const createPermanentWorktree = useCreatePermanentWorktree(
+    services?.runtimeWorkApi,
+    openStandaloneWorkspace
+  )
 
   const inventoryInput = {
     devices: state.devices,
@@ -175,10 +182,15 @@ export function CloudWorkPage() {
             onArchiveProjectsConversations={archiveProjectsConversations}
             onArchiveChatConversations={archiveChatConversations}
             onOpenStandaloneWorkspace={openStandaloneWorkspace}
+            onCreatePermanentWorktree={
+              services?.runtimeWorkApi ? createPermanentWorktree : undefined
+            }
             onSelectStandaloneDevice={selectStandaloneDevice}
             onRefreshDevices={refreshDevices}
             onUpdateProjectName={updateProjectName}
             onRemoveProject={removeProject}
+            onSetRuntimeProjectPinned={setRuntimeProjectPinned}
+            onSetRuntimeProjectAppearance={setRuntimeProjectAppearance}
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
