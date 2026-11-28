@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   lifecycleSubscribe: vi.fn(),
   conversationSubscribe: vi.fn(),
   subscribeReady: vi.fn(),
+  setGoal: vi.fn(),
   sendMessage: vi.fn(),
   cachedDevices: [] as DeviceInfo[],
   streamInventory: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock('@/services/runtimeApi', () => ({
     listNativeModels = mocks.nativeModels
     preflightWorkspace = mocks.preflight
     createConversation = mocks.create
+    setGoal = mocks.setGoal
     getHomeDirectory = mocks.homeDirectory
     createDirectory = mocks.createDirectory
     sendMessage = mocks.sendMessage
@@ -184,6 +186,7 @@ export function resetMobileRuntimeMocks() {
   mocks.lifecycleSubscribe.mockClear()
   mocks.conversationSubscribe.mockClear()
   mocks.subscribeReady.mockReset().mockResolvedValue(undefined)
+  mocks.setGoal.mockReset().mockResolvedValue({ accepted: true })
   mocks.sendMessage.mockReset().mockResolvedValue({ accepted: true })
   mocks.homeDirectory.mockReset().mockImplementation(async () => {
     mocks.order.push('home_dir')

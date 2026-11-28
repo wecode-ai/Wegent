@@ -1,7 +1,7 @@
 {
   "zh": {
     "title": "WeWork Mobile 隐私政策",
-    "updated": "更新日期：2026 年 11 月 15 日",
+    "updated": "更新日期：2026 年 11 月 26 日",
     "introduction": [
       "本说明适用于由 App Store 页面所列开发者发布和维护的 WeWork Mobile（Wegent 移动客户端）。应用支持手机本机执行，以及可选的用户自建 Wegent 服务连接。执行工具与 AI 模型推理可能位于不同位置。"
     ],
@@ -11,7 +11,7 @@
         "paragraphs": [
           "本机项目、工作文件、会话和执行记录保存在设备上的应用环境中。本机功能无需登录 Wegent。登录、退出或切换 Wegent 服务不会自动把本机项目上传到该服务。",
           "自定义模型配置由设备保存，API Key 使用本机安全存储。供本机任务调用模型时，相关配置可能传入本机执行环境。OpenAI / Codex 登录凭据由本机执行环境保存。获得完整访问授权的任务可能读取同一本机执行环境内的文件；这一环境不是项目之间的安全隔离边界。",
-          "应用不会默认把本机项目、会话或模型密钥发送到开发者的分析服务器，也没有内置广告追踪功能。"
+          "在获得你的明确同意后，应用会向 PostHog 分析服务发送匿名安装标识、应用版本、平台与系统版本、前台使用时长、启动耗时、卡顿汇总、会话与任务结果等有界数据，用于统计装机量、使用情况和稳定性。首次启动会询问是否允许，默认不启用，你可以随时在“设置 > 隐私”中关闭。应用不会发送聊天、提示词、模型回复、代码、文件名、文件路径、终端内容或凭据，也没有内置广告追踪功能。"
         ]
       },
       {
@@ -56,7 +56,7 @@
   },
   "en": {
     "title": "WeWork Mobile Privacy Policy",
-    "updated": "Last updated: November 15, 2026",
+    "updated": "Last updated: November 26, 2026",
     "introduction": [
       "This notice covers WeWork Mobile, the Wegent mobile client published and maintained by the developer identified on its App Store page. The app supports phone-local execution and optional connections to user-provided Wegent deployments. Execution tools and AI model inference can run in different locations."
     ],
@@ -66,7 +66,7 @@
         "paragraphs": [
           "Phone-local projects, working files, conversations and execution records are stored in the app's environment on your device. Local features do not require Wegent login. Connecting, disconnecting or changing a Wegent account does not automatically upload local projects to that service.",
           "Custom model settings are stored on the device, with API keys held in device secure storage. Settings needed by local tasks may be supplied to the local execution environment. OpenAI / Codex credentials are stored by that environment. Tasks granted full access may read files in the same local environment; it is not a security boundary between projects.",
-          "The app does not send local projects, conversations or model keys to the developer's analytics server by default, and has no built-in advertising tracking."
+          "After you explicitly opt in, the app sends the PostHog analytics service an anonymous installation identifier, app version, platform and OS version, foreground usage duration, startup duration, jank summaries, and bounded session and task outcomes. This supports installation, usage and stability reporting. The first launch asks for permission, collection is disabled by default, and you can change the choice in Settings > Privacy. The app does not send chats, prompts, model responses, code, file names, file paths, terminal contents or credentials, and has no built-in advertising tracking."
         ]
       },
       {

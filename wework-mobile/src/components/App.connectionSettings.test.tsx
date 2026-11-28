@@ -21,6 +21,7 @@ const authState = vi.hoisted(() => ({
 }))
 const runtime = vi.hoisted(() => ({
   work: { projects: [], chats: [] },
+  taskRunningByKey: new Map<string, boolean>(),
   messages: [],
   currentAddress: null as { deviceId: string; taskId: string } | null,
   selectedWorkspace: null,
@@ -77,6 +78,24 @@ vi.mock('@/components/PhoneProviderEditorScreen', () => ({
 }))
 vi.mock('@/components/PrivacyPolicyScreen', () => ({ PrivacyPolicyScreen: 'PrivacyPolicyScreen' }))
 vi.mock('@/hooks/useMobileDiagnostics', () => ({ useMobileDiagnostics: vi.fn() }))
+vi.mock('@/telemetry/mobileTelemetry', () => ({
+  mobileTelemetry: { recordStartup: vi.fn(), choose: vi.fn(), recordScreen: vi.fn() },
+}))
+vi.mock('@/telemetry/useMobileTelemetry', () => ({
+  useMobileTelemetryRuntime: () => ({
+    ready: false,
+    available: false,
+    asked: false,
+    enabled: false,
+    saving: false,
+    active: false,
+    error: null,
+  }),
+}))
+vi.mock('@/telemetry/useMobileTaskTelemetry', () => ({ useMobileTaskTelemetry: vi.fn() }))
+vi.mock('@/components/TelemetryConsentDialog', () => ({
+  TelemetryConsentDialog: 'TelemetryConsentDialog',
+}))
 vi.mock('@/theme', () => ({ lightTheme: {}, darkTheme: {} }))
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }))
 vi.mock('react-native', () => ({

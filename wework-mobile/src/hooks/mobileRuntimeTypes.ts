@@ -24,6 +24,7 @@ export interface MobileRuntimeState {
   api: RuntimeApi
   fileTarget: MobileWorkspaceFileTarget | null
   work: RuntimeWorkListResponse
+  taskRunningByKey: ReadonlyMap<string, boolean>
   devices: DeviceInfo[]
   cloudConnected: boolean
   failures: RuntimeFailureAction[]

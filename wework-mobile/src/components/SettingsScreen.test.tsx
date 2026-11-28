@@ -65,6 +65,9 @@ vi.mock('react-native-keyboard-controller', () => ({
 vi.mock('./AuthorizationScreen', () => ({ AuthorizationScreen: 'AuthorizationScreen' }))
 vi.mock('./LocalRuntimeSettings', () => ({ LocalRuntimeSettings: 'LocalRuntimeSettings' }))
 vi.mock('./DiagnosticsSettings', () => ({ DiagnosticsSettings: 'DiagnosticsSettings' }))
+vi.mock('./TelemetryPrivacySettings', () => ({
+  TelemetryPrivacySettings: 'TelemetryPrivacySettings',
+}))
 vi.mock('./errors/ErrorNotice', () => ({ ErrorNotice: 'ErrorNotice' }))
 vi.mock('@/services/errorAlerts', () => ({ confirmNativeAction: vi.fn(), showErrorAlert: vi.fn() }))
 

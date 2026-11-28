@@ -1,6 +1,7 @@
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/runtime'
 
@@ -30,6 +31,7 @@ const TERMINAL_RUNTIME_EVENTS = new Set([
 
 export interface RuntimeSendTransition {
   key: string
+  address: RuntimeTaskAddress
   revision: number
   hadPreviousRunning: boolean
   previousRunning: boolean | undefined
@@ -58,10 +60,19 @@ export class RuntimeTaskLifecycleProjection {
     return changed
   }
 
+  executorStopped(address: RuntimeTaskAddress): boolean {
+    const key = runtimeTaskKey(address)
+    const changed = this.runningByTask.get(key) !== false
+    this.advanceRevision(key)
+    this.runningByTask.set(key, false)
+    return changed
+  }
+
   sendRequested(address: RuntimeTaskAddress): RuntimeSendTransition {
     const key = runtimeTaskKey(address)
     const transition = {
       key,
+      address,
       revision: this.advanceRevision(key),
       hadPreviousRunning: this.runningByTask.has(key),
       previousRunning: this.runningByTask.get(key),
@@ -101,6 +112,7 @@ export class RuntimeTaskLifecycleProjection {
     return {
       ...transition,
       key: nextKey,
+      address,
       revision: canRollback ? nextRevision : -1,
     }
   }
@@ -167,4 +179,11 @@ export function isRunningRuntimeEvent(name: string): boolean {
 
 export function isTerminalRuntimeEvent(name: string): boolean {
   return TERMINAL_RUNTIME_EVENTS.has(name)
+}
+
+export function projectedRuntimeTaskRunning(
+  task: RuntimeTaskSummary | undefined,
+  projected: boolean | undefined
+): boolean {
+  return typeof projected === 'boolean' ? projected : task?.running === true
 }

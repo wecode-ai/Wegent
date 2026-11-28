@@ -2,3 +2,5 @@ packages:
   - .
 allowBuilds:
   react-native-enriched-markdown: true
+minimumReleaseAgeExclude:
+  - posthog-react-native@4.87.3
