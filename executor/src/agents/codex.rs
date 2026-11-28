@@ -2610,7 +2610,7 @@ async fn drive_codex_turn(
         defer_interactive_forms,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config =
+    let mut launch_config =
         build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
@@ -2780,6 +2780,7 @@ async fn drive_codex_turn(
                 )
             }
         };
+        launch_config.thread_model = resolved_model.0.clone();
         if let Some(callback) = thread_started {
             let resolved_model = native_activity::reporting_model_identity(
                 resolved_model,
@@ -4635,6 +4636,7 @@ struct CodexLaunchConfig {
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
     inference_model_provider: Option<String>,
+    thread_model: Option<String>,
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
@@ -7407,7 +7409,7 @@ fn codex_collaboration_mode_payload(
     Some(json!({
         "mode": mode,
         "settings": {
-            "model": codex_request_model(request),
+            "model": codex_request_model(request).or_else(|| launch_config.thread_model.clone())?,
             "reasoning_effort": launch_config.effort,
             "developer_instructions": Value::Null,
         }

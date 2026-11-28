@@ -4516,6 +4516,7 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
         Value::String("default".to_owned()),
     );
     let launch_config = CodexLaunchConfig {
+        thread_model: Some("gpt-5.6-luna".to_owned()),
         effort: Some("medium".to_owned()),
         ..CodexLaunchConfig::default()
     };
@@ -4534,6 +4535,21 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
         "medium"
     );
     assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
+
+    request.model_config = Value::Null;
+    let resumed = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    assert!(resumed.get("model").is_none());
+    assert_eq!(
+        resumed["collaborationMode"]["settings"]["model"],
+        "gpt-5.6-luna"
+    );
+    let unresolved = turn_start_params(
+        "thread-1",
+        &request,
+        &CodexLaunchConfig::default(),
+        Vec::new(),
+    );
+    assert!(unresolved.get("collaborationMode").is_none());
 }
 
 #[test]
