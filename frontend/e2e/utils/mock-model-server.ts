@@ -61,6 +61,7 @@ interface ModelRequest {
 interface StreamRule {
   matchText: string
   responseContent?: string
+  finishReason?: 'MALFORMED_RESPONSE'
   responseTool?: ToolResponse
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
@@ -294,7 +295,7 @@ function writeSseChunk(res: http.ServerResponse, content: string): void {
   )
 }
 
-function writeSseDone(res: http.ServerResponse): void {
+function writeSseDone(res: http.ServerResponse, finishReason = 'stop'): void {
   res.write(
     `data: ${JSON.stringify({
       id: 'mock-response',
@@ -305,7 +306,7 @@ function writeSseDone(res: http.ServerResponse): void {
         {
           index: 0,
           delta: {},
-          finish_reason: 'stop',
+          finish_reason: finishReason,
         },
       ],
     })}\n\n`
@@ -768,10 +769,13 @@ const server = http.createServer((req, res) => {
           return
         }
       }
+      const finishReason = streamRule?.finishReason
       const responseContent =
-        scenarioStep?.responseContent ||
-        streamRule?.responseContent ||
-        buildContextAwareResponseContent(parsedBody)
+        finishReason === 'MALFORMED_RESPONSE'
+          ? ''
+          : scenarioStep?.responseContent ||
+            streamRule?.responseContent ||
+            buildContextAwareResponseContent(parsedBody)
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
 
       // Check if streaming is requested
@@ -784,6 +788,11 @@ const server = http.createServer((req, res) => {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
         })
+
+        if (finishReason) {
+          writeSseDone(res, finishReason)
+          return
+        }
 
         writeStreamingResponse(
           res,
@@ -809,7 +818,7 @@ const server = http.createServer((req, res) => {
                   role: 'assistant',
                   content: responseContent,
                 },
-                finish_reason: 'stop',
+                finish_reason: finishReason ?? 'stop',
               },
             ],
             usage: {
@@ -906,10 +915,12 @@ const server = http.createServer((req, res) => {
         !streamRule?.matchText ||
         (!streamRule.responseContent &&
           !streamRule.responseTool &&
-          !streamRule.responseTools?.length)
+          !streamRule.responseTools?.length &&
+          !streamRule.finishReason)
       ) {
         writeJson(res, 400, {
-          error: 'matchText and responseContent, responseTool, or responseTools are required',
+          error:
+            'matchText and a responseContent, responseTool, responseTools, or finishReason are required',
         })
         return
       }

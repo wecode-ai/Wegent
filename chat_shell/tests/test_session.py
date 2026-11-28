@@ -173,3 +173,21 @@ class TestStreamingCore:
         assert response["messages_chain"] == streaming_state.messages_chain
         assert response["context_compactions"] == streaming_state.context_compactions
         assert response["termination_reason"] == "completed_with_unexecuted_tool_calls"
+
+    @pytest.mark.asyncio
+    async def test_malformed_model_response_emits_only_the_error_terminal(
+        self, streaming_state
+    ):
+        from chat_shell.models.response_validation import MalformedModelResponseError
+        from chat_shell.services.streaming.core import StreamingCore
+        from shared.models import EmitterBuilder, GeneratorTransport
+
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        core = StreamingCore(emitter=emitter, state=streaming_state)
+
+        await core.handle_error(MalformedModelResponseError())
+
+        [(event_type, error)] = transport.get_events()
+        assert event_type == "error"
+        assert "MALFORMED_RESPONSE" in error["message"]
