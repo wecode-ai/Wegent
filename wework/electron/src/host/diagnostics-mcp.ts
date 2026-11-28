@@ -1,5 +1,17 @@
 const tools = [
   {
+    name: 'inspect_conversation',
+    description:
+      'Read live in-memory state for a conversation on this device, including its queue, active turn, observed approvals and native Codex activity.',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'get_instance',
     description:
       'Identify the running Wework instance and process IDs bound to this local diagnostic session.',
@@ -102,7 +114,13 @@ export async function dispatchDiagnosticsMcp(
     const args = readArguments(params?.arguments)
     const name = params?.name
     let data: unknown
-    if (name === 'get_instance' && Object.keys(args).length === 0) {
+    if (
+      name === 'inspect_conversation' &&
+      Object.keys(args).length === 1 &&
+      typeof args.taskId === 'string'
+    ) {
+      data = await collect({ action: 'inspect-conversation', taskId: args.taskId })
+    } else if (name === 'get_instance' && Object.keys(args).length === 0) {
       data = await collect({ action: 'status' })
     } else if (name === 'record_renderer' && Object.keys(args).every(key => key === 'durationMs')) {
       data = await collect({ action: 'record', target: 'renderer', durationMs: args.durationMs })

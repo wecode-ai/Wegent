@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { requestExecutor } from './executor-rpc.mjs'
 import { execFileSync } from 'node:child_process'
 import { access, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -35,6 +36,7 @@ const STEP_TIMEOUT = 10_000
 
 export function createRepairWeWorkFlow(workspacePath) {
   let mode = null
+  let inspectedTaskId
   let questionSent = false
   let fixture
   let revision
@@ -71,7 +73,23 @@ export function createRepairWeWorkFlow(workspacePath) {
         ]
       } else if (!answered) {
         events = [assistantMessage('Waiting for the troubleshooting choice.')]
+      } else if (!requestContainsToolOutput(body, `repair-wework-session-${mode}`)) {
+        assert.ok(
+          inspectedTaskId,
+          'The pending conversation ID must be resolved before continuation'
+        )
+        events = mcpToolRequestEvents(body, {
+          toolName: 'inspect_conversation',
+          directToolName: 'mcp__wework_diagnostics__inspect_conversation',
+          argumentsValue: { taskId: inspectedTaskId },
+          searchCallId: `repair-wework-session-search-${mode}`,
+          toolCallId: `repair-wework-session-${mode}`,
+        }).events
       } else if (!requestContainsToolOutput(body, `repair-wework-instance-${mode}`)) {
+        const session = JSON.parse(toolOutputText(body, `repair-wework-session-${mode}`))
+        assert.equal(session.taskId, inspectedTaskId)
+        assert.ok(session.threadId)
+        assert.equal(session.runtime, 'codex')
         events = mcpToolRequestEvents(body, {
           toolName: 'get_instance',
           directToolName: 'mcp__wework_diagnostics__get_instance',
@@ -248,6 +266,22 @@ console.log('Repair verified at ' + git('-C', 'repair-worktree', 'rev-parse', 'H
             timeoutMs: STEP_TIMEOUT,
           })
           await control.command('waitFor', CARD, { text: QUESTION, timeoutMs: STEP_TIMEOUT })
+          const snapshot = JSON.parse(
+            await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+          )
+          const taskId = snapshot.workbench.currentRuntimeTask.taskId
+          inspectedTaskId = taskId
+          const live = await requestExecutor(
+            control,
+            'runtime.tasks.inspect_live_diagnostics',
+            { taskId },
+            STEP_TIMEOUT
+          )
+          assert.equal(live.taskId, taskId)
+          assert.ok(live.threadId)
+          assert.equal(live.runtime, 'codex')
+          assert.equal(typeof live.execution.available, 'boolean')
+          assert.equal(live.codex.processRunning, true)
           const option = `${CARD} [data-testid^="request-user-input-option-"][data-testid$="-${index}"]`
           assert.ok((await control.command('getText', option)).includes(label))
           await control.command('clickWhenEnabled', option, { timeoutMs: STEP_TIMEOUT })

@@ -208,6 +208,8 @@ AI 会先说明会检查哪些信息，再确认你要 **提交 Bug** 还是 **�
 
 本机 Codex 排障对话可以使用 `wework_diagnostics` MCP。它连接这条对话所在设备的运行中 Wework 实例。先告诉 AI 哪个操作会触发故障，再按它提示复现。AI 可录制当前工作台的 Console、异常调用栈、CPU profile 和 Chromium trace，或导出前端和 Electron 主进程的 JS 堆快照。
 
+会话卡在运行中时，AI 可以按本机任务 ID 直接读取 Executor 的活动轮次、队列、审批观察状态和 Codex 进程中的待处理请求。快照注明暂时无法读取的状态。
+
 AI 也可读取当前实例的 Electron、前端启动和 Executor transport 日志，macOS 上可采集选定组件的原生线程栈和内存区域摘要。CPU profile 可作为火焰图输入。录制文件和堆快照写入本机 Wework 数据目录。堆快照可能包含当前应用数据，采集时可能暂停界面。
 
 ### 反馈提交失败

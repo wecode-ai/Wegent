@@ -211,6 +211,8 @@ The AI explains what it may inspect and confirms whether you want to **Report a 
 
 A local Codex troubleshooting conversation can use the `wework_diagnostics` MCP. It connects to the running Wework instance on the device that owns the conversation. Tell the AI which action triggers the problem and reproduce it when prompted. The AI can record the workbench console, exception stacks, a CPU profile, and a Chromium trace, or export a JavaScript heap snapshot from the workbench or Electron main process.
 
+For a stuck conversation, the AI can use its local task ID to inspect the live Executor turn, queue, observed approvals, and outstanding native Codex requests. The snapshot identifies unavailable state.
+
 The AI can also read Electron, renderer startup, and Executor transport logs from the current instance. Native thread stack sampling and memory-region summaries are available on macOS. CPU profiles can be opened as flame charts. Captures and heap snapshots are written to the local Wework data directory. A heap export may pause the UI and can contain application data.
 
 ### Feedback submission failed

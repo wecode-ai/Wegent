@@ -2581,6 +2581,12 @@ async function configureDesktopRuntime(): Promise<void> {
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId,
     diagnostics: async input => {
+      if (input.action === 'inspect-conversation') {
+        if (!desktopRuntime) throw new Error('The local Executor is unavailable')
+        return desktopRuntime.requestExecutor('runtime.tasks.inspect_live_diagnostics', {
+          taskId: input.taskId,
+        })
+      }
       if (input.action === 'status') {
         return {
           instanceId,
