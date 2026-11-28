@@ -262,7 +262,7 @@ pub(crate) fn merge_assistant_transcript_message(existing: &Value, mut incoming:
     if object
         .get("content")
         .and_then(Value::as_str)
-        .map_or(true, str::is_empty)
+        .is_none_or(str::is_empty)
     {
         if let Some(content) = existing.get("content") {
             object.insert("content".to_owned(), content.clone());

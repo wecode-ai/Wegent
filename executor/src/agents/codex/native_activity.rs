@@ -191,7 +191,7 @@ impl CodexNativeActivity {
             .turns
             .get_mut(thread_id)
             .is_some_and(|turns| turns.remove(&turn_id));
-        let no_live_turns = self.turns.get(thread_id).map_or(true, HashSet::is_empty);
+        let no_live_turns = self.turns.get(thread_id).is_none_or(HashSet::is_empty);
         let mut goal_changed = false;
         if no_live_turns {
             self.turns.remove(thread_id);

@@ -164,10 +164,12 @@ ARG APP_VERSION=dev
 
 WORKDIR /app
 
+COPY .github/ci/rust-toolchain /tmp/rust-toolchain
+
 # turbojpeg-sys builds libjpeg-turbo from source with CMake.
 RUN dnf install -y gcc gcc-c++ cmake ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain stable \
+        | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

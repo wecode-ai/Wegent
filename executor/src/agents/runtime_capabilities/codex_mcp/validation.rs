@@ -184,7 +184,7 @@ fn validate_oauth(config: &RawMcpServerConfig) -> Result<(), String> {
             || oauth
                 .client_id
                 .as_deref()
-                .map_or(true, |id| id.trim().is_empty())
+                .is_none_or(|id| id.trim().is_empty())
         {
             return Err("Invalid native MCP OAuth client settings".to_owned());
         }

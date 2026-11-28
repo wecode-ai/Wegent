@@ -27,7 +27,7 @@ pub(super) fn history_owned(link: &RuntimeTaskLink, user: i64) -> bool {
     link.runtime_handle["executionRequest"]["user_id"] == user
         && link.runtime_handle["origin"]
             .get("userId")
-            .map_or(true, |owner| owner == user)
+            .is_none_or(|owner| owner == user)
         && !link.ephemeral
         && !matches!(
             link.runtime_handle["origin"]["type"].as_str(),
@@ -54,8 +54,8 @@ pub(super) fn filter_history_page(page: &mut Value, since: Option<i64>, until: O
         messages.retain(|message| {
             let at = timestamp_ms_field(message, "createdAt");
             unknown |= at.is_none();
-            at.map_or(true, |at| {
-                since.map_or(true, |start| at >= start) && until.map_or(true, |end| at < end)
+            at.is_none_or(|at| {
+                since.is_none_or(|start| at >= start) && until.is_none_or(|end| at < end)
             })
         });
     }
@@ -655,13 +655,10 @@ impl RuntimeWorkRpcHandler {
                 )
             });
         }
-        if matches!(
+        !matches!(
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work" | "issue_dispatch")
-        ) {
-            return false;
-        }
-        true
+        )
     }
 
     pub(super) fn validate_history_delivery(
@@ -752,10 +749,8 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(|link| {
                 self.conversation_visible(link, identity, &scope, &store)
-                    && since.map_or(true, |start| {
-                        link.updated_at == 0 || link.updated_at >= start
-                    })
-                    && until.map_or(true, |end| link.created_at == 0 || link.created_at < end)
+                    && since.is_none_or(|start| link.updated_at == 0 || link.updated_at >= start)
+                    && until.is_none_or(|end| link.created_at == 0 || link.created_at < end)
             })
             .collect();
         links.sort_by(|a, b| a.local_task_id.cmp(&b.local_task_id));

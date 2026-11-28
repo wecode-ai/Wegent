@@ -98,7 +98,7 @@ impl RuntimeWorkRpcHandler {
             let superseded = superseded_transcript_turn_ids(&link.runtime_handle);
             if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
                 turns.retain(|turn| {
-                    string_field(turn, "id").map_or(true, |id| !superseded.contains(id.as_str()))
+                    string_field(turn, "id").is_none_or(|id| !superseded.contains(id.as_str()))
                 });
             }
         }

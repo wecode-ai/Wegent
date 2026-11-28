@@ -80,7 +80,7 @@ cargo test --manifest-path executor/Cargo.toml --locked --all-features
 cargo test --manifest-path shared/rust/Cargo.toml --locked
 ```
 
-两个应用与其领域库分别通过 `workspace.package.rust-version` 继承原有版本声明，CI 使用 `.github/ci/rust-toolchain` 固定的工具链。本次保持已有源码 API 基线，不认证旧工具链对完整锁定依赖图的兼容性。
+Backend、Executor 和共享库的 Cargo 工作区都通过 `workspace.package.rust-version` 将最低 Rust 版本设为 1.100.1，与 `.github/ci/rust-toolchain` 固定的 CI 工具链一致。生产镜像构建也读取此文件。
 
 Backend 与 Executor 各自 workspace 的默认成员包含应用和专属库。共享 workspace 独立维护用于库测试的锁文件；依赖它的应用仍按各自锁文件解析依赖。应用的 `cargo test` 不会自动执行外部依赖的单测，因此现有 Backend CI 测试任务另外运行共享库的格式、测试和 Clippy 检查。
 

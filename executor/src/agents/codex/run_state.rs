@@ -367,7 +367,7 @@ fn is_root_codex_turn_event(params: &Value) -> bool {
     let turn = params.get("turn").unwrap_or(params);
     codex_agent_path(turn)
         .or_else(|| codex_agent_path(params))
-        .map_or(true, |agent_path| agent_path == "/root")
+        .is_none_or(|agent_path| agent_path == "/root")
 }
 
 pub(super) fn stream_thread_id(value: &Value) -> Option<String> {

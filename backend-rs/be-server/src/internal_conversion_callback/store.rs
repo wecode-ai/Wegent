@@ -93,7 +93,6 @@ pub(crate) struct RefreshedDocumentRow {
     #[allow(dead_code)]
     pub(crate) kind_id: i64,
     #[allow(dead_code)]
-    #[allow(dead_code)]
     pub(crate) attachment_id: i64,
     #[allow(dead_code)]
     pub(crate) index_status: String,

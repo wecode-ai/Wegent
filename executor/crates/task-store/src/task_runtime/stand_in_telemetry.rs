@@ -59,7 +59,7 @@ fn consent_allows(connection: &Connection, user: i64, at: i64) -> Result<bool, T
             |row| row.get(0),
         )
         .optional()?;
-    Ok(since.map_or(true, |since| at >= since))
+    Ok(since.is_none_or(|since| at >= since))
 }
 
 fn enabled(connection: &Connection, user: i64) -> Result<bool, TaskRuntimeError> {
@@ -306,7 +306,7 @@ impl LocalTaskStore {
         let prior = previous.clone();
         let was_waiting = previous.as_ref().is_some_and(|(_, _, _, waiting)| *waiting);
         let fresh = running
-            && previous.as_ref().map_or(true, |(id, phase, _, _)| {
+            && previous.as_ref().is_none_or(|(id, phase, _, _)| {
                 (turn.is_empty() && phase == "completed")
                     || (!turn.is_empty() && !id.is_empty() && id != turn)
             });

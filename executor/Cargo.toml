@@ -40,7 +40,7 @@ default-members = [".", "crates/*"]
 exclude = ["vendor/tf-rust-socketio"]
 
 [workspace.package]
-rust-version = "1.77"
+rust-version = "1.100.1"
 
 [dependencies]
 wegent-claude-harness = { path = "crates/claude-harness" }

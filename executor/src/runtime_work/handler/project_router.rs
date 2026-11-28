@@ -374,7 +374,7 @@ fn project_processing_due(state: &Value) -> bool {
     state["lastCheckAt"]
         .as_str()
         .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map_or(true, |at| at + chrono::Duration::minutes(5) <= now)
+        .is_none_or(|at| at + chrono::Duration::minutes(5) <= now)
         || state["nextWakeAt"]
             .as_str()
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())

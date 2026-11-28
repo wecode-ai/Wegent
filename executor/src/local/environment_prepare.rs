@@ -93,7 +93,7 @@ pub(crate) async fn prepare_environment(definition: &Value) -> Result<ExecutionR
     }
     if definition["repositories"]
         .as_array()
-        .map_or(true, Vec::is_empty)
+        .is_none_or(Vec::is_empty)
     {
         request = prepare_blank_workspace(request)?;
     }

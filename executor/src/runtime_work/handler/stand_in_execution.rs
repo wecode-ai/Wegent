@@ -55,7 +55,7 @@ impl RuntimeWorkRpcHandler {
         role["executionDeviceId"]
             .as_str()
             .filter(|device| !device.is_empty())
-            .map_or(true, |device| self.stand_in_device_runs_here(device))
+            .is_none_or(|device| self.stand_in_device_runs_here(device))
     }
 
     pub(super) fn stand_in_device_runs_here(&self, device: &str) -> bool {

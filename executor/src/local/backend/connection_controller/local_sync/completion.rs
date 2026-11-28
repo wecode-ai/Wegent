@@ -66,7 +66,7 @@ pub(super) async fn confirm(
             "plugin_local_sync_busy"
         }));
     }
-    if result["plugins"].as_array().map_or(true, |items| {
+    if result["plugins"].as_array().is_none_or(|items| {
         items.iter().any(|item| {
             !response["recorded"]
                 .as_array()

@@ -547,7 +547,7 @@ impl RuntimeWorkRpcHandler {
             } else if receipt["state"] == "awaiting_user" {
                 let link = self.local_task_link(&task_id(user));
                 if self.is_busy_local_task(&task_id(user))
-                    || link.as_ref().map_or(true, waits_for_user)
+                    || link.as_ref().is_none_or(waits_for_user)
                 {
                     return Err(AppIpcError::new("work_awaiting_user", "Answer the question or approval in the original coordinator task before checking again"));
                 }

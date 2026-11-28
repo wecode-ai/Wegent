@@ -208,8 +208,7 @@ impl RuntimeWorkRpcHandler {
                 && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
                     link,
                 ))
-                && crate::runtime_work::lifecycle::native_execution_state(link).map_or(
-                    true,
+                && crate::runtime_work::lifecycle::native_execution_state(link).is_none_or(
                     |state| {
                         state.latest_turn_id == codex_notification_turn_id(message)
                             && state.process_generation == Some(message.process_generation())

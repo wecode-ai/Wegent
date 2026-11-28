@@ -5,7 +5,7 @@ fn matching_item(entry: &Value, call_id: &str, turn_id: Option<&str>) -> Option<
     let item = &entry["item"];
     (item["id"] == call_id
         && item["type"] == "mcpToolCall"
-        && turn_id.map_or(true, |turn_id| entry["turnId"] == turn_id))
+        && turn_id.is_none_or(|turn_id| entry["turnId"] == turn_id))
     .then(|| item.clone())
 }
 

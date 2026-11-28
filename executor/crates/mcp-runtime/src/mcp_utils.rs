@@ -132,7 +132,7 @@ fn valid_mcp_env_variable(item: &Value) -> bool {
             object.get("name").is_some_and(Value::is_string)
                 && object
                     .get("source")
-                    .map_or(true, |value| value.is_null() || value.is_string())
+                    .is_none_or(|value| value.is_null() || value.is_string())
         })
 }
 

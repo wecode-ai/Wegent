@@ -572,7 +572,7 @@ impl AutomationStore {
     }
 
     pub fn list_runs(&self, automation_id: Option<&str>) -> Vec<AutomationRun> {
-        self.list_matching_runs(|run| automation_id.map_or(true, |id| run.automation_id == id))
+        self.list_matching_runs(|run| automation_id.is_none_or(|id| run.automation_id == id))
     }
 
     pub fn reconcile_interrupted_runs(

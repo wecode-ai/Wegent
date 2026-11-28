@@ -81,14 +81,14 @@ impl MappedSource {
         for character in text.chars() {
             let end = offset + character.len_utf16();
             result.text.push(character);
-            result.origins.extend(
-                std::iter::repeat(Some(Origin {
+            result.origins.extend(std::iter::repeat_n(
+                Some(Origin {
                     item_id: item_id.clone(),
                     start: offset,
                     end,
-                }))
-                .take(character.len_utf8()),
-            );
+                }),
+                character.len_utf8(),
+            ));
             offset = end;
         }
         result
@@ -101,7 +101,7 @@ impl MappedSource {
     pub fn append(&mut self, other: Self, separator: &str) {
         self.text.push_str(separator);
         self.origins
-            .extend(std::iter::repeat(None).take(separator.len()));
+            .extend(std::iter::repeat_n(None, separator.len()));
         self.text.push_str(&other.text);
         self.origins.extend(other.origins);
     }

@@ -414,7 +414,7 @@ impl LocalTaskStore {
                 let current = state["nextWakeAt"]
                     .as_str()
                     .and_then(|at| DateTime::parse_from_rfc3339(at).ok());
-                if current.map_or(true, |current| at < current) {
+                if current.is_none_or(|current| at < current) {
                     state["nextWakeAt"] = decision["at"].clone();
                 }
             }

@@ -598,7 +598,7 @@ impl RuntimeWorkRpcHandler {
                         .into_iter()
                         .flatten()
                         .find(|native| native["id"] == item["id"]);
-                    existing.map_or(true, |native| {
+                    existing.is_none_or(|native| {
                         item_type(native) == "commandexecution"
                             && !matches!(native["status"].as_str(), Some("completed" | "failed"))
                     })

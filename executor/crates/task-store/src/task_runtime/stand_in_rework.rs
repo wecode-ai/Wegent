@@ -350,7 +350,7 @@ fn median_interval(changes: &mut [f64]) -> (f64, f64, f64) {
         weight *= index as f64 / (n - index + 1) as f64;
         weights.push(weight);
     }
-    let total = 2.0 * weights.iter().sum::<f64>() - if n % 2 == 0 { 1.0 } else { 0.0 };
+    let total = 2.0 * weights.iter().sum::<f64>() - if n.is_multiple_of(2) { 1.0 } else { 0.0 };
     let mut tail = 0.0;
     let mut rank = 0;
     for (index, weight) in weights.into_iter().rev().enumerate() {

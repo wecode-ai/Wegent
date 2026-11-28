@@ -203,9 +203,7 @@ fn reasoning_summary(content: &[Value]) -> Vec<Value> {
 }
 
 fn summary_is_empty(summary: Option<&Value>) -> bool {
-    summary.map_or(true, |value| {
-        value.is_null() || value.as_array().is_some_and(Vec::is_empty)
-    })
+    summary.is_none_or(|value| value.is_null() || value.as_array().is_some_and(Vec::is_empty))
 }
 
 fn has_usable_encrypted_content(object: &Map<String, Value>) -> bool {

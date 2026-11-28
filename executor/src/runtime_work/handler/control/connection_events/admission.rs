@@ -243,7 +243,7 @@ impl RuntimeWorkRpcHandler {
                         .as_str()
                         .ok_or_else(|| invalid("Event conversation is missing"))?,
                 )
-                .map_or(true, |link| {
+                .is_none_or(|link| {
                     link.interaction_status
                         .as_deref()
                         .is_some_and(|status| !status.is_empty())

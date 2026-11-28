@@ -347,9 +347,9 @@ pub(super) fn validated_personal_marketplace_path_for_capabilities(
     }
     let canonical_expected = expected.canonicalize().ok();
     if requested != expected
-        && canonical_expected.as_ref().map_or(true, |canonical| {
-            requested.canonicalize().ok().as_ref() != Some(canonical)
-        })
+        && canonical_expected
+            .as_ref()
+            .is_none_or(|canonical| requested.canonicalize().ok().as_ref() != Some(canonical))
     {
         return Err(format!(
             "Personal marketplace path must be {}",
@@ -599,7 +599,7 @@ fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
 pub(super) fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
-        .map_or(true, |name| name != "marketplace.json")
+        .is_none_or(|name| name != "marketplace.json")
     {
         return path.to_path_buf();
     }

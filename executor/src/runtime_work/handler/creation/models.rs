@@ -168,7 +168,7 @@ impl RuntimeWorkRpcHandler {
             .filter(|model| {
                 model["runtime"] == runtime
                     && model["model_id"] == name
-                    && provider.map_or(true, |provider| model["provider"] == provider)
+                    && provider.is_none_or(|provider| model["provider"] == provider)
             })
             .collect::<Vec<_>>();
         if models.len() != 1 {

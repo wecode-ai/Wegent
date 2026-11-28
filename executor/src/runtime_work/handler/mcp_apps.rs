@@ -50,7 +50,7 @@ pub(super) fn source_call<'a>(
     thread["turns"]
         .as_array()?
         .iter()
-        .filter(|turn| turn_id.map_or(true, |id| turn["id"] == id))
+        .filter(|turn| turn_id.is_none_or(|id| turn["id"] == id))
         .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
         .find(|item| item["id"] == call_id && item["type"] == "mcpToolCall")
 }

@@ -102,7 +102,7 @@ impl RuntimeWorkRpcHandler {
             || row["generation"] != record["generation"]
             || row["stopped"] != false
             || row["observationId"] != record["observation_id"]
-            || row["expiresAt"].as_i64().map_or(true, |value| value <= 0)
+            || row["expiresAt"].as_i64().is_none_or(|value| value <= 0)
             || observation_identity(&row["source"]) != observation_identity(&record["source"])
             || response["observation"]["id"] != record["observation_id"]
             || observation_identity(&response["observation"]["source"])

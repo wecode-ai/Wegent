@@ -280,7 +280,7 @@ fn worktree_persistent_storage_verified_for(device_type: &str, verification: Opt
         "local" | "app" | "" => true,
         "cloud" | "remote" => verification
             .map(str::trim)
-            .map_or(true, |value| value.eq_ignore_ascii_case("true")),
+            .is_none_or(|value| value.eq_ignore_ascii_case("true")),
         _ => false,
     }
 }

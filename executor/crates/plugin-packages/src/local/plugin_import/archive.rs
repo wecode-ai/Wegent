@@ -287,7 +287,7 @@ pub(super) fn validate_plugin_import_manifest(
         .and_then(Value::as_object)
         .and_then(|author| author.get("name"))
         .and_then(Value::as_str)
-        .map_or(true, |name| name.trim().is_empty())
+        .is_none_or(|name| name.trim().is_empty())
     {
         issues.push(plugin_import_issue(
             "manifest_author_missing",
@@ -313,7 +313,7 @@ pub(super) fn validate_plugin_import_manifest(
     let interface = manifest.get("interface").and_then(Value::as_object);
     if interface
         .and_then(|value| value.get("capabilities"))
-        .map_or(true, |value| !value.is_array())
+        .is_none_or(|value| !value.is_array())
     {
         issues.push(plugin_import_issue(
             "manifest_capabilities_invalid",
@@ -321,7 +321,7 @@ pub(super) fn validate_plugin_import_manifest(
             "plugin.json field `interface.capabilities` must be an array",
         ));
     }
-    if interface.map_or(true, |value| {
+    if interface.is_none_or(|value| {
         !value.contains_key("defaultPrompt") && !value.contains_key("default_prompt")
     }) {
         issues.push(plugin_import_issue(
@@ -333,7 +333,7 @@ pub(super) fn validate_plugin_import_manifest(
     if let Some(skills) = manifest.get("skills") {
         if skills
             .as_str()
-            .map_or(true, |path| path.trim_end_matches('/') != "./skills")
+            .is_none_or(|path| path.trim_end_matches('/') != "./skills")
             || !root.join("skills").is_dir()
         {
             issues.push(plugin_import_issue(
