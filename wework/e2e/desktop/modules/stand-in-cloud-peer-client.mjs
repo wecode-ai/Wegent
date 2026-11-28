@@ -426,7 +426,10 @@ export function createStandInCloudPeerClient({
         // falls back cleanly to CLOUD_DEVICE_ID without overwriting cloud @primary and executes on CLOUD_DEVICE_ID.
         await reloadMainWindow(peerControl)
         await peerControl.command('clickWhenEnabled', testId('stand-in-primary-open'))
-        await peerControl.command('waitFor', testId('stand-in-conversation'))
+        await peerControl.command('waitFor', testId('stand-in-conversation'), {
+          text: PEER_CLOUD_COMPLETE,
+          timeoutMs: uiTimeoutMs,
+        })
         assert.equal(
           await readPrimaryDevice(),
           localDevice,
