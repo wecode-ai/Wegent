@@ -417,6 +417,46 @@ async def test_malformed_model_response_rejects_the_turn_before_tool_execution(s
 
 
 @pytest.mark.asyncio
+async def test_duplicate_malformed_gemini_frames_fail_before_aggregation():
+    import json
+
+    import httpx
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.models.response_validation import MalformedModelResponseError
+
+    frame = {
+        "modelVersion": "gemini-3-pro-preview",
+        "candidates": [{"index": 0, "finishReason": "MALFORMED_RESPONSE"}],
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(":streamGenerateContent")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text=f"data: {json.dumps(frame)}\n\n" * 2,
+        )
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3-pro-preview",
+        google_api_key="fixture-only",
+        base_url="https://model.test",
+        client_args={"transport": httpx.MockTransport(respond)},
+        streaming=True,
+        max_retries=0,
+    )
+    builder = LangGraphAgentBuilder(llm=llm)
+    try:
+        with pytest.raises(MalformedModelResponseError, match="MALFORMED_RESPONSE"):
+            await anext(builder.stream_tokens([{"role": "user", "content": "hi"}]))
+    finally:
+        await llm.client.aio.aclose()
+        llm.client.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("malformed", [False, True])
 async def test_tool_limit_recovery_persists_full_chain_without_instruction(
     monkeypatch, malformed

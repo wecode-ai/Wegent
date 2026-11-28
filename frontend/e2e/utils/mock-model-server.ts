@@ -401,9 +401,10 @@ function writeStreamingResponse(
   chunkDelayMs: number,
   doneDelayMs: number,
   doneGate?: MockResponseGate,
-  terminalError?: string
+  terminalError?: string,
+  finishReason?: StreamRule['finishReason']
 ): void {
-  const chunks = content.split(' ')
+  const chunks = content ? content.split(' ') : []
   let index = 0
 
   const sendChunk = () => {
@@ -418,10 +419,10 @@ function writeStreamingResponse(
     const finish = async () => {
       await doneGate?.wait(res)
       if (res.destroyed) return
-      if (terminalError) {
+      if (terminalError && !finishReason) {
         res.end(`data: ${JSON.stringify({ error: { message: terminalError } })}\n\n`)
       } else {
-        writeSseDone(res)
+        writeSseDone(res, finishReason)
       }
     }
     setTimeout(() => void finish(), doneDelayMs)
@@ -789,18 +790,14 @@ const server = http.createServer((req, res) => {
           Connection: 'keep-alive',
         })
 
-        if (finishReason) {
-          writeSseDone(res, finishReason)
-          return
-        }
-
         writeStreamingResponse(
           res,
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
           scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
           streamRule?.holdDone ? responseGate : undefined,
-          streamRule?.terminalError
+          streamRule?.terminalError,
+          finishReason
         )
       } else {
         // Return non-streaming response
