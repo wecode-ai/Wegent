@@ -55,13 +55,19 @@ class TestDockerExecutor:
         return mock
 
     @pytest.fixture
-    def executor(self, mock_subprocess, mock_requests):
+    def executor(self, mock_subprocess, mock_requests, callback_repository):
         """Create DockerExecutor instance with mocked dependencies"""
         # Mock docker availability check
         mock_subprocess.run.return_value = MagicMock(returncode=0)
         return DockerExecutor(
             subprocess_module=mock_subprocess, requests_module=mock_requests
         )
+
+    @pytest.fixture
+    def callback_repository(self, mocker):
+        return mocker.patch(
+            "executor_manager.services.sandbox.repository.get_sandbox_repository"
+        ).return_value
 
     @pytest.fixture
     def sample_task(self):
@@ -164,6 +170,29 @@ class TestDockerExecutor:
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
 
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_includes_callback_token(
+        self, mock_callback, executor
+    ):
+        """New and legacy callback credentials both reach the runtime."""
+        mock_callback.return_value = "http://callback.url"
+        task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "executor_callback_token": "callback-token",
+        }
+        task_info = executor._extract_task_info(task)
+
+        cmd = executor._prepare_docker_command(
+            task, task_info, "test-executor", "test/executor:latest"
+        )
+
+        assert "CALLBACK_URL=http://callback.url" in cmd
+        assert "EXECUTOR_CALLBACK_TOKEN=callback-token" in cmd
+        assert "EXECUTOR_CALLBACK_SCOPE=task" in cmd
+
     @patch.dict(os.environ, {"TASK_API_DOMAIN": "http://backend:8000"}, clear=False)
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_adds_task_api_domain(
@@ -264,6 +293,7 @@ class TestDockerExecutor:
             "type": "sandbox",
             "auth_token": "token-123",
             "skill_identity_token": "skill-jwt",
+            "executor_callback_token": "callback-token",
         }
 
         task_info = executor._extract_task_info(sandbox_task)
@@ -272,6 +302,7 @@ class TestDockerExecutor:
         )
 
         assert "AUTH_TOKEN=token-123" in cmd
+        assert "EXECUTOR_CALLBACK_SCOPE=sandbox" in cmd
         assert "TASK_ID=123" in cmd
         assert "EXECUTOR_MODE=docker" in cmd
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
@@ -393,30 +424,60 @@ class TestDockerExecutor:
         assert result["status"] == "failed"
         assert "has no ports mapped" in result["error_msg"]
 
+    @pytest.mark.parametrize("task_type", ["online", "validation"])
+    @pytest.mark.parametrize(
+        "base_image", [None, "127.0.0.1:1/wegent/recovery-missing"]
+    )
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch.object(docker_executor_module, "generate_executor_name")
-    def test_submit_executor_docker_error(
+    def test_submit_executor_docker_error_keeps_credentials_private(
         self,
         mock_name,
         mock_callback,
         executor,
         sample_task,
         mock_subprocess,
+        task_type,
+        mocker,
+        base_image,
     ):
         """Test submitting executor with Docker error"""
         mock_name.return_value = "new-executor"
         mock_callback.return_value = "http://callback.url"
-
-        # Reset mock and simulate error
-        mock_subprocess.run.reset_mock()
-        mock_subprocess.run.side_effect = subprocess.CalledProcessError(
-            1, "docker run", stderr="Docker error"
+        sample_task["type"] = task_type
+        credential = "test-only-callback-secret"
+        logger = mocker.patch.object(docker_executor_module, "logger")
+        validation = mocker.patch.object(executor, "_report_validation_stage")
+        mocker.patch.object(executor, "_should_enable_seccomp", return_value=True)
+        mocker.patch.object(
+            executor, "_get_base_image_from_task", return_value=base_image
         )
+        mocker.patch.object(executor, "_ensure_executor_binary_updated")
 
-        result = executor.submit_executor(sample_task)
+        with patch.object(
+            docker_executor_module,
+            "generate_callback_token",
+            return_value=credential,
+        ):
+            # Reset mock and simulate error
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.side_effect = subprocess.CalledProcessError(
+                1,
+                ["docker", "run", "-e", f"EXECUTOR_CALLBACK_TOKEN={credential}"],
+                stderr=f"Docker failed to pull image: {credential}",
+            )
+
+            result = executor.submit_executor(sample_task)
 
         assert result["status"] == "failed"
-        assert "Docker run error" in result["error_msg"]
+        image = base_image or sample_task["executor_image"]
+        assert f"exited with status 1 (image {image})" in result["error_msg"]
+        assert credential not in result["error_msg"]
+        assert credential not in str(logger.mock_calls)
+        if task_type == "validation":
+            assert validation.call_args.kwargs["stage"] == "pulling_image"
+            assert credential not in validation.call_args.kwargs["message"]
+            assert credential not in validation.call_args.kwargs["error_message"]
 
     @patch.object(docker_executor_module, "get_running_task_details")
     def test_cancel_task_uses_running_container_when_task_ids_is_empty(
@@ -457,6 +518,17 @@ class TestDockerExecutor:
 
         with (
             patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                return_value="callback-token",
+            ),
+            patch(
+                "executor_manager.services.sandbox.repository.get_sandbox_repository",
+                return_value=MagicMock(
+                    load_executor_callback_token=lambda *args, **kwargs: "callback-token"
+                ),
+            ),
+            patch.object(
                 executor,
                 "_prepare_docker_command",
                 return_value=["docker", "run", "dummy"],
@@ -477,7 +549,227 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
             mock_wait_ready.assert_called_once_with("new-executor")
+            assert "executor_callback_token" not in sample_task
             mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
+
+    @pytest.mark.parametrize("task_type", ["online", "sandbox"])
+    @pytest.mark.parametrize("nested_metadata", [False, True])
+    def test_create_new_container_prepares_callback_token_before_creation(
+        self, executor, sample_task, task_type, nested_metadata
+    ):
+        """The callback credential must be ready before the container command."""
+        sample_task["type"] = task_type
+        if nested_metadata:
+            sample_task = {"metadata": sample_task}
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+
+        with (
+            patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                return_value="callback-token",
+            ) as mock_prepare,
+            patch.object(executor, "create_instance") as mock_create,
+            patch.object(executor, "wait_instance_ready", return_value={"port": 8080}),
+            patch.object(executor, "dispatch_task_to_instance") as mock_dispatch,
+        ):
+            executor._create_new_container(sample_task, task_info, status)
+
+        mock_prepare.assert_called_once_with()
+        created_task = mock_create.call_args.args[0]
+        startup_fields = created_task["metadata"] if nested_metadata else created_task
+        request_fields = sample_task["metadata"] if nested_metadata else sample_task
+        assert startup_fields["executor_callback_token"] == "callback-token"
+        assert "executor_callback_token" not in request_fields
+        assert mock_create.call_count == 1
+        assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
+
+    @pytest.mark.parametrize("delete_status", ["success", "not_found", "failed"])
+    def test_sandbox_task_cleanup_preserves_the_regular_executor(
+        self, executor, mocker, delete_status
+    ):
+        inventory = mocker.patch.object(
+            docker_executor_module,
+            "get_running_task_details",
+            return_value={
+                "status": "success",
+                "containers": [
+                    {
+                        "container_name": "regular",
+                        "container_id": "a" * 64,
+                        "task_type": "online",
+                    },
+                    {
+                        "container_name": "sandbox",
+                        "container_id": "b" * 64,
+                        "task_type": "sandbox",
+                    },
+                ],
+            },
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": delete_status},
+        )
+        repository = mocker.patch(
+            "executor_manager.services.sandbox.repository.get_sandbox_repository"
+        ).return_value
+
+        result = executor.delete_executor_by_task_id("123", sandbox_only=True)
+
+        inventory.assert_called_once_with(
+            label_selector="task_id=123", include_stopped=True
+        )
+        delete.assert_called_once_with("b" * 64)
+        assert result["status"] == delete_status
+        assert result["deleted_containers"] == (
+            ["sandbox"] if delete_status == "success" else []
+        )
+        assert result["absent_containers"] == (
+            ["sandbox"] if delete_status == "not_found" else []
+        )
+        assert result["confirmed_container_ids"] == (
+            {"sandbox": "b" * 64} if delete_status != "failed" else {}
+        )
+        if delete_status in {"success", "not_found"}:
+            repository.delete_executor_binding.assert_called_once_with(
+                123,
+                expected_executor_name="sandbox",
+                expected_container_id="b" * 64,
+                sandbox=True,
+            )
+        else:
+            repository.delete_executor_binding.assert_not_called()
+
+    @pytest.mark.parametrize("task_type", ["validation", "sandbox"])
+    @pytest.mark.parametrize("delete_status", ["success", "failed"])
+    def test_callback_publication_failure_cleans_up_the_matching_binding(
+        self,
+        executor,
+        sample_task,
+        mocker,
+        callback_repository,
+        mock_subprocess,
+        task_type,
+        delete_status,
+    ):
+        sample_task["type"] = task_type
+        callback_repository.save_executor_binding.return_value = False
+        callback_repository.load_executor_binding_full.return_value = None
+        mock_subprocess.run.return_value.stdout = "new-container-id"
+        mocker.patch.object(
+            docker_executor_module,
+            "generate_callback_token",
+            return_value="issued-token",
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": delete_status},
+        )
+        validation = mocker.patch.object(executor, "_report_validation_stage")
+
+        result = executor.submit_executor(sample_task)
+
+        assert result["status"] == "failed"
+        delete.assert_called_once_with("new-container-id")
+        if delete_status == "success":
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                sample_task["task_id"],
+                expected_executor_name=result["executor_name"],
+                expected_callback_token="issued-token",
+                expected_container_id="new-container-id",
+                sandbox=task_type == "sandbox",
+            )
+        else:
+            callback_repository.delete_executor_binding.assert_not_called()
+        if task_type == "validation":
+            assert validation.call_args.kwargs["status"] == "failed"
+            assert validation.call_args.kwargs["valid"] is False
+        else:
+            validation.assert_not_called()
+
+    @pytest.mark.parametrize("same_container", [True, False])
+    def test_uncertain_callback_publication_verifies_the_runtime(
+        self, executor, sample_task, mocker, callback_repository, same_container
+    ):
+        sample_task["type"] = "sandbox"
+        sample_task["executor_callback_token"] = "issued-token"
+        callback_repository.save_executor_binding.return_value = False
+        callback_repository.load_executor_binding_full.return_value = {
+            "executor_name": "sandbox",
+            "container_id": "new-id" if same_container else "other-id",
+            "callback_token": "issued-token",
+        }
+        cleanup = mocker.patch.object(executor, "_cleanup_failed_start")
+
+        if same_container:
+            executor._publish_callback_binding(sample_task, "sandbox", "new-id")
+            cleanup.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="Could not persist"):
+                executor._publish_callback_binding(sample_task, "sandbox", "new-id")
+            cleanup.assert_called_once_with(
+                "new-id", 123, "sandbox", "issued-token", sandbox=True
+            )
+        callback_repository.load_executor_binding_full.assert_called_once_with(
+            123, sandbox=True
+        )
+
+    def test_recreated_container_rotates_callback_token_after_docker_succeeds(
+        self, executor, sample_task, mock_subprocess, callback_repository
+    ):
+        """The first runtime receives the callback credential at startup."""
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+
+        with (
+            patch.object(docker_executor_module, "build_callback_url") as mock_callback,
+            patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                side_effect=["callback-token", "unused-token", "replacement-token"],
+            ),
+            patch.object(executor, "_wait_for_container_ready", return_value=8080),
+            patch.object(executor, "dispatch_task_to_instance"),
+        ):
+            mock_callback.return_value = "http://callback.url"
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.return_value = MagicMock(
+                stdout="container-id\n", returncode=0
+            )
+
+            executor._create_new_container(sample_task, task_info, status)
+
+            command = mock_subprocess.run.call_args.args[0]
+            assert "EXECUTOR_CALLBACK_TOKEN=callback-token" in command
+            mock_subprocess.run.side_effect = subprocess.CalledProcessError(1, command)
+            with pytest.raises(RuntimeError, match="exited with status 1"):
+                executor._create_new_container(sample_task, task_info, status)
+            callback_repository.save_executor_binding.assert_called_once()
+
+            mock_subprocess.run.side_effect = None
+            mock_subprocess.run.return_value.stdout = "replacement-container-id"
+            executor._create_new_container(sample_task, task_info, status)
+
+        assert callback_repository.save_executor_binding.call_args_list == [
+            call(
+                123,
+                "new-executor",
+                sandbox=False,
+                callback_token="callback-token",
+                container_id="container-id",
+            ),
+            call(
+                123,
+                "new-executor",
+                sandbox=False,
+                callback_token="replacement-token",
+                container_id="replacement-container-id",
+            ),
+        ]
 
     def test_create_new_container_does_not_dispatch_for_sandbox(
         self, executor, mock_subprocess
@@ -494,6 +786,11 @@ class TestDockerExecutor:
         task_info = executor._extract_task_info(sandbox_task)
 
         with (
+            patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                return_value="callback-token",
+            ),
             patch.object(
                 executor,
                 "_prepare_docker_command",
@@ -529,6 +826,11 @@ class TestDockerExecutor:
         task_info = executor._extract_task_info(prepare_task)
 
         with (
+            patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                return_value="callback-token",
+            ),
             patch.object(executor, "create_instance") as mock_create,
             patch.object(executor, "wait_instance_ready") as mock_wait_ready,
             patch.object(
@@ -537,17 +839,59 @@ class TestDockerExecutor:
         ):
             executor._create_new_container(prepare_task, task_info, status)
 
-        mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
+        assert "executor_callback_token" not in prepare_task
+        mock_create.assert_called_once_with(
+            {**prepare_task, "executor_callback_token": "callback-token"},
+            task_info,
+            "prepare-executor",
+        )
         mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {
-            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
-        },
-        clear=False,
-    )
+    @pytest.mark.parametrize("delete_status", ["success", "failed"])
+    def test_initial_dispatch_failure_revokes_only_the_removed_runtime(
+        self, executor, sample_task, callback_repository, mocker, delete_status
+    ):
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+        mocker.patch.object(
+            docker_executor_module,
+            "generate_callback_token",
+            return_value="issued-token",
+        )
+        mocker.patch.object(
+            executor, "create_instance", return_value="new-container-id"
+        )
+        mocker.patch.object(
+            executor, "wait_instance_ready", return_value={"port": 8080}
+        )
+        mocker.patch.object(
+            executor,
+            "dispatch_task_to_instance",
+            side_effect=RuntimeError("dispatch failed"),
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": delete_status},
+        )
+
+        with pytest.raises(RuntimeError, match="dispatch failed"):
+            executor._create_new_container(sample_task, task_info, status)
+
+        delete.assert_called_once_with("new-container-id")
+        if delete_status == "success":
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                123,
+                expected_executor_name="new-executor",
+                expected_callback_token="issued-token",
+                expected_container_id="new-container-id",
+                sandbox=False,
+            )
+        else:
+            callback_repository.delete_executor_binding.assert_not_called()
+
+    @patch.dict(os.environ, {"VALIDATION_KEEP_FAILED_CONTAINER": "true"}, clear=False)
     @patch("executor_manager.executors.docker.executor.delete_container")
     def test_create_new_container_keeps_validation_container_on_dispatch_failure(
         self, mock_delete_container, executor
@@ -565,6 +909,11 @@ class TestDockerExecutor:
         task_info = executor._extract_task_info(validation_task)
 
         with (
+            patch.object(
+                docker_executor_module,
+                "generate_callback_token",
+                return_value="callback-token",
+            ),
             patch.object(executor, "create_instance"),
             patch.object(
                 executor,
@@ -577,48 +926,64 @@ class TestDockerExecutor:
 
         mock_delete_container.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {
-            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
-        },
-        clear=False,
-    )
-    def test_check_container_health_keeps_failed_validation_container_when_enabled(
-        self, executor, mock_subprocess
+    @pytest.mark.parametrize("keep_failed", [False, True])
+    def test_validation_startup_exit_cleans_up_container_and_binding(
+        self,
+        executor,
+        mock_subprocess,
+        callback_repository,
+        mocker,
+        monkeypatch,
+        keep_failed,
     ):
-        """Validation health check should not remove exited container when debug flag is enabled."""
+        monkeypatch.setenv(
+            "VALIDATION_KEEP_FAILED_CONTAINER", "true" if keep_failed else "false"
+        )
         task = {
             "task_id": 123,
             "subtask_id": 1,
             "type": "validation",
+            "executor_callback_token": "issued-token",
+            "executor_image": "test/executor:latest",
             "validation_params": {"validation_id": "vid-1"},
         }
 
         mock_subprocess.run.side_effect = [
+            MagicMock(returncode=0, stdout="validation-container-id\n"),
             MagicMock(returncode=0, stdout="exited\n"),  # container status
             MagicMock(returncode=0, stdout="executor crashed\n"),  # logs
             MagicMock(returncode=0, stdout="1\n"),  # exit code
         ]
+        mocker.patch.object(executor, "_get_base_image_from_task", return_value="base")
+        mocker.patch.object(executor, "_ensure_executor_binary_updated")
+        mocker.patch.object(
+            executor, "_prepare_docker_command", return_value=["docker", "run", "base"]
+        )
+        mocker.patch.object(executor, "_report_validation_stage")
+        mocker.patch.object(docker_executor_module.time, "sleep")
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": "success"},
+        )
 
-        with (
-            patch("executor_manager.executors.docker.executor.time.sleep"),
-            patch.object(
-                executor,
-                "_report_validation_stage",
-            ),
-        ):
-            with pytest.raises(RuntimeError, match="Container exited immediately"):
-                executor._check_container_health(
-                    task, "validation-executor", is_validation_task=True
-                )
+        with pytest.raises(RuntimeError, match="Container exited immediately"):
+            executor.create_instance(
+                task, executor._extract_task_info(task), "validation-executor"
+            )
 
-        rm_calls = [
-            call_args
-            for call_args in mock_subprocess.run.call_args_list
-            if call_args[0][0][:3] == ["docker", "rm", "-f"]
-        ]
-        assert len(rm_calls) == 0
+        if keep_failed:
+            delete.assert_not_called()
+            callback_repository.delete_executor_binding.assert_not_called()
+        else:
+            delete.assert_called_once_with("validation-container-id")
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                123,
+                expected_executor_name="validation-executor",
+                expected_callback_token="issued-token",
+                expected_container_id="validation-container-id",
+                sandbox=False,
+            )
 
     @patch.dict(
         os.environ,
@@ -729,26 +1094,59 @@ class TestDockerExecutor:
     def test_delete_executor_success(self, mock_run, executor):
         """Test deleting executor successfully"""
         # Mock subprocess.run calls:
-        # 1. check_container_ownership
-        # 2. delete_container (shell command)
+        # 1. resolve the owned container ID
+        # 2. stop the container
+        # 3. remove the container
+        container_id = "a" * 64
         mock_run.side_effect = [
-            MagicMock(stdout="test-executor\n", returncode=0),  # ownership check
-            MagicMock(returncode=0),  # delete command
+            MagicMock(stdout=f"test-executor|{container_id}\n", returncode=0),
+            MagicMock(returncode=0),  # stop
+            MagicMock(returncode=0),  # remove
         ]
 
         result = executor.delete_executor("test-executor")
 
         assert result["status"] == "success"
+        assert [call.args[0] for call in mock_run.call_args_list[1:]] == [
+            ["docker", "stop", "--", container_id],
+            ["docker", "rm", "--", container_id],
+        ]
+        assert result["container_id"] == container_id
 
-    @patch("executor_manager.executors.docker.utils.check_container_ownership")
-    def test_delete_executor_unauthorized(self, mock_check, executor):
-        """Test deleting executor without ownership"""
-        mock_check.return_value = False
+    @pytest.mark.parametrize(
+        ("runtime_status", "expected"),
+        [
+            ("running", "unauthorized"),
+            ("error", "failed"),
+            ("unknown", "failed"),
+            ("not_found", "not_found"),
+        ],
+    )
+    def test_delete_executor_without_confirmed_ownership(
+        self, executor, mocker, runtime_status, expected
+    ):
+        mocker.patch.object(
+            docker_executor_module, "find_owned_container_id", return_value=None
+        )
+        mocker.patch.object(
+            executor, "get_container_status", return_value={"status": runtime_status}
+        )
+        delete = mocker.patch.object(docker_executor_module, "delete_container")
 
         result = executor.delete_executor("test-executor")
 
-        assert result["status"] == "unauthorized"
-        assert "not owned by" in result["error_msg"]
+        assert result["status"] == expected
+        delete.assert_not_called()
+
+    @patch("executor_manager.executors.docker.utils.subprocess.run")
+    def test_delete_executor_reports_failed_ownership_lookup(self, mock_run, executor):
+        mock_run.side_effect = subprocess.TimeoutExpired("docker ps", 15)
+
+        result = executor.delete_executor("test-executor")
+
+        assert result["status"] == "failed"
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["timeout"] == 15
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_get_executor_count_success(self, mock_run, executor):

@@ -114,6 +114,7 @@ def mock_redis_client(mocker):
     mock_client.zrem.return_value = 1
     mock_client.zrange.return_value = []
     mock_client.zrangebyscore.return_value = []
+    mock_client.zscore.return_value = None
     return mock_client
 
 

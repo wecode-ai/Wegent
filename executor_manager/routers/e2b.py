@@ -27,7 +27,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from executor_manager.models.sandbox import SandboxStatus
-from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox import (
+    SandboxTerminationError,
+    get_sandbox_manager,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -465,26 +468,33 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
 
     manager = get_sandbox_manager()
 
-    # Find sandbox by e2b_sandbox_id
-    sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
-    if sandbox is None:
-        # Fallback: try direct lookup
-        sandbox = await manager.get_sandbox(sandbox_id, check_health=False)
-
-    if sandbox is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "not_found",
-                "message": f"Sandbox {sandbox_id} not found",
-            },
+    try:
+        sandbox = await _find_sandbox_by_e2b_id(
+            manager, sandbox_id, require_definitive_result=True
         )
+    except Exception as exc:
+        logger.warning("E2B sandbox lookup failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "termination_failed",
+                "message": f"Sandbox {sandbox_id} storage is unavailable",
+            },
+        ) from exc
 
-    success, message = await manager.terminate_sandbox(sandbox.sandbox_id)
+    try:
+        success, _ = await manager.terminate_sandbox(
+            sandbox.sandbox_id if sandbox is not None else sandbox_id, observed=sandbox
+        )
+    except SandboxTerminationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "termination_failed", "message": str(exc)},
+        ) from exc
     if not success:
         raise HTTPException(
-            status_code=500,
-            detail={"code": "termination_failed", "message": message},
+            status_code=404,
+            detail={"code": "not_found", "message": f"Sandbox {sandbox_id} not found"},
         )
 
     # Return 204 No Content
@@ -696,25 +706,52 @@ async def connect_to_sandbox(sandbox_id: str, http_request: Request):
 # =============================================================================
 
 
-async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
+async def _find_sandbox_by_e2b_id(
+    manager, e2b_sandbox_id: str, *, require_definitive_result: bool = False
+):
     """Find sandbox by E2B sandbox ID in metadata.
 
-    Searches through active sandboxes for one with matching e2b_sandbox_id
-    in metadata.
+    For deletion, try the E2B index before scanning active sandboxes.
 
     Args:
         manager: SandboxManager instance
         e2b_sandbox_id: E2B format sandbox UUID
+        require_definitive_result: Propagate storage lookup failures.
 
     Returns:
         Sandbox if found, None otherwise
     """
     repository = manager._repository
-    sandbox_ids = repository.get_active_sandbox_ids()
+    if require_definitive_result:
+        indexed_id = repository.lookup_sandbox_id_by_e2b_id(e2b_sandbox_id)
+        if (
+            indexed_id is not None
+            and repository.get_sandbox_activity_score(indexed_id) is not None
+        ):
+            indexed = repository.load_sandbox(
+                indexed_id, require_definitive_result=True
+            )
+            if indexed and indexed.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
+                return indexed
 
+    sandbox_ids = repository.get_active_sandbox_ids(
+        require_definitive_result=require_definitive_result
+    )
+
+    invalid_record: Optional[Exception] = None
     for sandbox_id in sandbox_ids:
-        sandbox = repository.load_sandbox(sandbox_id)
+        try:
+            sandbox = repository.load_sandbox(
+                sandbox_id, require_definitive_result=require_definitive_result
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            # Keep looking for a readable match, but do not report definite
+            # absence when a corrupt session could not be inspected.
+            invalid_record = exc
+            continue
         if sandbox and sandbox.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
             return sandbox
 
+    if invalid_record is not None:
+        raise invalid_record
     return None

@@ -44,6 +44,18 @@ def _create_repository(mocker, mock_redis_client) -> SandboxRepository:
     return SandboxRepository()
 
 
+@pytest.mark.parametrize("ttl", ["0", "-1"])
+def test_repository_rejects_non_positive_binding_ttl(
+    monkeypatch, mocker, mock_redis_client, ttl
+):
+    monkeypatch.setenv("SANDBOX_EXECUTOR_BINDING_TTL", ttl)
+
+    with pytest.raises(
+        ValueError, match="SANDBOX_EXECUTOR_BINDING_TTL must be positive"
+    ):
+        _create_repository(mocker, mock_redis_client)
+
+
 def test_manager_scope_prefers_explicit_configuration(
     monkeypatch, mocker, mock_redis_client
 ):
@@ -58,6 +70,38 @@ def test_manager_scope_prefers_explicit_configuration(
     assert repository.active_sandboxes_zset == _build_active_sandboxes_zset(
         "simulation-manager"
     )
+
+
+def test_delete_sandbox_preserves_retry_state_when_session_lookup_fails(
+    mocker, mock_redis_client
+):
+    repository = _create_repository(mocker, mock_redis_client)
+    mock_redis_client.hget.side_effect = OSError("Redis temporarily unavailable")
+
+    assert repository.delete_sandbox("12345") is False
+
+    mock_redis_client.zrem.assert_not_called()
+    mock_redis_client.delete.assert_not_called()
+
+
+def test_delete_sandbox_keeps_lookup_indexes_when_session_removal_fails(
+    mocker, mock_redis_client
+):
+    repository = _create_repository(mocker, mock_redis_client)
+    mock_redis_client.hget.return_value = (
+        '{"container_name":"executor","metadata":{"e2b_sandbox_id":"sandbox-e2b"}}'
+    )
+    mock_redis_client.delete.side_effect = OSError("Redis temporarily unavailable")
+    delete_e2b_index = mocker.spy(repository, "_delete_e2b_index")
+
+    assert repository.delete_sandbox("12345") is False
+    delete_e2b_index.assert_not_called()
+    mock_redis_client.zrem.assert_not_called()
+
+    mock_redis_client.delete.side_effect = None
+    assert repository.delete_sandbox("12345") is True
+    delete_e2b_index.assert_called_once_with("sandbox-e2b")
+    mock_redis_client.zrem.assert_called()
 
 
 def test_manager_scope_uses_stable_heartbeat_url(

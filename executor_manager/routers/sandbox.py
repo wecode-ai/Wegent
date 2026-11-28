@@ -36,7 +36,11 @@ from executor_manager.schemas.sandbox import (
     SandboxStatusResponse,
     TerminateSandboxResponse,
 )
-from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox import (
+    SandboxExecutionStorageError,
+    SandboxTerminationError,
+    get_sandbox_manager,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -246,7 +250,10 @@ async def terminate_sandbox(sandbox_id: str, http_request: Request):
     logger.info(f"[SandboxAPI] Terminate sandbox: {sandbox_id} from {client_ip}")
 
     manager = get_sandbox_manager()
-    success, message = await manager.terminate_sandbox(sandbox_id)
+    try:
+        success, message = await manager.terminate_sandbox(sandbox_id)
+    except SandboxTerminationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if not success:
         raise HTTPException(
@@ -336,12 +343,15 @@ async def execute(
     )
 
     manager = get_sandbox_manager()
-    execution, error = await manager.create_execution(
-        sandbox_id=sandbox_id,
-        prompt=request.prompt,
-        timeout=request.timeout,
-        metadata=request.metadata,
-    )
+    try:
+        execution, error = await manager.create_execution(
+            sandbox_id=sandbox_id,
+            prompt=request.prompt,
+            timeout=request.timeout,
+            metadata=request.metadata,
+        )
+    except SandboxExecutionStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if execution is None:
         raise HTTPException(

@@ -385,7 +385,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
             result = executor.delete_executor(request.executor_name)
 
         # Clean up running task state and the warm-pool binding if we got task_id.
-        if task_id_str:
+        if task_id_str and result.get("status") in ("success", "not_found"):
             try:
                 from executor_manager.services.heartbeat_manager import (
                     HeartbeatType,
@@ -399,6 +399,12 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                 )
 
                 task_id = int(task_id_str)
+                if not get_sandbox_repository().delete_executor_binding(
+                    task_id,
+                    expected_executor_name=request.executor_name,
+                    expected_container_id=result.get("container_id") or "",
+                ):
+                    return result
                 tracker = get_running_task_tracker()
                 heartbeat_mgr = get_heartbeat_manager()
 
@@ -408,8 +414,6 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                     f"(source: delete_executor, executor_name={request.executor_name})"
                 )
                 tracker.remove_running_task(task_id)
-                if result.get("status") in ("success", "not_found"):
-                    get_sandbox_repository().delete_executor_binding(task_id)
             except Exception as e:
                 logger.warning(f"Failed to clean up running task tracker: {e}")
 
@@ -941,13 +945,8 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
             "errors": [f"Unknown shell type: {shell_type}"],
         }
 
-    # Build validation task data
-    # Use a unique negative task_id to distinguish validation tasks from regular tasks
-    import time
-
-    validation_task_id = (
-        int(time.time() * 1000) % 1000000
-    )  # Negative ID for validation tasks
+    # Keep validation bindings separate from normal tasks and the legacy ID JSON-safe.
+    validation_task_id = -(uuid.uuid4().int % (1 << 52) + 1)
 
     # Build validation task in OpenAI Responses API format (same as normal code tasks)
     # Build callback URL from environment variables

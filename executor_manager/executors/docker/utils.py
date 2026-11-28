@@ -10,13 +10,16 @@
 Utility functions for Docker executor
 """
 
+import json
 import os
 import re
 import subprocess
 from typing import Optional
 from urllib.parse import urlparse
 
+from executor_manager.clients.executor_binding import CALLBACK_TOKEN
 from executor_manager.common.config import ROUTE_PREFIX
+from executor_manager.executors.docker.constants import CONTAINER_OWNER
 from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
@@ -34,9 +37,14 @@ def build_callback_url(task: dict) -> str:
     Returns:
         str: Callback URL
     """
-    callback_url = get_metadata_field(
-        task, "callback_url", os.getenv("CALLBACK_URL", "")
-    )
+    callback_url = os.getenv("CALLBACK_URL", "")
+    if get_metadata_field(task, CALLBACK_TOKEN):
+        # The Docker-facing address takes precedence over the Manager's URL,
+        # which may only be reachable from its own host.
+        if not callback_url and not os.getenv("CALLBACK_HOST"):
+            callback_url = os.getenv("EXECUTOR_MANAGER_CALLBACK_URL", "")
+    else:
+        callback_url = get_metadata_field(task, "callback_url", callback_url)
     if not callback_url:
         # Get the host IP that's accessible from containers
         # 127.0.0.1 won't work for container-to-container communication
@@ -65,37 +73,38 @@ def build_callback_url(task: dict) -> str:
 
 
 def check_container_ownership(container_name: str) -> bool:
-    """
-    Check if container exists and is owned by executor_manager.
-
-    Args:
-        container_name (str): Name of the container to check
-
-    Returns:
-        bool: True if container exists and is owned by executor_manager, False otherwise
-    """
+    """Check whether the exact container name belongs to this manager."""
     try:
-        check_cmd = [
-            "docker",
-            "ps",
-            "-a",
-            "--filter",
-            f"name={container_name}",
-            "--filter",
-            "label=owner=executor_manager",
-            "--format",
-            "{{.Names}}",
-        ]
-        check_result = subprocess.run(
-            check_cmd, check=True, capture_output=True, text=True
-        )
-        return container_name in check_result.stdout
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error checking container ownership: {e.stderr}")
+        return find_owned_container_id(container_name) is not None
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        logger.warning("Docker ownership lookup failed: %s", type(error).__name__)
         return False
-    except Exception as e:
-        logger.error(f"Unexpected error checking container ownership: {e}")
-        return False
+
+
+def find_owned_container_id(container_name: str) -> Optional[str]:
+    """Resolve an owned container's immutable ID from its exact name."""
+    check_cmd = [
+        "docker",
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        f"name={container_name}",
+        "--filter",
+        "label=owner=executor_manager",
+        "--format",
+        "{{.Names}}|{{.ID}}",
+    ]
+    check_result = subprocess.run(
+        check_cmd, check=True, capture_output=True, text=True, timeout=15
+    )
+    for line in check_result.stdout.splitlines():
+        name, _, container_id = line.partition("|")
+        if name == container_name:
+            if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+                raise RuntimeError("Docker returned incomplete container identity")
+            return container_id
+    return None
 
 
 def delete_container(container_name: str) -> dict:
@@ -109,12 +118,23 @@ def delete_container(container_name: str) -> dict:
         dict: Result with status and optional error message
     """
     try:
-        # Stop and remove container in one command
-        cmd = f"docker stop {container_name} && docker rm {container_name}"
-        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        subprocess.run(
+            ["docker", "stop", "--", container_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["docker", "rm", "--", container_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         logger.info(f"Deleted Docker container '{container_name}'")
         return {"status": "success"}
     except subprocess.CalledProcessError as e:
+        if get_container_status(container_name).get("status") == "not_found":
+            return {"status": "not_found"}
         logger.error(f"Docker error deleting container '{container_name}': {e.stderr}")
         return {"status": "failed", "error_msg": f"Docker error: {e.stderr}"}
     except Exception as e:
@@ -235,7 +255,9 @@ def count_running_containers(label_selector: str = None) -> dict:
         return {"status": "failed", "error_msg": f"Error: {error_msg}", "count": 0}
 
 
-def get_running_task_details(label_selector: str = None) -> dict:
+def get_running_task_details(
+    label_selector: str = None, *, include_stopped: bool = False
+) -> dict:
     """
     Get detailed information about running tasks from Docker containers.
 
@@ -244,6 +266,7 @@ def get_running_task_details(label_selector: str = None) -> dict:
 
     Args:
         label_selector (str, optional): Additional label selector for filtering
+        include_stopped: Include exited containers for runtime cleanup.
 
     Returns:
         dict: Result with status, task_details and optional error message
@@ -251,6 +274,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
     try:
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
+        if include_stopped:
+            cmd.extend(["--all", "--no-trunc"])
 
         # Add additional label selector if provided
         if label_selector:
@@ -264,6 +289,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
                 '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
             ]
         )
+        if include_stopped:
+            cmd[-1] += "|{{.ID}}"
 
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -277,6 +304,15 @@ def get_running_task_details(label_selector: str = None) -> dict:
 
             parts = line.strip().split("|")
 
+            if include_stopped and (
+                len(parts) != 6
+                or not parts[4]
+                or not re.fullmatch(r"[0-9a-f]{64}", parts[5])
+            ):
+                return {
+                    "status": "failed",
+                    "error_msg": "Docker returned incomplete container identity",
+                }
             if len(parts) >= 5:
                 task_id = parts[0]
                 subtask_id = parts[1]
@@ -291,6 +327,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
                     "subtask_next_id": subtask_next_id,
                     "task_type": task_type,
                 }
+                if include_stopped:
+                    container_info["container_id"] = parts[5]
 
                 containers.append(container_info)
 
@@ -486,6 +524,98 @@ def get_container_status(container_name: str) -> dict:
             "exit_code": -1,
             "error_msg": str(e),
         }
+
+
+def renew_running_docker_callback_bindings() -> None:
+    """Reconcile Redis leases from running, locally managed Docker executors."""
+    from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+    try:
+        listing = subprocess.run(
+            ["docker", "ps", "--filter", f"label=owner={CONTAINER_OWNER}", "--quiet"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.warning(
+            "Could not list Docker executors for callback renewal: %s",
+            type(error).__name__,
+        )
+        return
+
+    containers = listing.stdout.split()
+    if not containers:
+        return
+    repository = get_sandbox_repository()
+    for offset in range(0, len(containers), 100):
+        bindings = _inspect_docker_callback_bindings(containers[offset : offset + 100])
+        for task_id, name, token, container_id, sandbox in bindings:
+            repository.renew_docker_callback_binding(
+                task_id, name, token, container_id, sandbox=sandbox
+            )
+
+
+def _inspect_docker_callback_bindings(
+    containers: list[str],
+) -> list[tuple[int, str, str, str, bool]]:
+    template = (
+        '{{.State.Running}} {{.Id}} {{.Name}} {{index .Config.Labels "owner"}} '
+        '{{index .Config.Labels "task_id"}} {{json .Config.Env}}'
+    )
+    try:
+        result = subprocess.run(
+            ["docker", "container", "inspect", "--format", template, *containers],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.warning(
+            "Could not inspect Docker executors for callback renewal: %s",
+            type(error).__name__,
+        )
+        return []
+
+    bindings = []
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6:
+            continue
+        running, container_id, name, owner, task_id, environment = fields
+        if (
+            running != "true"
+            or owner != CONTAINER_OWNER
+            or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+            or not task_id.removeprefix("-").isdecimal()
+        ):
+            continue
+        try:
+            entries = json.loads(environment) or []
+        except json.JSONDecodeError:
+            continue
+        # The heartbeat type identifies sandboxes created before the scope marker.
+        sandbox = "EXECUTOR_CALLBACK_SCOPE=sandbox" in entries or (
+            "EXECUTOR_CALLBACK_SCOPE=task" not in entries
+            and "HEARTBEAT_TYPE=sandbox" in entries
+        )
+        for entry in entries:
+            key, _, token = entry.partition("=")
+            if key == "EXECUTOR_CALLBACK_TOKEN" and re.fullmatch(
+                r"[0-9a-f]{64}", token
+            ):
+                bindings.append(
+                    (
+                        int(task_id),
+                        name.removeprefix("/"),
+                        token,
+                        container_id,
+                        sandbox,
+                    )
+                )
+                break
+    return bindings
 
 
 def get_container_task_id(container_name: str) -> Optional[str]:

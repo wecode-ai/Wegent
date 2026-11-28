@@ -25,7 +25,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
-from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox import (
+    SandboxExecutionStorageError,
+    get_sandbox_manager,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -135,19 +138,6 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
     return base_url, sandbox
 
 
-def _touch_sandbox_activity(sandbox) -> None:
-    """Refresh sandbox activity for proxied SDK calls."""
-    try:
-        sandbox.touch()
-        get_sandbox_manager()._repository.save_sandbox(sandbox)
-    except Exception as exc:
-        logger.warning(
-            "[SandboxProxy] Failed to refresh sandbox activity sandbox_id=%s error=%s",
-            getattr(sandbox, "sandbox_id", "unknown"),
-            exc,
-        )
-
-
 @router.api_route(
     "/{sandbox_id}/{port:int}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
@@ -186,7 +176,15 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     try:
         # Get sandbox info including metadata
         base_url, sandbox = await _get_sandbox_info(sandbox_id)
-        _touch_sandbox_activity(sandbox)
+        body = await request.body()
+        if not await get_sandbox_manager().refresh_sandbox_activity(sandbox):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "unavailable",
+                    "message": "Could not refresh sandbox activity; retry the request",
+                },
+            )
 
         # Check if this is a sandbox task
         task_type = sandbox.metadata.get("task_type")
@@ -195,9 +193,6 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         logger.info(
             f"[SandboxProxy] Sandbox metadata: task_type={task_type}, is_sandbox={is_sandbox}"
         )
-
-        # Read request body
-        body = await request.body()
 
         # For sandbox tasks, transform the request for executor's task dispatch endpoint
         if is_sandbox and path == "execute" and request.method == "POST":
@@ -477,12 +472,16 @@ async def _proxy_sandbox_execute(
     except json.JSONDecodeError as e:
         logger.error(f"[SandboxProxy] Failed to parse execute request: {e}")
         return _error_response("invalid_request", f"Invalid JSON: {str(e)}")
+    except SandboxExecutionStorageError as exc:
+        return _error_response(
+            "execution_storage_unavailable", str(exc), status_code=503
+        )
     except Exception as e:
         logger.error(f"[SandboxProxy] Sandbox proxy error: {e}")
         return _error_response("proxy_error", str(e))
 
 
-def _error_response(code: str, message: str):
+def _error_response(code: str, message: str, *, status_code: int = 200):
     """Generate E2B standard error response in NDJSON format."""
 
     async def generate():
@@ -491,4 +490,6 @@ def _error_response(code: str, message: str):
         ) + "\n"
         yield json.dumps({"type": "end_of_execution"}) + "\n"
 
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        generate(), status_code=status_code, media_type="application/x-ndjson"
+    )
