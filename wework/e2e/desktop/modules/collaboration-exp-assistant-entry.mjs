@@ -9,6 +9,7 @@ const accountSetup = '[data-testid="personal-assistant-account-setup"]'
 const experience = '[data-testid="stand-in-experience"]'
 const legacy = '[data-testid="stand-in-overview"]'
 const input = `${experience} [data-testid="collaboration-exp-assistant-input"]`
+const dashboard = '[data-testid="stand-in-dashboard-open"]'
 const startup = '[data-testid="workbench-startup"]'
 const loading = '[data-testid="stand-in-preference-loading"]'
 const retry = '[data-testid="stand-in-preference-retry"]'
@@ -129,6 +130,13 @@ const mutationRules = [
   })),
 ]
 
+export async function openAssistantDashboard(control) {
+  await control.command('waitFor', `${dashboard}, ${input}`, { visible: true })
+  if ((await control.command('getElementCount', dashboard, { visible: true })) !== '0')
+    await control.command('clickWhenEnabled', dashboard)
+  await control.command('waitFor', input, { visible: true })
+}
+
 export async function verifyAssistantEntrySingleton(control, readBinding) {
   const gates = runtimeTransportGates(control)
   const armMutations = async afterReload => {
@@ -138,6 +146,7 @@ export async function verifyAssistantEntrySingleton(control, readBinding) {
   const binding = await readBinding()
   assert.equal(binding.status, 'unbound')
   const assertSingle = async (activePage, activeSubscriptions) => {
+    if (activePage === input) await openAssistantDashboard(control)
     await control.command('waitFor', activePage, { visible: true })
     assert.equal(await control.command('getElementCount', workspace), '1')
     assert.equal(

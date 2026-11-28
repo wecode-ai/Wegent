@@ -5,6 +5,7 @@ import {
 } from '@wegent/collaboration/controls/Collapsible'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { dequal } from 'dequal'
+import type { ConnectionProviderDescriptor } from '@/api/standIn'
 import type { StandInIdentity, StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInProposalSources } from './StandInProposalSources'
@@ -17,11 +18,13 @@ export function StandInProposalDiff({
   identity,
   previous,
   projects,
+  dingTalkAccount,
 }: {
   name: string
   identity: Identity
   previous?: Identity
   projects: CollaborationProject[]
+  dingTalkAccount?: ConnectionProviderDescriptor['availability']
 }) {
   const { t } = useTranslation('common')
   const description = (value?: Identity) =>
@@ -44,8 +47,16 @@ export function StandInProposalDiff({
           )}
         </p>
       )}
-      <StandInProposalSources identity={identity} previous={previous} projects={projects} />
-      {descriptionChanged && (
+      <StandInProposalSources
+        identity={identity}
+        previous={previous}
+        projects={projects}
+        dingTalkAccount={dingTalkAccount}
+      />
+      {descriptionChanged && !previous && description(identity) && (
+        <p className="whitespace-pre-wrap break-words text-sm">{description(identity)}</p>
+      )}
+      {descriptionChanged && previous && (
         <CollapsibleRoot className="text-sm">
           <CollapsibleTrigger
             className="min-h-8 cursor-pointer text-text-secondary"

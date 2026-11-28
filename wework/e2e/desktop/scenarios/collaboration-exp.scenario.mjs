@@ -21,6 +21,7 @@ import {
 } from '../modules/collaboration-exp-issue-flows.mjs'
 import { verifyCollaborationExpViewports } from '../modules/collaboration-exp-viewport-flows.mjs'
 import {
+  openAssistantDashboard,
   verifyAssistantEntrySingleton,
   verifyAssistantPreferenceGate,
 } from '../modules/collaboration-exp-assistant-entry.mjs'
@@ -659,6 +660,7 @@ export function createDesktopScenario({
           join(electronUserDataDirectory, 'app-preferences.json')
         )
         await control.command('navigate', 'body', { value: '/collaboration-exp?view=assistant' })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-welcome-advanced"]')
         const onboardingModel = '[data-testid="stand-in-onboarding-model"]'
         await control.command('waitFor', onboardingModel, { visible: true })
         const redirected = JSON.parse(await control.command('snapshot', 'body')).location
@@ -672,7 +674,7 @@ export function createDesktopScenario({
         await control.command('navigate', 'body', { value: '/' })
         await click(control, `${ACTIVE} [data-testid="personal-stand-in-button"]`)
         const assistantInput = `${ASSISTANT} [data-testid="collaboration-exp-assistant-input"]`
-        await control.command('waitFor', assistantInput, { visible: true })
+        await openAssistantDashboard(control)
         const assistantLocation = JSON.parse(await control.command('snapshot', 'body')).location
         assert.ok(new URL(assistantLocation).pathname.endsWith('/stand-in'))
         await control.command('navigate', 'body', {
@@ -680,7 +682,7 @@ export function createDesktopScenario({
         })
         await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-route-error"]`)
         await click(control, `${ACTIVE} [data-testid="stand-in-route-return"]`)
-        await control.command('waitFor', assistantInput, { visible: true })
+        await openAssistantDashboard(control)
         const beforeLocal = await localIssueIdentities()
         const beforeCloud = await request(`/api/v1/cloud-projects/${cloudProject.id}/loop-items`)
         const beforeShared = await comments()

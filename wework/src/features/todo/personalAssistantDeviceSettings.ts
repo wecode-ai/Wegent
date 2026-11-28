@@ -1,5 +1,8 @@
 import { ApiError } from '@/api/http'
-import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import {
+  assistantDefinitionName,
+  type PersonalAssistantAccount,
+} from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -136,7 +139,7 @@ function applyDefinitions(
         bindingDevice ?? settings.executionDeviceId,
         isKnownDevice
       ),
-      name: definition.team.metadata.displayName ?? existing.name,
+      name: assistantDefinitionName(definition) ?? existing.name,
       prompt: definition.ghost.spec.systemPrompt,
     })
   }
@@ -163,7 +166,7 @@ function definitionInputs(account: PersonalAssistantAccount) {
       {
         roleId: definition.roleId,
         executionDeviceId: definition.bot.spec?.execution_policy?.environment_id,
-        name: definition.team.metadata.displayName ?? '',
+        name: assistantDefinitionName(definition) ?? '',
         prompt: definition.ghost.spec.systemPrompt,
       },
     ])
@@ -242,10 +245,76 @@ export function personalAssistantDeviceSettings(
   const cloud = services.personalAssistantAccountApi
   if (!executor || !cloud) return services
   let unresolvedDefinitionRevision: string | undefined
+  const syncDefinitions = async (
+    account: PersonalAssistantAccount,
+    saved: PersonalStandInSettings,
+    definitions: ReturnType<typeof definitionInputs>
+  ) => {
+    if (matchesDefinitions(account, definitions))
+      return applyDefinitions(saved, account, isKnownDevice, false, bindingDevice)
+    try {
+      const updated = await cloud.updateDefinitions(account.revision, [...definitions.values()])
+      publish(updated)
+      return applyDefinitions(saved, updated, isKnownDevice, false, bindingDevice)
+    } catch (cause) {
+      const latest = await cloud.get().catch(() => null)
+      const conflict =
+        (cause instanceof ApiError && cause.status === 409) ||
+        Boolean(latest && latest.revision !== account.revision)
+      if (latest) {
+        publish(latest)
+        if (matchesDefinitions(latest, definitions))
+          return applyDefinitions(saved, latest, isKnownDevice, false, bindingDevice)
+      }
+      if (conflict && (!latest || latest.revision === account.revision)) {
+        unresolvedDefinitionRevision = account.revision
+      }
+      throw new PersonalAssistantDefinitionSaveError(
+        applyDefinitions(saved, latest ?? account, isKnownDevice, false, bindingDevice),
+        cause,
+        conflict
+      )
+    }
+  }
   return {
     ...services,
     standInApi: {
       ...executor,
+      async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
+        const account = readAccount()
+        if (!accept || !account)
+          return executor.resolveProposal(userId, deviceId, proposalId, accept, undoVersion)
+        const before = await executor.personalGet(userId, deviceId)
+        const saved = await executor.resolveProposal(
+          userId,
+          deviceId,
+          proposalId,
+          accept,
+          undoVersion
+        )
+        const definitions = definitionInputs(account)
+        const primary = definitions.get('@primary')
+        if (primary && saved.primary && before.primary?.prompt !== saved.primary.prompt)
+          primary.prompt = saved.primary.prompt
+        const previous = new Map(before.roles.map(role => [role.id, role]))
+        const retired = new Set(account.retiredRoleIds)
+        for (const role of saved.roles) {
+          const old = previous.get(role.id)
+          previous.delete(role.id)
+          const existing = definitions.get(role.id)
+          if ((old && !existing) || (!old && existing)) continue
+          if (retired.has(role.id) || (old?.name === role.name && old.prompt === role.prompt))
+            continue
+          definitions.set(role.id, {
+            roleId: role.id,
+            name: existing && old?.name === role.name ? existing.name : role.name,
+            prompt: existing && old?.prompt === role.prompt ? existing.prompt : role.prompt,
+            executionDeviceId: existing?.executionDeviceId ?? role.executionDeviceId,
+          })
+        }
+        for (const id of previous.keys()) definitions.delete(id)
+        return syncDefinitions(account, saved, definitions)
+      },
       async personalGet(userId, deviceId, options) {
         const settings = await executor.personalGet(userId, deviceId, options)
         let account = readAccount()
@@ -361,32 +430,11 @@ export function personalAssistantDeviceSettings(
           definitionChange,
           portableTeam
         )
-        const definitions = updateDefinitionInputs(account, settings, definitionChange)
-        if (matchesDefinitions(account, definitions))
-          return applyDefinitions(saved, account, isKnownDevice, false, bindingDevice)
-        try {
-          const current = await cloud.updateDefinitions(account.revision, [...definitions.values()])
-          publish(current)
-          return applyDefinitions(saved, current, isKnownDevice, false, bindingDevice)
-        } catch (cause) {
-          const latest = await cloud.get().catch(() => null)
-          const conflict =
-            (cause instanceof ApiError && cause.status === 409) ||
-            Boolean(latest && latest.revision !== account.revision)
-          if (latest) {
-            publish(latest)
-            if (matchesDefinitions(latest, definitions))
-              return applyDefinitions(saved, latest, isKnownDevice, false, bindingDevice)
-          }
-          if (conflict && (!latest || latest.revision === account.revision)) {
-            unresolvedDefinitionRevision = account.revision
-          }
-          throw new PersonalAssistantDefinitionSaveError(
-            applyDefinitions(saved, latest ?? account, isKnownDevice, false, bindingDevice),
-            cause,
-            conflict
-          )
-        }
+        return syncDefinitions(
+          account,
+          saved,
+          updateDefinitionInputs(account, settings, definitionChange)
+        )
       },
     },
   }

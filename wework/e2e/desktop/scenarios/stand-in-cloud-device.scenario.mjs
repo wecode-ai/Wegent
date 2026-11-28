@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInConversationFromHome,
+  openStandInDetails,
+  openStandInSettings,
+} from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -167,7 +171,12 @@ export function createDesktopScenario({
   }
   async function createRole(control, name, deviceId) {
     await control.command('clickWhenEnabled', testId('stand-in-create-role'))
-    await control.command('waitFor', testId('stand-in-role-name'))
+    const advanced = testId('stand-in-chat-advanced')
+    const nameInput = testId('stand-in-role-name')
+    await control.command('waitFor', `${advanced}, ${nameInput}`, { visible: true })
+    if ((await control.command('getElementCount', advanced, { visible: true })) !== '0')
+      await control.command('clickWhenEnabled', advanced)
+    await control.command('waitFor', nameInput)
     assert.equal(
       await control.command('getElementCount', testId('stand-in-device')),
       '0',
@@ -262,6 +271,9 @@ export function createDesktopScenario({
       value: JSON.stringify({ collaborationExperienceEnabled: true }),
     })
     await control.command('navigate', 'body', { value: '/stand-in' })
+    await control.command('clickWhenEnabled', testId('stand-in-dashboard-open'), {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', testId('collaboration-exp-assistant-input'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -499,12 +511,10 @@ export function createDesktopScenario({
         value: JSON.stringify({ collaborationExperienceEnabled: false }),
       })
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command(
-        'waitFor',
+      await openStandInConversationFromHome(
+        control,
         `${testId('stand-in-conversation')} [data-testid="chat-message-input"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-        }
+        uiTimeoutMs
       )
       const beforeSetup = await readStandInBinding(control, uiTimeoutMs)
       assert.equal(beforeSetup.status, 'unbound')

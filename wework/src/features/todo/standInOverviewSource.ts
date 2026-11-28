@@ -7,6 +7,7 @@ import {
 import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { PersonalAssistantDefinitionSaveError } from './personalAssistantDeviceSettings'
 
 export type StandInOverviewProfile = 'primary' | 'role' | 'create' | 'memory' | null
 interface OverviewObservation {
@@ -35,10 +36,10 @@ interface OverviewSnapshot {
   profile: StandInOverviewProfile
   calendarRequest: number
   focusRequest: number
-  exampleDraft?: { id: number; text: string }
+  exampleDraft?: { id: number; text: string; roleId?: string }
   proposal: StandInProposal | null
   proposalError: string | null
-  proposalSaveError: { id: string; message: string } | null
+  proposalSaveError: { id: string; message: string; appliedLocally?: boolean } | null
   resolving: boolean
   retryingSources: ReadonlySet<string>
   resolvedProposal: {
@@ -309,9 +310,16 @@ export function createStandInOverviewSource(initial: {
       })
       observation?.closeReview()
       observation?.reload()
+      return applied
     } catch (cause) {
       if (operation === revision && ownsScope(owner))
-        publish({ proposalSaveError: { id: proposal.id, message: getStandInErrorMessage(cause) } })
+        publish({
+          proposalSaveError: {
+            id: proposal.id,
+            message: getStandInErrorMessage(cause),
+            appliedLocally: cause instanceof PersonalAssistantDefinitionSaveError,
+          },
+        })
     } finally {
       if (operation === revision && ownsScope(owner)) publish({ resolving: false })
     }
@@ -393,7 +401,8 @@ export function createStandInOverviewSource(initial: {
     ) {
       publish({ exampleDraft: typeof value === 'function' ? value(snapshot.exampleDraft) : value })
     },
-    draftExample: (text: string) => publish({ exampleDraft: { id: ++exampleSequence, text } }),
+    draftExample: (text: string) =>
+      publish({ exampleDraft: { id: ++exampleSequence, text, roleId: snapshot.roleId } }),
     pressPanel: (inside: boolean) => {
       pressedInPanel = inside
     },

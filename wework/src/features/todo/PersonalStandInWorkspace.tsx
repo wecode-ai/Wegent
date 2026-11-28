@@ -1,6 +1,9 @@
 import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
-import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import {
+  assistantDefinitionName,
+  type PersonalAssistantAccount,
+} from '@/api/personalAssistantAccount'
 import { isStandInBindingOwner, type StandInBindingTarget } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -53,6 +56,7 @@ import { StandInHomeSetup } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 import { StandInMigration } from './StandInMigration'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import type { StandInStarterRequest } from './StandInWelcome'
 import { StandInRouteFailure, StandInRouteLoading } from './StandInRouteState'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInEntry } from './useStandInEntry'
@@ -330,12 +334,15 @@ function AccountStandInWorkspace({
       settingsRequest,
     ]
   )
+  const [dashboardOpen, setDashboardOpen] = useState(false)
+  const [pendingStarter, setPendingStarter] = useState<StandInStarterRequest>()
+  const starterHome = !embedded && !scheduled && entry.kind === 'home'
   const showAssistantExperience =
     experienceEnabled &&
     !embedded &&
     !scheduled &&
     !settingsRequest &&
-    (entry.kind === 'home' ||
+    ((starterHome && dashboardOpen) ||
       entry.kind === 'conversation' ||
       verifiedRole?.profileId === '@primary')
   const api = useMemo(
@@ -788,6 +795,7 @@ function AccountStandInWorkspace({
               localDeviceId={localDeviceId}
               devices={devices}
               onSelectDevice={bindDevice}
+              onOpenWelcome={starterHome ? () => setDashboardOpen(false) : undefined}
               headerActions={
                 !configuredDeviceOffline && binding.status === 'active' ? (
                   <Tooltip label={t('standIn.instance.stop')}>
@@ -812,7 +820,7 @@ function AccountStandInWorkspace({
         </CollaborationExpErrorBoundary>
       ) : api ? (
         <>
-          {experienceEnabled && (
+          {experienceEnabled && !starterHome && (
             <Button
               type="button"
               variant="ghost"
@@ -843,7 +851,7 @@ function AccountStandInWorkspace({
                     const currentAccount = readAccount?.() ?? account
                     const definitions = currentAccount.definitions.map(entry => ({
                       roleId: entry.roleId,
-                      name: entry.team.metadata.displayName ?? '',
+                      name: assistantDefinitionName(entry) ?? '',
                       prompt: entry.ghost.spec.systemPrompt,
                       executionDeviceId:
                         entry.roleId === roleId
@@ -873,6 +881,12 @@ function AccountStandInWorkspace({
             onSelectAssistantDevice={independentRole ? undefined : bindDevice}
             initialProfileId={roleLocation?.settings ? roleLocation.roleId : undefined}
             initialSelectedRoleId={roleLocation?.roleId}
+            starterHome={starterHome}
+            pendingStarter={pendingStarter}
+            onStarterRequestChange={setPendingStarter}
+            onOpenDashboard={
+              starterHome && experienceEnabled ? () => setDashboardOpen(true) : undefined
+            }
             initialDeviceId={selectedDevice}
             primaryDeviceId={deviceId}
             roleLocations={directory?.roles}

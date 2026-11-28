@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openAssistantDashboard } from './collaboration-exp-assistant-entry.mjs'
 import {
   COLLABORATION_EXP_RHYTHM_ROLE,
   assertUnchangedGeometry,
@@ -89,6 +90,7 @@ export async function verifyCollaborationExpViewports({
     })
     onWindowSizeCaptured(oldSize)
     await selectCollaborationExpAppearance(control, appearanceMode, '/stand-in')
+    await openAssistantDashboard(control)
     await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-experience"]`, {
       visible: true,
     })

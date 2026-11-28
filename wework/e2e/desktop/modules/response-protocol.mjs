@@ -73,7 +73,7 @@ function createSse(events) {
 }
 
 // Script only the model: task-result delivery and its history read stay native.
-function delegatedTaskResultEvents(body) {
+function delegatedTaskResultEvents(body, { includeExecutionMetadata = true } = {}) {
   const latestUser = (Array.isArray(body.input) ? body.input : [])
     .filter(item => item.role === 'user')
     .at(-1)
@@ -102,7 +102,12 @@ function delegatedTaskResultEvents(body) {
     .filter(Boolean)
     .at(-1)
   if (status === 'done') assert.ok(answer, 'A completed task must provide its actual result')
-  return [assistantMessage(`任务 ${taskId}（${status}）：${answer ?? '本次执行未产出回答。'}`)]
+  const outcome = answer ?? '本次执行未产出回答。'
+  return [
+    assistantMessage(
+      includeExecutionMetadata ? `任务 ${taskId}（${status}）：${outcome}` : outcome
+    ),
+  ]
 }
 
 function codexRequestMetadata(body) {

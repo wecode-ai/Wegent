@@ -5805,6 +5805,93 @@
     },
     "pipeline_confirmation_failed": "Could not confirm the current stage.",
     "confirm_pipeline_stage": "Confirm and start the next stage",
+    "welcome": {
+      "title": "What can your assistant help with today?",
+      "try": "Use as a draft",
+      "advanced": "Advanced mode",
+      "home": "Assistant home",
+      "dashboard": "Work overview",
+      "templates": "Conversation templates",
+      "create_label": "Fill in the creation template",
+      "create_hint": "Describe what the new assistant should handle in this conversation, or start with the template.",
+      "create_prompt": "I'd like to add an assistant. Ask me what it should handle and which work it should receive, then show me the proposed configuration to confirm.",
+      "manage_label": "Fill in the settings template",
+      "manage_hint": "Describe what should change. The assistant will show the proposed responsibilities and sources for confirmation.",
+      "manage_prompt": "I'd like to update the work you handle. Ask me which responsibilities and sources to change, then show me the proposed changes.",
+      "more_templates": "More templates",
+      "template_categories": {
+        "daily": "Daily work",
+        "meetings": "Meetings and handoffs",
+        "decisions": "Communication and decisions"
+      },
+      "examples": {
+        "dingtalk_reply": {
+          "title": "Run DingTalk support from a local handbook",
+          "hint": "Answer from the handbook and escalate uncertain questions",
+          "prompt": "Create a DingTalk Support Assistant to answer questions in the DingTalk support group using the Product Support Handbook on my computer. Confirm the work account, group, device, and handbook path with me. Verify that you can read the handbook and show me the proposed rules before enabling it. Watch all new questions, including messages that don’t mention me.\n\nIf the handbook clearly answers a question for the applicable product version, reply in the original thread and cite the section. If the handbook is silent, conflicts with a newer message, or the question involves a refund, schedule change, or customer commitment, privately send me the original question, evidence, and a draft. Wait for me to confirm before replying."
+        },
+        "development": {
+          "title": "Create my AI development assistant",
+          "hint": "Take assigned issues through changes, tests, and reporting",
+          "prompt": "Create an AI Development Assistant for me. When a development issue is assigned to me in a selected project, have it review the requirements, make the change in the linked repository, run the relevant tests, and report the changes, evidence, and decisions I still owe in the original issue. Confirm the projects, tasks, repository, and execution device before enabling it. Ask me before using production access, changing public interfaces, or acting on conflicting requirements."
+        },
+        "daily_check": {
+          "title": "Check for loose ends every day at 5 pm",
+          "hint": "Find unfinished work across email, DingTalk, and calendar",
+          "prompt": "Every day at 5 pm, review that day’s work email, DingTalk messages, and calendar. Confirm the mailbox, DingTalk account and chats, calendar, and time zone, and verify that you can read them. Separate unfinished commitments, messages awaiting my reply, and meeting follow-ups with no owner. Include the deadline, next step, and source for each item. Identify any source you couldn’t check and send the summary to my private Wework conversation."
+        },
+        "knowledge": {
+          "title": "Save useful conversation knowledge locally",
+          "hint": "Put reusable notes in a local folder you choose",
+          "prompt": "Create a Personal Knowledge Assistant that periodically reviews my authorized Wework conversations. Save verified techniques, decisions, and reusable troubleshooting steps as Markdown in the local folder I choose. Confirm the scope, frequency, device, and folder, and show me an example from recent work. Update existing topics with dated citations, flag contradictions, and protect my handwritten notes."
+        },
+        "weekly_review": {
+          "title": "Review my AI conversations on Fridays",
+          "hint": "Find work to improve next week, Fridays at 4 pm",
+          "prompt": "Every Friday at 4 pm, review my Wework AI conversations for the week and identify work AI could help me do better. Confirm my time zone and conversation scope. Look for background I explain repeatedly, work that needed redoing, and recurring manual steps. Give me three suggestions, each citing a real conversation, explaining one experiment for next week, and defining how to measure improvement. Deliver the report privately."
+        },
+        "meeting_prep": {
+          "title": "The meeting is soon and I haven’t read the material",
+          "prompt": "My launch review is about to start and I have five minutes to prepare. Make a one-page briefing from the related conversations, notes, and release checklist I provide. Start with the decision the meeting needs to make. List confirmed items, conflicting records, and the three questions I should ask. For each question, say who to ask and why it matters now. Cite the source for each conclusion.\n\nDeliver the briefing in this conversation. If I haven’t shared the material yet, tell me what to provide."
+        },
+        "disk_space": {
+          "title": "Find what’s using my disk space",
+          "prompt": "Analyze the disk space on this computer. Start with the system disk’s total capacity, available space, and percentage used. Then inspect folders I can access in my home directory, especially Downloads, Desktop, Documents, and common project folders. Rank the largest folders and files by space used, with paths, sizes, and what they appear to contain.\n\nFlag inaccessible folders, cloud-only placeholders, and system usage you cannot attribute to files. Tell me the three places most worth checking first and how much space each uses. Keep the inspection read-only. Leave all files in place."
+        },
+        "brief": {
+          "title": "What needs my attention today?",
+          "prompt": "Use the calendar entries, open tasks, and messages I share. I have three morning meetings and a quote due this afternoon. Find the three items I must handle today. For each, include the deadline, who is waiting, the next action, and its source. List what can wait separately. Show any conflicting deadlines so I can decide."
+        },
+        "project": {
+          "title": "Follow up on the supplier’s quote",
+          "prompt": "The supplier promised a revised quote by Friday at 5 p.m. We need it for Monday’s purchasing review. Help me track that commitment in the project issue I specify. Confirm the issue, time zone, and reminder before setting it up. If I share the revised quote, compare cost and delivery lead time and point to the original. If it is still missing at the deadline, prepare a follow-up draft for me."
+        },
+        "recap": {
+          "title": "Who’s doing what after the meeting?",
+          "prompt": "Read the launch review transcript, meeting chat, and follow-up notes I share. Separate decisions and assigned actions from suggestions. List each action with an owner, due date, and source. Preserve vague dates like “next week” and flag them for confirmation. Call out circular dependencies and draft a short message for the attendees to verify."
+        },
+        "launch": {
+          "title": "Are we ready to launch tomorrow?",
+          "prompt": "The release is tomorrow at 10. Compare the checklist, open issues, test results, and group decisions I share. Check migration verification, rollback ownership, and customer notification. Put blockers first with evidence, an owner to ask, and the latest confirmation time. Separate post-launch work and put conflicting statements side by side for my decision."
+        },
+        "handoff": {
+          "title": "Prepare my handoff before I go on leave",
+          "prompt": "I’m out Monday through Friday, and Lin is covering. Use the open tasks, meeting schedule, and commitments I share. Prioritize work due while I’m away and anything blocking another person. Write a handoff with status, next action, deadline, contacts, and links. Separate decisions I owe before leaving from actions Lin can take, and show me the draft before it is shared."
+        },
+        "weekly": {
+          "title": "Turn this week’s work into an update",
+          "prompt": "Write my manager an update covering Monday through Friday. Compare the closed issues, deliveries, and meeting decisions I share from launch, customer phase two, and hiring. Lead with three outcomes and a source for each. Name what is blocked and who can help, then give three milestones for next week. Flag provisional numbers for me to verify."
+        },
+        "reply": {
+          "title": "Draft a reply to a customer deadline request",
+          "prompt": "A customer wants delivery moved from the end of the month to next Wednesday. Compare their email with the agreed scope and the latest schedule I share. Summarize what changed and draft a short reply using confirmed facts. Flag any new date, cost, or staffing commitment for my review before I send anything."
+        },
+        "decision": {
+          "title": "What did the discussion actually decide?",
+          "prompt": "Using the project thread I share, sort proposals, objections, decisions, and later corrections by time. Give me the decisions, outstanding disagreements, and who needs to confirm the next step. Cite a quote and the source for each. If the thread only shows a few people agreeing, record it as a preference and let me decide."
+        }
+      }
+    },
     "preference_loading": "Loading assistant preferences…",
     "preference_error": "Couldn't load assistant preferences",
     "preference_retry": "Try again",
@@ -6406,6 +6493,9 @@
       "group_message_scope": "Receive",
       "group_message_scope_for": "Message intake for {{name}}",
       "group_all_messages": "All messages",
+      "group_all_new_messages": "Group · Every new message",
+      "proposal_dingtalk_confirm": "Reads and analyzes automatically, then asks before taking action",
+      "proposal_account": "DingTalk account {{account}}",
       "select_results": "Select current results",
       "resource_selected": "Selected",
       "select_resource": "Select",
@@ -6820,7 +6910,7 @@
       "device_label": "Execution device",
       "switching_device": "Switching execution device…",
       "model_required": "Chat model (required)",
-      "model_help": "Choose a model to start chatting. You can change it later under Assistant details → Manage assistant → Execution environment.",
+      "model_help": "Choose a model to start chatting. You can change it later under Assistant details → Manage assistant → Advanced mode → Execution environment.",
       "exit": "Set up later"
     },
     "authorization": {

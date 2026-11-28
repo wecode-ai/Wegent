@@ -12,6 +12,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -55,6 +56,8 @@ EXTERNAL_LINK_AUDIENCE = "wegent-external-connector-authorization"
 POLL_INTERVAL_SECONDS = 2
 DISCOVERY_TIMEOUT_SECONDS = 15
 logger = logging.getLogger(__name__)
+
+ConnectorOAuthOutcome = Literal["success", "declined"]
 
 REJECTED_REFRESH_ERRORS = {"invalid_grant", "bad_refresh_token"}
 
@@ -354,7 +357,7 @@ class ConnectorOAuthService:
         code: str | None,
         state_token: str,
         provider_error: str | None = None,
-    ) -> str:
+    ) -> ConnectorOAuthOutcome:
         claims = ConnectorOAuthService._decode_state(state_token)
         session_id = str(claims["session_id"])
         session = await ConnectorOAuthService._read_session(session_id)
@@ -380,7 +383,7 @@ class ConnectorOAuthService:
         if provider_error:
             session.update({"status": "declined", "error": provider_error})
             await ConnectorOAuthService._write_session(session_id, session)
-            return "Connector authorization was declined. You can close this window."
+            return "declined"
         try:
             if str(session.get("oauth")) == "dynamic":
                 token_payload = await ConnectorOAuthService._exchange_dynamic_code(
@@ -456,7 +459,7 @@ class ConnectorOAuthService:
         session.update({"status": "success", "completed_at": int(time.time())})
         session.pop("code_verifier", None)
         await ConnectorOAuthService._write_session(session_id, session)
-        return "Connector is connected. You can close this window."
+        return "success"
 
     @staticmethod
     def _lock_callback_app(db: Session, session: dict) -> None:

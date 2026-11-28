@@ -1,9 +1,15 @@
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInProposal } from '@/api/standIn'
+import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { dequal } from 'dequal'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useMemo, useSyncExternalStore } from 'react'
 import { StandInGhostEvidence } from './StandInGhostEvidence'
 import { StandInProposalDiff } from './StandInProposalDiff'
 
@@ -14,6 +20,8 @@ export function StandInProposalCard({
   onResolve,
   projects,
   result,
+  api,
+  deviceId,
 }: {
   proposal: StandInProposal
   current: PersonalStandInSettings
@@ -21,6 +29,8 @@ export function StandInProposalCard({
   projects: CollaborationProject[]
   onResolve(accept: boolean): Promise<void>
   result?: 'accepted' | 'rejected'
+  api?: StandInExecutorApi
+  deviceId?: string
 }) {
   const { t } = useTranslation('common')
   const changed = proposal.settings.roles.filter(
@@ -33,6 +43,20 @@ export function StandInProposalCard({
   const removed = current.roles.filter(
     role => !proposal.settings.roles.some(row => row.id === role.id)
   )
+  const providerId = '@wegent/dsh-connection-dingtalk/dingtalk'
+  const needsAccount = [proposal.settings.primary, ...changed].some(identity =>
+    identity?.connections?.some(source => source.providerId === providerId && source.profile)
+  )
+  const catalog = useMemo(
+    () => createAsyncResource(deviceId ?? '', () => api!.connectionProviders(deviceId!)),
+    [api, deviceId]
+  )
+  const snapshot = useSyncExternalStore(
+    needsAccount && api && deviceId ? catalog.subscribe : subscribeIdleResource,
+    catalog.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const account = snapshot.data?.items.find(item => item.id === providerId)?.availability
   const stale =
     proposal.settings.executionDeviceId === current.executionDeviceId &&
     proposal.settings.version !== current.version
@@ -48,9 +72,11 @@ export function StandInProposalCard({
     >
       <header className="shrink-0 border-b border-border px-4 py-3">
         <h2 className="font-medium">{title}</h2>
-        <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{proposal.summary}</p>
       </header>
       <div className="min-h-0 overflow-y-auto px-4" data-testid="stand-in-proposal-details">
+        <p className="break-words border-b border-border py-3 text-sm leading-relaxed text-text-secondary">
+          {proposal.summary}
+        </p>
         {proposal.training ? (
           <StandInGhostEvidence training={proposal.training} resolved={!!result} />
         ) : (
@@ -69,6 +95,7 @@ export function StandInProposalCard({
                   identity={role}
                   previous={previous}
                   projects={projects}
+                  dingTalkAccount={account}
                 />
               )
             })}
@@ -85,6 +112,7 @@ export function StandInProposalCard({
                 identity={proposal.settings.primary}
                 previous={current.primary}
                 projects={projects}
+                dingTalkAccount={account}
               />
             )}
           </div>
