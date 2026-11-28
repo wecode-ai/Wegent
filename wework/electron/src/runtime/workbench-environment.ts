@@ -62,6 +62,10 @@ export function resolveWorkbenchUserData(options: WorkbenchEnvironmentOptions): 
   )
 }
 
+export function resolveWorkbenchExecutorHome(options: WorkbenchEnvironmentOptions): string {
+  return options.environment.WEGENT_EXECUTOR_HOME?.trim() || resolveWorkbenchPaths(options).desktop
+}
+
 export function resolveWorkbenchCodexHome(options: WorkbenchEnvironmentOptions): string {
   const { environment } = options
   const executorHome = environment.WEGENT_EXECUTOR_HOME?.trim()

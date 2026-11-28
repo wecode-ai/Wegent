@@ -18,6 +18,7 @@ export interface AfterStopMetadata {
 export interface AfterStopHomes {
   codexHome: string
   workbenchRoot: string
+  executorHome?: string
 }
 
 function requiresPreparation(metadata: AfterStopMetadata): boolean {

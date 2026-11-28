@@ -142,6 +142,7 @@ async function fixture(currentVersion = '1.0.0') {
   const options = {
     store,
     dataDirectory: directory,
+    executorHome: directory,
     currentVersion,
     executable: join(directory, 'host'),
     resources: join(directory, 'resources'),

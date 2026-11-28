@@ -193,6 +193,7 @@ import {
 import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
   prepareWorkbenchEnvironment,
+  resolveWorkbenchExecutorHome,
   resolveWorkbenchPaths,
   resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
@@ -673,13 +674,11 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
 })
-const executorHome =
-  process.env.WEGENT_EXECUTOR_HOME?.trim() ||
-  resolveWorkbenchPaths({
-    environment: process.env,
-    metadata: packageMetadata,
-    homeDirectory: app.getPath('home'),
-  }).desktop
+const executorHome = resolveWorkbenchExecutorHome({
+  environment: process.env,
+  metadata: packageMetadata,
+  homeDirectory: app.getPath('home'),
+})
 const startupRendererLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'renderer-startup.log'),
   ''
@@ -703,6 +702,7 @@ const logRetention = new LogRetentionService({
 const appUpdates = new AppUpdateService({
   store: new ReleaseStore(join(app.getPath('userData'), 'releases')),
   dataDirectory: app.getPath('userData'),
+  executorHome,
   currentVersion: app.getVersion(),
   executable: process.execPath,
   resources: process.resourcesPath,
