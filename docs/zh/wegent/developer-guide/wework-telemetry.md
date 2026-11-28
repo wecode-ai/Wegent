@@ -84,6 +84,12 @@ Wework 针对 agent 任务 trace、LLM generation 和用户反馈上报 PostHog 
 | `$ai_trace`      | 一次任务运行，在运行开始和结束时各上报一次。                    | `$ai_trace_id`（运行开始时生成的透明 per-run id）、`$ai_trace_phase`（`start` 或 `end`）、`execution_target`、`duration_ms`（仅 end）、`result`（`success`、`failure` 或 `cancelled`；仅 end）、`failure_reason`（有限的失败分类；仅 result 为 `failure` 时）。                                                                                                                                           |
 | `$ai_generation` | 每一次由 LLM 驱动的助手回复，从助手开始生成到生成结束进行测量。 | `$ai_generation_id`、`$ai_trace_id`（该运行所属的透明 trace id；这是 PostHog 要求并用来把 generation 归入同一 trace 的属性）、`$ai_parent_id`（同一 per-run id，保留用于树状嵌套）、`$ai_model`（运行时目录枚举）、`$ai_provider`（已知提供方的有界枚举）、`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`、`$ai_latency`（秒）、`$ai_cost`（识别到模型时的最佳 effort 美元估算）、`result`。 |
 
+在 **设置 → 个人 → 通用 → 隐私** 开启「帮助改进 Wework」后，已配置 PostHog 的客户端会显示「上报诊断细节」。单独开启并保存后，Wework 桌面主进程将本机模型代理的最终 HTTP 4xx/5xx 响应作为 `model_http_error` 发送到开关中显示的 PostHog 服务。查看 `http_status`、`response_body` 和 `response_body_encoding`；正文可能含敏感信息。诊断请求在 JSON 编码后超过 1 MiB 时不予上报，非 UTF-8 正文按 Base64 计入大小。关闭任一开关会立即停止本次运行中的正文上报，并取消正在进行的上传。关闭成功保存后，重启仍保持关闭。
+
+构建时设置 `VITE_WEWORK_DETAILED_TELEMETRY_DEFAULT=true` 可在首次授权弹窗中预选「上报诊断细节」。默认不预选，点击同意后才保存。后续版本沿用用户已保存的选择。模型 HTTP 错误正文是首个接入此授权的场景。
+
+失败的 `$ai_generation` 通过 `error_type` 上报聊天错误分类，例如 `rate_limit`、`server_overloaded` 或 `stream_protocol_error`。无法识别的错误归入 `generic_error`。分析事件仅保留枚举值。
+
 任务是一个可被重复运行的稳定资源，因此 trace 关联必须限定在**单次运行**内，而不是绑定任务 ID。运行开始时，客户端生成一个透明的 `t-<base36>` trace id，本次运行期间发出的每条 `$ai_trace` 和 `$ai_generation` 都共享它；运行结束时该 id 被丢弃，下一次运行会重新生成。如果所有运行都复用同一任务 ID 派生的 trace id，不同运行会被合并进同一条 PostHog trace，导致按运行统计的时长、token、成本全部失真。每条 `$ai_generation` 在助手开始时捕获当前运行的 trace id，因此即使运行与 generation 并发结束，关联也不会丢失。若窗口在运行进行中关闭，会补发一条 `$ai_trace` `end`（`result=cancelled`），避免留下永不闭合的 trace。运行时白名单会强制 `$ai_trace_id`、`$ai_parent_id` 符合哈希后的 `t-<base36>` 格式、`$ai_generation_id` 符合 UUID 格式，因此未经哈希的原始任务 ID 永远不会作为关联属性被上报。
 
 generation 的 token 数（`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`）取自该次运行在结束事件中携带的自身 context usage，保证计数归属于它所描述的 generation，而不会串到同一任务的并发运行上；当运行没有上报某轮的 usage 时，这些 token 属性会被省略。

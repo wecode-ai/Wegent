@@ -5,6 +5,7 @@ declare const __WEWORK_COMMIT_SHA__: string
 
 interface ImportMetaEnv {
   readonly VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS?: string
+  readonly VITE_WEWORK_DETAILED_TELEMETRY_DEFAULT?: string
   readonly VITE_WEWORK_TELEMETRY_IDENTITY?: string
   readonly VITE_WEWORK_TELEMETRY_SOURCE?: string
   readonly VITE_WEWORK_POSTHOG_HOST?: string

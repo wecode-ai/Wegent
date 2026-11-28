@@ -3,6 +3,8 @@ import type { AppPreferencesState } from '@/features/app-preferences/appPreferen
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
+import { detailedTelemetryPreference } from './config'
+
 let choice: boolean | undefined
 let latestChoice: boolean | undefined
 let persistedChoice: boolean | undefined
@@ -70,11 +72,11 @@ export function useSessionTelemetryConsentAsked(): boolean {
   return useSyncExternalStore(subscribeSessionTelemetryConsent, () => asked)
 }
 
-export function saveTelemetryConsent(value: boolean, expectedRevision: number) {
+export function saveTelemetryConsent(value: boolean, expectedRevision: number, details?: boolean) {
   setSessionTelemetryConsent(value)
   const currentGeneration = generation
   pending += 1
-  return persistChoice(value, currentGeneration, expectedRevision).finally(() => {
+  return persistChoice(value, currentGeneration, expectedRevision, details).finally(() => {
     if (currentGeneration !== generation) return
     pending -= 1
     if (pending === 0 && persistedChoice === true && latestChoice === true) choice = undefined
@@ -85,12 +87,14 @@ export function saveTelemetryConsent(value: boolean, expectedRevision: number) {
 async function persistChoice(
   value: boolean,
   currentGeneration: number,
-  expectedRevision: number
+  expectedRevision: number,
+  details?: boolean
 ): ReturnType<typeof updateAppPreferences> {
   const preferences = await updateAppPreferences(
     {
       telemetryConsentAsked: true,
       telemetryEnabled: value,
+      ...(value && details !== undefined && detailedTelemetryPreference(details)),
     },
     expectedRevision
   )

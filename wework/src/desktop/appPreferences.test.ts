@@ -30,6 +30,7 @@ const mergedDefaultPreferences = {
   localCodexSubscriptionEnabled: true,
   telemetryConsentRevision: 0,
   telemetryConsentAsked: false,
+  detailedTelemetryEnabled: false,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
   supervisorPrinciples: '',

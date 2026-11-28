@@ -51,6 +51,18 @@ export class DesktopPreferencesController {
     patch: Record<string, unknown>,
     expectedTelemetryConsentRevision?: number
   ): Promise<Record<string, unknown>> {
+    if (
+      Object.keys(patch).every(key =>
+        [
+          'telemetryEnabled',
+          'telemetryConsentAsked',
+          'detailedTelemetryEnabled',
+          'detailedTelemetryDestination',
+        ].includes(key)
+      )
+    ) {
+      return this.store.update(patch, expectedTelemetryConsentRevision)
+    }
     const result = this.operation.then(() => this.apply(patch, expectedTelemetryConsentRevision))
     this.operation = result.then(
       () => undefined,

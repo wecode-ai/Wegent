@@ -85,13 +85,15 @@ export function createWorkbenchSessionStreams(owner: WorkbenchStreamOwner, tabId
     onAssistantResponseSize: (address, turnId, bytes) => {
       if (owner.isHeld()) owner.telemetry.onAssistantResponseSize(address, turnId, bytes)
     },
-    onAssistantSettled: (address, turnId, outcome) => {
+    onAssistantSettled: (address, turnId, outcome, errorType) => {
       if (!owner.isHeld()) return
       settleRuntimeConversationSubagents(address)
       owner.telemetry.onAssistantSettled(
         address,
         turnId,
-        outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
+        outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled',
+        undefined,
+        errorType
       )
       void owner.operations.syncRuntimeTaskUntilExecutorSettles(address)
       owner.operations.syncRuntimeGoalSnapshot(address)

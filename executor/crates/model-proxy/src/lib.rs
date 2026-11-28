@@ -6,6 +6,7 @@ mod error;
 pub use error::HttpError;
 pub mod codex_model_catalog;
 mod codex_responses_proxy_transform;
+mod detailed_telemetry;
 pub mod harness_context;
 pub mod local_decision_proxy;
 pub mod local_model_proxy;

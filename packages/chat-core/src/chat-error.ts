@@ -160,6 +160,8 @@ const ERROR_METADATA: Record<
   generic_error: { category: "unknown", retryPolicy: "unknown" },
 };
 
+export const CHAT_ERROR_TYPES = Object.freeze(Object.keys(ERROR_METADATA) as ChatErrorType[]);
+
 const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   [
     "skills_unmanaged_entries",

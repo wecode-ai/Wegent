@@ -107,6 +107,7 @@ describe('createRuntimeTaskStreamHandlers lifecycle retention', () => {
       subtaskId: 'turn-1',
       error: 'Selected model is at capacity.',
       type: 'response.failed',
+      errorInfo: { code: 'serverOverloaded' },
     })
     handlers.onChatRecovered?.({
       deviceId: 'device-1',
@@ -126,7 +127,7 @@ describe('createRuntimeTaskStreamHandlers lifecycle retention', () => {
     ])
     expect(onAssistantRecovered).toHaveBeenCalledWith('turn-1')
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
-    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'failed')
+    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'failed', 'server_overloaded')
   })
 
   test('bounds settled turn deduplication state for a long-running task', () => {
