@@ -36,8 +36,8 @@ interface SkillAutocompleteProps {
   selectedSkillIds?: number[]
   /** Callback when a skill is selected */
   onSelect: (skill: UnifiedSkill) => void
-  /** Callback when menu should close */
-  onClose: () => void
+  /** Close the menu and optionally restore editor focus after Escape. */
+  onClose: (restoreEditorFocus?: boolean) => void
   /** Live caret range in the editor */
   anchor: { getBoundingClientRect(): Pick<DOMRect, 'top' | 'bottom' | 'left'> }
   /** Whether this is a Chat Shell (affects filtering behavior) */
@@ -340,11 +340,12 @@ export default function SkillAutocomplete({
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        onClose()
-      } else if (
-        filteredSkills.length > 0 &&
-        (event.key === 'ArrowDown' || event.key === 'ArrowUp')
-      ) {
+        onClose(focusInMenu)
+        return
+      }
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return
+
+      if (filteredSkills.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
         event.preventDefault()
         event.stopPropagation()
 
@@ -357,15 +358,7 @@ export default function SkillAutocomplete({
         } else {
           option?.scrollIntoView?.({ block: 'nearest' })
         }
-      } else if (
-        event.key === 'Enter' &&
-        !focusInMenu &&
-        !event.shiftKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey &&
-        selected
-      ) {
+      } else if (event.key === 'Enter' && !focusInMenu && selected) {
         event.preventDefault()
         event.stopPropagation()
         handleSelect(selected.skill, getOption(selectedIndex))

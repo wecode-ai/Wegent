@@ -196,6 +196,7 @@ test.each([
   { pendingCatalog: false, method: 'type', action: 'send with modifier' },
   { pendingCatalog: false, method: 'type', action: 'move caret' },
   { pendingCatalog: false, method: 'type', action: 'switch from mention' },
+  { pendingCatalog: false, method: 'type', action: 'escape from option' },
   { pendingCatalog: false, method: 'type', action: 'keyboard' },
 ])(
   'preserves the draft for slash $method followed by $action (pending catalog: $pendingCatalog)',
@@ -301,6 +302,16 @@ test.each([
       if (action === 'switch from mention') {
         expect(screen.queryByTestId('mention-autocomplete')).not.toBeInTheDocument()
       }
+      if (action === 'escape from option') {
+        await user.tab({ shift: true })
+        expect(option).toHaveFocus()
+        await user.keyboard('{Escape}')
+        expect(option).not.toBeInTheDocument()
+        expect(input).toHaveFocus()
+        expect(window.getSelection()?.anchorOffset).toBe('Check '.length + command.length)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
       if (action === 'move caret') {
         window.getSelection()?.collapse(input.firstChild, 0)
         fireEvent(document, new Event('selectionchange'))
@@ -314,6 +325,8 @@ test.each([
         const menu = screen.getByTestId('slash-skill-menu')
         expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
         expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
+        expect(fireEvent.keyDown(input, { key: 'ArrowUp', shiftKey: true })).toBe(true)
+        expect(fireEvent.keyDown(input, { key: 'ArrowDown', metaKey: true })).toBe(true)
 
         onRender.mockClear()
         caretTop = 135

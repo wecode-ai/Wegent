@@ -227,6 +227,22 @@ export default function ChatInput({
   const [skillCommand, setSkillCommand] = useState<SkillCommand | null>(null)
   const [skillMenuVisible, setSkillMenuVisible] = useState(false)
   const closeSkillMenu = useCallback(() => setSkillCommand(null), [])
+  const dismissSkillMenu = useCallback(
+    (restoreEditorFocus?: boolean) => {
+      const input = editableRef.current
+      if (restoreEditorFocus && input && skillCommand) {
+        input.focus({ preventScroll: true })
+        const selection = window.getSelection()
+        const { anchor } = skillCommand
+        if (selection && input.contains(anchor.startContainer)) {
+          selection.removeAllRanges()
+          selection.addRange(anchor.cloneRange())
+        }
+      }
+      closeSkillMenu()
+    },
+    [closeSkillMenu, skillCommand]
+  )
 
   // Skill fly animation state (managed here so animation persists after autocomplete closes)
   const [flyAnimation, setFlyAnimation] = useState<{
@@ -902,7 +918,7 @@ export default function ChatInput({
           onVisibilityChange={setSkillMenuVisible}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
-          onClose={closeSkillMenu}
+          onClose={dismissSkillMenu}
           anchor={skillCommand.anchor}
           isChatShell={isChatShell}
           skillButtonRef={skillButtonRef}
