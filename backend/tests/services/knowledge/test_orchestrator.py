@@ -634,7 +634,7 @@ class TestKnowledgeOrchestrator:
                 retrieval_config={
                     "retriever_name": "retriever-1",
                     "embedding_config": {"model_name": "embedding-1"},
-                    "top_k": 20,
+                    "top_k": 51,
                 },
             )
 
