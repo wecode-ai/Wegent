@@ -245,6 +245,12 @@ export function createWelcomeDailyCheck(options) {
         })
         assert.equal(schedule.schedule.expression, '0 17 * * *')
         assert.equal(schedule.taskRequest.standInCalendar.readSources.length, 2)
+        await storyUntil(
+          async () => (await rpc('runtime.capacity.get', {})).categories.standIn,
+          capacity => capacity.active === 0 && capacity.queued === 0,
+          options.uiTimeoutMs,
+          'The assistant confirmation must release its scheduler slot and drain the queue before Run now'
+        )
         const receipt = await rpc('runtime.automations.run_now', { automationId: schedule.id })
         assert.ok(receipt.run?.id)
         await storyUntil(

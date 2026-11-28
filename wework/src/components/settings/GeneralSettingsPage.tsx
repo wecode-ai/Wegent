@@ -64,6 +64,8 @@ import {
   SettingsSwitch,
 } from './settings-ui'
 
+import { detailedTelemetryPreference, getTelemetryConfig } from '@/telemetry/config'
+
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
     ? Key
@@ -181,9 +183,14 @@ export function GeneralSettingsPage() {
     setError(null)
     try {
       const nextPreferences =
-        key === 'telemetryEnabled'
-          ? await saveTelemetryConsent(value, preferences.telemetryConsentRevision)
-          : await updateAppPreferences({ [key]: value })
+        key === 'detailedTelemetryEnabled'
+          ? await updateAppPreferences(
+              detailedTelemetryPreference(value),
+              preferences.telemetryConsentRevision
+            )
+          : key === 'telemetryEnabled'
+            ? await saveTelemetryConsent(value, preferences.telemetryConsentRevision)
+            : await updateAppPreferences({ [key]: value })
       setPreferences(nextPreferences)
     } catch (saveError) {
       console.error('[Wework] Failed to update app preferences', saveError)
@@ -818,6 +825,17 @@ export function GeneralSettingsPage() {
             label: t('workbench.general_settings_telemetry'),
             description: t('workbench.general_settings_telemetry_description'),
           })}
+          {preferences.telemetryEnabled &&
+            sessionTelemetryConsent !== false &&
+            getTelemetryConfig().posthogKey &&
+            renderSwitchRow({
+              preferenceKey: 'detailedTelemetryEnabled',
+              testId: 'general-detailed-telemetry-toggle',
+              label: t('workbench.detailed_telemetry_enabled'),
+              description: t('workbench.detailed_telemetry_description', {
+                host: getTelemetryConfig().posthogHost,
+              }),
+            })}
         </SettingsGroup>
         <TelemetryCollectionNotice />
       </section>

@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Check, Zap, User, Users, Globe } from 'lucide-react'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -30,14 +30,16 @@ interface SkillAutocompleteProps {
   showEmptyResults?: boolean
   /** Editor that opened the slash menu */
   editorRef?: React.RefObject<HTMLElement | null>
+  editorViewportRef?: React.RefObject<HTMLElement | null>
+  onVisibilityChange?: (visible: boolean) => void
   /** Already selected skill IDs */
   selectedSkillIds?: number[]
   /** Callback when a skill is selected */
   onSelect: (skill: UnifiedSkill) => void
-  /** Callback when menu should close */
-  onClose: () => void
-  /** Position relative to container */
-  position: { top: number; left: number }
+  /** Close the menu and optionally restore editor focus after Escape. */
+  onClose: (restoreEditorFocus?: boolean) => void
+  /** Live caret range in the editor */
+  anchor: { getBoundingClientRect(): Pick<DOMRect, 'top' | 'bottom' | 'left'> }
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
   /** Ref to the skill button element for fly animation target */
@@ -48,6 +50,66 @@ interface SkillAutocompleteProps {
 
 interface GroupedSkill extends Omit<SourceGroupedSkill, 'group'> {
   group: SourceGroupedSkill['group'] | 'team'
+}
+
+const MENU_GAP = 8
+const MENU_MARGIN = 8
+const MENU_MAX_WIDTH = 400
+const MENU_MAX_HEIGHT = 300
+
+type CaretBounds = ReturnType<SkillAutocompleteProps['anchor']['getBoundingClientRect']>
+
+function getMenuPlacement(
+  caret: CaretBounds,
+  menu: HTMLElement,
+  editorViewport?: HTMLElement | null
+) {
+  const viewport = window.visualViewport
+  const viewportTop = viewport?.offsetTop ?? 0
+  const viewportLeft = viewport?.offsetLeft ?? 0
+  const viewportHeight = viewport?.height ?? window.innerHeight
+  const viewportWidth = viewport?.width ?? window.innerWidth
+  const viewportBottom = viewportTop + viewportHeight
+  const viewportRight = viewportLeft + viewportWidth
+  const editorBounds = editorViewport?.getBoundingClientRect()
+  const visibleTop = Math.max(viewportTop, editorBounds?.top ?? viewportTop)
+  const visibleBottom = Math.min(viewportBottom, editorBounds?.bottom ?? viewportBottom)
+  if (
+    caret.bottom <= visibleTop ||
+    caret.top >= visibleBottom ||
+    caret.left < viewportLeft ||
+    caret.left > viewportRight
+  ) {
+    return null
+  }
+
+  const aboveAnchor = caret.top - MENU_GAP
+  const belowAnchor = caret.bottom + MENU_GAP
+  const above = aboveAnchor - viewportTop - MENU_MARGIN
+  const below = viewportBottom - MENU_MARGIN - belowAnchor
+  const preferredBelow = caret.top < viewportTop + viewportHeight / 2
+  const desiredHeight = Math.min(
+    menu.scrollHeight + menu.offsetHeight - menu.clientHeight,
+    MENU_MAX_HEIGHT
+  )
+  const preferredSpace = preferredBelow ? below : above
+  const otherSpace = preferredBelow ? above : below
+  const opensBelow =
+    preferredSpace < desiredHeight && otherSpace > preferredSpace ? !preferredBelow : preferredBelow
+  const width = Math.min(MENU_MAX_WIDTH, viewportWidth - MENU_MARGIN * 2)
+  const maxHeight = Math.min(MENU_MAX_HEIGHT, opensBelow ? below : above)
+  if (width <= 0 || maxHeight <= 0) return null
+
+  return {
+    top: opensBelow ? belowAnchor : aboveAnchor,
+    left: Math.max(
+      viewportLeft + MENU_MARGIN,
+      Math.min(caret.left, viewportRight - width - MENU_MARGIN)
+    ),
+    width,
+    maxHeight,
+    transform: opensBelow ? undefined : 'translateY(-100%)',
+  }
 }
 
 /**
@@ -68,10 +130,12 @@ export default function SkillAutocomplete({
   query = '',
   showEmptyResults = true,
   editorRef,
+  editorViewportRef,
+  onVisibilityChange,
   selectedSkillIds = [],
   onSelect,
   onClose,
-  position,
+  anchor,
   isChatShell,
   skillButtonRef,
   onTriggerFlyAnimation,
@@ -79,6 +143,7 @@ export default function SkillAutocomplete({
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [menuPositioned, setMenuPositioned] = useState(false)
 
   // Group and filter skills
   const groupedSkills = useMemo<GroupedSkill[]>(() => {
@@ -112,6 +177,77 @@ export default function SkillAutocomplete({
     })
   }, [groupedSkills, query])
 
+  const hasResults = filteredSkills.length > 0
+  const showMenu = showEmptyResults || hasResults
+  const visible = showMenu && menuPositioned
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) {
+      setMenuPositioned(false)
+      return
+    }
+
+    const editorViewport = editorViewportRef?.current
+    let lastCaret = anchor.getBoundingClientRect()
+    let frame = 0
+    const positionMenu = (caret: CaretBounds) => {
+      lastCaret = caret
+      const placement = getMenuPlacement(caret, menu, editorViewport)
+      if (placement) {
+        // Geometry updates write to the menu only. React owns its visibility and rows.
+        menu.style.top = `${placement.top}px`
+        menu.style.left = `${placement.left}px`
+        menu.style.width = `${placement.width}px`
+        menu.style.maxHeight = `${placement.maxHeight}px`
+        menu.style.transform = placement.transform ?? ''
+      }
+      setMenuPositioned(placement !== null)
+    }
+    const updatePlacement = () => positionMenu(anchor.getBoundingClientRect())
+    const trackCaretPosition = () => {
+      const caret = anchor.getBoundingClientRect()
+      if (
+        caret.top !== lastCaret.top ||
+        caret.bottom !== lastCaret.bottom ||
+        caret.left !== lastCaret.left
+      ) {
+        positionMenu(caret)
+      }
+      frame = window.requestAnimationFrame(trackCaretPosition)
+    }
+    const handleScroll = (event: Event) => {
+      if (event.target !== menu) updatePlacement()
+    }
+    positionMenu(lastCaret)
+    // A centered composer can move when nearby content changes size without scrolling or resizing.
+    if (editorViewport) frame = window.requestAnimationFrame(trackCaretPosition)
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePlacement)
+    observer?.observe(menu)
+    if (editorRef?.current) observer?.observe(editorRef.current)
+    if (editorViewport) observer?.observe(editorViewport)
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', updatePlacement)
+    viewport?.addEventListener('scroll', updatePlacement)
+    window.addEventListener('resize', updatePlacement)
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer?.disconnect()
+      viewport?.removeEventListener('resize', updatePlacement)
+      viewport?.removeEventListener('scroll', updatePlacement)
+      window.removeEventListener('resize', updatePlacement)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [anchor, editorRef, editorViewportRef, filteredSkills, showMenu])
+
+  useLayoutEffect(() => {
+    onVisibilityChange?.(visible)
+    return () => {
+      if (visible) onVisibilityChange?.(false)
+    }
+  }, [onVisibilityChange, visible])
+
   useEffect(() => {
     const focused = document.activeElement
     const focusedIndex = menuRef.current?.contains(focused)
@@ -120,19 +256,27 @@ export default function SkillAutocomplete({
     setSelectedIndex(Number(focusedIndex ?? 0))
   }, [filteredSkills])
 
-  // Close on outside click
+  // Close on outside click or when keyboard focus leaves the autocomplete.
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
+    const closeIfOutsideMenu = (event: Event) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) {
         onClose()
       }
     }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
+    const handleFocusOutside = (event: FocusEvent) => {
+      const target = event.target
+      if (target instanceof Node && !editorRef?.current?.contains(target)) {
+        closeIfOutsideMenu(event)
+      }
     }
-  }, [onClose])
+
+    document.addEventListener('mousedown', closeIfOutsideMenu)
+    document.addEventListener('focusin', handleFocusOutside)
+    return () => {
+      document.removeEventListener('mousedown', closeIfOutsideMenu)
+      document.removeEventListener('focusin', handleFocusOutside)
+    }
+  }, [editorRef, onClose])
 
   const handleSelect = useCallback(
     (skill: UnifiedSkill, option?: HTMLElement | null) => {
@@ -179,6 +323,8 @@ export default function SkillAutocomplete({
 
   // Handle keyboard navigation
   useEffect(() => {
+    if (!visible) return
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const menu = menuRef.current
       if (!menu || event.isComposing || event.keyCode === 229 || !(event.target instanceof Node))
@@ -189,15 +335,19 @@ export default function SkillAutocomplete({
 
       const getOption = (index: number) =>
         menuRef.current?.querySelector<HTMLButtonElement>(`[data-skill-index="${index}"]`)
+      const selected = filteredSkills[selectedIndex]
 
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        onClose()
-      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        onClose(focusInMenu)
+        return
+      }
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return
+
+      if (filteredSkills.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
         event.preventDefault()
         event.stopPropagation()
-        if (filteredSkills.length === 0) return
 
         const step = event.key === 'ArrowDown' ? 1 : -1
         const nextIndex = Math.min(Math.max(selectedIndex + step, 0), filteredSkills.length - 1)
@@ -208,11 +358,10 @@ export default function SkillAutocomplete({
         } else {
           option?.scrollIntoView?.({ block: 'nearest' })
         }
-      } else if (event.key === 'Enter' && !focusInMenu) {
+      } else if (event.key === 'Enter' && !focusInMenu && selected) {
         event.preventDefault()
         event.stopPropagation()
-        const selected = filteredSkills[selectedIndex]
-        if (selected) handleSelect(selected.skill, getOption(selectedIndex))
+        handleSelect(selected.skill, getOption(selectedIndex))
       }
     }
 
@@ -220,7 +369,7 @@ export default function SkillAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredSkills, selectedIndex, handleSelect, editorRef])
+  }, [onClose, filteredSkills, selectedIndex, handleSelect, editorRef, visible])
 
   // Get section header for a group
   const getSectionHeader = (group: 'team' | 'personal' | 'group' | 'public') => {
@@ -250,29 +399,14 @@ export default function SkillAutocomplete({
     }
   }
 
-  if (filteredSkills.length === 0) {
-    if (!showEmptyResults) return null
-    return (
-      <div
-        ref={menuRef}
-        className="absolute z-50 bg-surface border border-border rounded-md shadow-lg py-2 px-3 min-w-[250px]"
-        style={{
-          bottom: `calc(100% - ${position.top}px)`,
-          left: `${position.left}px`,
-        }}
-      >
-        <div className="text-sm text-text-muted">
-          {t('common:skillSelector.no_available_skills')}
-        </div>
-      </div>
-    )
-  }
+  if (!showMenu) return null
 
   // Group skills for rendering with section headers
   // For group skills, we need to track namespace changes to show group name
   let currentGroup: 'team' | 'personal' | 'group' | 'public' | null = null
   let currentNamespace: string | null = null
   const renderItems: React.ReactNode[] = []
+  const selectedIds = new Set(selectedSkillIds)
   let itemIndex = 0
 
   for (const { skill, group, groupNamespace } of filteredSkills) {
@@ -304,7 +438,7 @@ export default function SkillAutocomplete({
       )
     }
 
-    const isSelected = selectedSkillIds.includes(skill.id)
+    const isSelected = selectedIds.has(skill.id)
     const displayIndex = itemIndex
     itemIndex++
 
@@ -341,16 +475,22 @@ export default function SkillAutocomplete({
   return (
     <div
       ref={menuRef}
-      className="absolute z-50 bg-surface border border-border rounded-md shadow-lg py-1 min-w-[300px] max-w-[400px] max-h-[300px] overflow-y-auto"
-      style={{
-        bottom: `calc(100% - ${position.top}px)`,
-        left: `${position.left}px`,
-      }}
+      data-testid="slash-skill-menu"
+      className="fixed z-50 overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-lg"
+      style={{ visibility: visible ? undefined : 'hidden' }}
     >
-      {renderItems}
-      <div className="px-3 py-1 text-xs text-text-muted border-t border-border mt-1">
-        {t('common:skillSelector.skill_autocomplete_title')}
-      </div>
+      {hasResults ? (
+        <>
+          {renderItems}
+          <div className="mt-1 border-t border-border px-3 py-1 text-xs text-text-muted">
+            {t('common:skillSelector.skill_autocomplete_title')}
+          </div>
+        </>
+      ) : (
+        <div className="px-3 py-1 text-sm text-text-muted">
+          {t('common:skillSelector.no_available_skills')}
+        </div>
+      )}
     </div>
   )
 }

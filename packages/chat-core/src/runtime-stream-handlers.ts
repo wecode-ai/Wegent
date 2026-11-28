@@ -1,3 +1,4 @@
+import { parseChatError, type ChatErrorType } from "./chat-error";
 import {
   isStandaloneCompletedContextCompaction,
   isRuntimeTaskStreamPayload,
@@ -73,6 +74,7 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantSettled?: (
     turnId: string,
     outcome: "succeeded" | "failed" | "cancelled",
+    errorType?: ChatErrorType,
   ) => void;
   onAssistantRecovered?: (turnId: string) => void;
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void;
@@ -105,6 +107,7 @@ export interface RuntimeConversationStreamHandlers {
     address: RuntimeTaskAddress,
     turnId: string,
     outcome: "succeeded" | "failed" | "cancelled",
+    errorType?: ChatErrorType,
   ) => void;
   onAssistantRecovered?: (address: RuntimeTaskAddress, turnId: string) => void;
   onContextUsageUpdated?: (
@@ -210,9 +213,9 @@ export function createRuntimeConversationStreamHandlers(
             turnId,
             responseSizeBytes,
           ),
-        onAssistantSettled: (turnId, outcome) => {
+        onAssistantSettled: (turnId, ...settlement) => {
           activeTurnIds.delete(turnId);
-          handlers.onAssistantSettled?.(address, turnId, outcome);
+          handlers.onAssistantSettled?.(address, turnId, ...settlement);
         },
         onAssistantRecovered: (turnId) => {
           activeTurnIds.delete(turnId);
@@ -317,6 +320,7 @@ export function createRuntimeTaskStreamHandlers(
     terminalTurnId: string,
     outcome: "succeeded" | "failed" | "cancelled",
     allowProviderAlias = true,
+    errorType?: ChatErrorType,
   ) => {
     if (settledAssistantTurnIds.has(terminalTurnId)) return;
 
@@ -332,7 +336,11 @@ export function createRuntimeTaskStreamHandlers(
     firstTokenSent.delete(lifecycleTurnId);
     rememberSettledAssistantTurn(terminalTurnId);
     rememberSettledAssistantTurn(lifecycleTurnId);
-    handlers.onAssistantSettled?.(lifecycleTurnId, outcome);
+    if (errorType) {
+      handlers.onAssistantSettled?.(lifecycleTurnId, outcome, errorType);
+    } else {
+      handlers.onAssistantSettled?.(lifecycleTurnId, outcome);
+    }
   };
   const recoverAssistantTurn = (turnId: string) => {
     unsettledAssistantTurnIds.delete(turnId);
@@ -624,6 +632,9 @@ export function createRuntimeTaskStreamHandlers(
         identity.subtaskId,
         cancelled ? "cancelled" : "failed",
         !payload.task?.executionState,
+        cancelled
+          ? undefined
+          : parseChatError(payload.error, payload.type, payload.errorInfo).type,
       );
       streamedFileChanges.delete(identity.subtaskId);
     },
