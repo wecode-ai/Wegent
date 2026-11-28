@@ -2879,6 +2879,9 @@ impl RuntimeWorkRpcHandler {
                 );
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request, false);
+                if let Some(active_turn) = active_turn.filter(|_| turn.goal_status_observed) {
+                    self.settle_completed_goal_turn(local_task_id, &event_request, active_turn);
+                }
                 let response_item_id = turn.response_item_id;
                 let response_value_origin = turn.response_value_origin;
                 if response_value_origin == crate::agents::CodexResponseValueOrigin::Final

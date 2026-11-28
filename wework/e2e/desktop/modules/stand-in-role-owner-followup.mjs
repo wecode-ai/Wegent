@@ -46,8 +46,22 @@ export function createOwnerFollowupStory({ tool, reply }) {
           return true
         }
         const output = readMcpToolOutput(body, call)
-        if (first) assert.equal(JSON.parse(output).ok, true, output)
-        else assert.ok(output.includes(pageUrl), output)
+        if (first) {
+          assert.equal(JSON.parse(output).ok, true, output)
+        } else {
+          assert.ok(output.includes(pageUrl), output)
+          const navigateCall = 'specialist-navigate-original-browser'
+          if (!requestContainsToolOutput(body, navigateCall)) {
+            const followupUrl = new URL('/?owner-followup=confirmed', fixtureOrigin).href
+            reply(
+              response,
+              tool(body, 'browser_open', navigateCall, { url: followupUrl }, 'wework_browser')
+            )
+            return true
+          }
+          const navigation = readMcpToolOutput(body, navigateCall)
+          assert.equal(JSON.parse(navigation).ok, true, navigation)
+        }
         reply(response, [assistantMessage(work.result)])
         return true
       }
@@ -146,7 +160,8 @@ export function createOwnerFollowupStory({ tool, reply }) {
       )
 
       await send(turns[1].input)
-      await allowBrowserCall('browser_inspect')
+      // The read must find the original page before the restricted task asks to navigate.
+      await allowBrowserCall('browser_open')
       await waitForReply(turns[1].result)
       assert.equal((await readTask(parentId)).threadId, parentThread)
       const { task: resumed } = await rpc('runtime.tasks.get', { taskId })

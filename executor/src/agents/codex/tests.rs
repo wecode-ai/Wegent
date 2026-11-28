@@ -5139,22 +5139,13 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
         notifications: hub,
         reader_task: tokio::spawn(async {}),
     });
-    let (_answer_tx, answer_rx) = mpsc::channel(1);
-    let router = InteractionAnswerRouter::new(answer_rx);
-    let (notifications, mut received) = mpsc::unbounded_channel();
-    let (errors, _error_rx) = mpsc::unbounded_channel();
     let request = json!({"id":91,"method":"item/commandExecution/requestApproval","params":{
         "threadId":"thread", "turnId":"turn", "itemId":"command", "expiresAtUnixMs":0
     }});
-    spawn_shared_approval_response(
-        &client,
-        &request,
-        Some(router),
-        errors,
-        Some(notifications.downgrade()),
-    )
-    .unwrap();
-    let event = tokio::time::timeout(Duration::from_secs(5), received.recv())
+    let transport = client.existing_process().await.unwrap();
+    let mut thread = transport.notifications.subscribe_thread("thread");
+    transport.track_server_interaction(&request);
+    let event = tokio::time::timeout(Duration::from_secs(5), thread.recv())
         .await
         .unwrap()
         .unwrap();
@@ -5169,6 +5160,10 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
         codex_approval_result(&request, &json!({})).unwrap()["decision"],
         "decline"
     );
+    assert!(!transport
+        .answer_server_interaction(&json!(91), json!({"decision":"accept"}))
+        .await
+        .unwrap());
     client.restart().await;
 }
 

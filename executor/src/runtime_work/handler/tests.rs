@@ -2166,6 +2166,15 @@ fn finishing_a_goal_request_updates_metadata_without_settling_native_admission()
 
 #[test]
 fn turn_result_persists_goal_status_before_native_execution_settles() {
+    assert_observed_goal_completion(false);
+}
+
+#[test]
+fn turn_result_settles_continuation_when_native_turn_completed_first() {
+    assert_observed_goal_completion(true);
+}
+
+fn assert_observed_goal_completion(native_first: bool) {
     let index_path = temp_runtime_work_index_path("finish-observed-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -2175,9 +2184,14 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         "Task".to_owned(),
     );
     link.goal_status = Some("active".to_owned());
+    link.thread_id = Some("thread-1".to_owned());
     handler.upsert_local_task(link);
     let execution_id = start_test_execution(&handler, "task-1");
 
+    if native_first {
+        finish_test_native_turn(&handler, "task-1", "thread-1");
+        assert!(handler.native_task_holds_capacity("task-1"));
+    }
     handler.handle_turn_result(
         "task-1",
         execution_id,
@@ -2185,7 +2199,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         Some(&ActiveCodexTurn {
             execution_id,
             thread_id: "thread-1".to_owned(),
-            turn_id: "turn-1".to_owned(),
+            turn_id: "test-native-turn".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
@@ -2204,9 +2218,11 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         }),
     );
 
-    assert!(handler.local_task_link("task-1").unwrap().running);
     assert!(!handler.is_active_local_task("task-1"));
-    finish_test_native_turn(&handler, "task-1", "thread-1");
+    if !native_first {
+        assert!(handler.local_task_link("task-1").unwrap().running);
+        finish_test_native_turn(&handler, "task-1", "thread-1");
+    }
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");

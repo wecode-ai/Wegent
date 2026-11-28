@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import {
+  closeStandInSettingsAfterBinding,
+  openStandInSettings,
+} from './stand-in-profile-navigation.mjs'
 import { fetchJson } from './shared.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 
@@ -75,9 +78,5 @@ export async function chooseStandInExecutionDevice(control, deviceId, timeoutMs,
     { timeoutMs }
   )
   if (waitForSaved) await waitForSaved()
-  const close = testId('stand-in-primary-profile-close')
-  const panel = testId('stand-in-profile-panel')
-  await control.command('waitFor', `${close}:disabled`, { visible: false, timeoutMs })
-  await control.command('clickIfPresent', close)
-  await control.command('waitFor', panel, { visible: false, timeoutMs })
+  await closeStandInSettingsAfterBinding(control, timeoutMs)
 }

@@ -392,6 +392,11 @@ export function createStandInRoleBrowserChecks(reply) {
         await control.command('waitFor', browserRejectButton, {
           timeoutMs: modelResponseTimeoutMs,
         })
+        const rejectedApprovalId = await control.command('getAttribute', browserRejectButton, {
+          value: 'data-approval-id',
+        })
+        assert.ok(rejectedApprovalId, 'The first browser confirmation must have an identity')
+        const rejectedApproval = `${browserRejectButton}[data-approval-id=${JSON.stringify(rejectedApprovalId)}]`
         browserPromptCount += 1
         try {
           assert.equal(
@@ -400,13 +405,14 @@ export function createStandInRoleBrowserChecks(reply) {
             'Full-access tasks must not prompt runtime MCP approval for browser tools'
           )
         } finally {
-          await control.command('clickWhenEnabled', browserRejectButton)
+          await control.command('clickWhenEnabled', rejectedApproval)
         }
-        await control.command('waitFor', browserRejectButton, {
+        await control.command('waitFor', rejectedApproval, {
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', browserApproveButton, {
+        const nextApproval = `${browserApproveButton}:not([data-approval-id=${JSON.stringify(rejectedApprovalId)}])`
+        await control.command('waitFor', nextApproval, {
           timeoutMs: modelResponseTimeoutMs,
         })
         browserPromptCount += 1
@@ -417,9 +423,9 @@ export function createStandInRoleBrowserChecks(reply) {
             'Full-access tasks must keep runtime MCP approval suppressed across browser steps'
           )
         } finally {
-          await control.command('clickWhenEnabled', browserApproveButton)
+          await control.command('clickWhenEnabled', nextApproval)
         }
-        await control.command('waitFor', browserApproveButton, {
+        await control.command('waitFor', nextApproval, {
           visible: false,
           timeoutMs: uiTimeoutMs,
         })

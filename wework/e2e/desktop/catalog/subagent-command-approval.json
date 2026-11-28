@@ -1,0 +1,6 @@
+{
+  "order": 130026,
+  "scenario": "./scenarios/subagent-command-approval.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 79051, "shard": 10, "position": 2060 } }
+}

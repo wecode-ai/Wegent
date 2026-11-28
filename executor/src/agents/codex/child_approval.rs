@@ -2,7 +2,7 @@
 use super::*;
 
 impl CodexAppServerClient {
-    pub(crate) async fn answer_child_mcp_approval(
+    pub(crate) async fn answer_child_approval(
         &self,
         request_id: &Value,
         response: &Value,
@@ -13,7 +13,7 @@ impl CodexAppServerClient {
         };
         let request = transport
             .notifications
-            .pending_mcp_elicitations
+            .pending_server_interactions
             .lock()
             .unwrap()
             .get(&request_id.to_string())
@@ -21,11 +21,15 @@ impl CodexAppServerClient {
         let Some(mut request) = request else {
             return Ok(None);
         };
+        let method = request["method"].as_str().unwrap_or_default();
+        let native_approval = is_codex_approval_request_method(method);
         let params = message_params(&request);
         let Some(turn_id) = response["interactionScope"].as_str() else {
             return Ok(None);
         };
-        if !is_mcp_tool_call_approval(params) || params["turnId"].as_str() != Some(turn_id) {
+        if (!native_approval && !is_mcp_tool_call_approval(params))
+            || params["turnId"].as_str() != Some(turn_id)
+        {
             return Ok(None);
         }
         let Some(single_approval) = params["threadId"].as_str().and_then(child_policy) else {
@@ -37,9 +41,17 @@ impl CodexAppServerClient {
         if elicitation::remaining(&request).is_zero() || !valid_decision(&request, response) {
             return Ok(Some(false));
         }
-        let result = mcp_server_elicitation_response(&request, Some(response))?;
-        let status = elicitation::response_status(&result);
-        if !transport.answer_mcp_elicitation(request_id, result).await? {
+        let (result, status) = if native_approval {
+            (codex_approval_result(&request, response)?, "answered")
+        } else {
+            let result = mcp_server_elicitation_response(&request, Some(response))?;
+            let status = elicitation::response_status(&result);
+            (result, status)
+        };
+        if !transport
+            .answer_server_interaction(request_id, result)
+            .await?
+        {
             return Ok(Some(false));
         }
         transport
@@ -57,8 +69,22 @@ fn valid_decision(request: &Value, response: &Value) -> bool {
     if answers.is_empty() {
         return true;
     }
+    let method = request["method"].as_str().unwrap_or_default();
+    let params = message_params(request);
+    let (question_id, payload) = if is_codex_approval_request_method(method) {
+        (
+            CODEX_APPROVAL_QUESTION_ID,
+            crate::runtime_work::codex_approval_render_payload(method, params, request.get("id"))
+                .map(|(_, payload)| payload),
+        )
+    } else {
+        (
+            MCP_ELICITATION_APPROVAL_QUESTION_ID,
+            mcp_server_elicitation_request_user_input_params(params),
+        )
+    };
     let Some(answer) = answers
-        .get(MCP_ELICITATION_APPROVAL_QUESTION_ID)
+        .get(question_id)
         .and_then(|answer| answer["answers"].as_array())
     else {
         return false;
@@ -67,11 +93,9 @@ fn valid_decision(request: &Value, response: &Value) -> bool {
         return false;
     };
     answers.len() == 1
-        && mcp_server_elicitation_request_user_input_params(message_params(request)).is_some_and(
-            |payload| {
-                payload["questions"][0]["options"]
-                    .as_array()
-                    .is_some_and(|options| options.iter().any(|option| &option["label"] == answer))
-            },
-        )
+        && payload.is_some_and(|payload| {
+            payload["questions"][0]["options"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| &option["label"] == answer))
+        })
 }

@@ -1496,7 +1496,7 @@ impl RuntimeWorkRpcHandler {
                     ));
                 }
                 if let Some(result) = self
-                    .respond_to_child_mcp_approval(&local_task_id, &response)
+                    .respond_to_child_approval(&local_task_id, &response)
                     .await?
                 {
                     return Ok(result);

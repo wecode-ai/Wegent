@@ -2138,7 +2138,7 @@ fn emit_codex_approval_request(
     );
 }
 
-pub(super) fn codex_approval_render_payload(
+pub(crate) fn codex_approval_render_payload(
     method: &str,
     params: &Value,
     message_request_id: Option<&Value>,
@@ -2186,6 +2186,9 @@ pub(super) fn codex_approval_render_payload(
         );
         if let Some(request_id) = request_id {
             object.insert("requestId".to_owned(), request_id.clone());
+        }
+        if let Some(turn_id) = params.get("turnId") {
+            object.insert("interactionScope".to_owned(), turn_id.clone());
         }
     }
     Some((block_id, render_payload))
@@ -4174,6 +4177,7 @@ mod tests {
         assert_eq!(block["tool_name"], "request_user_input");
         assert_eq!(block["render_payload"]["interactionKind"], "approval");
         assert_eq!(block["render_payload"]["approvalKind"], "command");
+        assert_eq!(block["render_payload"]["interactionScope"], "turn-1");
         assert_eq!(
             block["render_payload"]["questions"][0]["id"],
             "__codex_approval"
