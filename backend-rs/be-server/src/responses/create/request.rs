@@ -88,11 +88,13 @@ pub(crate) async fn authorize_pipeline(
     Ok(())
 }
 
-async fn authorize_frozen_pipeline(
+async fn authorize_pipeline_turn(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
 ) -> Result<(), FastApiError> {
-    if input.task_json["spec"]["currentStage"].is_number() {
+    if input.task_json["spec"]["currentStage"].is_number()
+        || input.team.json.0["spec"]["collaborationModel"] == "pipeline"
+    {
         authorize_pipeline(
             state,
             input.user_id,
@@ -109,7 +111,7 @@ pub async fn build_execution_request(
     input: &BuildExecutionRequestInput<'_>,
     preload_skills: &[String],
 ) -> Result<ExecutionRequest, FastApiError> {
-    authorize_frozen_pipeline(state, input).await?;
+    authorize_pipeline_turn(state, input).await?;
     request::build_execution_request(&services(state), input, preload_skills).await
 }
 
@@ -122,7 +124,7 @@ pub(crate) async fn build_chat_execution_request(
     model_options: Option<&Value>,
     created_git_repository: Option<&Value>,
 ) -> Result<ExecutionRequest, FastApiError> {
-    authorize_frozen_pipeline(state, input).await?;
+    authorize_pipeline_turn(state, input).await?;
     let runtime_model = super::socket_runtime_model::resolve(state, input, model_options).await?;
     request::build_chat_execution_request(
         &services(state),
@@ -148,7 +150,7 @@ pub(crate) async fn build_background_execution_request(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
-    authorize_frozen_pipeline(state, input).await?;
+    authorize_pipeline_turn(state, input).await?;
     request::build_background_execution_request(&services(state), input).await
 }
 

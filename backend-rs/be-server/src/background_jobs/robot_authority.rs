@@ -206,8 +206,8 @@ async fn agent_use_on(
             row.assigner_user_id,
         )
         .await?;
-        if let Some(agent) = agent {
-            let bound = authority::integer(&agent.metadata.0["wegent_team_id"]).unwrap_or(0);
+        if let Some(metadata) = agent {
+            let bound = authority::integer(&metadata["wegent_team_id"]).unwrap_or(0);
             if team_id != 0 && bound != team_id {
                 bail!("Assigned Team binding changed");
             }
@@ -218,7 +218,7 @@ async fn agent_use_on(
                     .as_str()
                     .filter(|id| !id.is_empty())
                     .or_else(|| {
-                        agent.metadata.0["default_runtime_profile_id"]
+                        metadata["default_runtime_profile_id"]
                             .as_str()
                             .filter(|id| !id.is_empty())
                     });

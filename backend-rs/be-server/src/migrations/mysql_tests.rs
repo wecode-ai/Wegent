@@ -77,7 +77,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 51);
+    assert_eq!(tables.len(), 50);
     assert!(
         !tables
             .iter()
@@ -90,35 +90,9 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     );
     upgrade(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
-    use wegent_task_store::task_store_pipeline::{managed_strategy, save_strategy};
-    let waiting = serde_json::json!({"collaborationModel":"pipeline","members":[{"requireConfirmation":true}]});
-    let global_id: i64 = 7_000_000_000;
-    mysql
-        .execute("CREATE TABLE tasks_007 LIKE tasks", ())
-        .await?;
-    mysql.with_transaction(async |tx| {
-        let mut task = serde_json::json!({"spec":{}, "status":{"status":"PENDING_CONFIRMATION"}});
-        save_strategy(tx, global_id, &waiting, &mut task).await?;
-        tx.execute("INSERT INTO tasks_007(id,user_id,kind,name,namespace,json,is_active,created_at,updated_at,project_id,is_group_chat) VALUES (?,7,'Task','waiting','default',?,1,NOW(),NOW(),0,0)",
-            (global_id, brz_mysql::Json(task))).await?;
-        Ok(())
-    }).await?;
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;
     check(mysql).await?;
-    let (brz_mysql::Json(mut restored),): (brz_mysql::Json<serde_json::Value>,) = mysql
-        .fetch_one("SELECT json FROM tasks_007 WHERE id=?", (global_id,))
-        .await?;
-    restored["spec"]
-        .as_object_mut()
-        .unwrap()
-        .remove("currentStage");
-    assert_eq!(restored["status"]["status"], "PENDING_CONFIRMATION");
-    assert_eq!(
-        managed_strategy(&mut &*mysql, restored.as_object(), global_id).await?,
-        Some(waiting)
-    );
-    historical::project_agent_teams_round_trip(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
     crate::socketio::issue_timestamp_tests::verify(mysql).await?;

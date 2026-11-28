@@ -73,21 +73,27 @@ pub(super) fn persist(connection: &Connection, settings: &Value) -> Result<(), T
                 continue;
             }
         }
-        let runtime = role["model"]["runtime"].as_str().unwrap_or("codex");
-        let shell = match runtime {
-            "codex" => "Codex",
-            "claude_code" => "ClaudeCode",
-            _ => {
-                return Err(TaskRuntimeError::Invalid(
-                    "Unsupported personal Team runtime".into(),
-                ));
-            }
-        };
-        let bot = json!({"id":format!("{reference}-bot"),"name":role["name"],"shell_type":shell});
-        let metadata = json!({"id":reference,"name":role["name"],"runtime":runtime,"bot":[bot],"collaboration_model":"solo","system_prompt":"","additional_skills":[],"plugins":[]});
+        let metadata = solo_definition(&role, reference)?;
         write_definition(connection, user, reference, &metadata)?;
     }
     Ok(())
+}
+
+fn solo_definition(role: &Value, reference: &str) -> Result<Value, TaskRuntimeError> {
+    let runtime = role["model"]["runtime"].as_str().unwrap_or("codex");
+    let shell = match runtime {
+        "codex" => "Codex",
+        "claude_code" => "ClaudeCode",
+        _ => {
+            return Err(TaskRuntimeError::Invalid(
+                "Unsupported personal Team runtime".into(),
+            ));
+        }
+    };
+    let bot = json!({"id":format!("{reference}-bot"),"name":role["name"],"shell_type":shell});
+    Ok(
+        json!({"id":reference,"name":role["name"],"runtime":runtime,"bot":[bot],"collaboration_model":"solo","system_prompt":"","additional_skills":[],"plugins":[]}),
+    )
 }
 
 fn write_definition(
@@ -124,10 +130,19 @@ fn definition(
         agent["name"] = json!(row.title.or(row.name));
         return Ok(agent);
     }
-    Ok(get_item_from(connection, reference, "local_team")?
-        .filter(|r| r.created_by_user_id == user)
-        .ok_or_else(unavailable)?
-        .metadata)
+    if let Some(row) = get_item_from(connection, reference, "local_team")? {
+        return if row.created_by_user_id == user {
+            Ok(row.metadata)
+        } else {
+            Err(unavailable())
+        };
+    }
+    let settings = read_personal(connection, user, "")?;
+    let role = stand_in_identities(&settings)
+        .into_iter()
+        .find(|role| role["teamRef"].as_str() == Some(reference))
+        .ok_or_else(unavailable)?;
+    solo_definition(&role, reference)
 }
 
 /// The transfer carries only executable public role fields. Device grants and
@@ -501,6 +516,32 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_an_older_personal_role_resolves_its_team_without_persisting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        settings["roles"] = json!([empty_role("review", "device")]);
+        let saved = store.save_personal_stand_in(7, "device", settings).unwrap();
+        let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
+        let expected = store.personal_execution_team(7, reference).unwrap();
+        let before = {
+            let conn = store.connection().unwrap();
+            conn.execute("DELETE FROM loop_items WHERE id=?1", [reference])
+                .unwrap();
+            conn.execute("UPDATE loop_items SET metadata=json_remove(metadata,'$.roles[0].teamRef') WHERE id=?1",[personal_key(7)]).unwrap();
+            conn.total_changes()
+        };
+        let projected = store.personal_stand_in(7, "device").unwrap();
+        assert_eq!(projected["roles"][0]["teamRef"], reference);
+        assert_eq!(
+            store.personal_execution_team(7, reference).unwrap(),
+            expected
+        );
+        assert!(store.personal_execution_team(8, reference).is_err());
+        assert_eq!(store.connection().unwrap().total_changes(), before);
+    }
 
     #[test]
     fn older_role_editor_preserves_the_selected_team_until_explicitly_reset() {

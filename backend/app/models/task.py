@@ -138,13 +138,3 @@ class TaskResource(Base):
             )
         """
         return [cls.STATE_ACTIVE, cls.STATE_SUBSCRIPTION]
-
-
-class TaskTeamStrategy(Base):
-    """Server-owned Pipeline definition accepted with the Task's first turn."""
-
-    __tablename__ = "task_team_strategies"
-    __table_args__ = {"mysql_engine": "InnoDB"}
-
-    task_id = Column(big_integer_id_type(), primary_key=True, autoincrement=False)
-    strategy = Column(JSON, nullable=False)

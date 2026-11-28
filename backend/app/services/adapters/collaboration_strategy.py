@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.services.adapters.pipeline_context import normalize_context_passing
-from app.services.adapters.pipeline_snapshot import accepted_team
 from app.services.adapters.pipeline_stage import latest_stage_completion
 
 logger = logging.getLogger(__name__)
@@ -261,7 +260,7 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 )
                 return None
 
-            team_crd = Team.model_validate(accepted_team(db, task_id, team).json)
+            team_crd = Team.model_validate(team.json)
             members = team_crd.spec.members
             if not members:
                 logger.info(
@@ -421,7 +420,7 @@ class CollaborationStrategyFactory:
             if not team:
                 return DefaultCollaborationStrategy()
 
-            team_crd = Team.model_validate(accepted_team(db, task_id, team).json)
+            team_crd = Team.model_validate(team.json)
             collaboration_model = team_crd.spec.collaborationModel
 
             logger.debug(

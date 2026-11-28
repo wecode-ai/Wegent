@@ -283,42 +283,30 @@ class TaskRequestBuilder:
         include_wework_space_mcp = (
             include_wework_space_mcp or self._is_board_wegent_task(task)
         )
-        from app.models.task import TaskTeamStrategy
-        from app.services.adapters.pipeline_snapshot import overlay_team
-
-        snapshot = self.db.get(TaskTeamStrategy, task.id)
-        if snapshot is not None:
-            team = overlay_team(team, snapshot.strategy)
         # Parse team CRD
         team_crd = Team.model_validate(team.json)
 
         # Get bot for this subtask
         # In pipeline mode, subtask.bot_ids contains the specific bot for this stage
         # Otherwise, use the first bot from team members
-        bot = self._get_bot_for_subtask(subtask, team, team_crd)
+        stage_member = None
+        if team_crd.spec.collaborationModel == "pipeline":
+            from app.services.adapters.pipeline_stage import (
+                resolve_pipeline_stage_bot,
+                validate_pipeline_team,
+            )
+
+            validate_pipeline_team(task, team)
+            stage_member, bot = resolve_pipeline_stage_bot(
+                self.db, task, team, team_crd
+            )
+            if subtask.bot_ids and bot.id != subtask.bot_ids[0]:
+                raise ValueError("Pipeline stage Bot identity changed")
+            team_member_prompt = stage_member.prompt
+        else:
+            bot = self._get_bot_for_subtask(subtask, team, team_crd)
         if not bot:
             raise ValueError(f"No bot found for team {team.name}")
-
-        accepted = {}
-        accepted_prompt = None
-        if snapshot is not None:
-            accepted = snapshot.strategy["bots"].get(str(bot.id))
-            if accepted is None:
-                raise ValueError("Bot identity changed since assignment")
-            stage = task.json["spec"].get("currentStage") or 0
-            members = team_crd.spec.members
-            if not 0 <= stage < len(members) or not self._team_member_matches_bot(
-                members[stage], bot
-            ):
-                raise ValueError("Pipeline stage Bot identity changed")
-            parts = [accepted["ghost_prompt"].strip(), members[stage].prompt]
-            prompt = "\n\n".join(part for part in parts if part)
-            accepted_prompt = (
-                f"<base_prompt>\n{prompt}\n</base_prompt>" if prompt else ""
-            )
-        frozen_model = (
-            accepted if not force_override and not runtime_model_config else {}
-        )
 
         # Build workspace configuration first to get git_domain for user info matching
         workspace = self._build_workspace(task)
@@ -363,19 +351,11 @@ class TaskRequestBuilder:
             runtime_model_config=runtime_model_config,
             use_secondary_model_for_chat=use_secondary_model_for_generation_chat,
             resolution_meta=model_resolution,
-            **({"accepted_model": frozen_model} if frozen_model else {}),
         )
 
         # Get base system prompt from Ghost
-        system_prompt = (
-            accepted_prompt
-            if accepted_prompt is not None
-            else self._get_base_system_prompt(
-                bot=bot,
-                team=team,
-                team_crd=team_crd,
-                team_member_prompt=team_member_prompt,
-            )
+        system_prompt = self._get_base_system_prompt(
+            bot=bot, team=team, team_crd=team_crd, team_member_prompt=team_member_prompt
         )
         if include_wework_space_mcp:
             system_prompt = f"{system_prompt.rstrip()}\n\n{BOARD_MCP_GUIDANCE}"
@@ -466,21 +446,8 @@ class TaskRequestBuilder:
                 if model_resolution.get("used_secondary_model")
                 else runtime_model_config
             ),
-            **({"accepted_model": frozen_model} if frozen_model else {}),
+            **({"stage_member": stage_member} if stage_member else {}),
         )
-
-        if accepted_prompt is not None:
-            bot_config[0]["system_prompt"] = accepted_prompt
-            if frozen_model.get("model_id"):
-                config = bot_config[0]["agent_config"]
-                bot_config[0]["agent_config"] = {
-                    **config,
-                    "env": {
-                        **config.get("env", {}),
-                        "model_id": frozen_model["model_id"],
-                        **frozen_model.get("inline_env", {}),
-                    },
-                }
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
@@ -1379,7 +1346,6 @@ class TaskRequestBuilder:
         runtime_model_config: dict[str, Any] | None = None,
         use_secondary_model_for_chat: bool = False,
         resolution_meta: dict[str, bool] | None = None,
-        accepted_model: dict | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -1439,10 +1405,7 @@ class TaskRequestBuilder:
             user_id,
             override_model_name=override_model_name,
             force_override=force_override,
-            **({"accepted_model": accepted_model} if accepted_model else {}),
         )
-        if accepted_model and accepted_model.get("model_id"):
-            model_config["model_id"] = accepted_model["model_id"]
 
         # Build agent_config and task_data for placeholder replacement
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
@@ -2381,7 +2344,7 @@ class TaskRequestBuilder:
         runtime_model_config: dict[str, Any] | None = None,
         user_name: str = "",
         task_id: int | None = None,
-        accepted_model: dict | None = None,
+        stage_member: TeamMember | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -2413,7 +2376,10 @@ class TaskRequestBuilder:
         bot_members: list[tuple[Kind, TeamMember | None]] = []
         if collaboration_model == "pipeline":
             bot_members.append(
-                (first_bot, self._find_team_member_for_bot(team_crd, first_bot))
+                (
+                    first_bot,
+                    stage_member or self._find_team_member_for_bot(team_crd, first_bot),
+                )
             )
         else:
             for member in members:
@@ -2478,7 +2444,6 @@ class TaskRequestBuilder:
                     user_id,
                     override_model_name=override_model_name,
                     force_override=force_override,
-                    **({"accepted_model": accepted_model} if accepted_model else {}),
                 )
                 if (
                     codex_coordinate

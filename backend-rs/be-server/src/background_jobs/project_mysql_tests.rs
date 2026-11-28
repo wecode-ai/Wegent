@@ -37,55 +37,42 @@ async fn real_mysql_completion_is_atomic_idempotent_and_fenced() -> Result<()> {
     Ok(())
 }
 
-async fn verify_pipeline_strategy_recovery(mysql: &MysqlService) -> Result<()> {
-    use wegent_task_store::task_store_pipeline::{apply_managed_strategy, save_strategy};
-    ddl(
-        mysql,
-        "CREATE TABLE task_team_strategies (task_id BIGINT PRIMARY KEY, strategy JSON NOT NULL)",
-    )
-    .await?;
-    let mut waiting = json!({"spec":{"teamRef":{"name":"original","namespace":"default","user_id":1}},"status":{"status":"PENDING_CONFIRMATION"}});
-    let mut new_task = json!({"metadata":{"labels":{"projectRobotExecutionId":"444"}}});
-    let first = json!({"collaborationModel":"pipeline","members":[
-        {"botRef":{"name":"author"},"requireConfirmation":true,"contextPassing":"original_and_previous"},
-        {"botRef":{"name":"reviewer"},"prompt":"original review"}
-    ]});
-    let edited = json!({"collaborationModel":"pipeline","members":[
-        {"botRef":{"name":"author"},"requireConfirmation":false},{"botRef":{"name":"replacement"}}
-    ]});
+async fn verify_legacy_agent_execution(mysql: &MysqlService) -> Result<()> {
+    let metadata = json!({"runtime":"codex","visibility":"private","system_prompt":"original"});
+    mysql.execute("INSERT INTO loop_items(id,resource_type,cloud_project_id,created_by_user_id,status,metadata,description,completed_at) VALUES ('legacy','chat_agent','project-1',7,'active',?,'',NOW())", (Json(metadata.clone()),)).await?;
+    let require = async |project: &'static str, user: i64| {
+        super::authority::agent_execution_on(&mut &*mysql, project, 1, "legacy", user).await
+    };
+    assert_eq!(require("project-1", 7).await?, Some(metadata.clone()));
+    assert!(require("project-2", 7).await.is_err());
+    assert!(require("project-1", 8).await.is_err());
+    let (Json(stored), version): (Json<Value>, i64) = mysql
+        .fetch_one(
+            "SELECT metadata,version FROM loop_items WHERE id='legacy'",
+            (),
+        )
+        .await?;
+    assert_eq!(stored, metadata);
+    assert_eq!(version, 1);
+    mysql.execute("INSERT INTO resource_members VALUES ('Workspace',1,'project_agent','legacy','pending','Developer')", ()).await?;
+    assert!(require("project-1", 7).await.is_err());
     mysql
-        .with_transaction(async |tx| {
-            save_strategy(tx, 901, &first, &mut waiting).await?;
-            tx.execute(
-                "INSERT INTO tasks (id,user_id,kind,json) VALUES (901,1,'Task',?)",
-                (Json(waiting.clone()),),
-            )
-            .await?;
-            save_strategy(tx, 902, &edited, &mut new_task).await
-        })
+        .execute("UPDATE resource_members SET status='approved'", ())
         .await?;
-    let (Json(mut restored),): (Json<Value>,) = mysql
-        .fetch_one("SELECT json FROM tasks WHERE id=901", ())
+    mysql
+        .execute(
+            "UPDATE loop_items SET deleted_at=NOW() WHERE id='legacy'",
+            (),
+        )
         .await?;
-    assert_eq!(restored["status"]["status"], "PENDING_CONFIRMATION");
-    restored["spec"]
-        .as_object_mut()
-        .unwrap()
-        .remove("currentStage");
-    let mut current = json!({"spec":edited});
-    apply_managed_strategy(&mut &*mysql, restored.as_object(), 901, &mut current).await?;
-    assert_eq!(current["spec"], first);
-    restored["spec"]["teamRef"]["user_id"] = json!(2);
-    assert!(
-        apply_managed_strategy(&mut &*mysql, restored.as_object(), 901, &mut current)
-            .await
-            .is_err()
-    );
-    apply_managed_strategy(&mut &*mysql, new_task.as_object(), 902, &mut current).await?;
-    assert_eq!(current["spec"], edited);
-    let legacy = json!({"spec":{"currentStage":1}});
-    apply_managed_strategy(&mut &*mysql, legacy.as_object(), 903, &mut current).await?;
-    assert_eq!(current["spec"], edited);
+    assert!(require("project-1", 7).await.is_err());
+    mysql
+        .execute(
+            "UPDATE loop_items SET deleted_at=NULL,status='inactive' WHERE id='legacy'",
+            (),
+        )
+        .await?;
+    assert!(require("project-1", 7).await.is_err());
     Ok(())
 }
 
@@ -93,7 +80,7 @@ async fn verify(mysql: &MysqlService, redis: &brz_redis::RedisService) -> Result
     for statement in DDL {
         ddl(mysql, statement).await?;
     }
-    verify_pipeline_strategy_recovery(mysql).await?;
+    verify_legacy_agent_execution(mysql).await?;
     verify_managed_recovery(mysql, redis).await?;
     super::super::robot::verify_managed_activity(mysql).await?;
     let tables = crate::task_store::TableTemplates {
@@ -312,8 +299,9 @@ async fn projection(mysql: &MysqlService, run: &str, message: &str) -> Result<Pr
     Ok(mysql.fetch_one("SELECT r.status AS run_status,m.status AS message_status,m.content,m.metadata,r.version FROM loop_items r JOIN project_chat_messages m ON m.message_id=? WHERE r.id=?",(message,run)).await?)
 }
 
-const DDL: [&str; 4] = [
-    "CREATE TABLE loop_items(id VARCHAR(64) PRIMARY KEY,resource_type VARCHAR(32) NOT NULL,public_id VARCHAR(64) NULL UNIQUE,project_key VARCHAR(64) NULL UNIQUE,storage_prefix VARCHAR(64) NULL UNIQUE,cloud_project_id VARCHAR(64),created_by_user_id BIGINT,backend_task_id BIGINT,status VARCHAR(32),title VARCHAR(255) NOT NULL DEFAULT '',description TEXT NOT NULL,metadata JSON NOT NULL,completed_at DATETIME(6) NOT NULL,version BIGINT NOT NULL DEFAULT 1,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
+const DDL: [&str; 5] = [
+    "CREATE TABLE resource_members(resource_type VARCHAR(64),resource_id BIGINT,entity_type VARCHAR(64),entity_id VARCHAR(64),status VARCHAR(16),`role` VARCHAR(32)) ENGINE=InnoDB",
+    "CREATE TABLE loop_items(id VARCHAR(64) PRIMARY KEY,resource_type VARCHAR(32) NOT NULL,public_id VARCHAR(64) NULL UNIQUE,project_key VARCHAR(64) NULL UNIQUE,storage_prefix VARCHAR(64) NULL UNIQUE,cloud_project_id VARCHAR(64),created_by_user_id BIGINT,backend_task_id BIGINT,status VARCHAR(32),title VARCHAR(255) NOT NULL DEFAULT '',description TEXT NOT NULL,metadata JSON NOT NULL,deleted_at DATETIME(6),completed_at DATETIME(6) NOT NULL,version BIGINT NOT NULL DEFAULT 1,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
     "CREATE TABLE tasks(id BIGINT PRIMARY KEY,user_id BIGINT NOT NULL,kind VARCHAR(32) NOT NULL,name VARCHAR(255) NOT NULL DEFAULT '',namespace VARCHAR(255) NOT NULL DEFAULT 'default',json JSON NOT NULL,is_active INT NOT NULL DEFAULT 1,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),project_id BIGINT NULL,client_origin VARCHAR(64) NOT NULL DEFAULT '',is_group_chat TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB",
     "CREATE TABLE subtasks(id BIGINT PRIMARY KEY,task_id BIGINT NOT NULL,user_id BIGINT NOT NULL,role VARCHAR(32) NOT NULL,status VARCHAR(32) NOT NULL DEFAULT 'PENDING',message_id BIGINT NOT NULL DEFAULT 1,executor_name VARCHAR(255) NOT NULL DEFAULT '',executor_namespace VARCHAR(255) NOT NULL DEFAULT 'default',result JSON,error_message TEXT,updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
     crate::app_test_support::PROJECT_CHAT_MESSAGES_DDL,

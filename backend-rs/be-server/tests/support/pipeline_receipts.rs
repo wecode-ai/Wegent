@@ -10,7 +10,7 @@ use wegent_execution_completion::{CompletionStore, Tables, persist};
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL 8 and Redis; covered by the Responses CI suite"]
-async fn completed_stage_resolves_legacy_replacement_frozen_bot_and_archived_team() {
+async fn completed_stage_uses_live_roster_and_rejects_unavailable_resources() {
     let fixture = fixture::Fixture::new().await;
     let db = &fixture.mysql;
     let store = DefaultTaskStore::new(db.clone());
@@ -29,9 +29,7 @@ async fn completed_stage_resolves_legacy_replacement_frozen_bot_and_archived_tea
     };
     fixture.seed_running_subtask(501, 801, 7).await;
     db.execute("CREATE TABLE kinds (id BIGINT PRIMARY KEY, user_id INT, kind VARCHAR(20), name VARCHAR(100), namespace VARCHAR(100), json JSON, is_active TINYINT, created_at DATETIME, updated_at DATETIME)", ()).await.unwrap();
-    let frozen = json!({"collaborationModel":"pipeline","members":[{"botRef":{"name":"retired"}},{"botRef":{"name":"next"}}]});
-    let mut live = frozen.clone();
-    live["members"][0]["botRef"]["name"] = json!("replacement");
+    let live = json!({"collaborationModel":"pipeline","members":[{"botRef":{"name":"replacement"}},{"botRef":{"name":"next"}}]});
     db.execute(
         "INSERT INTO kinds (id,user_id,kind,name,namespace,json,is_active) VALUES
         (81,7,'Team','team','default',?,1),
@@ -41,7 +39,7 @@ async fn completed_stage_resolves_legacy_replacement_frozen_bot_and_archived_tea
     )
     .await
     .unwrap();
-    for (task_id, subtask_id, saved, active_team, active_next) in [
+    for (task_id, subtask_id, running, active_team, active_next) in [
         (501, 801, false, true, true),
         (502, 1802, true, true, true),
         (503, 2803, true, true, false),
@@ -58,14 +56,6 @@ async fn completed_stage_resolves_legacy_replacement_frozen_bot_and_archived_tea
         )
         .await
         .unwrap();
-        if saved {
-            db.execute(
-                "INSERT INTO task_team_strategies VALUES (?,?)",
-                (task_id, Json(frozen.clone())),
-            )
-            .await
-            .unwrap();
-        }
         db.execute("UPDATE kinds SET is_active=? WHERE id=81", (active_team,))
             .await
             .unwrap();
@@ -93,7 +83,6 @@ async fn completed_stage_resolves_legacy_replacement_frozen_bot_and_archived_tea
         );
         if let Some(handoff) = handoff {
             let child = handoff.pair.assistant_subtask_id;
-            let running = saved;
             if running {
                 let accepted = db
                     .with_transaction(async |tx| {

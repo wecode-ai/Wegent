@@ -25,90 +25,6 @@ use wegent_resource_store::kind_rows::{KIND_COLUMNS, KindRow};
 pub(crate) const USER_FOR_PIPELINE: &str =
     "SELECT users.user_name, users.preferences FROM users WHERE users.id = ?";
 
-/// Save only on Task creation, on the same transaction as its first turn.
-pub async fn save_strategy(
-    tx: &mut impl MysqlTransaction,
-    task_id: i64,
-    strategy: &Value,
-    task: &mut Value,
-) -> MysqlResult<()> {
-    let mut definition = strategy.clone();
-    if let Some(reference) = task.pointer("/spec/teamRef") {
-        definition["team_ref"] = reference.clone();
-    }
-    tx.execute(
-        "INSERT INTO task_team_strategies (task_id,strategy) VALUES (?,?)",
-        (task_id, Json(definition)),
-    )
-    .await?;
-    task["spec"]["currentStage"] = json!(0);
-    Ok(())
-}
-
-/// Overlay the accepted Team definition on the current, authorized Team row.
-pub async fn apply_managed_strategy(
-    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
-    task: Option<&serde_json::Map<String, Value>>,
-    task_id: i64,
-    team: &mut Value,
-) -> MysqlResult<Option<Value>> {
-    let snapshot = managed_strategy(query, task, task_id).await?;
-    if let Some(snapshot) = snapshot.as_ref() {
-        overlay_strategy(team, snapshot);
-    }
-    Ok(snapshot)
-}
-
-pub fn overlay_strategy(team: &mut Value, snapshot: &Value) {
-    team["spec"]["members"] = snapshot["members"].clone();
-    team["spec"]["collaborationModel"] = snapshot["collaborationModel"].clone();
-}
-
-pub async fn managed_strategy(
-    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
-    task: Option<&serde_json::Map<String, Value>>,
-    task_id: i64,
-) -> MysqlResult<Option<Value>> {
-    if let Some(snapshot) = saved_task_strategy(query, task_id).await? {
-        if let Some(reference) = snapshot.get("team_ref")
-            && let Some(task) = task
-            && task.get("spec").and_then(|spec| spec.get("teamRef")) != Some(reference)
-        {
-            return Err(brz_mysql::MysqlError::InvalidQuery {
-                reason: "Pipeline Team binding changed".to_owned(),
-            });
-        }
-        return Ok(Some(snapshot));
-    }
-    let Some(task) = task else { return Ok(None) };
-    let labels = &task.get("metadata").unwrap_or(&Value::Null)["labels"];
-    let Some(execution_id) = labels["projectRobotExecutionId"]
-        .as_str()
-        .and_then(|id| id.parse::<i64>().ok())
-    else {
-        return Ok(None);
-    };
-    let row: Option<(Option<Json<Value>>,)> = query.fetch_optional(
-        "SELECT JSON_EXTRACT(execution_payload,'$.team_strategy') FROM loop_item_executions WHERE id=? AND backend_task_id=?",
-        (execution_id, task_id)
-    ).await?;
-    Ok(row.and_then(|(snapshot,)| snapshot.map(|json| json.0)))
-}
-
-/// Retrieve only the definition accepted with the Task's first turn.
-pub async fn saved_task_strategy(
-    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
-    task_id: i64,
-) -> MysqlResult<Option<Value>> {
-    let row: Option<(Json<Value>,)> = query
-        .fetch_optional(
-            "SELECT strategy FROM task_team_strategies WHERE task_id=?",
-            (task_id,),
-        )
-        .await?;
-    Ok(row.map(|(snapshot,)| snapshot.0))
-}
-
 pub const PIPELINE_UNAVAILABLE: &str =
     "Pipeline cannot continue: the Team, stage, or next Bot is unavailable";
 
@@ -127,7 +43,6 @@ pub struct PipelineStageAdvance {
     pub project_id: i64,
     pub pair: SubtaskPairInsert,
     pub previous_bot_id: i64,
-    pub strategy: Option<Value>,
     pub team: KindRow,
     pub bot: KindRow,
     pub member: Value,
@@ -239,38 +154,20 @@ async fn advance_on<T: MysqlTransaction>(
     else {
         return Ok(None);
     };
-    let Some(mut team) = load_team(transaction, &task_json).await? else {
+    let Some(team) = load_team(transaction, &task_json).await? else {
         return Ok(None);
     };
-    let strategy = apply_managed_strategy(
-        &mut &mut *transaction,
-        task_json.as_object(),
-        task_id,
-        &mut team.json.0,
-    )
-    .await?;
     let stage = if replay.is_some() {
         task_json
             .pointer("/spec/currentStage")
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
     } else {
-        if team
-            .json
-            .0
-            .pointer("/spec/collaborationModel")
-            .and_then(Value::as_str)
-            != Some("pipeline")
-        {
+        if team.json.0["spec"]["collaborationModel"] != "pipeline" {
             return Ok(None);
         }
         let bot = completed_bot_identity(transaction, previous_bot_id).await?;
-        match pipeline_stage(
-            task_json.get("spec"),
-            &team.json.0["spec"],
-            bot.as_ref(),
-            strategy.is_some(),
-        ) {
+        match pipeline_stage(task_json.get("spec"), &team.json.0["spec"], bot.as_ref()) {
             PipelineStage::Advance(stage) => Some(stage),
             _ => None,
         }
@@ -287,7 +184,9 @@ async fn advance_on<T: MysqlTransaction>(
     let Some(member) = members.get(stage).cloned() else {
         return Ok(None);
     };
-    let Some(bot) = load_member_bot(transaction, team.user_id, &member).await? else {
+    let Some(bot) =
+        query_member_bot::<KindRow>(transaction, team.user_id, &member, KIND_COLUMNS).await?
+    else {
         return Ok(None);
     };
     let handoff = match replay {
@@ -326,7 +225,6 @@ async fn advance_on<T: MysqlTransaction>(
         project_id: task_column::<i64>(&task, "project_id").unwrap_or_default(),
         pair,
         previous_bot_id,
-        strategy,
         team,
         bot,
         member,
@@ -652,11 +550,22 @@ async fn load_team<T: MysqlTransaction>(
         .await
 }
 
-pub async fn load_member_bot<T: MysqlTransaction>(
-    transaction: &mut T,
+pub async fn member_bot_exists(
+    transaction: &mut impl MysqlTransaction,
     owner: i64,
     member: &Value,
-) -> MysqlResult<Option<KindRow>> {
+) -> MysqlResult<bool> {
+    Ok(query_member_bot::<i64>(transaction, owner, member, "1")
+        .await?
+        .is_some())
+}
+
+async fn query_member_bot<Row: brz_mysql::FromMysqlRow + Send>(
+    transaction: &mut impl MysqlTransaction,
+    owner: i64,
+    member: &Value,
+    columns: &str,
+) -> MysqlResult<Option<Row>> {
     let name = member
         .pointer("/botRef/name")
         .and_then(Value::as_str)
@@ -665,7 +574,7 @@ pub async fn load_member_bot<T: MysqlTransaction>(
         .pointer("/botRef/namespace")
         .and_then(Value::as_str)
         .unwrap_or("default");
-    transaction.fetch_optional(format!("SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.namespace = ? AND kinds.name = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"), (owner, namespace, name)).await
+    transaction.fetch_optional(format!("SELECT {columns} FROM kinds WHERE kinds.user_id = ? AND kinds.namespace = ? AND kinds.name = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"), (owner, namespace, name)).await
 }
 
 /// Resolve the identity that produced an existing receipt, even after deactivation.
@@ -691,15 +600,7 @@ pub fn pipeline_stage(
     task_spec: Option<&Value>,
     team_spec: &Value,
     bot: Option<&(String, String)>,
-    frozen: bool,
 ) -> PipelineStage {
-    // A legacy Team has no accepted stage definition to validate. Its original
-    // default for a receipt with no applicable next stage is completion.
-    let unmatched = if frozen {
-        PipelineStage::Invalid
-    } else {
-        PipelineStage::Complete
-    };
     let current = match task_spec.and_then(|spec| spec.get("currentStage")) {
         None | Some(Value::Null) => Some(0),
         Some(value) => value.as_u64().and_then(|v| usize::try_from(v).ok()),
@@ -707,10 +608,10 @@ pub fn pipeline_stage(
     let (Some(stage), Some(members), Some((name, namespace))) =
         (current, team_spec["members"].as_array(), bot)
     else {
-        return unmatched;
+        return PipelineStage::Complete;
     };
     let Some(member) = members.get(stage) else {
-        return unmatched;
+        return PipelineStage::Invalid;
     };
     let matches = |member: &Value| {
         member.pointer("/botRef/name").and_then(Value::as_str) == Some(name.as_str())
@@ -720,11 +621,14 @@ pub fn pipeline_stage(
                 .unwrap_or("default")
                 == namespace
     };
-    // Legacy tasks track the live roster. A removed Bot's latest receipt still
+    // Tasks track the live roster. A removed Bot's latest receipt still
     // closes its recorded stage. A Bot belonging to another stage cannot.
     if !matches(member) {
-        if frozen || members.iter().any(matches) {
-            return unmatched;
+        if member.pointer("/botRef/name").and_then(Value::as_str) == Some(name.as_str()) {
+            return PipelineStage::Invalid;
+        }
+        if members.iter().any(matches) {
+            return PipelineStage::Complete;
         }
         if member["requireConfirmation"].as_bool() == Some(true) {
             return PipelineStage::Complete;
@@ -829,30 +733,27 @@ mod tests {
     }
 
     #[test]
-    fn frozen_and_legacy_receipts_use_the_same_stage_in_both_transactions() {
+    fn live_team_receipts_use_the_same_stage_in_both_transactions() {
         let mut team = team();
         let spec = json!({"currentStage":0});
-        let stage = |team: &Value, bot: &str, frozen| {
+        let stage = |team: &Value, bot: &str| {
             pipeline_stage(
                 Some(&spec),
                 &team["spec"],
                 Some(&(bot.into(), "default".into())),
-                frozen,
             )
         };
-        assert_eq!(stage(&team, "removed", false), PipelineStage::Advance(1));
-        assert_eq!(stage(&team, "removed", true), PipelineStage::Invalid);
-        assert_eq!(stage(&team, "second", false), PipelineStage::Complete);
-        assert_eq!(stage(&team, "first", true), PipelineStage::Advance(1));
+        assert_eq!(stage(&team, "removed"), PipelineStage::Advance(1));
+        assert_eq!(stage(&team, "second"), PipelineStage::Complete);
+        assert_eq!(stage(&team, "first"), PipelineStage::Advance(1));
         team["spec"]["members"][0]["requireConfirmation"] = json!(true);
-        assert_eq!(stage(&team, "first", true), PipelineStage::Confirm);
-        assert_eq!(stage(&team, "removed", false), PipelineStage::Complete);
+        assert_eq!(stage(&team, "first"), PipelineStage::Confirm);
+        assert_eq!(stage(&team, "removed"), PipelineStage::Complete);
         assert_eq!(
             pipeline_stage(
                 Some(&json!({"currentStage":1})),
                 &team["spec"],
-                Some(&("second".into(), "default".into())),
-                true
+                Some(&("second".into(), "default".into()))
             ),
             PipelineStage::Complete
         );
@@ -878,8 +779,7 @@ mod tests {
                 pipeline_stage(
                     Some(&json!({"currentStage":cursor})),
                     &repeated["spec"],
-                    Some(&bot),
-                    true
+                    Some(&bot)
                 ),
                 expected
             );
@@ -888,8 +788,7 @@ mod tests {
             pipeline_stage(
                 None,
                 &repeated["spec"],
-                Some(&("first".into(), "other".into())),
-                true
+                Some(&("first".into(), "other".into()))
             ),
             PipelineStage::Invalid
         );

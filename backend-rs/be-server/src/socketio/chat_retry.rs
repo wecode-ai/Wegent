@@ -304,7 +304,6 @@ async fn prepare_retry(
         .map(str::to_string);
     Ok(PreparedRetry {
         turn: ChatTurn {
-            strategy: None,
             task_id: payload.task_id,
             is_subscription: task.is_active == 2,
             user_subtask_id: user_subtask.id,

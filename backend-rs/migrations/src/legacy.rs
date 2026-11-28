@@ -39,7 +39,6 @@ pub fn validate(revision: &Revision, down: bool) -> Result<()> {
                     | "e58ee381a7c2"
                     | "b8e2c4f6a901"
                     | "c2f8d4a6b901"
-                    | "ac7e491bf026"
                     | "c9d4e7f1a2b3"
                     | "e6f1a2b3c4d5"
             ),
@@ -70,7 +69,6 @@ pub async fn execute(
             "8a4c1f2d9e70" => data::plugin_policy(tx, down).await,
             "64356fbc03dd" => data::workflows(tx, down).await,
             "d47dd270f4b6" => data::retrieval_key(tx, down).await,
-            "ac7e491bf026" => super::project_agent_teams::execute(tx, down).await,
             "c9d4e7f1a2b3" => data::codex(tx, down).await,
             "e6f1a2b3c4d5" => data::project_permissions(tx, down).await,
             "e58ee381a7c2" if down => super::runtime_profiles::downgrade(tx).await,

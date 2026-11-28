@@ -292,31 +292,6 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
            WHERE id = NEW.id;
          END;",
     )?;
-    connection.execute_batch(
-        "UPDATE loop_items SET metadata=json_set(metadata,'$.human_coordination_dispatch',lower(hex(randomblob(16))))
-            WHERE resource_type='task' AND deleted_at IS NULL AND json_extract(metadata,'$.collaboration_group.leader.kind')='human'
-            AND json_extract(metadata,'$.human_coordination_dispatch') IS NULL;
-         DELETE FROM loop_items WHERE resource_type='issue_receipt' AND json_extract(metadata,'$.id') IS NULL
-           AND parent_id IN (SELECT id FROM loop_items WHERE resource_type='task' AND json_extract(metadata,'$.human_coordination_dispatch') IS NOT NULL);
-         INSERT OR IGNORE INTO loop_items(id,loop_item_id,resource_type,created_at,updated_at,assignee_user_id,metadata)
-            SELECT json_extract(metadata,'$.human_coordination_dispatch'),id,'issue_coordination',updated_at,updated_at,json_extract(metadata,'$.collaboration_group.leader.id'),
-            json_object('round',1,'payload',json_object('dispatch_id',json_extract(metadata,'$.human_coordination_dispatch'),'collaboration_group',json_extract(metadata,'$.collaboration_group')))
-            FROM loop_items WHERE resource_type='task' AND json_extract(metadata,'$.human_coordination_dispatch') IS NOT NULL;
-         CREATE INDEX IF NOT EXISTS ix_coordination_assignment_attempt ON loop_item_executions(loop_item_id,json_extract(execution_payload,'$.dispatch_id'),json_extract(execution_payload,'$.coordination_round_id'),json_extract(execution_payload,'$.assignment_id'),id) WHERE json_valid(execution_payload);
-         CREATE TABLE IF NOT EXISTS project_team_bindings (
-             project_id TEXT NOT NULL REFERENCES loop_items(id) ON DELETE CASCADE,
-             team_ref TEXT NOT NULL REFERENCES loop_items(id) ON DELETE CASCADE,
-             status TEXT NOT NULL DEFAULT 'active',
-             version INTEGER NOT NULL DEFAULT 1,
-             PRIMARY KEY (project_id, team_ref)
-         ) WITHOUT ROWID;
-         UPDATE loop_items SET metadata=json_set(metadata,'$.collaboration_model','single','$.bot',
-             json_array(json_object('id',id,'name',COALESCE(name,title,'AI'),'shell_type',
-             CASE WHEN json_extract(metadata,'$.runtime')='claude_code' THEN 'ClaudeCode' ELSE 'Codex' END,
-             'mcp_servers',json(COALESCE(json_extract(metadata,'$.mcp_servers'),'{}')))))
-             WHERE resource_type='chat_agent' AND json_type(metadata,'$.bot') IS NULL;
-         CREATE INDEX IF NOT EXISTS ix_local_manager_round ON loop_item_executions(loop_item_id,json_extract(execution_payload,'$.dispatch_id'),json_extract(execution_payload,'$.coordination_submitted_round_id')) WHERE json_valid(execution_payload);",
-    )?;
     stand_in_telemetry::migrate(connection)?;
     stand_in_history_index::ensure_schema(connection)?;
     ensure_runtime_query_indexes(connection)?;
@@ -333,8 +308,8 @@ pub(super) fn runtime_query_indexes_are_current(
     connection: &Connection,
 ) -> Result<bool, rusqlite::Error> {
     connection.query_row(
-        "SELECT count(*) = 2 FROM sqlite_master WHERE type = 'index'
-         AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user')",
+        "SELECT count(*) = 3 FROM sqlite_master WHERE type = 'index'
+         AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user', 'ix_coordination_assignment_attempt')",
         [],
         |row| row.get(0),
     )
@@ -349,7 +324,11 @@ fn ensure_runtime_query_indexes(connection: &Connection) -> Result<(), rusqlite:
             ON loop_items(resource_type, json_extract(metadata,'$.userId'))
             WHERE resource_type='stand_in_action' AND json_valid(metadata)
               AND json_extract(metadata,'$.kind')='run_arrangement'
-              AND json_extract(metadata,'$.status') IN ('pending','sending');",
+              AND json_extract(metadata,'$.status') IN ('pending','sending');
+         CREATE INDEX IF NOT EXISTS ix_coordination_assignment_attempt
+            ON loop_item_executions(loop_item_id,json_extract(execution_payload,'$.dispatch_id'),
+               json_extract(execution_payload,'$.coordination_round_id'),json_extract(execution_payload,'$.assignment_id'))
+            WHERE json_valid(execution_payload) AND json_extract(execution_payload,'$.dispatch_id') IS NOT NULL;",
     )
 }
 

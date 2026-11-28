@@ -2112,12 +2112,11 @@ def test_external_update_denies_read_only_creator_for_all_writes(
     assert excinfo.value.status_code == 403
 
 
-def test_project_agent_binding_migration_restarts_and_preserves_grants(
+def test_legacy_project_agent_reads_without_backfill_and_preserves_grants(
     test_db: Session, test_user: User
 ) -> None:
     from app.models.delivery import LoopNode
     from app.services.project_chat.service import compiled_bot_config
-    from scripts.migrate_project_agent_teams import migrate
 
     project = _make_project(test_db, test_user)
     agent = _make_bot(test_db, project, test_user)
@@ -2146,41 +2145,18 @@ def test_project_agent_binding_migration_restarts_and_preserves_grants(
     ).delete()
     test_db.commit()
     grants = test_db.query(ResourceMember).count()
-    first = migrate(test_db, batch_size=1)
     test_db.refresh(agent)
-    identity = agent.metadata_json["teamRef"]
-    assert first["created"] >= 1
-    assert compiled_bot_config(test_db, agent)["teamRef"] == identity
-    assert migrate(test_db, batch_size=1)["created"] == 0
-    test_db.refresh(agent)
-    assert agent.metadata_json["teamRef"] == identity
+    assert compiled_bot_config(test_db, agent)["runtime"] == legacy["runtime"]
+    assert agent.metadata_json == legacy
+    assert (
+        not test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            namespace=f"projects/{project.id}",
+            name=f"agent-{agent.id}",
+        )
+        .count()
+    )
     assert bound.metadata_json["wegent_team_id"] == existing.id
     assert existing.json == original_team
     assert test_db.query(ResourceMember).count() == grants
-    from app.services.issue_coordination import (
-        coordination_activity,
-        current_dispatch_id,
-    )
-
-    item = _make_item(test_db, project, test_user)
-    item.metadata_json = {
-        "collaboration_group": {"id": "23"},
-        "collaboration_group_assignment_key": "round-to-finish",
-    }
-    activity = coordination_activity(
-        test_db, item, current_dispatch_id(item), {"id": "23"}
-    )
-    test_db.commit()
-    with pytest.raises(ValueError, match="Finish active v2"):
-        migrate(test_db, rollback=True)
-    test_db.refresh(agent)
-    assert agent.metadata_json["teamRef"] == identity
-    activity.status = "completed"
-    test_db.commit()
-    assert migrate(test_db, rollback=True)["detached"] >= 1
-    test_db.refresh(agent)
-    assert agent.metadata_json == legacy
-    assert test_db.get(Kind, identity) is not None
-    migrate(test_db)
-    test_db.refresh(agent)
-    assert agent.metadata_json["teamRef"] == identity

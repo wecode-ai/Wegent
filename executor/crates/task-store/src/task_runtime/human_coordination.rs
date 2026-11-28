@@ -72,20 +72,38 @@ impl LocalTaskStore {
         let item = get_item_from(&tx, issue, "task")?
             .filter(|i| i.cloud_project_id.as_deref() == Some(project))
             .ok_or(TaskRuntimeError::TaskNotFound)?;
-        let Some(dispatch) = item.metadata["human_coordination_dispatch"].as_str() else {
+        let stored_dispatch = item.metadata["human_coordination_dispatch"].as_str();
+        let group = &item.metadata["collaboration_group"];
+        let legacy_dispatch;
+        let (dispatch, mut state): (&str, Value) = if let Some(dispatch) = stored_dispatch {
+            let stored: String = tx.query_row(
+                "SELECT metadata FROM loop_items WHERE resource_type='issue_coordination' AND id=?1 AND loop_item_id=?2",
+                params![dispatch, issue],
+                |r| r.get(0),
+            )?;
+            (
+                dispatch,
+                serde_json::from_str(&stored)
+                    .map_err(|_| invalid("Invalid coordination activity"))?,
+            )
+        } else if group["leader"]["kind"] == "human" {
+            legacy_dispatch = format!(
+                "issue-coordination:{:x}",
+                Sha256::digest(
+                    json!([issue, group, item.metadata["assignment_history"]]).to_string()
+                )
+            );
+            (
+                legacy_dispatch.as_str(),
+                json!({"round":1,"payload":{"dispatch_id":legacy_dispatch,"collaboration_group":group}}),
+            )
+        } else {
             return if action == "get" {
                 Ok(Value::Null)
             } else {
                 Err(TaskRuntimeError::VersionConflict)
             };
         };
-        let stored: String = tx.query_row(
-            "SELECT metadata FROM loop_items WHERE resource_type='issue_coordination' AND id=?1 AND loop_item_id=?2",
-            params![dispatch, issue],
-            |r| r.get(0),
-        )?;
-        let mut state: Value =
-            serde_json::from_str(&stored).map_err(|_| invalid("Invalid coordination activity"))?;
         let snapshot = &state["payload"]["collaboration_group"];
         let project_row =
             get_item_from(&tx, project, "project")?.ok_or(TaskRuntimeError::ProjectNotFound)?;
@@ -163,6 +181,10 @@ impl LocalTaskStore {
         }
         if !open || waiting || submitted != round.to_string() {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if stored_dispatch.is_none() {
+            tx.execute("INSERT INTO loop_items(id,loop_item_id,resource_type,created_at,updated_at,metadata,assignee_user_id) VALUES (?1,?2,'issue_coordination',?3,?3,?4,?5)",params![dispatch,issue,now(),state.to_string(),actor])?;
+            tx.execute("UPDATE loop_items SET metadata=json_set(metadata,'$.human_coordination_dispatch',?1) WHERE id=?2",params![dispatch,issue])?;
         }
         let sender_name = leader["name"].as_str().unwrap_or_default().to_owned();
         let (response, content, activity) = match action {
@@ -253,6 +275,15 @@ mod tests {
     use crate::{DeliveryCreate, DeliveryFinalize};
     #[test]
     fn human_coordination_waits_for_delivery_and_accepts_only_one_authorized_decision() {
+        verify_human_coordination(false);
+    }
+
+    #[test]
+    fn historical_human_assignment_coordinates_without_writing_on_read() {
+        verify_human_coordination(true);
+    }
+
+    fn verify_human_coordination(historical: bool) {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("issues.sqlite")).unwrap();
         let project = store
@@ -283,11 +314,26 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
+        if historical {
+            let conn = store.connection().unwrap();
+            conn.execute("DELETE FROM loop_items WHERE resource_type='issue_coordination' AND loop_item_id=?1",[&issue.id]).unwrap();
+            conn.execute("UPDATE loop_items SET metadata=json_remove(metadata,'$.human_coordination_dispatch') WHERE id=?1",[&issue.id]).unwrap();
+            conn.execute("UPDATE loop_items SET metadata='{}' WHERE resource_type='issue_receipt' AND parent_id=?1",[&issue.id]).unwrap();
+        }
         let get = json!({"loopItemId":issue.id});
         let call =
             |op, user, input: &Value| store.human_issue_coordination(op, user, &project.id, input);
         let view = call("get", 0, &get).unwrap();
         assert_eq!(view["canCoordinate"], true);
+        if historical {
+            let before = store.connection().unwrap().total_changes();
+            assert_eq!(
+                store.assignment_receipts(&project.id, &issue.id).unwrap()[0]["target_id"],
+                "0"
+            );
+            call("get", 0, &get).unwrap();
+            assert_eq!(store.connection().unwrap().total_changes(), before);
+        }
         let batch = json!({"loopItemId":issue.id,"roundId":"1","dispatchId":view["dispatchId"],"items":[{"assignment_id":"review","assignee_type":"human","assignee_id":"42","title":"Review","instructions":"Record findings"},{"assignment_id":"inspect","assignee_type":"agent","assignee_id":agent.id,"title":"Inspect","instructions":"Review implementation"}]});
         assert!(call("submit", 42, &batch).is_err());
         let mut invalid_batch = batch.clone();

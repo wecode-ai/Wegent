@@ -1162,13 +1162,7 @@ pub async fn handle(
                     return Ok(Completion::Rollback(Err(error_ack("Task is not awaiting confirmation"))));
                 }
             }
-            let mut team = scope.team;
-            let saved_strategy = if let Some(task_id) = payload.task_id {
-                wegent_task_store::task_store_pipeline::apply_managed_strategy(&mut &state.mysql, scope.task_json.as_object(), task_id, &mut team.json.0).await.map_err(|error| {
-                    tracing::error!(%error, task_id, "managed Team strategy unavailable");
-                    FastApiError::internal()
-                })?
-            } else { None };
+            let team = scope.team;
             let stage = scope.task_json["spec"]["currentStage"].as_u64().unwrap_or(0) as usize;
             let pipeline = team.json.0["spec"]["collaborationModel"] == "pipeline";
             let mut new_session = false;
@@ -1307,12 +1301,11 @@ pub async fn handle(
             if pipeline {
                 crate::responses::create::request::authorize_pipeline(state,user_id,&team,payload.task_id.map(|id|(id,&scope.task_json))).await?;
             }
-            let pipeline_strategy = if pipeline && payload.task_id.is_none() {
-                match crate::background_jobs::project::agents::readiness(state, &team, user_id,payload.force_override_bot_model.as_deref()).await {
-                    Ok(strategy) => Some(strategy),
-                    Err(error) => return Ok(Completion::Rollback(Err(error_ack(&error.to_string())))),
-                }
-            } else { saved_strategy };
+            if pipeline && payload.task_id.is_none()
+                && let Err(error) = crate::background_jobs::project::agents::readiness(state, &team, user_id, payload.force_override_bot_model.as_deref()).await
+            {
+                return Ok(Completion::Rollback(Err(error_ack(&error.to_string()))));
+            }
             let bots = match resolution::resolve_team_bots(&cache, team.user_id, bot_team).await
             {
                 Ok(bots) => bots,
@@ -1388,7 +1381,7 @@ pub async fn handle(
                 // binds on the task lookups.
                 owner_user_id: user_id as i32,
                 continuation,
-                pipeline_strategy: pipeline_strategy.as_ref(),
+                pipeline,
             history_window: None,
                 team_id: team.id,
                 bot_ids: &bots.bot_ids,
@@ -1567,7 +1560,7 @@ pub async fn handle(
             let created_git_repository =
                 (setup.workspace_id != 0 && git_workspace).then(|| input.repository.to_json());
             let turn = ChatTurn {
-                strategy: pipeline_strategy,
+
                 task_id: setup.task_id,
                 is_subscription: scope.is_subscription,
                 user_subtask_id: setup.user_subtask_id,

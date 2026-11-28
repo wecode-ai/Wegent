@@ -85,9 +85,9 @@ impl LocalTaskStore {
         issue: &str,
     ) -> Result<Vec<Value>, TaskRuntimeError> {
         let mut connection = self.connection()?;
-        require_receipt_issue(&connection, project, issue)?;
-        initialize_receipt(&mut connection, project, issue)?;
-        Ok(read_receipt(&connection, project, issue)?
+        let tx = connection.transaction()?;
+        require_receipt_issue(&tx, project, issue)?;
+        Ok(current_receipt(&tx, project, issue)?
             .into_iter()
             .filter(|row| row["id"].is_string())
             .collect())
@@ -103,10 +103,9 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
         require_receipt_issue(&connection, project, issue)?;
-        initialize_receipt(&mut connection, project, issue)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current =
-            read_receipt(&transaction, project, issue)?.ok_or(TaskRuntimeError::TaskNotFound)?;
+            current_receipt(&transaction, project, issue)?.ok_or(TaskRuntimeError::TaskNotFound)?;
         if current["id"].as_str() != Some(assignment) {
             return Err(TaskRuntimeError::Invalid(
                 "Assignment is no longer active".into(),
@@ -117,6 +116,7 @@ impl LocalTaskStore {
                 "Only the recipient can acknowledge an assignment".into(),
             ));
         }
+        persist_receipt(&transaction, project, issue, &current)?;
         let field = if stand_in {
             "$.stand_in_received_at"
         } else {
@@ -169,23 +169,17 @@ fn read_receipt(
     .transpose()
 }
 
-fn initialize_receipt(
-    connection: &mut Connection,
+fn current_receipt(
+    connection: &Connection,
     project: &str,
     issue: &str,
-) -> Result<(), TaskRuntimeError> {
-    if read_receipt(connection, project, issue)?.is_some() {
-        return Ok(());
+) -> Result<Option<Value>, TaskRuntimeError> {
+    if let Some(row) = read_receipt(connection, project, issue)?.filter(|row| row["id"].is_string())
+    {
+        return Ok(Some(row));
     }
-    // Only legacy Issues need a one-time projection from their existing history.
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if read_receipt(&transaction, project, issue)?.is_none() {
-        let item =
-            get_item_from(&transaction, issue, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-        sync_assignment_receipt(&transaction, project, issue, &item.metadata)?;
-    }
-    transaction.commit()?;
-    Ok(())
+    let item = get_item_from(connection, issue, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    Ok(Some(project_receipt(issue, &item.metadata)))
 }
 
 pub(super) fn sync_assignment_receipt(
@@ -194,8 +188,17 @@ pub(super) fn sync_assignment_receipt(
     issue: &str,
     metadata: &Value,
 ) -> Result<(), TaskRuntimeError> {
+    persist_receipt(
+        connection,
+        project,
+        issue,
+        &project_receipt(issue, metadata),
+    )
+}
+
+fn project_receipt(issue: &str, metadata: &Value) -> Value {
     let history = metadata["assignment_history"].as_array();
-    let row = history
+    history
         .and_then(|rows| {
             let entry = rows.last()?;
             let leader = &metadata["collaboration_group"]["leader"];
@@ -214,7 +217,15 @@ pub(super) fn sync_assignment_receipt(
                 "stand_in_received_at": entry["stand_in_received_at"],
             }))
         })
-        .unwrap_or_else(|| json!({}));
+        .unwrap_or_else(|| json!({}))
+}
+
+fn persist_receipt(
+    connection: &Connection,
+    project: &str,
+    issue: &str,
+    row: &Value,
+) -> Result<(), TaskRuntimeError> {
     connection.execute(
         "INSERT INTO loop_items(id,resource_type,cloud_project_id,parent_id,metadata,created_at,updated_at)
          VALUES (?1,'issue_receipt',?2,?3,?4,?5,?5)

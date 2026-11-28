@@ -7,7 +7,7 @@ use super::{sql, subtask_column};
 use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::{Map, Value, json};
 use wegent_task_store::task_store_pipeline::{
-    PipelineStage, completed_bot_identity, load_member_bot, managed_strategy, pipeline_stage,
+    PipelineStage, completed_bot_identity, member_bot_exists, pipeline_stage,
 };
 
 /// The collaboration strategy's two decisions for one completion:
@@ -49,8 +49,15 @@ pub(super) async fn collaboration_status<T: MysqlTransaction>(
         return Ok(default_collaboration_status(subtask_status));
     }
     let team = strategy_team(mysql, regular_task_found, payload).await?;
-    let snapshot = managed_strategy(&mut &mut *mysql, Some(payload), task_id).await?;
-    let spec = snapshot.as_ref().or_else(|| team.as_ref()?.get("spec"));
+    if team.is_none()
+        && payload
+            .get("spec")
+            .and_then(|spec| spec.get("currentStage"))
+            .is_some_and(Value::is_number)
+    {
+        return Ok(pipeline_status(PipelineStage::Invalid, false));
+    }
+    let spec = team.as_ref().and_then(|team| team.get("spec"));
     if let Some(spec) = spec.filter(|spec| spec["collaborationModel"] == "pipeline") {
         let bot_id = subtask_column::<Json<Value>>(subtask, "bot_ids")
             .and_then(|ids| ids.0.as_array()?.first()?.as_i64());
@@ -58,18 +65,17 @@ pub(super) async fn collaboration_status<T: MysqlTransaction>(
             Some(id) => completed_bot_identity(mysql, id).await?,
             None => None,
         };
-        let stage = pipeline_stage(payload.get("spec"), spec, bot.as_ref(), snapshot.is_some());
+        let stage = pipeline_stage(payload.get("spec"), spec, bot.as_ref());
         let owner = payload
             .get("spec")
             .and_then(|spec| spec.pointer("/teamRef/user_id"))
             .and_then(Value::as_i64);
-        let next_available = match (&stage, team.is_some(), owner) {
-            (PipelineStage::Advance(next), true, Some(owner)) => {
-                load_member_bot(mysql, owner, &spec["members"][*next])
-                    .await?
-                    .is_some()
+        let next_available = match (&stage, owner) {
+            (PipelineStage::Advance(next), Some(owner)) => {
+                member_bot_exists(mysql, owner, &spec["members"][*next]).await?
             }
-            _ => team.is_some(),
+            (PipelineStage::Advance(_), None) => false,
+            _ => true,
         };
         return Ok(pipeline_status(stage, next_available));
     }

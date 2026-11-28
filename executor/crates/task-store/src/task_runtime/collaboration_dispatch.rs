@@ -303,7 +303,7 @@ impl LocalTaskStore {
         let mut statement = connection.prepare(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND json_extract(execution_payload, '$.dispatch_role') = 'member'
+               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.dispatch_role') = 'member'
                AND json_extract(execution_payload, '$.coordination_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
              ORDER BY id",
         )?;
@@ -687,7 +687,7 @@ fn manager_execution_id_for_runtime(
             "SELECT id FROM loop_item_executions
              WHERE runtime_task_id = ?1
                AND (status IN ('claimed', 'running') OR (status = 'completed' AND termination_reason = 'collaboration_round_dispatched'))
-               AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
+               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
              ORDER BY id DESC LIMIT 1",
             params![runtime_task_id],
             |row| row.get(0),
@@ -903,7 +903,7 @@ fn collaboration_round_is_ready(
                 COALESCE(SUM(CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN 1 ELSE 0 END), 0)
          FROM loop_item_executions
          WHERE loop_item_id = ?1
-           AND json_extract(execution_payload, '$.dispatch_role') = 'member'
+           AND json_valid(execution_payload) AND json_extract(execution_payload, '$.dispatch_role') = 'member'
            AND json_extract(execution_payload, '$.coordination_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3",
         params![item_id, round_id, dispatch_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
@@ -934,7 +934,7 @@ fn manager_resume_exists(
         "SELECT EXISTS(
              SELECT 1 FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
+               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
                AND json_extract(execution_payload, '$.coordination_resume_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
          )",
         params![item_id, round_id, dispatch_id],
@@ -952,8 +952,8 @@ fn source_manager_execution(
         .query_row(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
-               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.coordination_submitted_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
+               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
+               AND json_extract(execution_payload, '$.coordination_submitted_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
              ORDER BY id DESC LIMIT 1",
             params![item_id, round_id, dispatch_id],
             |row| row.get(0),

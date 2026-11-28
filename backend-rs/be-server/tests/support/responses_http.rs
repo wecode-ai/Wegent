@@ -28,7 +28,6 @@ const RATE_SCRIPT: &str = "local current\nlocal amount = tonumber(ARGV[2])\ncurr
 
 pub async fn seed_task(mysql: &MysqlService, table: &str, task_id: i64, user_id: i32) {
     for sql in [
-        "CREATE TABLE IF NOT EXISTS task_team_strategies (task_id BIGINT PRIMARY KEY, strategy JSON NOT NULL)",
         "CREATE TABLE IF NOT EXISTS users (
             id INT PRIMARY KEY, user_name VARCHAR(100) NOT NULL, password_hash VARCHAR(100) DEFAULT '',
             email VARCHAR(100), git_info JSON, is_active TINYINT DEFAULT 1,

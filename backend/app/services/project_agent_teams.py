@@ -6,37 +6,23 @@ Its private execution definition grants no catalog or workspace use rights.
 
 from sqlalchemy import select
 from sqlalchemy.engine import Connection
-from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopNode, ProjectChatAgent
+from app.models.delivery import ProjectChatAgent
 from app.models.kind import Kind
 
 
 def write_project_agent_team(connection: Connection, agent: ProjectChatAgent) -> dict:
-    metadata, _ = _project_agent_binding(connection, agent)
-    return metadata
-
-
-def _project_agent_binding(
-    connection: Connection,
-    agent: ProjectChatAgent,
-    *,
-    backfill: bool = False,
-    rollback: bool = False,
-) -> tuple[dict, bool]:
     metadata = dict(agent.metadata_json or {})
     runtime = metadata.get("runtime")
     owner = agent.created_by_user_id
     if not owner or owner < 0 or not agent.cloud_project_id:
-        return metadata, False
+        return metadata
     namespace = f"projects/{agent.cloud_project_id}"
     name = f"agent-{agent.id}"
     if (
         runtime not in {"codex", "claude_code"}
         or metadata.get("wegent_team_id") is not None
     ):
-        if backfill:
-            return metadata, False
         if metadata.pop("teamRef", None) is not None:
             kinds = Kind.__table__
             connection.execute(
@@ -49,9 +35,7 @@ def _project_agent_binding(
                 )
                 .values(is_active=False)
             )
-        return metadata, False
-    if rollback and "teamRef" not in metadata:
-        return metadata, False
+        return metadata
     ref = {"name": name, "namespace": namespace}
     skills = metadata.get("additional_skills") or []
     specs = {
@@ -110,9 +94,6 @@ def _project_agent_binding(
         raise ValueError(
             f"Project Agent {agent.id} Team binding does not match its source"
         )
-    if rollback:
-        metadata.pop("teamRef")
-        return metadata, False
     active = agent.status != "archived"
     for kind, spec in specs.items():
         definition = {
@@ -139,7 +120,7 @@ def _project_agent_binding(
             ).inserted_primary_key[0]
         else:
             key = row.id
-            if not backfill and (row.json != definition or row.is_active != active):
+            if row.json != definition or row.is_active != active:
                 connection.execute(
                     kinds.update()
                     .where(kinds.c.id == key)
@@ -147,7 +128,7 @@ def _project_agent_binding(
                 )
         if kind == "Team":
             metadata["teamRef"] = key
-    return metadata, "Team" not in existing
+    return metadata
 
 
 def project_team_config(db, agent: ProjectChatAgent, config: dict) -> dict:
@@ -198,108 +179,3 @@ def project_team_config(db, agent: ProjectChatAgent, config: dict) -> dict:
         "mcp_servers": ghost["mcpServers"],
         "plugins": ghost["plugins"],
     }
-
-
-def migrate(
-    db: Session,
-    *,
-    batch_size: int = 100,
-    rollback: bool = False,
-    commit_batches: bool = True,
-) -> dict[str, int]:
-    from app.models.loop_item_execution import LoopItemExecution
-    from app.services.loop_item_executions.service import ACTIVE_STATUSES
-
-    if rollback:
-        from app.models.delivery import LoopItem
-        from app.models.project_chat_message import ProjectChatMessage
-
-        metadata = ProjectChatMessage.metadata_json
-        pending = (
-            db.query(ProjectChatMessage.id)
-            .join(LoopItem, LoopItem.id == metadata["issue_id"].as_string())
-            .filter(
-                ProjectChatMessage.message_type == "coordination",
-                ProjectChatMessage.status == "active",
-                metadata["protocol"].as_integer() == 2,
-                LoopItem.cloud_project_id == metadata["project_id"].as_string(),
-                LoopItem.metadata_json["collaboration_group_assignment_key"].as_string()
-                == metadata["assignment_key"].as_string(),
-            )
-            .first()
-        )
-        from sqlalchemy import JSON, case, func, type_coerce
-
-        payload = type_coerce(
-            case(
-                (
-                    func.json_valid(LoopItemExecution.execution_payload) == 1,
-                    LoopItemExecution.execution_payload,
-                ),
-                else_="{}",
-            ),
-            JSON,
-        )
-        running = (
-            db.query(LoopItemExecution.id)
-            .filter(
-                LoopItemExecution.status.in_(ACTIVE_STATUSES),
-                payload["origin_context"]["dispatch_protocol_version"].as_integer()
-                == 2,
-            )
-            .first()
-        )
-        if pending or running:
-            raise ValueError("Finish active v2 Issue coordination before downgrading")
-
-    counts = {
-        "created": 0,
-        "reused": 0,
-        "unavailable": 0,
-        "detached": 0,
-        "invalid_references": 0,
-        "unfinished_executions": db.query(LoopItemExecution)
-        .filter(LoopItemExecution.status.in_(ACTIVE_STATUSES))
-        .count(),
-    }
-    cursor = ""
-    nodes = LoopNode.__table__
-    while True:
-        rows = (
-            db.query(ProjectChatAgent)
-            .filter(ProjectChatAgent.id > cursor)
-            .order_by(ProjectChatAgent.id)
-            .limit(batch_size)
-            .populate_existing()
-            .with_for_update()
-            .all()
-        )
-        if not rows:
-            return counts
-        cursor = rows[-1].id
-        for row in rows:
-            previous = row.metadata_json or {}
-            metadata, created = _project_agent_binding(
-                db.connection(), row, backfill=True, rollback=rollback
-            )
-            if previous != metadata:
-                db.execute(
-                    nodes.update().where(nodes.c.id == row.id).values(metadata=metadata)
-                )
-            if rollback and previous != metadata:
-                counts["detached"] += 1
-            elif created:
-                counts["created"] += 1
-            elif metadata.get("wegent_team_id") is not None:
-                key = metadata["wegent_team_id"]
-                team = db.get(Kind, key) if type(key) is int and key > 0 else None
-                if team is None or team.kind != "Team" or not team.is_active:
-                    counts["invalid_references"] += 1
-                else:
-                    counts["reused"] += 1
-            elif metadata.get("teamRef"):
-                counts["reused"] += 1
-            else:
-                counts["unavailable"] += 1
-        if commit_batches:
-            db.commit()

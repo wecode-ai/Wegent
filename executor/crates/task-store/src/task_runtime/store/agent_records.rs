@@ -12,15 +12,21 @@ impl LocalTaskStore {
     ) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
-                    public_id, project_key, name, title, description, sequence_number,
-                    next_item_number, COALESCE((SELECT b.status FROM project_team_bindings b WHERE b.project_id=?1 AND b.team_ref=loop_items.id), status), priority, sort_order, current_delivery_id,
-                    metadata, COALESCE((SELECT b.version FROM project_team_bindings b WHERE b.project_id=?1 AND b.team_ref=loop_items.id), version), created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id, assignee_user_id
-             FROM loop_items
-             WHERE resource_type = 'chat_agent' AND deleted_at IS NULL
-               AND (cloud_project_id = ?1 OR id IN (SELECT team_ref FROM project_team_bindings WHERE project_id = ?1))
-             ORDER BY created_at ASC",
+            "WITH project_agents AS (
+                SELECT id, status, version FROM loop_items INDEXED BY idx_loop_items_project_type
+                WHERE cloud_project_id=?1 AND resource_type='chat_agent'
+                UNION ALL
+                SELECT parent_id, status, version FROM loop_items INDEXED BY idx_loop_items_project_type
+                WHERE cloud_project_id=?1 AND resource_type='project_team_binding'
+             )
+             SELECT a.id, a.resource_type, a.project_space, a.cloud_project_id, a.parent_id,
+                    a.public_id, a.project_key, a.name, a.title, a.description, a.sequence_number,
+                    a.next_item_number, p.status, a.priority, a.sort_order, a.current_delivery_id,
+                    a.metadata, p.version, a.created_at, a.updated_at, a.completed_at,
+                    a.assignee_agent_id, a.created_by_user_id, a.assignee_user_id
+             FROM project_agents p CROSS JOIN loop_items a ON a.id=p.id
+             WHERE a.resource_type='chat_agent' AND a.deleted_at IS NULL
+             ORDER BY a.created_at ASC",
         )?;
         let rows =
             statement.query_map(params![project_id], |row| map_loop_item(&connection, row))?;
@@ -61,8 +67,10 @@ impl LocalTaskStore {
             })?;
         if project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
             tx.execute(
-                "INSERT OR IGNORE INTO project_team_bindings(project_id, team_ref) VALUES (?1, ?2)",
-                params![project_id, team_ref],
+                "INSERT INTO loop_items(id,resource_type,cloud_project_id,parent_id,status,created_at,updated_at)
+                 VALUES ('project-team:' || json_array(?1,?2),'project_team_binding',?1,?2,'active',?3,?3)
+                 ON CONFLICT(id) DO NOTHING",
+                params![project_id, team_ref, now()],
             )?;
         }
         tx.commit()?;
@@ -132,7 +140,7 @@ impl LocalTaskStore {
         if current.cloud_project_id.as_deref() != Some(project_id) {
             if let Some(status @ ("active" | "archived")) = input.status.as_deref() {
                 if has_project_team_binding(&connection, project_id, agent_id)? {
-                    if connection.execute("UPDATE project_team_bindings SET status=?1, version=version+1 WHERE project_id=?2 AND team_ref=?3 AND version=?4",
+                    if connection.execute("UPDATE loop_items SET status=?1, version=version+1 WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?2,?3) AND version=?4",
                         params![status, project_id, agent_id, input.version])? != 1 {
                         return Err(TaskRuntimeError::VersionConflict);
                     }
@@ -286,7 +294,7 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let connection = self.connection()?;
         if has_project_team_binding(&connection, project_id, agent_id)? {
-            if connection.execute("UPDATE project_team_bindings SET status='archived',version=version+1 WHERE project_id=?1 AND team_ref=?2 AND version=?3",params![project_id, agent_id, version])? != 1 {
+            if connection.execute("UPDATE loop_items SET status='archived',version=version+1 WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2) AND version=?3",params![project_id, agent_id, version])? != 1 {
                 return Err(TaskRuntimeError::VersionConflict);
             }
             return Ok(());
@@ -317,7 +325,7 @@ impl LocalTaskStore {
             .ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
         if !bound
             && transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM project_team_bindings WHERE team_ref=?1)",
+                "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND parent_id=?1)",
                 [agent_id],
                 |row| row.get::<_, bool>(0),
             )?
@@ -355,7 +363,7 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::Invalid("PROJECT_AGENT_IN_USE: replace or remove the Agent from its collaboration groups first".into()));
         }
         if bound {
-            if transaction.execute("DELETE FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2 AND version=?3",params![project_id, agent_id, version])? != 1 { return Err(TaskRuntimeError::VersionConflict); }
+            if transaction.execute("DELETE FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2) AND version=?3",params![project_id, agent_id, version])? != 1 { return Err(TaskRuntimeError::VersionConflict); }
             transaction.commit()?;
             return Ok(());
         }
@@ -377,7 +385,7 @@ impl LocalTaskStore {
             .ok_or_else(|| TaskRuntimeError::Invalid("Robot not found".to_owned()))?;
         let mut agent = map_chat_agent(row);
         if agent.project_id != project_id {
-            let (status,version) = connection.query_row("SELECT status, version FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2", params![project_id,agent_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).optional()?.ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
+            let (status,version) = connection.query_row("SELECT status, version FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2)", params![project_id,agent_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).optional()?.ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
             agent.project_id = project_id.to_owned();
             agent.status = status;
             agent.version = version;

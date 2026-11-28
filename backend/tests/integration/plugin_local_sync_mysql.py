@@ -13,12 +13,7 @@ from sqlalchemy.orm import Session
 from alembic import command
 from alembic.config import Config
 from app.core.config import settings
-from app.db.base import Base
-from app.models.delivery import LoopNode
 from app.models.kind import Kind
-from app.models.loop_item_execution import LoopItemExecution
-from app.models.project import Project
-from app.models.task import TaskResource
 from app.models.user import User
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
@@ -85,27 +80,17 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Migrations after this revision read historical Share and Project data.
-        Base.metadata.create_all(
-            engine,
-            tables=[
-                User.__table__,
-                Kind.__table__,
-                Project.__table__,
-                TaskResource.__table__,
-                LoopNode.__table__,
-                LoopItemExecution.__table__,
-            ],
-        )
+        # Include the historical table consumed by later share-token migrations;
+        # a two-table fixture stamped at an old head is not a valid upgrade input.
+        User.__table__.create(engine)
+        Kind.__table__.create(engine)
         create_legacy_share_links(engine)
         command.stamp(config, "f3a7c9e1b2d4")
-        expected_tables = set(inspect(engine).get_table_names()) | {
-            "task_team_strategies"
-        }
+        tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == expected_tables
-        assert "plugin_local_sync_operations" not in expected_tables
-        assert "plugin_sync_outbox" not in expected_tables
+        assert set(inspect(engine).get_table_names()) == tables
+        assert "plugin_local_sync_operations" not in tables
+        assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
         original = {
             "operationId": "uncertain-operation",
@@ -130,9 +115,9 @@ def verify(engine, url):
                 lookup_operation(db, 1, "other-native", "uncertain-operation") is None
             )
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
-        assert set(inspect(engine).get_table_names()) == expected_tables
+        assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: schema upgrade, existing account marker recovery and identity isolation passed"
+        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
     )
 
 

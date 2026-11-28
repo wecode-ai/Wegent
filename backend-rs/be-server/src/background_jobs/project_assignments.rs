@@ -122,9 +122,6 @@ pub(crate) async fn agent_admission(
             .into()
     };
     let mut selection = json!({"runtime_source":source,"runtime_profile_id":profile.as_ref().map(|profile|&profile.id),"runtime_profile_version":profile.as_ref().map(|profile|profile.version),"model":model,"model_type":model_type,"model_options":if options.is_object(){options}else{json!({})},"capability_mode":config["capability_mode"],"workspace_policy":profile_metadata["workspace_policy"].as_str().unwrap_or("project")});
-    if let Some(strategy) = config.get("team_strategy") {
-        selection["team_strategy"] = strategy.clone();
-    }
     let mut configured_model = model.as_str().unwrap_or("").to_owned();
     if runtime != "wegent" && config["execution_policy"].is_object() {
         let route = routing::resolve(

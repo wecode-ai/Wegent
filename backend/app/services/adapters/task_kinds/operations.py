@@ -33,11 +33,11 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
-from app.services.adapters.pipeline_snapshot import (
-    accepted_team,
-    save_pipeline_snapshot,
+from app.services.adapters.pipeline_stage import (
+    initialize_pipeline,
+    pipeline_stage_service,
+    validate_pipeline_team,
 )
-from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
@@ -227,13 +227,14 @@ class TaskOperationsMixin:
                 detail=f"Team '{team_name}' not found, it may be deleted or not shared",
             )
 
+        validate_pipeline_team(existing_task, team)
         task_stores.task_store.update_json(
             db,
             task=existing_task,
             payload=mark_task_pending_payload(existing_task.json),
         )
 
-        return existing_task, accepted_team(db, existing_task.id, team)
+        return existing_task, team
 
     def _create_new_task(
         self,
@@ -301,7 +302,7 @@ class TaskOperationsMixin:
                 title=title,
                 namespace=namespace,
             )
-        save_pipeline_snapshot(db, task, team)
+        initialize_pipeline(task, team)
         return task, team
 
     def _create_new_task_with_allocated_pair(

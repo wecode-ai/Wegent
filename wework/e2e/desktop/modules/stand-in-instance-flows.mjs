@@ -27,7 +27,8 @@ export async function chooseStandInExecutionDevice(control, deviceId, timeoutMs,
   )
   if (waitForSaved) await waitForSaved()
   const close = testId('stand-in-primary-profile-close')
-  if ((await control.command('getElementCount', close)) !== '0')
-    await control.command('clickWhenEnabled', close, { timeoutMs })
-  await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false, timeoutMs })
+  const panel = testId('stand-in-profile-panel')
+  await control.command('waitFor', `${close}:disabled`, { visible: false, timeoutMs })
+  await control.command('clickIfPresent', close)
+  await control.command('waitFor', panel, { visible: false, timeoutMs })
 }

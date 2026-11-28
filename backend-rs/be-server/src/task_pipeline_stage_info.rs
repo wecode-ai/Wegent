@@ -140,20 +140,7 @@ async fn run(
     };
 
     // `Team.model_validate(team.json)`.
-    let document = task.json.to_value();
-    let strategy = wegent_task_store::task_store_pipeline::managed_strategy(
-        &mut &state.mysql,
-        document.as_object(),
-        task_id,
-    )
-    .await
-    .map_err(ApiError::dependency)?;
-    let team_crd = match strategy {
-        Some(snapshot) => TeamProjection::project(&brz_json::OpaqueJson::from(
-            serde_json::json!({"spec":snapshot}),
-        )),
-        None => TeamProjection::project(&team.kinds_json.0),
-    };
+    let team_crd = TeamProjection::project(&team.kinds_json.0);
     let members = team_crd.members;
 
     // Non-pipeline teams return the default document.

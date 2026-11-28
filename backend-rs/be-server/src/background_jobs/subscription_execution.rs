@@ -122,7 +122,6 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
     let mut request = create::request::build_subscription_execution_request(
         app,
         &BuildExecutionRequestInput {
-            strategy: None,
             user_id: data.subscription.user_id,
             user_name: &data.username,
             // This native job path enriches the Git identity from

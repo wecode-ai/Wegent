@@ -245,16 +245,9 @@ pub(crate) async fn request_for_task(
         )
         .await?;
     let assistant:Assistant=mysql.fetch_one(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT'",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
-    let mut team = resolution::team_by_id(&state.mysql, input.team_id)
+    let team = resolution::team_by_id(&state.mysql, input.team_id)
         .await?
         .context("Managed project automation Team is unavailable")?;
-    let strategy = wegent_task_store::task_store_pipeline::apply_managed_strategy(
-        &mut &state.mysql,
-        task.json.0.as_object(),
-        input.task_id,
-        &mut team.json.0,
-    )
-    .await?;
     let user = load_user(&state.mysql, input.user_id).await?;
     let resolvers = state.entity_resolvers.for_execution();
     let directory = state
@@ -287,7 +280,6 @@ pub(crate) async fn request_for_task(
     let mut request = create::request::build_background_execution_request(
         state,
         &BuildExecutionRequestInput {
-            strategy: strategy.as_ref(),
             user_id: input.user_id,
             user_name: &user.user_name,
             // This native job path enriches the Git identity from

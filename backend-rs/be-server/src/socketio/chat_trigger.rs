@@ -41,7 +41,6 @@ const CONVERSATION_CONTEXT: &str = "conversation";
 /// transaction (`prepare_execution_session`'s result).
 #[derive(Debug, Clone)]
 pub(crate) struct ChatTurn {
-    pub strategy: Option<Value>,
     pub task_id: i64,
     pub is_subscription: bool,
     pub user_subtask_id: i64,
@@ -381,22 +380,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         );
         return Err(FastApiError::internal());
     };
-    let mut team: resolution::KindRow = team.into();
-    let restored;
-    let strategy = if let Some(snapshot) = &turn.strategy {
-        wegent_task_store::task_store_pipeline::overlay_strategy(&mut team.json.0, snapshot);
-        Some(snapshot)
-    } else {
-        restored = wegent_task_store::task_store_pipeline::apply_managed_strategy(
-            &mut &state.mysql,
-            turn.task_json.as_object(),
-            turn.task_id,
-            &mut team.json.0,
-        )
-        .await
-        .map_err(dependency)?;
-        restored.as_ref()
-    };
+    let team: resolution::KindRow = team.into();
     // `_trigger_ai`'s `db.refresh(user)` (`chat_namespace.py:1237-1240`); the
     // Task and assistant subtask refreshes already ran in the handler. The
     // recording renders this refresh with the bare entity projection
@@ -440,7 +424,6 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     let mut request = build_chat_execution_request(
         state,
         &BuildExecutionRequestInput {
-            strategy,
             user_id,
             user_name: &user.user_name,
             user_git_info: &user.git_info,
@@ -685,7 +668,6 @@ mod tests {
     #[test]
     fn task_created_requires_the_source_gate() {
         let turn = ChatTurn {
-            strategy: None,
             is_subscription: false,
             task_id: 1,
             user_subtask_id: 2,

@@ -266,38 +266,21 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
-        from app.models.task import TaskTeamStrategy
-        from app.services.adapters.pipeline_snapshot import overlay_team
+    team_crd = _load_team_crd(team)
+    if task is not None and team_crd is not None:
+        from app.services.adapters.pipeline_stage import (
+            resolve_pipeline_stage_bot,
+            validate_pipeline_team,
+        )
 
-        saved = db.get(TaskTeamStrategy, task.id)
-        if saved is not None:
-            ref = task.json["spec"]["teamRef"]
-            if (ref["name"], ref.get("namespace", "default"), ref.get("user_id")) != (
-                team.name,
-                team.namespace,
-                team.user_id,
-            ):
-                raise HTTPException(
-                    status_code=403, detail="Pipeline Team binding changed"
-                )
-            team = overlay_team(team, saved.strategy)
-            stage = task.json["spec"].get("currentStage") or 0
-            members = saved.strategy["members"]
-            if not 0 <= stage < len(members):
-                raise ValueError("Pipeline stage is out of range")
-            bot_ref = members[stage]["botRef"]
-            bot = kindReader.get_by_name_and_namespace(
-                db,
-                team.user_id,
-                KindType.BOT,
-                bot_ref.get("namespace", "default"),
-                bot_ref["name"],
-            )
-            if not bot or str(bot.id) not in saved.strategy["bots"]:
-                raise ValueError("Pipeline stage Bot identity changed")
+        try:
+            validate_pipeline_team(task, team)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if team_crd.spec.collaborationModel == "pipeline":
+            _, bot = resolve_pipeline_stage_bot(db, task, team, team_crd)
             bot_ids_override = [bot.id]
 
-    team_crd = _load_team_crd(team)
     if team_crd is not None and not team_crd.spec.members:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

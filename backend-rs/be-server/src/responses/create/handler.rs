@@ -176,7 +176,6 @@ pub(super) async fn resolve_principal_on(
 /// The team/model/source-group/session state one create request resolves on its
 /// single request transaction.
 struct PreparedCreate {
-    strategy: Option<serde_json::Value>,
     user: ResponsesUser,
     team: crate::responses::create::resolution::KindRow,
     bot: crate::responses::create::resolution::KindRow,
@@ -235,7 +234,7 @@ async fn resolve_create_scope(
         )
         .await
         .map_err(dependency)?;
-    let Some(mut team) = team.map(kinds_row) else {
+    let Some(team) = team.map(kinds_row) else {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             format!(
@@ -258,16 +257,8 @@ async fn resolve_create_scope(
     )
     .await?;
 
-    let strategy = if let Some(previous) = &continuation {
-        let frozen = wegent_task_store::task_store_pipeline::apply_managed_strategy(
-            &mut &mut *transaction,
-            previous.task_json.as_object(),
-            previous.task_id,
-            &mut team.json.0,
-        )
-        .await
-        .map_err(dependency)?;
-        if frozen.is_some()
+    if let Some(previous) = &continuation {
+        if previous.task_json["spec"]["currentStage"].is_number()
             && (previous.task_json["spec"]["teamRef"]["name"] != team.name
                 || previous.task_json["spec"]["teamRef"]["namespace"] != team.namespace
                 || previous.task_json["spec"]["teamRef"]["user_id"] != team.user_id)
@@ -277,21 +268,16 @@ async fn resolve_create_scope(
                 "Pipeline Team binding changed",
             ));
         }
-        frozen
     } else if team.json.0["spec"]["collaborationModel"] == "pipeline" {
-        Some(
-            crate::background_jobs::project::agents::readiness(
-                state,
-                &team,
-                user_id,
-                model.model_id.as_deref(),
-            )
-            .await
-            .map_err(|error| FastApiError::detail(StatusCode::BAD_REQUEST, error.to_string()))?,
+        crate::background_jobs::project::agents::readiness(
+            state,
+            &team,
+            user_id,
+            model.model_id.as_deref(),
         )
-    } else {
-        None
-    };
+        .await
+        .map_err(|error| FastApiError::detail(StatusCode::BAD_REQUEST, error.to_string()))?;
+    }
 
     // `create_response`'s model selection (`openapi_responses.py:594-672`)
     // runs before the task is created: an explicit `model_id` resolves that
@@ -374,7 +360,7 @@ async fn resolve_create_scope(
             user_id,
             owner_user_id: user.id,
             continuation,
-            pipeline_strategy: strategy.as_ref(),
+            pipeline: team.json.0["spec"]["collaborationModel"] == "pipeline",
             history_window: None,
             team_id: team.id,
             bot_ids: &bots.bot_ids,
@@ -434,7 +420,6 @@ async fn resolve_create_scope(
     }
 
     Ok(PreparedCreate {
-        strategy,
         user,
         team,
         bot,
@@ -535,7 +520,6 @@ async fn create_response_flow(
     observation.accept();
     let (
         PreparedCreate {
-            strategy,
             user,
             team,
             bot,
@@ -648,10 +632,7 @@ async fn create_response_flow(
     // The same expiry covers the Team Kind: `build_execution_request` receives
     // the expired instance (`openapi_responses.py:795-799`) and its first
     // `team.` access reloads the row by primary key.
-    let mut team = reload_team(&state.mysql, &team).await?;
-    if let Some(snapshot) = &strategy {
-        wegent_task_store::task_store_pipeline::overlay_strategy(&mut team.json.0, snapshot);
-    }
+    let team = reload_team(&state.mysql, &team).await?;
     let user_id = i64::from(user.id);
 
     // `setup.task` is the Task CRD this request built or reused: a resumed
@@ -684,7 +665,6 @@ async fn create_response_flow(
         .unwrap_or_else(|| format!("req_{}", setup.assistant_subtask_id));
 
     let dispatch = DispatchInput {
-        strategy: strategy.as_ref(),
         created_at,
         user_id,
         user_name: &user.user_name,

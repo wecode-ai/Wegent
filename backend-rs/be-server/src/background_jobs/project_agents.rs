@@ -68,7 +68,7 @@ pub(crate) async fn readiness(
     team: &resolution::KindRow,
     execution_user: i64,
     override_model: Option<&str>,
-) -> Result<Value> {
+) -> Result<()> {
     let resolvers = state.entity_resolvers.for_execution();
     let directory = state
         .entity_resolvers
@@ -89,7 +89,6 @@ pub(crate) async fn readiness(
     // through `kindReader.get_by_name_and_namespace` (cached version/value
     // reads), never the whole Ghost chain, then resolves the Shell and, when
     // the Bot declares no execution policy, its Model.
-    let mut definitions = serde_json::Map::new();
     let mut checked = std::collections::BTreeSet::new();
     for member in members {
         let reference = &member["botRef"];
@@ -110,7 +109,7 @@ pub(crate) async fn readiness(
             .unwrap_or("default")
             .to_owned();
         let ghost_name = spec["ghostRef"]["name"].as_str().unwrap_or("").to_owned();
-        let ghost = cache
+        cache
             .get_by_name_and_namespace_row(team.user_id, "Ghost", &ghost_namespace, &ghost_name)
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?
@@ -129,8 +128,6 @@ pub(crate) async fn readiness(
         )
         .await?
         .context("Wegent Team member Shell is unavailable")?;
-        let ghost_document = serde_json::to_value(&ghost.kinds_json.0)?;
-        let mut definition = json!({"ghost_prompt":ghost_document["spec"]["systemPrompt"].as_str().unwrap_or_default()});
         if !spec["execution_policy"].is_object() && override_model.is_none() {
             let name = resolution::resolve_model_name(spec, false, None).unwrap_or_default();
             let model = resolution::resolve_model_for_bot(
@@ -142,33 +139,20 @@ pub(crate) async fn readiness(
             )
             .await?
             .context("Wegent Team member Model is unavailable")?;
-            let config =
-                crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
-                    .context("Wegent Team member Model configuration is unavailable")?;
-            definition["model_name"] = json!(name);
-            definition["model_resource_id"] = json!(model.id);
-            definition["model_id"] = json!(config.get("model_id"));
-            if crate::responses::create::model_config::inline_agent_config_ready(
-                &spec["agent_config"],
-                false,
-                None,
-            ) {
-                for key in ["model", "model_id"] {
-                    if let Some(value) = spec["agent_config"]["env"][key].as_str() {
-                        definition["inline_env"][key] = json!(value);
-                    }
-                }
-            }
+            crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
+                .context("Wegent Team member Model configuration is unavailable")?;
         }
-        definitions.insert(bot.kinds_id.to_string(), definition);
     }
-    Ok(
-        json!({"members":members,"collaborationModel":team.json.0["spec"]["collaborationModel"],"bots":definitions}),
-    )
+    Ok(())
 }
 
 /// Resolve the Agent-private definition under the project Agent grant.
-async fn private_team_config(state: &AppState, agent: &Node, mut config: Value) -> Result<Value> {
+async fn private_team_config(
+    state: &AppState,
+    agent: &Node,
+    team_id: i64,
+    mut config: Value,
+) -> Result<Value> {
     let namespace = format!("projects/{}", agent.cloud_project_id);
     let name = format!("agent-{}", agent.id);
     let reference = json!({"name":name, "namespace":namespace});
@@ -177,8 +161,9 @@ async fn private_team_config(state: &AppState, agent: &Node, mut config: Value) 
         (agent.created_by_user_id, namespace, name)
     ).await?;
     let mut specs = std::collections::BTreeMap::new();
-    let team_id = authority::integer(&agent.metadata.0["teamRef"])
-        .context("Project Agent has no persisted Team binding")?;
+    if rows.len() != 4 {
+        bail!("Project Agent Team definition unavailable");
+    }
     for row in &rows {
         if row.json.0["metadata"]["migrationSource"] != agent.id
             || (row.kind == "Team" && row.id != team_id)
@@ -213,6 +198,18 @@ async fn private_team_config(state: &AppState, agent: &Node, mut config: Value) 
     Ok(config)
 }
 
+fn native_team_binding(metadata: &Value) -> Result<Option<i64>> {
+    metadata
+        .get("teamRef")
+        .map(|reference| {
+            reference
+                .as_i64()
+                .filter(|id| *id > 0)
+                .context("Project Agent has an invalid Team binding")
+        })
+        .transpose()
+}
+
 pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64) -> Result<Value> {
     let resolvers = state.entity_resolvers.for_execution();
     let directory = state
@@ -244,12 +241,15 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     }
     config["execution_device_id"] = json!(agent.device_id);
     if runtime != "wegent" {
-        return private_team_config(state, agent, config).await;
+        let Some(team_id) = native_team_binding(&agent.metadata.0)? else {
+            return Ok(config);
+        };
+        return private_team_config(state, agent, team_id, config).await;
     }
     let team_id = authority::integer(&config["wegent_team_id"])
         .context("Project Agent has an invalid Team binding")?;
     let team = authority::team(&state.mysql, &agent.cloud_project_id, team_id).await?;
-    let strategy = readiness(state, &team, execution_user, None).await?;
+    readiness(state, &team, execution_user, None).await?;
     let members = team.json.0["spec"]["members"]
         .as_array()
         .context("Team has no members")?;
@@ -263,7 +263,6 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
         &resolvers,
     );
     if team.json.0["spec"]["collaborationModel"] != "solo" || members.len() != 1 {
-        config["team_strategy"] = strategy;
         return Ok(config);
     }
     let member = &members[0];
@@ -381,4 +380,26 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
         }
     }
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_agent_uses_stored_config_only_when_the_team_binding_is_absent() {
+        let metadata = json!({"runtime":"codex","system_prompt":"original","plugins":["tools"],"execution_policy":{"mode":"project_pool"}});
+        assert_eq!(native_team_binding(&metadata).unwrap(), None);
+        let config = config_metadata(&metadata);
+        for (key, value) in metadata.as_object().unwrap() {
+            assert_eq!(&config[key], value);
+        }
+        assert_eq!(
+            native_team_binding(&json!({"teamRef":17})).unwrap(),
+            Some(17)
+        );
+        for invalid in [Value::Null, json!(false), json!("17"), json!(0)] {
+            assert!(native_team_binding(&json!({"teamRef":invalid})).is_err());
+        }
+    }
 }

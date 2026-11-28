@@ -439,11 +439,9 @@ class TaskResourceBaseService(KindBaseService):
                 payload=resource_data,
             )
             if team is not None:
-                from app.services.adapters.pipeline_snapshot import (
-                    save_pipeline_snapshot,
-                )
+                from app.services.adapters.pipeline_stage import initialize_pipeline
 
-                save_pipeline_snapshot(db, db_resource, team)
+                initialize_pipeline(db_resource, team)
                 self._prepare_task_turn(db, db_resource, team)
             db.commit()
             db.refresh(db_resource)
@@ -490,15 +488,26 @@ class TaskResourceBaseService(KindBaseService):
             # Extract resource data
             resource_data = self._extract_resource_data(resource)
 
+            if (
+                team is not None
+                and db_resource.json["spec"].get("currentStage") is not None
+            ):
+                from app.services.adapters.pipeline_stage import validate_pipeline_team
+
+                validate_pipeline_team(db_resource, team)
+                resource_data["spec"].update(
+                    currentStage=db_resource.json["spec"]["currentStage"],
+                    teamRef={
+                        **resource_data["spec"]["teamRef"],
+                        "user_id": team.user_id,
+                    },
+                )
+
             # Update resource
             task_store.update_json(db, task=db_resource, payload=resource_data)
 
             if team is not None:
-                from app.services.adapters.pipeline_snapshot import accepted_team
-
-                self._prepare_task_turn(
-                    db, db_resource, accepted_team(db, db_resource.id, team)
-                )
+                self._prepare_task_turn(db, db_resource, team)
             db.commit()
             db.refresh(db_resource)
 

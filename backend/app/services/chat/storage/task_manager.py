@@ -402,9 +402,9 @@ def create_new_task(
         project_id=params.project_id or 0,
     )
     task_stores.task_store.update_json(db, task=task, payload=task_json)
-    from app.services.adapters.pipeline_snapshot import save_pipeline_snapshot
+    from app.services.adapters.pipeline_stage import initialize_pipeline
 
-    save_pipeline_snapshot(db, task, team)
+    initialize_pipeline(task, team)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="

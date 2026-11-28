@@ -20,16 +20,61 @@ import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.schemas.kind import Task, Team
+from app.schemas.kind import Task, Team, TeamMember
 from app.services.adapters.pipeline_context import (
     build_pipeline_context_prompt,
     normalize_context_passing,
 )
-from app.services.adapters.pipeline_snapshot import accepted_team
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
+
+
+def initialize_pipeline(task: TaskResource, team: Kind) -> None:
+    if team.json["spec"].get("collaborationModel") == "pipeline":
+        spec = task.json["spec"]
+        task.json = {
+            **task.json,
+            "spec": {
+                **spec,
+                "currentStage": 0,
+                "teamRef": {**spec["teamRef"], "user_id": team.user_id},
+            },
+        }
+
+
+def validate_pipeline_team(task: TaskResource, team: Kind) -> None:
+    spec = task.json["spec"]
+    if (
+        spec.get("currentStage") is None
+        and team.json["spec"].get("collaborationModel") != "pipeline"
+    ):
+        return
+    ref = spec["teamRef"]
+    if (
+        ref["name"] != team.name
+        or ref.get("namespace", "default") != team.namespace
+        or (ref.get("user_id") is not None and ref["user_id"] != team.user_id)
+    ):
+        raise ValueError("Pipeline Team binding changed")
+
+
+def resolve_pipeline_stage_bot(
+    db: Session, task: TaskResource, team: Kind, team_crd: Team
+) -> tuple[TeamMember, Kind]:
+    stage = task.json["spec"].get("currentStage") or 0
+    members = team_crd.spec.members
+    if not 0 <= stage < len(members):
+        raise ValueError("Pipeline stage is out of range")
+    member = members[stage]
+    ref = member.botRef
+    bot = kindReader.get_by_name_and_namespace(
+        db, team.user_id, KindType.BOT, ref.namespace, ref.name
+    )
+    if not bot:
+        raise ValueError("Pipeline stage Bot is unavailable")
+    return member, bot
 
 
 def latest_stage_completion(
@@ -276,7 +321,9 @@ class PipelineStageService:
         team = kindReader.get_by_name_and_namespace(
             db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
-        return accepted_team(db, task.id, team) if team else None
+        if team:
+            validate_pipeline_team(task, team)
+        return team
 
     def pipeline_confirm(
         self,
@@ -688,8 +735,6 @@ class PipelineStageService:
         Returns:
             Dict with pipeline info including bot_ids, or None if not a pipeline team
         """
-        if task_id is not None:
-            team = accepted_team(db, task_id, team)
         team_crd = Team.model_validate(team.json)
 
         # Only handle pipeline mode teams

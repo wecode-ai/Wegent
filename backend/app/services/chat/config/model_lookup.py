@@ -29,7 +29,6 @@ def _resolve_model_for_bot(
     force_override: bool = False,
     *,
     lookup: ExecutionCapabilityLookup | None = None,
-    accepted_model: dict | None = None,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
     """
     Resolve model Kind and spec for a bot.
@@ -73,8 +72,6 @@ def _resolve_model_for_bot(
         model_name = override_model_name
         model_from_user_override = True
         logger.info(f"Using task model (force override): {model_name}")
-    elif accepted_model and accepted_model.get("model_name"):
-        model_name = accepted_model["model_name"]
     else:
         # Priority 2: Bot's agent_config.bind_model
         bind_model = raw_agent_config.get("bind_model")
@@ -141,9 +138,6 @@ def _resolve_model_for_bot(
             f"(public model whitelist); treating it as not found"
         )
         model_kind, model_spec = None, None
-    if accepted_model and accepted_model.get("model_resource_id") is not None:
-        if not model_kind or model_kind.id != accepted_model["model_resource_id"]:
-            raise ValueError("Assigned model is no longer accessible")
     return model_kind, model_spec, model_name, raw_agent_config
 
 

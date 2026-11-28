@@ -260,7 +260,7 @@ pub(super) async fn create(
         user_id: data.subscription.user_id,
         owner_user_id: data.subscription.user_id.try_into()?,
         continuation,
-        pipeline_strategy: None,
+        pipeline: false,
         history_window: Some(data.history_limit()),
         team_id: data.team.id,
         bot_ids: bots,

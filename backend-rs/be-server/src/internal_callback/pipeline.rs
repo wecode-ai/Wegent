@@ -157,7 +157,6 @@ async fn prepare_dispatch(
     let mut execution = request::build_execution_request(
         state,
         &request::BuildExecutionRequestInput {
-            strategy: advance.strategy.as_ref(),
             user_id: advance.user_id,
             user_name: &advance.user_name,
             // The pipeline callback carries no `users.git_info` row; its
@@ -316,7 +315,7 @@ async fn claim_and_dispatch(
             return Ok(Claim::Revoked);
         }
         // Lock the live execution resources through claim commit so archival
-        // and this dispatch have a definite order. The snapshot only selects the stage.
+        // and this dispatch have a definite order.
         let eligible: Option<i64> = transaction.fetch_optional(
             "SELECT t.id FROM kinds t JOIN kinds b ON b.user_id=t.user_id WHERE t.id=? AND t.user_id=? AND t.namespace=? AND t.name=? AND t.kind='Team' AND t.is_active=1 AND b.id=? AND b.namespace=? AND b.name=? AND b.kind='Bot' AND b.is_active=1 FOR SHARE",
             (advance.team.id, advance.team.user_id, advance.team.namespace.as_str(), advance.team.name.as_str(),

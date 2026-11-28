@@ -211,7 +211,9 @@ pub(super) fn read_personal(
     user: i64,
     device: &str,
 ) -> Result<Value, TaskRuntimeError> {
-    read_personal_state(connection, user, device).map(|(settings, _)| settings)
+    let (mut settings, _) = read_personal_state(connection, user, device)?;
+    execution_team::bind(&mut settings, user)?;
+    Ok(settings)
 }
 
 fn personal_snapshot(
@@ -229,6 +231,7 @@ fn personal_snapshot(
                 .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
         }),
     };
+    execution_team::bind(&mut settings, user)?;
     Ok((settings, needs_persistence))
 }
 
@@ -246,7 +249,6 @@ fn read_personal_state(
             fields.remove("selectionErrors");
         }
         migrate_personal_settings(&mut settings)?;
-        execution_team::bind(&mut settings, user)?;
         return Ok((settings, Some(original)));
     }
     let mut personal = empty_personal(user, device);
@@ -290,7 +292,6 @@ fn read_personal_state(
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;
-    execution_team::bind(&mut personal, user)?;
     Ok((personal, None))
 }
 

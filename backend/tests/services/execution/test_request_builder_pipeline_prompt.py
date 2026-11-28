@@ -157,38 +157,22 @@ def test_pipeline_bot_config_uses_current_stage_member_prompt(test_db, mocker):
     assert "STAGE_ONE_MEMBER_PROMPT" not in bot_configs[0]["system_prompt"]
 
 
-def test_pending_task_uses_accepted_team_after_session_restart(test_db, test_user):
+def test_pending_task_resumes_current_stage_after_session_restart(test_db, test_user):
     from copy import deepcopy
 
     from sqlalchemy.orm import Session
 
     from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-    from app.models.task import TaskResource, TaskTeamStrategy
+    from app.models.task import TaskResource
     from app.schemas.task import TaskCreate
     from app.services.adapters.pipeline_stage import pipeline_stage_service
     from app.services.adapters.task_kinds import task_kinds_service
 
     owner = test_user.id
-    model = Kind(
-        user_id=owner,
-        kind="Model",
-        name="pipeline-test-model",
-        namespace="default",
-        json={
-            "spec": {
-                "modelConfig": {"env": {"model_id": "accepted", "api_key": "unused"}}
-            }
-        },
-    )
-    test_db.add(model)
     bots = []
     for name in ("author", "reviewer"):
         ghost = _create_ghost(test_db, user_id=owner, name=name, system_prompt=name)
         bot = _create_bot(test_db, user_id=owner, name=name, ghost_name=ghost.name)
-        bot.json = {
-            **bot.json,
-            "spec": {**bot.json["spec"], "modelRef": {"name": model.name}},
-        }
         bots.append(bot)
     team = _create_pipeline_team(
         test_db, user_id=owner, first_bot=bots[0], second_bot=bots[1]
@@ -217,16 +201,5 @@ def test_pending_task_uses_accepted_team_after_session_restart(test_db, test_use
     team.json = edited
     test_db.commit()
     with Session(bind=test_db.get_bind()) as restarted:
-        newer = task_kinds_service.create_task_or_append(
-            restarted, obj_in=request, user=test_user
-        )
         restored = pipeline_stage_service.pipeline_confirm(restarted, old["id"], owner)
-        assert restored["success"] and restored["next_stage_name"] == "reviewer"
-        new_strategy = restarted.get(TaskTeamStrategy, newer["id"]).strategy
-        assert new_strategy["members"][1]["botRef"]["name"] == "author"
-        assert new_strategy["bots"][str(bots[0].id)] == {
-            "ghost_prompt": "author",
-            "model_name": model.name,
-            "model_id": "accepted",
-            "model_resource_id": model.id,
-        }
+        assert restored["success"] and restored["next_stage_name"] == "author"

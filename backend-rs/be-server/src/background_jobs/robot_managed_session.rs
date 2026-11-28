@@ -8,7 +8,7 @@ fn dependency(error: impl std::fmt::Debug) -> brz_mysql::MysqlError {
 }
 
 pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
-    let mut team = resolution::team_by_id(&app.mysql, expected.team_id)
+    let team = resolution::team_by_id(&app.mysql, expected.team_id)
         .await?
         .context("Managed Team unavailable")?;
     let context = expected.context();
@@ -35,31 +35,6 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
     {
         bail!("Managed source binding changed");
     }
-    let saved = if let Some(previous) = &continuation {
-        wegent_task_store::task_store_pipeline::saved_task_strategy(
-            &mut &app.mysql,
-            previous.task_id,
-        )
-        .await?
-    } else {
-        None
-    };
-    let legacy_continuation = continuation.is_some() && saved.is_none();
-    let selection = expected.selection();
-    let strategy = match saved.as_ref().or_else(|| selection.get("team_strategy")) {
-        Some(snapshot) if snapshot["bots"].is_object() => snapshot.clone(),
-        _ => {
-            super::super::super::project::agents::readiness(
-                app,
-                &team,
-                expected.executor_owner_user_id,
-                None,
-            )
-            .await?
-        }
-    };
-    team.json.0["spec"]["members"] = strategy["members"].clone();
-    team.json.0["spec"]["collaborationModel"] = strategy["collaborationModel"].clone();
     let resolvers = app.entity_resolvers.for_execution();
     let directory = app.entity_resolvers.execution_directory(app.erp.as_ref());
     let cache = crate::task_skills::kinds::KindCacheStore::new(
@@ -125,7 +100,7 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
         let selection = row.selection();
         let input = session::SetupChatSessionInput {
             user_id:row.executor_owner_user_id, owner_user_id:row.executor_owner_user_id.try_into().map_err(dependency)?, continuation,
-            pipeline_strategy: (strategy["collaborationModel"] == "pipeline").then_some(&strategy),
+            pipeline: team.json.0["spec"]["collaborationModel"] == "pipeline",
             history_window:None,team_id:team.id,bot_ids:&bots.bot_ids,create_assistant:true,
             model_override_type:selection["model_type"].as_str(),model_options:selection["model_options"].as_object().map(|_| &selection["model_options"]),
             input_text:&prompt,user_result:None,additional_skills:&[],
@@ -139,9 +114,6 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
         let setup = session::setup_chat_session(app.task_store.as_ref(),tx,&input).await.map_err(dependency)?;
         let execute = managed::Execute {task_id:setup.task_id,assistant_subtask_id:setup.assistant_subtask_id,user_subtask_id:setup.user_subtask_id,team_id:row.team_id,user_id:row.executor_owner_user_id,prompt,developer_instruction:context["system_prompt"].as_str().unwrap_or_default().to_owned()};
         let mut intent = row.intent();
-        if legacy_continuation || strategy["collaborationModel"] != "pipeline" {
-            intent["team_strategy"] = strategy.clone();
-        }
         intent["managed_task"] = serde_json::to_value(execute).map_err(dependency)?;
         persist(app,tx,&row,&issue,&setup,chat,intent).await
     }).await?;

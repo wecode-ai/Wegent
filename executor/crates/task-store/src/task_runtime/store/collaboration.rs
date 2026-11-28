@@ -107,7 +107,7 @@ pub(super) fn has_active_project_team_binding(
     project: &str,
     agent: &str,
 ) -> Result<bool, TaskRuntimeError> {
-    Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2 AND status='active')", params![project, agent], |row| row.get(0))?)
+    Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2) AND status='active')", params![project, agent], |row| row.get(0))?)
 }
 
 pub(super) fn has_project_team_binding(
@@ -116,7 +116,7 @@ pub(super) fn has_project_team_binding(
     agent: &str,
 ) -> Result<bool, TaskRuntimeError> {
     Ok(connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2)",
+        "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='project_team_binding' AND id='project-team:' || json_array(?1,?2))",
         params![project, agent],
         |row| row.get(0),
     )?)

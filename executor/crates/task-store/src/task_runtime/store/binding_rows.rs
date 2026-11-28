@@ -12,7 +12,11 @@ pub(super) fn save_solo_bot(metadata: &mut Value, id: &str, name: &str) {
     } else {
         "Codex"
     };
-    let servers = metadata["mcp_servers"].clone();
+    let servers = metadata
+        .get("mcp_servers")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     if metadata.get("bot").is_none() {
         metadata["bot"] = json!([{"id":id}]);
     }

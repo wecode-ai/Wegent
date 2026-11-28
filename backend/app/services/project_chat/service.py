@@ -297,6 +297,8 @@ def compiled_bot_config(
         )
 
     if config["runtime"] != "wegent":
+        if "teamRef" not in (row.metadata_json or {}):
+            return config
         from app.services.project_agent_teams import project_team_config
 
         return project_team_config(db, row, config)
