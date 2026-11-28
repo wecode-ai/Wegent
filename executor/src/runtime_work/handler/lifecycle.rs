@@ -20,7 +20,48 @@ fn clear_preparation_failure(link: &mut RuntimeTaskLink) {
     }
 }
 
+fn settle_inactive_goal_continuation(
+    link: &RuntimeTaskLink,
+    state: &mut NativeExecutionState,
+) -> bool {
+    if state.phase != NativeExecutionPhase::Continuing
+        || link.goal_status.as_deref() == Some("active")
+    {
+        return false;
+    }
+    state.phase = NativeExecutionPhase::Idle;
+    state.execution_outcome = state.outcome.clone();
+    true
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) fn settle_completed_goal_turn(
+        &self,
+        task_id: &str,
+        request: &ExecutionRequest,
+        turn: &ActiveCodexTurn,
+    ) {
+        let mut changed = false;
+        let link = self.store.update_task(task_id, |link| {
+            let Some(mut state) = native_execution_state(link) else {
+                return;
+            };
+            if link.thread_id.as_deref() != Some(turn.thread_id.as_str())
+                || state.latest_turn_id.as_deref() != Some(turn.turn_id.as_str())
+                || !settle_inactive_goal_continuation(link, &mut state)
+            {
+                return;
+            }
+            state.revision = next_runtime_event_sequence().to_string();
+            state.updated_at = now_ms();
+            project_native_execution(link, &state);
+            changed = true;
+        });
+        if let Some(link) = link.filter(|_| changed) {
+            self.publish_native_execution(task_id, request, link);
+        }
+    }
+
     pub(super) fn native_task_holds_capacity(&self, task_id: &str) -> bool {
         self.store
             .read_task(task_id, |link| {
@@ -277,12 +318,7 @@ impl RuntimeWorkRpcHandler {
                 if state.native_sequence >= message.sequence() {
                     return;
                 }
-                if state.phase == NativeExecutionPhase::Continuing
-                    && link.goal_status.as_deref() != Some("active")
-                {
-                    state.phase = NativeExecutionPhase::Idle;
-                    state.execution_outcome = state.outcome.clone();
-                }
+                settle_inactive_goal_continuation(link, &mut state);
                 state.revision = next_runtime_event_sequence().to_string();
                 state.native_sequence = message.sequence();
                 state.updated_at = now_ms();

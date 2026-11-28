@@ -86,6 +86,12 @@ export function configuredPrimaryStandInDevice(
     ?.bot.spec?.execution_policy?.environment_id?.trim()
 }
 
+function preferredStandInDevice(connected: boolean, devices: DeviceInfo[]): string | undefined {
+  if (!connected) return undefined
+  const available = availableStandInDevices(devices)
+  return (available.find(device => device.is_default) ?? available[0])?.device_id
+}
+
 export async function resolvePrimaryStandInDevice({
   api,
   account,
@@ -110,9 +116,7 @@ export async function resolvePrimaryStandInDevice({
   if (routeDevice) return routeDevice
   const owned = await api.personalGet(userId, localDeviceId, { deviceSettingsOnly: true })
   if (hasSavedStandIn(owned)) return localDeviceId
-  const available = connected ? availableStandInDevices(devices) : []
-  const preferred = available.find(device => device.is_default) ?? available[0]
-  return preferred?.device_id ?? localDeviceId
+  return preferredStandInDevice(connected, devices) ?? localDeviceId
 }
 
 /** Resolve the account's primary execution device and manage per-device stand-in lifecycle. */
@@ -199,14 +203,18 @@ export function createAccountStandInInstanceSource({
   const selectionScope = (
     configured: string | undefined,
     localDeviceId: string,
-    devices: DeviceInfo[]
-  ) =>
-    JSON.stringify([
+    devices: DeviceInfo[],
+    connected: boolean
+  ) => {
+    const reachable = resolveReachableStandInDevice(configured, localDeviceId, devices)
+    return JSON.stringify([
       userId,
       configured ?? '',
       localDeviceId,
-      resolveReachableStandInDevice(configured, localDeviceId, devices) ?? '',
+      reachable ?? '',
+      reachable ? '' : (preferredStandInDevice(connected, devices) ?? ''),
     ])
+  }
   const profileFor = (target: StandInBindingTarget) =>
     verifiedProfile && sameTarget(verifiedProfile.target, target)
       ? verifiedProfile.profile
@@ -380,7 +388,7 @@ export function createAccountStandInInstanceSource({
         })
         return
       }
-      const scope = selectionScope(configured, identity.deviceId, owner.devices)
+      const scope = selectionScope(configured, identity.deviceId, owner.devices, owner.connected)
       let targetDeviceId: string
       if (pinnedSelection?.userId === userId && pinnedSelection.scope === scope) {
         targetDeviceId = pinnedSelection.deviceId
@@ -844,7 +852,8 @@ export function createAccountStandInInstanceSource({
         scope: selectionScope(
           configuredPrimaryStandInDevice(observation?.readAccount?.() ?? observation?.account),
           localDeviceId,
-          observation?.devices ?? []
+          observation?.devices ?? [],
+          observation?.connected ?? false
         ),
         deviceId: target.deviceId,
       }

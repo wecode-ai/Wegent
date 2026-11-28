@@ -563,6 +563,12 @@ it('shares cloud primary execution device across clients and falls back cleanly 
 
   // When another desktop saved its private electron-* IPC ID (either current sha256 or legacy UUID),
   // this client resolves an available cloud device without overwriting the other desktop's setting.
+  freshAccount = makeAccount(`electron-${'c'.repeat(64)}`)
+  rerender({ account: freshAccount, userId: 1, devices: [] })
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe(currentDesktopId))
+  rerender({ account: freshAccount, userId: 1, devices })
+  await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-1'))
+
   for (const desktopId of [foreignDesktopId, 'electron-11111111-1111-4111-8111-111111111111']) {
     const previousVersion = result.current.binding!.version
     freshAccount = makeAccount(desktopId)
