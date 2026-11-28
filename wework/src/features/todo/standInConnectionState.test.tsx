@@ -1219,6 +1219,13 @@ it('shares offline stopping state across clients, guards stale stops, and recove
   )
   await waitFor(() => expect(firstMount.result.current.binding?.target?.deviceId).toBe('cloud-1'))
 
+  // A refresh that observes the same profile must not invalidate an open Stop confirmation.
+  const beforeRefresh = firstMount.result.current.binding!
+  const profileReadsBeforeRefresh = personalGet.mock.calls.length
+  await act(async () => firstMount.result.current.reload())
+  expect(personalGet.mock.calls.length).toBeGreaterThan(profileReadsBeforeRefresh)
+  expect(firstMount.result.current.binding?.version).toBe(beforeRefresh.version)
+
   // Another client switches @primary to cloud-2 before stop is confirmed on this client.
   const staleStopTarget = firstMount.result.current.binding!.target!
   latestAccount = makeAccount('cloud-2', 'rev-2')
