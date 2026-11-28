@@ -483,6 +483,10 @@ describe("shared Issue threads", () => {
     expect(comment?.textContent).toContain(
       "负责人已综合证据，将 Issue 提交待确认。",
     );
+    expect(
+      comment?.querySelector('[data-testid="cloud-task-activity-role-root"]')
+        ?.textContent,
+    ).toBe("小组负责人");
     expect(comment?.textContent).not.toContain("已完成任务规划");
   });
 
