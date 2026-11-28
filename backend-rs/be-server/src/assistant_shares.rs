@@ -1,6 +1,8 @@
 //! Account-owned assistant definitions and recipient-specific use grants.
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "assistant_project_binding.rs"]
+mod project_binding;
 #[path = "assistant_share_storage.rs"]
 mod storage;
 use storage::{COPY, DIRECT, GRANTS, PUBLICATIONS, RECEIPT, RECEIPTS, SHARE};
@@ -509,6 +511,8 @@ fn snapshot_allowed(row: &DefinitionRow, mode: &str) -> bool {
 
 #[derive(FromMysqlRow, Serialize)]
 struct ShareSource {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    roster_only: bool,
     kind: String,
     source: String,
     revision: u64,
@@ -521,7 +525,7 @@ async fn owned_share_sources(
 ) -> Result<Vec<ShareSource>, FastApiError> {
     let active_definition = storage::active_definition();
     state.mysql.fetch_all(
-        format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=? AND {active_definition}"),
+        format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision,(d.resource_kind='team' AND NOT EXISTS(SELECT 1 FROM resource_members g WHERE g.resource_type='{SHARE}' AND g.resource_id=d.id AND g.entity_type='user' AND g.status='approved')) AS roster_only FROM {PUBLICATIONS} d WHERE d.owner_user_id=? AND {active_definition}"),
         (user.0.id,),
     ).await.map_err(internal)
 }
@@ -567,6 +571,11 @@ async fn sync_definition(
             return Ok(SyncOutcome::VersionConflict);
         }
         if let Definition::Team(team) = &body.root {
+            let active: Option<i64> = tx.fetch_optional("SELECT 1 FROM resource_members WHERE resource_type=? AND resource_id=? AND entity_type='user' AND status='approved' LIMIT 1",(SHARE,old.id)).await?;
+            if active.is_none() {
+                storage::update_publication(tx, &old, &body.root).await?;
+                return Ok(SyncOutcome::Committed(Vec::new()));
+            }
             let supplied: std::collections::BTreeSet<_> = body.assistants.iter().map(|row| row.key().1).collect();
             for id in team.members.keys() {
                 if !supplied.contains(id.as_str()) && storage::publication(tx, owner, "assistant", id).await?.is_none() {
@@ -727,6 +736,10 @@ mod tests {
         .unwrap();
         let routes = crate::RouteTable::compile(config).unwrap();
         assert!(routes.matches(&http::Method::POST, "/api/v1/assistant-shares"));
+        assert!(routes.matches(
+            &http::Method::PUT,
+            "/api/v1/cloud-projects/8201/personal-team-bindings/weekly"
+        ));
         assert!(routes.matches(&http::Method::GET, "/api/v1/assistant-shares/7/team/weekly"));
         assert!(routes.matches(
             &http::Method::PATCH,

@@ -104,6 +104,15 @@ async fn authorized_definition_on(
             bail!("Collaboration group resource authorization is revoked")
         }
     }
+    if group.json.0["status"]["state"] == "binding_required" {
+        bail!("Personal team project bindings require review");
+    }
+    if let Some(bindings) = group.json.0.pointer("/metadata/personalTeamSource/agents") {
+        let stale: Option<i64> = query.fetch_optional("SELECT 1 FROM JSON_TABLE(?, '$.*' COLUMNS(agent_id VARCHAR(64) PATH '$.id',team_id BIGINT PATH '$.teamId')) b LEFT JOIN loop_items a ON a.id=BINARY b.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=? AND a.status='active' AND (a.deleted_at IS NULL OR a.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) WHERE a.id IS NULL OR b.team_id IS NULL OR NOT (CAST(b.team_id AS BINARY) <=> CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.runtime'))='wegent' THEN JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.wegent_team_id')) ELSE JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.teamRef')) END) LIMIT 1",(Json(bindings),project_id)).await?;
+        if stale.is_some() {
+            bail!("Personal team project Agent binding changed");
+        }
+    }
     let spec = &group.json.0["spec"];
     let snapshot = json!({"id":group.id,"workspace_id":workspace,"owner_type":if group.namespace.starts_with("projects/"){"project"}else{"workspace"},"owner_id":if group.namespace.starts_with("projects/"){project_id.parse::<i64>()?}else{workspace},"name":group.name,"description":spec["description"].as_str().unwrap_or(""),"instructions":spec["instructions"].as_str().unwrap_or(""),"leader":spec.get("leader").filter(|value|value.is_object()).cloned().unwrap_or(json!({})),"members":spec["members"].as_array().cloned().unwrap_or_default(),"coordination_mode":spec["coordinationMode"].as_str().unwrap_or("manager"),"stages":spec["stages"].as_array().cloned().unwrap_or_default(),"execution_requirements":spec.get("executionRequirements").filter(|value|value.is_object()).cloned().unwrap_or(json!({"required_tags":[]})),"version":group.json.0["status"]["version"].as_i64().unwrap_or(1),"created_by_user_id":group.user_id});
     Ok(snapshot)

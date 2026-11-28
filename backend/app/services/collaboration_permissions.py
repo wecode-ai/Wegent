@@ -426,6 +426,35 @@ class CollaborationPermissionService:
                 raise HTTPException(
                     422, "Collaboration group resource authorization is revoked"
                 )
+        document = group.json or {}
+        if (document.get("status") or {}).get("state") == "binding_required":
+            raise HTTPException(422, "Personal team project bindings require review")
+        source = (document.get("metadata") or {}).get("personalTeamSource")
+        if source:
+            expected = {
+                row["id"]: str(row["teamId"]) for row in source["agents"].values()
+            }
+            agents = (
+                db.query(ProjectChatAgent)
+                .filter(
+                    ProjectChatAgent.cloud_project_id == str(project_id),
+                    ProjectChatAgent.id.in_(expected),
+                    ProjectChatAgent.status == "active",
+                )
+                .all()
+            )
+            current = {}
+            for agent in agents:
+                if loop_datetime_value_is_unset(agent.deleted_at):
+                    config = agent.metadata_json or {}
+                    key = (
+                        "wegent_team_id"
+                        if config.get("runtime") == "wegent"
+                        else "teamRef"
+                    )
+                    current[agent.id] = str(config.get(key))
+            if current != expected:
+                raise HTTPException(422, "Personal team project Agent binding changed")
         return group
 
 

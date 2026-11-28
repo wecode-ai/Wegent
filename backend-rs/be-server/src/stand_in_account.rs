@@ -158,6 +158,20 @@ fn internal(error: MysqlError) -> FastApiError {
     FastApiError::internal()
 }
 
+pub(crate) async fn owns_role_team(
+    tx: &mut impl MysqlTransaction,
+    owner: i32,
+    role: &str,
+    team_id: i64,
+) -> MysqlResult<bool> {
+    let identity:Option<i64> = tx.fetch_optional(
+        "SELECT 1 FROM kinds account JOIN JSON_TABLE(account.json,'$.spec.identities[*]' COLUMNS(role_id VARCHAR(64) PATH '$.roleId',name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.teamRef.name',namespace VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PATH '$.teamRef.namespace')) identity_ref
+         JOIN kinds team ON team.user_id=account.user_id AND team.kind='Team' AND team.namespace=account.namespace AND team.namespace=identity_ref.namespace AND team.name=identity_ref.name AND team.is_active=TRUE
+         WHERE account.kind=? AND account.name=? AND account.namespace=? AND account.user_id=? AND account.is_active=TRUE AND BINARY identity_ref.role_id=? AND team.id=? LIMIT 1",
+        (ACCOUNT_KIND,DEFAULT_NAME,NAMESPACE,owner,role,team_id)).await?;
+    Ok(identity.is_some())
+}
+
 fn view(rows: &[Row]) -> MysqlResult<Value> {
     let resources: HashMap<_, _> = rows
         .iter()

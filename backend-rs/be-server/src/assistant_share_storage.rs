@@ -35,6 +35,7 @@ pub(super) fn team_copy_access(recipient: &str, require_receipt: bool) -> String
 
 pub(super) fn active_definition() -> String {
     format!("(EXISTS (SELECT 1 FROM {GRANTS} g WHERE g.resource_id=d.id AND g.status='approved')
+        OR (d.resource_kind='team' AND EXISTS (SELECT 1 FROM resource_members b JOIN kinds g ON g.id=CAST(b.entity_id AS UNSIGNED) AND g.kind='CollaborationGroup' JOIN resource_members p ON p.resource_type='CollaborationGroup' AND p.resource_id=g.id AND p.entity_type='project' AND p.status='approved' WHERE b.resource_type='PersonalTeamProjectBinding' AND b.resource_id=d.id AND b.entity_type='collaboration_group' AND b.status='approved' AND g.is_active=TRUE))
         OR (d.resource_kind='assistant' AND EXISTS (SELECT 1 FROM {PUBLICATIONS} t JOIN {GRANTS} tg ON tg.resource_id=t.id
         WHERE t.owner_user_id=d.owner_user_id AND t.resource_kind='team' AND tg.status='approved'
         AND JSON_CONTAINS(JSON_KEYS(JSON_EXTRACT(t.definition,'$.definition.members')),JSON_QUOTE(d.source_id)))))")
@@ -102,6 +103,9 @@ pub(super) async fn update_publication(
         (Json(document), old.id),
     )
     .await?;
+    if let Definition::Team(team) = definition {
+        super::project_binding::refresh(tx, old.id, team, old.revision + 1).await?;
+    }
     Ok(())
 }
 

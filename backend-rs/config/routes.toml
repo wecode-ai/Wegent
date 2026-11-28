@@ -1260,6 +1260,10 @@ path = "/api/plugins/native-auth/exchange"
 methods = ["POST"]
 path = "/api/v1/loop-items"
 
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/cloud-projects/:project_id/personal-team-bindings/:source_id"
+
 # Assistant sharing uses explicit recipient grants.
 [[routes]]
 methods = ["GET", "POST"]

@@ -404,6 +404,7 @@ class WorkspaceCollaborationGroupService:
                 ResourceMember.entity_id == str(project_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
+            .with_for_update()
             .first()
         )
         if row is None:
@@ -517,17 +518,46 @@ class WorkspaceCollaborationGroupService:
                 for stage in current["stages"]
             ]
         )
-        self._validate_members(
-            db,
-            workspace_id=workspace_id,
-            owner_type=owner_type,
-            owner_id=owner_id,
-            leader=leader,
-            members=members,
-            stages=stages,
-        )
+        source = (group.json.get("metadata") or {}).get("personalTeamSource")
+        source_managed = current["personal_team_managed"]
+        if source_managed and (
+            name != current["name"]
+            or (
+                values.leader is not None
+                and leader != CollaborationGroupMember.model_validate(current["leader"])
+            )
+            or (
+                values.members is not None
+                and members
+                != [
+                    CollaborationGroupMember.model_validate(member)
+                    for member in current["members"]
+                ]
+            )
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Update the personal team or its project Agent bindings to change the roster",
+            )
+        if not source_managed or (
+            values.stages is not None
+            and stages
+            != [
+                CollaborationGroupStage.model_validate(stage)
+                for stage in current["stages"]
+            ]
+        ):
+            self._validate_members(
+                db,
+                workspace_id=workspace_id,
+                owner_type=owner_type,
+                owner_id=owner_id,
+                leader=leader,
+                members=members,
+                stages=stages,
+            )
         group.name = name
-        group.json = _group_payload(
+        document = _group_payload(
             CollaborationGroupCreate(
                 name=name,
                 description=(
@@ -556,6 +586,13 @@ class WorkspaceCollaborationGroupService:
             ),
             version=values.version + 1,
         )
+        if source_managed:
+            document["metadata"]["personalTeamSource"] = source
+            document["status"] = {
+                **(group.json.get("status") or {}),
+                "version": values.version + 1,
+            }
+        group.json = document
         db.flush()
         db.refresh(group)
         return _group_values(
@@ -759,6 +796,10 @@ def _group_values(
         "workspace_id": workspace_id,
         "owner_type": owner_type,
         "owner_id": owner_id,
+        "binding_required": status_value.get("state") == "binding_required",
+        "personal_team_managed": isinstance(
+            (payload.get("metadata") or {}).get("personalTeamSource"), dict
+        ),
         "name": group.name,
         "description": str(spec.get("description") or ""),
         "instructions": str(spec.get("instructions") or ""),
