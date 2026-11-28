@@ -13,8 +13,10 @@ function Conversation({
   cachedSize,
   onFirstLayout,
   onBatchLayout,
+  onRepeatLayout,
 }: {
   cachedSize?: number
+  onRepeatLayout?: () => void
   onFirstLayout: (size?: number) => void
   onBatchLayout: (
     rowCount: number,
@@ -102,16 +104,29 @@ function Conversation({
           <div key={row.key} data-index={row.index} data-message-row />
         ))}
       </div>
+      {onRepeatLayout && (
+        <button
+          type="button"
+          onClick={() =>
+            measureRows(
+              Array.from(listRef.current!.querySelectorAll<HTMLElement>(rowSelector)),
+              onRepeatLayout
+            )
+          }
+        >
+          Measure again
+        </button>
+      )}
     </div>
   )
 }
 
 test.each([
-  { cachedSize: undefined, firstSize: rowHeight },
+  { cachedSize: undefined, firstSize: rowHeight, repeatAfterMs: 50 },
   { cachedSize: 4000, firstSize: 4000 },
 ])(
   'restores row geometry before converging ($cachedSize cached)',
-  async ({ cachedSize, firstSize }) => {
+  async ({ cachedSize, firstSize, repeatAfterMs }) => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -140,6 +155,8 @@ test.each([
       return new DOMRect(0, 0, 640, this.matches(rowSelector) ? rowHeight : this.clientHeight)
     })
     try {
+      const clock = repeatAfterMs && vi.spyOn(performance, 'now').mockReturnValue(100)
+      const onRepeatLayout = repeatAfterMs ? vi.fn() : undefined
       const onFirstLayout = vi.fn()
       const onBatchLayout = vi.fn()
       await act(async () =>
@@ -148,10 +165,14 @@ test.each([
             cachedSize={cachedSize}
             onFirstLayout={onFirstLayout}
             onBatchLayout={onBatchLayout}
+            onRepeatLayout={onRepeatLayout}
           />
         )
       )
       expect(onFirstLayout.mock.calls[0]).toEqual([firstSize])
+      for (let frame = 0; frame < 100 && onBatchLayout.mock.calls.length === 0; frame++) {
+        await act(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+      }
       expect(container.querySelectorAll(rowSelector)).toHaveLength(viewportHeight / rowHeight + 2)
       expect(onBatchLayout).toHaveBeenCalledExactlyOnceWith(
         viewportHeight / rowHeight + 2,
@@ -160,6 +181,16 @@ test.each([
         4000,
         rowHeight
       )
+
+      if (repeatAfterMs && clock && onRepeatLayout) {
+        clock.mockReturnValue(100 + repeatAfterMs)
+        // Keep any requested frame pending so only microtasks can complete this batch.
+        vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+        await act(async () => {
+          container.querySelector('button')!.click()
+        })
+        expect(onRepeatLayout).toHaveBeenCalledOnce()
+      }
     } finally {
       act(() => root.unmount())
       container.remove()
