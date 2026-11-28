@@ -668,8 +668,6 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', testId('stand-in-instance-stopped'))
-      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
       assert.equal(readProfile(remoteHome).lifecycle?.status, 'stopped')
       assert.equal(
         await readPrimaryDevice(),
@@ -680,6 +678,14 @@ export function createDesktopScenario({
       assert.ok(
         migrated,
         'Successful migration must retain portable responsibilities on the target'
+      )
+      // The migration returns to the source when the destination stays paused.
+      const migratedRole = testId(`stand-in-overview-role-${migrated.id}`)
+      await control.command('waitFor', migratedRole, { visible: true, timeoutMs: uiTimeoutMs })
+      assert.notEqual(
+        await control.command('getAttribute', migratedRole, { value: 'aria-current' }),
+        'page',
+        'Copying a paused role must not switch the conversation to that role'
       )
       const migratedDefinition = (await readInitialAssistant()).assistant.definitions.find(
         definition => definition.roleId === migrated.id
