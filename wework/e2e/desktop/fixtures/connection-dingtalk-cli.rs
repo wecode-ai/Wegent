@@ -199,6 +199,32 @@ fn main() {
         ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => {
             (EMPTY_MESSAGES, 0)
         }
+        ["chat", "message", "reply", ..]
+            if env::var_os("WEWORK_E2E_DINGTALK_HANDBOOK_REPLY").is_some() =>
+        {
+            record("send");
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            assert_eq!(
+                option(&arguments, "--conversation-id"),
+                Some("scoped-group")
+            );
+            assert_eq!(
+                option(&arguments, "--ref-msg-id"),
+                Some("welcome-launch-handbook")
+            );
+            assert_eq!(
+                option(&arguments, "--ref-sender"),
+                Some("fixture-colleague")
+            );
+            assert_eq!(
+                option(&arguments, "--text"),
+                Some("根据《产品客服手册》v3 第 2 节，本次验收窗口是 18:00。")
+            );
+            (
+                r#"{"success":true,"result":{"openMessageId":"welcome-handbook-reply"}}"#,
+                0,
+            )
+        }
         ["chat", "message", "reply" | "send" | "send-by-bot", ..] => {
             record("send");
             process::exit(2);

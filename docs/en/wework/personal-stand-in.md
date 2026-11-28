@@ -426,6 +426,8 @@ After first-time setup, the header shows **Default assistant** and **Add assista
 
 Open a connection from assistant setup to see its receive scopes. Edit or add a scope, then select **Save scope** to return to its list. Select a model and **Start chatting** from assistant setup. If you close setup with unsaved changes, the guide asks whether to discard them. Apps that require authorization prompt you to sign in.
 
-Select **Assistant home** in the conversation header to return at any time and keep your conversation draft. **Conversation templates** above the composer fill the active conversation’s composer with the selected example. The DingTalk example uses the assistant to look up the account and group and presents the configuration for confirmation in chat. The meeting briefing uses material you provide.
+Assistant home highlights five templates: DingTalk support, a development assistant, a daily check for unfinished work, local knowledge notes, and a weekly AI conversation review. Select **More templates** to browse by category. Select a template to preview it, then choose **Try this** to put the draft in the composer. Select **Assistant home** in the conversation header to return at any time and keep your existing draft. You can also open **Conversation templates** above the composer.
+
+The DingTalk support template asks you to confirm the account, group, execution device, and local handbook. Review the proposed intake scope and reply rules in the conversation. The assistant can reply in the group when the handbook has a clear answer. It brings uncertain questions and draft replies to you privately.
 
 Request weekly reviews in chat or use the template under **Stand-in settings → Connections → Calendar**. The default is Monday at 09:00 Asia/Shanghai, reviewing the preceding seven days of work and conversations on this device. Edit, pause, or delete it at any time. Deleted arrangements are not restored automatically.

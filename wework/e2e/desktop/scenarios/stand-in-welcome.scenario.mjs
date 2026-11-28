@@ -10,10 +10,13 @@ import {
   handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
+  modelMessageText,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectShellToolCommand,
+  selectedToolCall,
 } from '../modules/response-protocol.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
@@ -26,13 +29,21 @@ const providerId = '@wegent/dsh-connection-dingtalk/dingtalk'
 const byId = id => `[data-testid="${id}"]`
 const home = byId('stand-in-welcome')
 const proposal = byId('stand-in-proposal')
+const preview = `${byId('stand-in-welcome-preview')} p:last-child`
+const more = byId('stand-in-welcome-more')
+const library = byId('stand-in-template-library')
 const input = `${STORY_CHAT} ${byId('chat-message-input')}`
 const send = `${STORY_CHAT} ${byId('send-message-button')}`
 const roleId = 'welcome-launch-assistant'
 const addedRole = { id: 'welcome-release-notes', name: '发布说明校对助理' }
 const addRequest = addPrompt + '请叫它「发布说明校对助理」，只校对我在对话中发给它的发布说明。'
 const launchResponsibilities =
-  '发现发布窗口变更、回归阻塞或有人等待确认时，汇报发生了什么、谁在等及消息原文。按已确认的发布和验收口径起草回复，由用户确认后再发。涉及改发布时间或对客户承诺，说明影响并等待用户决定。'
+  '读取获准的本地《产品客服手册》v3。手册明确覆盖的内容在原消息下直接回复并注明章节。没有依据、与新消息冲突、改期或客户承诺均先私下找我确认。'
+const handbookQuestion = '请问今天上线的验收窗口是几点？'
+const handbookReply = '根据《产品客服手册》v3 第 2 节，本次验收窗口是 18:00。'
+const handbookMessageId = 'welcome-launch-handbook'
+const uncertainMessageId = 'welcome-launch-regression'
+const handbookContent = '《产品客服手册》v3 第 2 节：本次验收窗口是 18:00。'
 const followUp = '上线组有一项支付回调回归未通过，17:30 复测后需要确认发布窗口。'
 const sourceMessage =
   '回归结果：支付回调还有一条用例未通过，等 17:30 复测。客户成功同事在等是否能承诺今晚发布。'
@@ -51,7 +62,13 @@ function dingTalkMessages(messages) {
 }
 
 async function chooseExample(control, id) {
-  await control.command('clickWhenEnabled', byId(`stand-in-welcome-example-${id}`))
+  const featured = byId(`stand-in-welcome-example-${id}`)
+  if ((await control.command('getElementCount', featured)) === '0') {
+    await control.command('clickWhenEnabled', more)
+    await control.command('clickWhenEnabled', byId(`stand-in-template-library-${id}`))
+  } else {
+    await control.command('clickWhenEnabled', featured)
+  }
   await control.command('clickWhenEnabled', byId('stand-in-welcome-start'))
   await control.command('waitFor', input, { text: examples[id].prompt.split('\n')[0] })
 }
@@ -61,6 +78,7 @@ export function createDesktopScenario(options) {
     options
   const fixture = createStandInDingTalkFixture(options)
   const messagesPath = join(options.resultDir, 'welcome-dingtalk-messages.json')
+  const handbookPath = join(options.workspacePath, 'product-support-handbook.md')
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const load = control => rpc(control, 'runtime.stand_in.personal.get', { userId: STORY_USER })
   const meetingRequest = examples.meeting_prep.prompt + '\n\n材料见会话《发布评审会原始材料》。'
@@ -103,7 +121,19 @@ export function createDesktopScenario(options) {
       toolCallId: `${prefix}-${name}`,
     }).events
 
+  function readHandbook(body, callId) {
+    const script =
+      'process.stdout.write(require("node:fs").readFileSync(' +
+      JSON.stringify(handbookPath) +
+      ', "utf8"))'
+    const encoded = Buffer.from(script).toString('base64')
+    const command = `node -e "eval(Buffer.from('${encoded}', 'base64').toString())"`
+    return selectedToolCall(callId, selectShellToolCommand(body, command, options.workspacePath))
+  }
+
   function configureDingTalk(body) {
+    if (!has(body, 'welcome-check-handbook')) return readHandbook(body, 'welcome-check-handbook')
+    assert.ok(readMcpToolOutput(body, 'welcome-check-handbook').includes(handbookContent))
     if (!has(body, 'welcome-search_connections'))
       return call(body, 'search_connections', { providerId, kind: 'group', query: 'Scoped Group' })
     if (!has(body, 'welcome-get_profile')) return call(body, 'get_profile', {})
@@ -115,14 +145,15 @@ export function createDesktopScenario(options) {
     const current = read(body, 'welcome-get_profile')
     if (!has(body, 'welcome-propose_profile')) {
       return call(body, 'propose_profile', {
-        summary: '连接 Scoped Group，跟进每条新消息，发送前由你确认。',
+        summary:
+          '连接 Scoped Group，跟进每条新消息，按《产品客服手册》v3 自动回复有依据的问题，其余先找你确认。',
         settings: {
           ...current,
           roles: [
             ...current.roles,
             {
               ...personalRole(current, { id: roleId, name: '上线跟进助理' }),
-              prompt: launchResponsibilities,
+              prompt: `${launchResponsibilities} 本地路径：${handbookPath}`,
               connections: [
                 {
                   providerId,
@@ -133,7 +164,7 @@ export function createDesktopScenario(options) {
                   collectionKey: 'all-messages',
                   policy: {
                     automatic: true,
-                    askBeforeAct: true,
+                    askBeforeAct: false,
                     immediate: true,
                     sessionStrategy: 'reuse',
                   },
@@ -169,7 +200,9 @@ export function createDesktopScenario(options) {
     async prepareApp(context) {
       await fixture.prepareApp(context)
       await writeFile(messagesPath, dingTalkMessages([]))
+      await writeFile(handbookPath, handbookContent)
       context.appEnvironment.WEWORK_E2E_DINGTALK_GROUP_MESSAGES = messagesPath
+      context.appEnvironment.WEWORK_E2E_DINGTALK_HANDBOOK_REPLY = '1'
     },
     async handleHttp(req, response, url) {
       if (!activeStory) return meeting.handleHttp(req, response, url)
@@ -180,13 +213,15 @@ export function createDesktopScenario(options) {
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input)
       let events
-      if (
-        input.includes('Handle only these newly received source events') &&
-        input.includes('welcome-launch-regression')
-      ) {
-        if (!has(body, 'welcome-read_work')) events = call(body, 'read_work', {})
-        else {
-          assert.ok(readMcpToolOutput(body, 'welcome-read_work').includes(sourceMessage))
+      const event = body.input
+        .map(modelMessageText)
+        .reverse()
+        .find(text => text.startsWith('Handle only these newly received source events'))
+      if (event?.includes(uncertainMessageId)) {
+        if (!has(body, 'welcome-uncertain-read_work')) {
+          events = call(body, 'read_work', {}, 'welcome-uncertain')
+        } else {
+          assert.ok(readMcpToolOutput(body, 'welcome-uncertain-read_work').includes(sourceMessage))
           events = [
             assistantMessage(
               [
@@ -198,7 +233,24 @@ export function createDesktopScenario(options) {
             ),
           ]
         }
-      } else if (activeStory === 'dingtalk' && input.includes('找到「Scoped Group」')) {
+      } else if (event?.includes(handbookMessageId)) {
+        if (!has(body, 'welcome-read_work')) events = call(body, 'read_work', {})
+        else if (!has(body, 'welcome-work-handbook')) {
+          events = readHandbook(body, 'welcome-work-handbook')
+        } else {
+          const messages = read(body, 'welcome-read_work').messages
+          const question = messages.find(message => message.id === handbookMessageId)
+          assert.ok(question?.recordId, 'Use the original group question’s immutable record ID')
+          assert.ok(JSON.stringify(question).includes(handbookQuestion))
+          assert.ok(readMcpToolOutput(body, 'welcome-work-handbook').includes(handbookContent))
+          if (!has(body, 'welcome-reply')) {
+            events = call(body, 'reply', { messageId: question.recordId, text: handbookReply })
+          } else {
+            assert.ok(readMcpToolOutput(body, 'welcome-reply').includes('welcome-handbook-reply'))
+            events = [assistantMessage('已根据手册第 2 节在原消息下答复。')]
+          }
+        }
+      } else if (activeStory === 'dingtalk' && input.includes('钉钉「Scoped Group」')) {
         events = configureDingTalk(body)
       } else if (activeStory === 'add' && input.includes(addRequest)) {
         events = configurePersonalRole(body)
@@ -227,11 +279,68 @@ export function createDesktopScenario(options) {
           { value: 'includeText' }
         )
       )
+      const featured = [
+        'dingtalk_reply',
+        'development',
+        'daily_check',
+        'knowledge',
+        'weekly_review',
+      ]
+      const grouped = [
+        'brief',
+        'project',
+        'weekly',
+        'meeting_prep',
+        'recap',
+        'handoff',
+        'launch',
+        'reply',
+        'decision',
+      ]
       assert.deepEqual(
         metrics.map(row => row.testId),
-        ['stand-in-welcome-example-dingtalk_reply', 'stand-in-welcome-example-meeting_prep']
+        featured.map(id => `stand-in-welcome-example-${id}`)
       )
+      await control.command(
+        'waitFor',
+        `${home}:has(canvas[data-rendered-shape="idle"], canvas[hidden])`
+      )
+      await control.command('waitFor', byId('stand-in-welcome-start') + ':not(:disabled)')
       await captureScreenshot(control, '01-assistant-home.png')
+
+      for (const id of featured) {
+        const selector = byId(`stand-in-welcome-example-${id}`)
+        await control.command('clickWhenEnabled', selector)
+        await control.command('waitFor', selector + '[aria-pressed="true"]')
+        assert.equal(await control.command('getText', preview), examples[id].prompt)
+        if (id === 'dingtalk_reply') {
+          await control.command(
+            'waitFor',
+            `${home}:has(canvas[data-rendered-shape="connection"], canvas[hidden])`
+          )
+          await captureScreenshot(control, '01b-dingtalk-preview.png')
+        }
+        await control.command('clickWhenEnabled', selector)
+      }
+      for (const id of grouped) {
+        await control.command('clickWhenEnabled', more)
+        await control.command('waitFor', library)
+        if (id === 'brief') {
+          const selectors = grouped.map(id => byId(`stand-in-template-library-${id}`)).join(',')
+          const rows = JSON.parse(
+            await control.command('getElementMetrics', selectors, { value: 'includeText' })
+          )
+          assert.deepEqual(
+            rows.map(row => row.testId),
+            grouped.map(id => `stand-in-template-library-${id}`)
+          )
+          await captureScreenshot(control, '01c-template-library.png')
+        }
+        const selector = byId(`stand-in-template-library-${id}`)
+        await control.command('clickWhenEnabled', selector)
+        await control.command('waitFor', library, { visible: false })
+        assert.equal(await control.command('getText', preview), examples[id].prompt)
+      }
 
       await chooseExample(control, 'dingtalk_reply')
       assert.equal(
@@ -240,7 +349,9 @@ export function createDesktopScenario(options) {
       )
       await captureScreenshot(control, '02-dingtalk-editable-draft.png')
       await control.command('fill', input, {
-        value: examples.dingtalk_reply.prompt.replace('产品上线协作群', 'Scoped Group'),
+        value:
+          examples.dingtalk_reply.prompt.replace('钉钉支持群', '钉钉「Scoped Group」') +
+          `\n\n我确认用这台设备。手册路径：${handbookPath}`,
       })
       const before = await load(control)
       assert.equal(before.primary.model.model_id, model.model_id)
@@ -252,7 +363,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('waitFor', proposal, { text: '每条新消息', timeoutMs: uiTimeoutMs })
       await control.command('waitFor', proposal, { text: 'Fixture · Fixture Organization' })
-      await control.command('waitFor', proposal, { text: '自动读取并分析，执行操作前由你确认' })
+      await control.command('waitFor', proposal, { text: '自动帮我处理' })
       assert.deepEqual((await load(control)).primary.connections, before.primary.connections)
       assert.ok(!(await load(control)).roles.some(role => role.id === roleId))
       await control.command('waitFor', proposal, { text: launchResponsibilities })
@@ -266,13 +377,13 @@ export function createDesktopScenario(options) {
       )
       assert.deepEqual(applied.primary.connections, before.primary.connections)
       const launchAssistant = applied.roles.find(role => role.id === roleId)
-      assert.equal(launchAssistant.prompt, launchResponsibilities)
+      assert.equal(launchAssistant.prompt, `${launchResponsibilities} 本地路径：${handbookPath}`)
       const connection = launchAssistant.connections[0]
       assert.equal(connection.profile, 'fixture-org:fixture-user')
       assert.equal(connection.collectionKey, 'all-messages')
       assert.deepEqual(connection.policy, {
         automatic: true,
-        askBeforeAct: true,
+        askBeforeAct: false,
         immediate: true,
         sessionStrategy: 'reuse',
       })
@@ -281,18 +392,25 @@ export function createDesktopScenario(options) {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, '04-dingtalk-configuration-saved.png')
+      const groupMessage = (openMessageId, content) => ({
+        openMessageId,
+        senderOpenDingTalkId: 'fixture-colleague',
+        sender: '测试同事',
+        content,
+        createTime: new Date().toISOString(),
+        sendType: 'user',
+      })
+      const knownQuestion = groupMessage(handbookMessageId, handbookQuestion)
+      await writeFile(messagesPath, dingTalkMessages([knownQuestion]))
+      await storyUntil(
+        () => fixture.operations(),
+        operations => operations.includes('send'),
+        modelResponseTimeoutMs,
+        'A question covered by the approved handbook must reach the DingTalk reply protocol'
+      )
       await writeFile(
         messagesPath,
-        dingTalkMessages([
-          {
-            openMessageId: 'welcome-launch-regression',
-            senderOpenDingTalkId: 'fixture-colleague',
-            sender: '测试同事',
-            content: sourceMessage,
-            createTime: new Date().toISOString(),
-            sendType: 'user',
-          },
-        ])
+        dingTalkMessages([knownQuestion, groupMessage(uncertainMessageId, sourceMessage)])
       )
       const work = await storyUntil(
         async () => {
@@ -324,7 +442,7 @@ export function createDesktopScenario(options) {
         'The private work must report the launch blocker and draft a reply'
       )
       assert.ok((await fixture.operations()).includes('selected-group-messages'))
-      assert.ok(!(await fixture.operations()).includes('send'))
+      assert.equal((await fixture.operations()).filter(operation => operation === 'send').length, 1)
       activeStory = undefined
 
       await meeting.verify(control, model)
