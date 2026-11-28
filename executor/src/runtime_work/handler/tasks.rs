@@ -16,6 +16,25 @@ enum OwnerMessage {
     Interrupt,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum TaskStartInput {
+    Owner,
+    Activity,
+    Other,
+}
+
+impl TaskStartInput {
+    pub(super) fn from_message(activity: bool, owner_input: bool) -> Self {
+        if activity {
+            Self::Activity
+        } else if owner_input {
+            Self::Owner
+        } else {
+            Self::Other
+        }
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
         &self,
@@ -443,26 +462,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.create_task_with_activity(payload, false).await
-    }
-
-    pub(super) async fn create_task_with_activity(
-        &self,
-        payload: Value,
-        activity: bool,
-    ) -> Result<Value, AppIpcError> {
-        self.create_task_with_initial_permissions(payload, activity, None, None)
+        self.create_task_with_initial_permissions(payload, TaskStartInput::Other, None, None)
             .await
     }
 
     pub(super) async fn create_task_with_initial_permissions(
         &self,
         mut payload: Value,
-        activity: bool,
+        input: TaskStartInput,
         initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
         owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
-        self.bind_stand_in_owner_command(&mut payload, activity);
+        self.bind_stand_in_owner_command(&mut payload, matches!(input, TaskStartInput::Activity));
         normalize_user_message_presentation(&mut payload)?;
         let command_gate = payload
             .get("commandId")
@@ -473,12 +484,7 @@ impl RuntimeWorkRpcHandler {
             None => None,
         };
         super::dispatch::boxed_rpc(|| {
-            self.create_task_after_local_checks(
-                payload,
-                activity,
-                initial_permissions,
-                owner_request,
-            )
+            self.create_task_after_local_checks(payload, input, initial_permissions, owner_request)
         })
         .await
     }
@@ -486,7 +492,7 @@ impl RuntimeWorkRpcHandler {
     async fn create_task_after_local_checks(
         &self,
         mut payload: Value,
-        activity: bool,
+        input: TaskStartInput,
         initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
         owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
@@ -562,7 +568,12 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
-        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        self.stamp_stand_in_owner_request(
+            &local_task_id,
+            &mut request,
+            matches!(input, TaskStartInput::Activity),
+            matches!(input, TaskStartInput::Owner),
+        )?;
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
         log_executor_event(
             "runtime task create identity",
@@ -1148,19 +1159,51 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
         }
+        let command = super::stand_in_tasks::required(&payload, "commandId")?;
+        // The result ID identifies a single child completion across parent profile changes.
+        if let Some(receipt) = self
+            .parent_role_result_receipt(&task, user, command)
+            .await?
+        {
+            return Ok(receipt);
+        }
         self.send_message_with_activity_checks(payload, true, None, true, None, None)
             .await
     }
 
     pub(super) async fn send_stand_in_role_retry(
         &self,
-        payload: Value,
+        intent: &Value,
+        mut payload: Value,
         attempt: u64,
     ) -> Result<Value, AppIpcError> {
         let task = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
+        if intent["followupRequestId"].is_string() {
+            normalize_user_message_presentation(&mut payload)?;
+            let delegation = &payload["executionRequest"]["standInDelegation"];
+            let user = delegation["userId"]
+                .as_i64()
+                .ok_or_else(super::stand_in_role_delegation::denied)?;
+            let link = self.local_task_link(&task);
+            if link
+                .as_ref()
+                .is_some_and(|link| self.role_attempt_is_admitted(link, user, attempt))
+            {
+                if let Some(receipt) = self.existing_payload_command(&payload, false).await? {
+                    return Ok(receipt);
+                }
+            }
+            self.validate_role_attempt_start(
+                link.as_ref(),
+                intent,
+                user,
+                attempt,
+                delegation["retrying"] == true,
+            )?;
+        }
         self.send_message_with_activity_checks(payload, false, None, false, None, Some(attempt))
             .await
     }
@@ -1259,7 +1302,7 @@ impl RuntimeWorkRpcHandler {
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
             return super::dispatch::boxed_rpc(|| {
-                self.create_task_after_local_checks(payload, false, None, None)
+                self.create_task_after_local_checks(payload, TaskStartInput::Other, None, None)
             })
             .await
             .map(Some);
@@ -1784,7 +1827,7 @@ impl RuntimeWorkRpcHandler {
                 .recover_failed_session_start(
                     existing_link.as_ref(),
                     payload.clone(),
-                    activity,
+                    TaskStartInput::from_message(activity, owner_input),
                     owner_message,
                 )
                 .await?
@@ -1829,13 +1872,16 @@ impl RuntimeWorkRpcHandler {
             .filter(|_| ephemeral && !start_fresh_native_session);
         let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_fresh_native_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-        payload[super::control::connection_events::OWNER_INPUT] = json!(
-            owner_input
-                && !super::automatic_turns::is_automatic_input(&request)
-                && !start_new_session
-        );
-
-        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        let direct_owner_input =
+            owner_input && !super::automatic_turns::is_automatic_input(&request);
+        payload[super::control::connection_events::OWNER_INPUT] =
+            json!(direct_owner_input && !start_new_session);
+        self.stamp_stand_in_owner_request(
+            &local_task_id,
+            &mut request,
+            activity,
+            direct_owner_input,
+        )?;
         let use_saved_stand_in_permissions =
             (owner_message.is_some() && !reply_input) || role_retry_attempt.is_some();
         let turn = SpawnTurnRequest {
@@ -3105,7 +3151,7 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         stop_timeout: Duration,
     ) -> Result<Value, AppIpcError> {
-        self.cancel_task_with_stop_policy(payload, stop_timeout, false)
+        self.cancel_task_with_stop_policy(payload, stop_timeout, false, None)
             .await
     }
 
@@ -3114,12 +3160,14 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         stop_timeout: Duration,
         require_stopped: bool,
+        role_attempt: Option<u64>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
         // A preparation can own the send gate while awaiting cancellable provider I/O.
-        let stopped_preparation = self.stop_preparing_turn_before_send_gate(&local_task_id)?;
+        let stopped_preparation =
+            self.stop_preparing_turn_before_send_gate(&local_task_id, role_attempt)?;
         if stopped_preparation {
             // The notified owner cleans up its own preparation and queue reservation.
             // Acknowledgement must not wait behind another send or touch its state.
@@ -3135,6 +3183,7 @@ impl RuntimeWorkRpcHandler {
         }
         let send_gate = self.task_send_gate(&local_task_id);
         let _send_guard = send_gate.lock().await;
+        self.check_role_stop_attempt(&local_task_id, role_attempt)?;
         if let Err(error) = self.invalidate_stand_in_owner_request(&local_task_id) {
             self.cancel_preparing_turn(&local_task_id);
             self.request_active_turn_stop(&local_task_id);

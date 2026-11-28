@@ -310,12 +310,10 @@ function StandInSettingsEditor({
     saving,
     () => setConfirmDiscard(true)
   )
+  const requestRoleLeave = useStableEvent(navigation.requestLeave)
   const requestLeave = useStableEvent((action: () => void) => {
-    if (connectionRef.current)
-      connectionRef.current.requestLeave(discarded =>
-        discarded ? action() : navigation.requestLeave(action)
-      )
-    else navigation.requestLeave(action)
+    if (connectionRef.current) connectionRef.current.requestLeave(() => requestRoleLeave(action))
+    else requestRoleLeave(action)
   })
   const close = () =>
     connectionRef.current ? connectionRef.current.requestLeave(closeView) : closeView()

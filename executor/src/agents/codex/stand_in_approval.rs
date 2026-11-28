@@ -102,23 +102,37 @@ pub(super) fn stand_in_mcp_approval_overrides(
     let mut result = Vec::new();
     for (name, tools) in servers {
         // Collaboration tools enforce access and dispatch roles on the server.
-        // Do not replace their approval policy with external-source review.
-        let mode = if name == crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME {
-            "approve"
-        } else if super::external_work::applies(request)
-            && !crate::runtime_work::stand_in_requires_confirmation(request)
-        {
-            "prompt"
-        } else if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
+        // The task permission determines native approval. The live browser preference
+        // belongs exclusively to the host browser's per-operation confirmation policy.
+        // A mutable preference must not authorize a native session for future calls.
+        let is_browser = name == crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
+        let browser_owner_approved = is_browser
             && request
-                .extra
-                .get("origin")
-                .is_some_and(|origin| origin["type"] == "stand_in_identity")
-        {
-            "approve"
-        } else {
-            "writes"
-        };
+                .stand_in_task_permissions
+                .is_some_and(|permissions| {
+                    permissions.permission_mode
+                        == crate::protocol::StandInPermissionMode::FullAccess
+                });
+        let browser_restricted_task = is_browser && request.stand_in_task_permissions.is_some();
+        let mode =
+            if name == crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME || browser_owner_approved {
+                "approve"
+            } else if browser_restricted_task {
+                "writes"
+            } else if super::external_work::applies(request)
+                && !crate::runtime_work::stand_in_requires_confirmation(request)
+            {
+                "prompt"
+            } else if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
+                && request
+                    .extra
+                    .get("origin")
+                    .is_some_and(|origin| origin["type"] == "stand_in_identity")
+            {
+                "approve"
+            } else {
+                "writes"
+            };
         result.push(format!(
             "{}={}",
             toml_key_path(&["mcp_servers", &name, "default_tools_approval_mode"]),
@@ -428,5 +442,101 @@ approval_mode = "approve"
         fs::remove_file(root.path().join("config.toml")).unwrap();
         fs::create_dir(root.path().join("config.toml")).unwrap();
         assert!(stand_in_mcp_approval_overrides(&request, root.path(), &[], &Map::new()).is_err());
+    }
+
+    #[test]
+    fn only_full_access_owner_delegated_tasks_exempt_browser_while_restricted_and_source_work_keep_review(
+    ) {
+        use crate::protocol::{StandInPermissionMode, StandInTaskPermissions};
+
+        let root = tempfile::tempdir().unwrap();
+        let overrides = vec![
+            "mcp_servers.wework_browser.default_tools_approval_mode=\"approve\"".into(),
+            "mcp_servers.wework_browser.tools.browser_open.approval_mode=\"prompt\"".into(),
+            "mcp_servers.business.default_tools_approval_mode=\"approve\"".into(),
+        ];
+
+        for (mode, ask_before_act, expected_browser) in [
+            (StandInPermissionMode::ReadOnly, true, "writes"),
+            (StandInPermissionMode::ReadOnly, false, "writes"),
+            (StandInPermissionMode::WorkspaceWrite, true, "writes"),
+            (StandInPermissionMode::WorkspaceWrite, false, "writes"),
+            (StandInPermissionMode::FullAccess, true, "approve"),
+            (StandInPermissionMode::FullAccess, false, "approve"),
+        ] {
+            let mut delegated: ExecutionRequest = serde_json::from_value(json!({
+                "origin":{"type":"stand_in_task","initiatedBy":"stand_in","askBeforeAct":ask_before_act,"roleDelegation":{"root":"owner"}},
+                "standInDelegation":{"askBeforeAct":ask_before_act,"roleDelegation":{"root":"owner"}}
+            }))
+            .unwrap();
+            delegated.stand_in_task_permissions = Some(StandInTaskPermissions {
+                permission_mode: mode,
+                command_approval: None,
+            });
+            let result =
+                stand_in_mcp_approval_overrides(&delegated, root.path(), &overrides, &Map::new())
+                    .unwrap();
+            assert!(result.contains(&format!(
+                "mcp_servers.wework_browser.default_tools_approval_mode=\"{expected_browser}\""
+            )));
+            assert!(result.contains(&format!(
+                "mcp_servers.wework_browser.tools.browser_open.approval_mode=\"{expected_browser}\""
+            )));
+            let expected_business = if ask_before_act { "writes" } else { "prompt" };
+            assert!(result.contains(&format!(
+                "mcp_servers.business.default_tools_approval_mode=\"{expected_business}\""
+            )));
+        }
+
+        let owner_chat: ExecutionRequest = serde_json::from_value(json!({
+            "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true}
+        }))
+        .unwrap();
+        let result =
+            stand_in_mcp_approval_overrides(&owner_chat, root.path(), &overrides, &Map::new())
+                .unwrap();
+        assert!(result
+            .contains(&"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".into()));
+
+        let mut owner_event = owner_chat;
+        owner_event
+            .extra
+            .insert("resource_event_keys".into(), json!(["event-1"]));
+        let result =
+            stand_in_mcp_approval_overrides(&owner_event, root.path(), &overrides, &Map::new())
+                .unwrap();
+        assert!(result
+            .contains(&"mcp_servers.wework_browser.default_tools_approval_mode=\"writes\"".into()));
+
+        for (origin, expected) in [
+            (
+                json!({"type":"stand_in_task","initiatedBy":"stand_in","askBeforeAct":true}),
+                "writes",
+            ),
+            (
+                json!({"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}),
+                "writes",
+            ),
+            (
+                json!({"type":"connection_work","initiatedBy":"stand_in","askBeforeAct":false}),
+                "prompt",
+            ),
+            (
+                json!({"type":"issue_dispatch","initiatedBy":"stand_in","askBeforeAct":true}),
+                "writes",
+            ),
+        ] {
+            let source: ExecutionRequest =
+                serde_json::from_value(json!({ "origin": origin })).unwrap();
+            let result =
+                stand_in_mcp_approval_overrides(&source, root.path(), &overrides, &Map::new())
+                    .unwrap();
+            assert!(result.contains(&format!(
+                "mcp_servers.wework_browser.default_tools_approval_mode=\"{expected}\""
+            )));
+            assert!(result.contains(&format!(
+                "mcp_servers.wework_browser.tools.browser_open.approval_mode=\"{expected}\""
+            )));
+        }
     }
 }

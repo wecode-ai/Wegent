@@ -313,6 +313,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('fill', tagInput, { value: invalidTag })
       await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
       await control.command('clickWhenEnabled', selector('stand-in-project-tags-discard'))
+      // Discarding the unfinished tag must not implicitly discard the added project scopes.
+      await control.command('waitFor', selector('stand-in-primary-discard'), { visible: true })
+      await control.command('clickWhenEnabled', selector('stand-in-primary-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), updated)
       await control.command('clickWhenEnabled', selector('stand-in-create-role'))

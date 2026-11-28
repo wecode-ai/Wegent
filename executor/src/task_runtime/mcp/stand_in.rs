@@ -257,6 +257,11 @@ pub(crate) fn stand_in_mcp_client_config(
     context.stand_in_delivery =
         active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
+    context.stand_in_caller_command = request
+        .extra
+        .get("runtime_command_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let origin = &request.extra["origin"];
     context.stand_in_role_delegation =
         (crate::task_runtime::personal_stand_in::supports_role_delegation(origin)
@@ -496,7 +501,13 @@ pub(super) async fn call(
             .chain(super::stand_in_tasks::role_delegation_tools())
             .any(|tool| tool["name"] == name)
     {
-        return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        return match super::stand_in_tasks::call_with_command(
+            identity.clone(),
+            name.to_owned(),
+            arguments,
+            context.stand_in_caller_command.clone(),
+        )
+        .await
         {
             Ok(value) => text_result(value.to_string(), false),
             Err(error) => text_result(error, true),

@@ -180,12 +180,6 @@ export function createDesktopScenario({
       const inbox = () => recipientRequest('/api/v1/wework-notifications?category=general')
       await cloud.waitForConnectedAppDevice()
       const { deviceId } = await rpc('runtime.stand_in.device_identity', {})
-      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
-      await rpc('runtime.stand_in.binding', {
-        operation: 'bind',
-        version: binding.version,
-        target: { userId, deviceId, backendUrl: `${cloud.backendUrl}/api` },
-      })
       await rpc('runtime.stand_in.onboarding.complete', {
         userId,
         weeklyReview: false,

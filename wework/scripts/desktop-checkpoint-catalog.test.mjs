@@ -281,6 +281,27 @@ test('Connector fixture and OAuth checkpoint edits select only their existing cl
   }
 })
 
+test('embedded browser helper edits select the actual browser checkpoints', () => {
+  for (const path of [
+    'wework/e2e/desktop/modules/browser-full-control.mjs',
+    'wework/e2e/desktop/scenarios/browser-chrome-focus.mjs',
+    'wework/e2e/desktop/scenarios/browser-video-settings-regression.mjs',
+  ]) {
+    const result = classified(path)
+    for (const [matrix, id] of [
+      ['wework_desktop_core_e2e_matrix', 'core-3'],
+      ['wework_desktop_cloud_e2e_matrix', 'cloud-1'],
+    ]) {
+      assert.ok(
+        JSON.parse(result[matrix]).include.some(
+          shard => shard.id === id && shard.segments.split(',').includes('embedded-browser')
+        ),
+        `Browser checkpoint is missing from CI for ${path} on ${id}`
+      )
+    }
+  }
+})
+
 test('plugin cache changes retain the recovery scenario in its existing cloud shard', () => {
   for (const path of [
     'executor/crates/plugin-packages/src/services/workbench.rs',

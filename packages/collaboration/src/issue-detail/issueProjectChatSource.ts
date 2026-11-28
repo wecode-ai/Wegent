@@ -49,7 +49,7 @@ export function createIssueProjectChatSource(
   let revoked = false
   let activeRevision: number | undefined
   let invalidatesSnapshot: ((cause: unknown) => boolean) | undefined
-  let stopConnection: (() => void) | undefined
+  let connection: { detach(): (() => void) | undefined } | undefined
   const listeners = new Set<() => void>()
   const statusListeners = new Set<() => void>()
   const statusOf = ({ owner, loading, ready, currentUserId, error }: typeof snapshot) => ({
@@ -74,10 +74,17 @@ export function createIssueProjectChatSource(
   }
   const merge = (incoming: ProjectChatMessage[]) => {
     if (listeners.size && !revoked)
-      publish({ ...snapshot, messages: mergeIssueChatMessages(snapshot.messages, incoming) })
+      publish({
+        ...snapshot,
+        messages: mergeIssueChatMessages(snapshot.messages, incoming),
+      })
   }
-  const connect = () => {
+  const connect = (retained?: () => void) => {
     if (!client) return
+    const releaseRetained = () => {
+      retained?.()
+      retained = undefined
+    }
     let active = true
     let unsubscribe: (() => void) | undefined
     let subscribing = false
@@ -89,11 +96,12 @@ export function createIssueProjectChatSource(
       reconnectDuringAttempt = false
       const epoch = authorityEpoch
       let valid = true
+      let authorized = false
       const buffered: Array<(messages: ProjectChatMessage[]) => ProjectChatMessage[]> = []
       const accepts = () => valid && current() && epoch === authorityEpoch
       const receive = (message: ProjectChatMessage) => {
         if (!accepts()) return
-        if (revoked) buffered.push(messages => mergeIssueChatMessages(messages, [message]))
+        if (!authorized) buffered.push(messages => mergeIssueChatMessages(messages, [message]))
         else merge([message])
       }
       void Promise.resolve()
@@ -122,7 +130,7 @@ export function createIssueProjectChatSource(
                 },
               ])
             }
-            if (revoked) buffered.push(apply)
+            if (!authorized) buffered.push(apply)
             else {
               const messages = apply(snapshot.messages)
               if (messages !== snapshot.messages) publish({ ...snapshot, messages })
@@ -136,10 +144,12 @@ export function createIssueProjectChatSource(
             return
           }
           unsubscribe = subscription.unsubscribe
+          releaseRetained()
           // Preserve pre-snapshot event order, including sequence-less deltas.
           const messages = buffered.reduce((items, apply) => apply(items), snapshot.messages)
           buffered.length = 0
           revoked = false
+          authorized = true
           publish({
             ...snapshot,
             loading: false,
@@ -153,6 +163,7 @@ export function createIssueProjectChatSource(
           valid = false
           buffered.length = 0
           if (!current()) return
+          releaseRetained()
           const invalidated = invalidatesSnapshot?.(cause)
           if (invalidated) {
             authorityEpoch += 1
@@ -175,10 +186,15 @@ export function createIssueProjectChatSource(
       else subscribe()
     })
     subscribe()
-    return () => {
-      active = false
-      stopReconnect?.()
-      unsubscribe?.()
+    return {
+      detach() {
+        active = false
+        stopReconnect?.()
+        const release = unsubscribe ?? retained
+        unsubscribe = undefined
+        retained = undefined
+        return release
+      },
     }
   }
   return {
@@ -192,13 +208,13 @@ export function createIssueProjectChatSource(
     subscribe(listener: () => void) {
       listeners.add(listener)
       queueMicrotask(() => {
-        if (listeners.size && !stopConnection) stopConnection = connect()
+        if (listeners.size && !connection) connection = connect()
       })
       return () => {
         listeners.delete(listener)
         if (listeners.size) return
-        stopConnection?.()
-        stopConnection = undefined
+        connection?.detach()?.()
+        connection = undefined
       }
     },
     observeStatus(
@@ -210,9 +226,11 @@ export function createIssueProjectChatSource(
       invalidatesSnapshot = invalidate
       if (activeRevision !== revision) {
         activeRevision = revision
-        if (stopConnection) {
-          stopConnection()
-          stopConnection = connect()
+        if (connection) {
+          // Keep the room lease through the same-Issue refresh. The new read
+          // occurs before the server joins the room, so releasing first can
+          // lose a live reply between the snapshot and the new join.
+          connection = connect(connection.detach())
         }
       }
       return () => {

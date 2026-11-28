@@ -5934,6 +5934,13 @@ fn cdp_browser_mcp_config_overrides(
         auth_env_name.to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
+    // Native approval is resolved from the run's task permission. The mutable
+    // Browser Full Control setting is checked at execution time by the host.
+    let default_approval_mode = if codex_has_full_access(request) {
+        "approve"
+    } else {
+        "writes"
+    };
     overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.required=false"),
@@ -5954,7 +5961,7 @@ fn cdp_browser_mcp_config_overrides(
         ),
         format!(
             "{key}.default_tools_approval_mode={}",
-            toml_value("approve")
+            toml_value(default_approval_mode)
         ),
     ]);
 

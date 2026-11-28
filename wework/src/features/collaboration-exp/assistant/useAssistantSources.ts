@@ -35,6 +35,8 @@ export function useAssistantSourceState(
   const expectedDevice = target?.deviceId
   const scope = JSON.stringify([userId, backendUrl, expectedUser, expectedDevice])
   const api = services.standInApi
+  const connected = Boolean(cloud?.isConnected)
+  const devices = state.devices
   const model = useMemo(
     () =>
       createAssistantSourcesModel(
@@ -49,8 +51,8 @@ export function useAssistantSourceState(
     [services, api, userId, scope, expectedUser, expectedDevice]
   )
   const subscribe = useCallback(
-    (listener: () => void) => model.subscribe(listener, includeProposals),
-    [model, includeProposals]
+    (listener: () => void) => model.subscribe(listener, includeProposals, devices, connected),
+    [model, includeProposals, devices, connected]
   )
   const snapshot = useSyncExternalStore(
     active ? subscribe : subscribeIdleResource,

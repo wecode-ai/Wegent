@@ -20,7 +20,10 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { fetchJson } from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
-import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
+import {
+  finishStandInOnboarding,
+  assertStandInAccountDevice,
+} from '../modules/stand-in-instance-flows.mjs'
 
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
@@ -167,6 +170,7 @@ export function createDesktopScenario(options) {
       userId = user.id
       const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       await finishStandInOnboarding(control)
+      await assertStandInAccountDevice(userId, local.deviceId, uiTimeoutMs, cloud)
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
