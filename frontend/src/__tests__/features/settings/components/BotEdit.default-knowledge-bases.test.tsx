@@ -9,11 +9,18 @@ import { cloneElement, type ReactNode } from 'react'
 import BotEdit from '@/features/settings/components/BotEdit'
 import { botApis } from '@/apis/bots'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { getKnowledgeCatalogPage } from '@/apis/knowledge'
 import { modelApis } from '@/apis/models'
 import { publicResourceApis } from '@/apis/publicResources'
 import { shellApis } from '@/apis/shells'
 import { fetchPublicSkillsList, fetchUnifiedSkillsList } from '@/apis/skills'
 import type { Bot } from '@/types/api'
+
+let mockCatalogUserId: number | undefined
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: mockCatalogUserId === undefined ? null : { id: mockCatalogUserId } }),
+}))
+jest.mock('@/apis/knowledge', () => ({ getKnowledgeCatalogPage: jest.fn() }))
 
 const mockTranslate = (key: string, options?: { count?: number }) => {
   const translations: Record<string, string> = {
@@ -299,6 +306,7 @@ async function renderBotEdit(
 
 describe('BotEdit default knowledge bases', () => {
   beforeEach(() => {
+    mockCatalogUserId = undefined
     mockedUpdateBot.mockReset()
     mockedCreateBot.mockReset()
     mockedCreateBot.mockResolvedValue({ id: 8 })
@@ -869,6 +877,80 @@ describe('BotEdit default knowledge bases', () => {
         binding: { botId: 7, namespace: 'existing-group' },
       })
     })
+  })
+
+  test('checks retained knowledge bindings against the existing Bot source group', async () => {
+    mockCatalogUserId = 7
+    jest.mocked(getKnowledgeCatalogPage).mockResolvedValue({
+      items: [],
+      total: 0,
+      returned_count: 0,
+      limit: 50,
+      offset: 0,
+      has_more: false,
+      space_counts: {},
+    })
+    await renderBotEdit({ namespace: 'existing-group' }, { scope: 'personal' })
+
+    const chip = await screen.findByTestId('default-knowledge-base-chip-101')
+    await waitFor(() =>
+      expect(getKnowledgeCatalogPage).toHaveBeenCalledWith(
+        expect.objectContaining({ binding_group: 'existing-group', candidate_ids: [101] }),
+        0,
+        expect.any(AbortSignal)
+      )
+    )
+    expect(chip).toHaveTextContent('picker.invalidBinding')
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-101'))
+    await waitFor(() => expect(screen.getByTestId('save-button')).toBeEnabled())
+  })
+
+  test('keeps a retained conflict and blocks save when revalidation fails', async () => {
+    mockCatalogUserId = 7
+    const emptyPage = {
+      items: [],
+      total: 0,
+      returned_count: 0,
+      limit: 50,
+      offset: 0,
+      has_more: false,
+      space_counts: {},
+    }
+    const catalog = jest.mocked(getKnowledgeCatalogPage)
+    catalog
+      .mockResolvedValueOnce(emptyPage)
+      .mockRejectedValueOnce(new Error('Catalog temporarily unavailable'))
+      .mockResolvedValue(emptyPage)
+
+    await renderBotEdit({
+      namespace: 'existing-group',
+      default_knowledge_base_refs: [
+        { id: 101, name: 'First' },
+        { id: 102, name: 'Retained' },
+      ],
+    })
+    const retained = await screen.findByTestId('default-knowledge-base-chip-102')
+    await waitFor(() => expect(retained).toHaveTextContent('picker.invalidBinding'))
+    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-101'))
+    expect(retained).toHaveTextContent('picker.invalidBinding')
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+
+    const retry = await screen.findByRole('button', { name: 'common:actions.retry' })
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+    fireEvent.click(retry)
+    await waitFor(() =>
+      expect(catalog).toHaveBeenLastCalledWith(
+        expect.objectContaining({ candidate_ids: [102] }),
+        0,
+        expect.any(AbortSignal)
+      )
+    )
+    await waitFor(() => expect(retry).not.toBeInTheDocument())
+    expect(retained).toHaveTextContent('picker.invalidBinding')
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-102'))
+    await waitFor(() => expect(screen.getByTestId('save-button')).toBeEnabled())
   })
 
   test('uses creation scope without a source Bot', async () => {

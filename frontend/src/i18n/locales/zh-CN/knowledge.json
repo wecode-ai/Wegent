@@ -17,6 +17,17 @@
   "documents_count": "{{count}} 篇文档",
   "picker": {
     "selectContent": "选择内容",
+    "searchDocuments": "在此库中搜索文档",
+    "alreadySelected": "已选",
+    "invalidBinding": "当前范围不可绑定",
+    "removeBinding": "移除 {{name}}",
+    "resolveBinding": "请移除不可绑定的知识库，或调整发布范围。",
+    "selectedLibraries_one": "{{count}} 个整库",
+    "selectedLibraries_other": "{{count}} 个整库",
+    "selectedFolders_one": "{{count}} 个文件夹",
+    "selectedFolders_other": "{{count}} 个文件夹",
+    "selectedDocuments_one": "{{count}} 篇文档",
+    "selectedDocuments_other": "{{count}} 篇文档",
     "selectedCount": "已选择 {{count}} 项",
     "columns": {
       "sources": "一级分组",

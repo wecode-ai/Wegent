@@ -164,14 +164,18 @@ Parameters:
 | --- | --- | --- | --- |
 | `scope` | `string` | `all` | Visibility scope, matching the internal knowledge list, for example `all`, `personal`, `group`, or `organization` |
 | `group_name` | `string \| null` | `null` | Optional space or group name. Required when `scope=group`; an empty string is treated as missing |
-| `query` | `string \| null` | `null` | Optional keyword filter. It matches knowledge base name and description case-insensitively |
+| `query` | `string \| null` | `null` | Trimmed, case-insensitive substring of the knowledge base name |
 | `owner_user_ids` | `list[int] \| null` | `null` | Optional creator user ID filter, at most `100` IDs. An empty list is treated as unfiltered |
+| `category` | `all \| document \| code` | `all` | Knowledge base type filter |
+| `include_code` | `bool` | `true` | Include code knowledge bases. Set this to the effective web preference when comparing results |
+| `space_level` | `personal \| group \| organization \| null` | `null` | Space filter independent of the access scope |
+| `space_namespace` | `string \| null` | `null` | Match a specific space by namespace |
 | `limit` | `int` | `50` | Number of results to return, from `1` to `100` |
 | `offset` | `int` | `0` | Offset, must be greater than or equal to `0` |
 
 Behavior:
 
-- Results are sorted by `created_at` descending, so callers do not need to sort again for display.
+- Results are sorted by `created_at` descending, with descending library ID as a tie-breaker.
 - `document_count` counts all documents in the knowledge base, including inactive documents, matching the internal knowledge list behavior.
 - Each `items[]` entry returns `owner_user_id` and `creator`; `creator` contains `user_id`, `user_name`, and deployment-extensible `attributes`.
 - Each `items[]` entry returns `namespace_level` and `namespace_display_name`: personal knowledge bases use `personal` / `personal`, group knowledge bases use `group` / the group display name, and organization knowledge bases use `organization` / the organization display name. `namespace_display_name` only represents the space display name and does not encode sharing or creator relation.

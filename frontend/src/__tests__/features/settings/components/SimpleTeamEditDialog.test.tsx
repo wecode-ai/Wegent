@@ -1336,7 +1336,8 @@ describe('Simple TeamEditDialog', () => {
     expect(await screen.findByTestId('capability-scope-group-engineering')).toBeInTheDocument()
     expect(screen.queryByTestId('capability-scope-group-readers')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    const group = screen.getByTestId('capability-scope-group-engineering')
+    if (group.getAttribute('aria-checked') !== 'true') fireEvent.click(group)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
@@ -1377,7 +1378,12 @@ describe('Simple TeamEditDialog', () => {
       target: { value: 'New group agent' },
     })
     fireEvent.click(screen.getByTestId('capability-scope-team'))
-    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    const group = screen.getByTestId('capability-scope-group-engineering')
+    expect(group).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(group)
+    expect(group).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.click(group)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {

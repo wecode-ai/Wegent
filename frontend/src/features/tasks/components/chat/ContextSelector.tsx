@@ -9,7 +9,6 @@ import { X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { KnowledgeBase } from '@/types/api'
@@ -17,6 +16,7 @@ import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { ContextItem } from '@/types/context'
 import { useExternalKnowledgeSources } from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -94,9 +94,17 @@ export default function ContextSelector({
   isGroupChat,
   excludeKnowledgeBaseId,
 }: ContextSelectorProps) {
-  const { t } = useTranslation()
-  const [allGroupedKnowledge, setAllGroupedKnowledge] =
-    useState<AllGroupedKnowledgeResponse | null>(null)
+  const { t, i18n } = useTranslation()
+  const { user } = useUser()
+  const [groupedSnapshot, setGroupedSnapshot] = useState<{
+    userId: number | undefined
+    data: AllGroupedKnowledgeResponse
+  } | null>(null)
+  const [needsGroupNames, setNeedsGroupNames] = useState(false)
+  const [groupRequest, setGroupRequest] = useState(0)
+  const accountId = user?.id
+  const allGroupedKnowledge =
+    groupedSnapshot?.userId === accountId ? groupedSnapshot?.data : undefined
   const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,20 +112,26 @@ export default function ContextSelector({
   const knowledgeBaseError = error
   const isMobile = useIsMobile()
 
-  const fetchKnowledgeBases = useCallback(async () => {
+  useEffect(() => {
+    if (!open || (accountId !== undefined && !needsGroupNames)) return
+    let cancelled = false
     setLoading(true)
     setError(null)
-    try {
-      const response = await knowledgeBaseApi.getAllGrouped()
-      setAllGroupedKnowledge(response)
-    } catch (error) {
-      console.error('Failed to fetch knowledge bases:', error)
-      setError(t('knowledge:fetch_error'))
-      setAllGroupedKnowledge(null)
-    } finally {
-      setLoading(false)
+    knowledgeBaseApi
+      .getAllGrouped()
+      .then(data => {
+        if (!cancelled) setGroupedSnapshot({ userId: accountId, data })
+      })
+      .catch(() => {
+        if (!cancelled) setError(t('knowledge:fetch_error'))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
-  }, [t])
+  }, [accountId, groupRequest, needsGroupNames, open, t])
 
   // Fetch bound knowledge bases for group chat
   const fetchBoundKnowledgeBases = useCallback(async () => {
@@ -134,11 +148,6 @@ export default function ContextSelector({
       setBoundKnowledgeBases([])
     }
   }, [taskId, isGroupChat])
-
-  // The catalog is only needed while browsing knowledge bases.
-  useEffect(() => {
-    if (open) void fetchKnowledgeBases()
-  }, [open, fetchKnowledgeBases])
 
   // Fetch bound knowledge bases when taskId or isGroupChat changes
   useEffect(() => {
@@ -202,7 +211,7 @@ export default function ContextSelector({
   }, [allGroupedKnowledge, boundKnowledgeBases, excludeKnowledgeBaseId])
 
   const handleKnowledgeBaseRetry = () => {
-    fetchKnowledgeBases()
+    setGroupRequest(value => value + 1)
   }
 
   const externalSources = useExternalKnowledgeSources()
@@ -211,12 +220,40 @@ export default function ContextSelector({
   useEffect(() => {
     if (!open) {
       setSearchValue('')
+      setNeedsGroupNames(false)
     }
   }, [open])
 
-  const selectedContextCount = selectedContexts.filter(context =>
-    ['knowledge_base', 'dingtalk_doc', 'external_knowledge'].includes(context.type)
-  ).length
+  let libraries = 0
+  let folders = 0
+  let documents = 0
+  for (const context of new Map(selectedContexts.map(item => [item.id, item])).values()) {
+    if (context.type === 'knowledge_base') {
+      if (context.scope_restricted) {
+        folders += new Set(context.folder_ids).size
+        documents += new Set(context.document_ids).size
+      } else {
+        libraries += 1
+      }
+    } else if (context.type === 'dingtalk_doc') {
+      if (context.source === 'wikispace' && context.dingtalk_node_id === context.workspace_id) {
+        libraries += 1
+      } else if (context.node_type === 'folder') {
+        folders += 1
+      } else {
+        documents += 1
+      }
+    } else if (context.type === 'external_knowledge') {
+      if (context.ref.target_type === 'folder') folders += 1
+      else if (context.ref.target_type === 'document') documents += 1
+      else libraries += 1
+    }
+  }
+  const selectionParts = [
+    libraries ? t('knowledge:picker.selectedLibraries', { count: libraries }) : '',
+    folders ? t('knowledge:picker.selectedFolders', { count: folders }) : '',
+    documents ? t('knowledge:picker.selectedDocuments', { count: documents }) : '',
+  ].filter(Boolean)
 
   const selectorContent = (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -236,18 +273,11 @@ export default function ContextSelector({
       </div>
 
       <div className="flex h-full min-h-0 flex-1 flex-col">
-        <Input
-          placeholder={t('knowledge:search_placeholder')}
-          value={searchValue}
-          onChange={event => setSearchValue(event.target.value)}
-          className={cn(
-            'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
-            'placeholder:text-text-muted'
-          )}
-          data-testid="context-selector-knowledge-search-input"
-        />
         <KnowledgeSourcePicker
           groupedKnowledgeBases={groupedKnowledgeBases}
+          catalogAccountId={open ? user?.id : undefined}
+          onOpenGroupSources={() => setNeedsGroupNames(true)}
+          excludeKnowledgeBaseId={excludeKnowledgeBaseId}
           boundKnowledgeBases={boundKnowledgeBases}
           externalSources={externalSources}
           selectedContexts={selectedContexts}
@@ -266,7 +296,9 @@ export default function ContextSelector({
 
       <div className="flex min-h-16 shrink-0 items-center justify-between border-t border-border px-4 lg:hidden">
         <span className="text-sm text-text-primary" data-testid="context-selector-selected-count">
-          {t('knowledge:picker.selectedCount', { count: selectedContextCount })}
+          {selectionParts.length
+            ? new Intl.ListFormat(i18n?.language, { type: 'conjunction' }).format(selectionParts)
+            : t('knowledge:picker.selectedCount', { count: 0 })}
         </span>
         <Button
           type="button"

@@ -3,6 +3,7 @@
 
 import type {
   AllGroupedKnowledgeResponse,
+  KnowledgeBase,
   KnowledgeBaseWithGroupInfo,
   MemberRole,
 } from '@/types/knowledge'
@@ -76,4 +77,38 @@ export function collectNavigationKnowledge(
       }
     })
     .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || a.id - b.id)
+}
+
+/**
+ * Convert KnowledgeBaseWithGroupInfo to KnowledgeBase
+ */
+export function toKnowledgeBase(
+  kb: Pick<
+    KnowledgeBaseWithGroupInfo,
+    | 'id'
+    | 'name'
+    | 'description'
+    | 'user_id'
+    | 'namespace'
+    | 'document_count'
+    | 'kb_type'
+    | 'created_at'
+    | 'updated_at'
+  >
+): KnowledgeBase {
+  return {
+    id: kb.id,
+    name: kb.name,
+    description: kb.description,
+    user_id: kb.user_id,
+    namespace: kb.namespace,
+    document_count: kb.document_count,
+    is_active: true,
+    summary_enabled: false,
+    kb_type: kb.kb_type || 'notebook',
+    max_calls_per_conversation: 10,
+    exempt_calls_before_check: 5,
+    created_at: kb.created_at,
+    updated_at: kb.updated_at,
+  }
 }

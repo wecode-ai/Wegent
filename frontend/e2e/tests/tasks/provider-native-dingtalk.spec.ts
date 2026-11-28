@@ -76,7 +76,18 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
       await expect(container).toBeVisible()
       await expect(container).toHaveAttribute('data-state', 'open')
 
-      await page.getByTestId('knowledge-picker-dingtalk-parent').click()
+      if (viewport.compact) {
+        const source = page.getByTestId('knowledge-picker-mobile-source')
+        await source.click()
+        const dingtalk = page.getByTestId('knowledge-picker-mobile-source-dingtalk')
+        await expect(dingtalk).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(source).toBeFocused()
+        await source.click()
+        await dingtalk.click()
+      } else {
+        await page.getByTestId('knowledge-picker-dingtalk-parent').click()
+      }
       const compactDingTalkOption = page.getByTestId(
         'knowledge-picker-responsive-dingtalk-wikispace'
       )

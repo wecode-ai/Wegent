@@ -18,6 +18,7 @@ interface CapabilityScopeSelectorProps {
   groups: Group[]
   groupName?: string
   groupNames?: string[]
+  sourceGroupName?: string
   onChange: (value: CapabilityPublishTarget, groupName?: string, groupNames?: string[]) => void
   existingResource?: boolean
   multipleGroups?: boolean
@@ -63,6 +64,7 @@ export function CapabilityScopeSelector({
   groups,
   groupName,
   groupNames,
+  sourceGroupName,
   onChange,
   existingResource = false,
   multipleGroups = false,
@@ -184,6 +186,11 @@ export function CapabilityScopeSelector({
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-text-primary">
                     {group.display_name || group.name}
+                    {selectedGroupNames.length > 1 && group.name === sourceGroupName && (
+                      <span className="ml-2 text-xs text-text-muted">
+                        {t('new_capability.source_group')}
+                      </span>
+                    )}
                   </span>
                   {group.display_name && (
                     <span className="block truncate text-xs text-text-muted">{group.name}</span>

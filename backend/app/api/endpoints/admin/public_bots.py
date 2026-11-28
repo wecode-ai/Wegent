@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -21,12 +22,41 @@ from app.schemas.admin import (
     PublicBotResponse,
     PublicBotUpdate,
 )
-from app.schemas.kind import Ghost, Model, SkillRefMeta, resolve_model_category
+from app.schemas.kind import (
+    Ghost,
+    KnowledgeBaseDefaultRef,
+    Model,
+    SkillRefMeta,
+    resolve_model_category,
+)
 from app.services.adapters.shell_utils import get_shell_info_by_name
+from app.services.knowledge.knowledge_visibility_query import (
+    get_acl_accessible_knowledge_base_ids,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_KNOWLEDGE_REFS = TypeAdapter(list[KnowledgeBaseDefaultRef])
+
+
+def _validate_public_knowledge_bindings(db: Session, refs: list[dict] | None) -> None:
+    if not refs:
+        return
+    try:
+        ids = {ref.id for ref in _KNOWLEDGE_REFS.validate_python(refs)}
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid default knowledge bases"
+        ) from exc
+    public_ids = get_acl_accessible_knowledge_base_ids(
+        db, user_id=0, candidate_ids=list(ids)
+    )
+    if public_ids != ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Public bots can only bind organization knowledge bases",
+        )
 
 
 def _get_model_category_type(model: Kind) -> str:
@@ -613,6 +643,7 @@ async def create_public_bot(
         bot_json = bot_data.bot_json
     elif bot_data.shell_name:
         # Form data mode - auto-create Ghost and optionally Model
+        _validate_public_knowledge_bindings(db, bot_data.default_knowledge_base_refs)
         logger.info(f"Creating public bot '{bot_data.name}' in form data mode")
 
         # Validate shell exists as public resource
@@ -817,6 +848,7 @@ async def update_public_bot(
         or bot_data.default_knowledge_base_refs is not None
     ):
         # Form data mode - auto-update Ghost and optionally Model
+        _validate_public_knowledge_bindings(db, bot_data.default_knowledge_base_refs)
         logger.info(f"Updating public bot '{new_name}' in form data mode")
 
         # Get current bot spec

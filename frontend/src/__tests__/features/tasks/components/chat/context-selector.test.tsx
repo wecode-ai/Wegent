@@ -38,7 +38,7 @@ const mockGetDingTalkWikispaceSyncStatus = jest.fn()
 let mockIsMobile = false
 
 const mockT = (key: string, options?: { count?: number }) =>
-  key === 'knowledge:picker.selectedCount' ? `${key}:${options?.count ?? 0}` : key
+  options?.count !== undefined ? `${key}:${options.count}` : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: mockT,
@@ -85,15 +85,46 @@ jest.mock('@/apis/dingtalk-doc', () => ({
   },
 }))
 
-jest.mock('@/components/ui/popover', () => ({
-  Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PopoverTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PopoverContent: ({ children, side }: { children: React.ReactNode; side?: string }) => (
-    <div data-testid="context-selector-popover" data-side={side}>
-      {children}
-    </div>
-  ),
-}))
+jest.mock('@/components/ui/popover', () => {
+  const React = jest.requireActual<typeof import('react')>('react')
+  const PopoverState = React.createContext<{
+    open: boolean
+    setOpen?: (open: boolean) => void
+  }>({ open: false })
+  return {
+    Popover: ({
+      children,
+      open,
+      onOpenChange,
+    }: {
+      children: React.ReactNode
+      open: boolean
+      onOpenChange?: (open: boolean) => void
+    }) => (
+      <PopoverState.Provider value={{ open, setOpen: onOpenChange }}>
+        {children}
+      </PopoverState.Provider>
+    ),
+    PopoverTrigger: ({ children }: { children: React.ReactNode }) => {
+      const { open, setOpen } = React.useContext(PopoverState)
+      return <div onClick={() => setOpen?.(!open)}>{children}</div>
+    },
+    PopoverContent: ({
+      children,
+      side,
+      'data-testid': testId,
+    }: {
+      children: React.ReactNode
+      side?: string
+      'data-testid'?: string
+    }) =>
+      React.useContext(PopoverState).open ? (
+        <div data-testid={testId} data-side={side}>
+          {children}
+        </div>
+      ) : null,
+  }
+})
 
 jest.mock('@/components/ui/drawer', () => ({
   Drawer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -264,7 +295,7 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('clears the knowledge-base search before showing its documents', async () => {
+  it('keeps the library query separate from the document query', async () => {
     mockListDocuments.mockResolvedValue({
       items: [
         {
@@ -298,7 +329,8 @@ describe('ContextSelector organization grouping', () => {
     fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
 
     await waitFor(() => {
-      expect(search).toHaveValue('')
+      expect(search).toHaveValue('Org KB')
+      expect(screen.getByTestId('knowledge-picker-document-search')).toHaveValue('')
       expect(screen.getByTestId('knowledge-picker-document-node-document-21')).toBeInTheDocument()
     })
   })
@@ -353,10 +385,11 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('context-selector-drawer')).toBeInTheDocument()
     })
     expect(screen.getByTestId('context-selector-selected-count')).toHaveTextContent(
-      'knowledge:picker.selectedCount:1'
+      'knowledge:picker.selectedDocuments:1'
     )
 
-    fireEvent.click(await screen.findByTestId('knowledge-picker-dingtalk-parent'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-mobile-source'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-mobile-source-dingtalk'))
     expect(
       screen.getByTestId('knowledge-picker-responsive-dingtalk-wikispace').querySelector('svg')
     ).toHaveClass('lucide-book-open')
@@ -1151,7 +1184,7 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeInTheDocument()
     })
-    fireEvent.change(screen.getByTestId('context-selector-knowledge-search-input'), {
+    fireEvent.change(screen.getByTestId('knowledge-picker-document-search'), {
       target: { value: 'Specs' },
     })
 
@@ -1223,7 +1256,7 @@ describe('ContextSelector organization grouping', () => {
       screen.getByTestId('knowledge-picker-document-node-document-101').querySelector('svg')
     ).toHaveClass('lucide-file-text', 'text-error')
 
-    fireEvent.change(screen.getByTestId('context-selector-knowledge-search-input'), {
+    fireEvent.change(screen.getByTestId('knowledge-picker-document-search'), {
       target: { value: 'Specs' },
     })
 
@@ -1289,7 +1322,7 @@ describe('ContextSelector organization grouping', () => {
       expect(mockListDocuments).toHaveBeenNthCalledWith(2, 1, { limit: 200, offset: 200 })
     })
 
-    fireEvent.change(screen.getByTestId('context-selector-knowledge-search-input'), {
+    fireEvent.change(screen.getByTestId('knowledge-picker-document-search'), {
       target: { value: 'Beyond' },
     })
 

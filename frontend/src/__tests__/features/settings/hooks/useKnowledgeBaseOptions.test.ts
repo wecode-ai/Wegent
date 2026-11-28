@@ -2,11 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
+import { getKnowledgeCatalogPage, type KnowledgeCatalogPage } from '@/apis/knowledge'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { useKnowledgeBaseOptions } from '@/features/settings/hooks/useKnowledgeBaseOptions'
+import {
+  useKnowledgeBaseOptions,
+  useKnowledgeBindingValidation,
+} from '@/features/settings/hooks/useKnowledgeBaseOptions'
 
+jest.mock('@/apis/knowledge', () => ({ getKnowledgeCatalogPage: jest.fn() }))
 jest.mock('@/apis/knowledge-base', () => ({
   knowledgeBaseApi: {
     getAllGrouped: jest.fn(),
@@ -91,4 +96,57 @@ describe('useKnowledgeBaseOptions', () => {
       namespace: 'weibo',
     })
   })
+})
+
+test('blocks save until the bindings are revalidated after reopening', async () => {
+  const emptyPage: KnowledgeCatalogPage = {
+    items: [],
+    total: 0,
+    returned_count: 0,
+    limit: 50,
+    offset: 0,
+    has_more: false,
+    space_counts: {},
+  }
+  const readyPage: KnowledgeCatalogPage = {
+    ...emptyPage,
+    items: [
+      {
+        id: 126,
+        name: 'Team Docs',
+        description: null,
+        user_id: 1,
+        namespace: 'team',
+        document_count: 0,
+        kb_type: 'classic',
+        created_at: '2026-11-25T00:00:00Z',
+        updated_at: '2026-11-25T00:00:00Z',
+        namespace_level: 'group',
+        namespace_display_name: 'Team',
+      },
+    ],
+    total: 1,
+    returned_count: 1,
+  }
+  let complete!: (page: KnowledgeCatalogPage) => void
+  jest
+    .mocked(getKnowledgeCatalogPage)
+    .mockResolvedValueOnce(readyPage)
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          complete = resolve
+        })
+    )
+  const { result, rerender } = renderHook(
+    ({ open }) => useKnowledgeBindingValidation([126], open ? 1 : undefined, 'team', false),
+    { initialProps: { open: true } }
+  )
+  await waitFor(() => expect(result.current.blocksSave).toBe(false))
+  rerender({ open: false })
+  rerender({ open: true })
+  expect(result.current).toMatchObject({ status: 'pending', blocksSave: true })
+  await act(async () => complete(emptyPage))
+  expect(result.current).toMatchObject({ status: 'ready', blocksSave: true })
+  expect(result.current.invalidIds.has(126)).toBe(true)
 })

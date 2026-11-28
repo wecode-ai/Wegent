@@ -17,7 +17,18 @@
   "documents_count": "{{count}} documents",
   "picker": {
     "selectContent": "Select content",
+    "searchDocuments": "Search documents in this library",
+    "alreadySelected": "Selected",
+    "invalidBinding": "Unavailable in this scope",
+    "removeBinding": "Remove {{name}}",
+    "resolveBinding": "Remove the unavailable knowledge bases or change the publication scope.",
     "selectedCount": "{{count}} selected",
+    "selectedLibraries_one": "{{count}} whole library",
+    "selectedLibraries_other": "{{count}} whole libraries",
+    "selectedFolders_one": "{{count}} folder",
+    "selectedFolders_other": "{{count}} folders",
+    "selectedDocuments_one": "{{count}} document",
+    "selectedDocuments_other": "{{count}} documents",
     "columns": {
       "sources": "Primary Group",
       "knowledgeBases": "Secondary Group"

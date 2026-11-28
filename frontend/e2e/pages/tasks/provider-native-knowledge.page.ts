@@ -18,13 +18,6 @@ export class ProviderNativeKnowledgePage {
     await expect(contextButton).toBeVisible()
     await contextButton.click()
     await expect(this.page.getByTestId('knowledge-source-picker')).toBeVisible()
-    const personalSource = this.page.getByTestId('knowledge-picker-source-personal')
-    const personalSourceIsActive = await personalSource.evaluate(element =>
-      element.classList.contains('bg-primary/10')
-    )
-    if (!personalSourceIsActive) {
-      await personalSource.click()
-    }
   }
 
   async selectWholeKnowledgeBase(
@@ -138,8 +131,19 @@ export class ProviderNativeKnowledgePage {
 
   private async openDingTalkSource(source: 'docs' | 'wikispace'): Promise<void> {
     await this.openPicker()
-    await this.page.getByTestId('knowledge-picker-dingtalk-parent').click()
-    const sourceButton = this.page.getByTestId(`knowledge-picker-dingtalk-${source}`)
+    const mobileSources = this.page.getByTestId('knowledge-picker-mobile-source')
+    const compact = await mobileSources.isVisible()
+    if (compact) {
+      await mobileSources.click()
+      await this.page.getByTestId('knowledge-picker-mobile-source-dingtalk').click()
+    } else {
+      await this.page.getByTestId('knowledge-picker-dingtalk-parent').click()
+    }
+    const sourceButton = this.page.getByTestId(
+      compact
+        ? `knowledge-picker-responsive-dingtalk-${source}`
+        : `knowledge-picker-dingtalk-${source}`
+    )
     await expect(sourceButton).toBeVisible()
     await sourceButton.click()
   }

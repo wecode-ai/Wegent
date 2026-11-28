@@ -85,6 +85,30 @@ test.describe('Provider-native Wegent knowledge access', () => {
     await ensureTestTeamSelected(page)
   })
 
+  test('All Knowledge Bases and Chat find the same library by name', async ({ page }) => {
+    const { knowledgeBase, otherKnowledgeBase, documents } = fixture
+    const keyword = `  ${knowledgeBase.name.toLowerCase()}  `
+    const picker = new ProviderNativeKnowledgePage(page)
+    await picker.openPicker()
+    const librarySearch = page.getByTestId('context-selector-knowledge-search-input')
+    await librarySearch.fill(keyword)
+    const selectedRow = page.getByTestId(`knowledge-picker-kb-${knowledgeBase.id}`)
+    await expect(selectedRow).toBeVisible()
+    await expect(page.getByTestId(`knowledge-picker-kb-${otherKnowledgeBase.id}`)).toHaveCount(0)
+    await selectedRow.click()
+    await page.getByTestId('knowledge-picker-document-search').fill(documents.a1.name)
+    await expect(
+      page.getByTestId(`knowledge-picker-document-node-document-${documents.a1.id}`)
+    ).toBeVisible()
+    await expect(librarySearch).toHaveValue(keyword)
+
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('knowledge-search').fill(keyword)
+    await expect(page.getByTestId(`kb-row-${knowledgeBase.id}`)).toBeVisible()
+    await expect(page.getByTestId(`kb-row-${otherKnowledgeBase.id}`)).toHaveCount(0)
+    await expect(page.getByTestId('knowledge-result-count')).toHaveText('1')
+  })
+
   test.afterEach(async ({ request }) => {
     await clearConfiguredToolScenario(request)
     if (longDocumentId !== null) {

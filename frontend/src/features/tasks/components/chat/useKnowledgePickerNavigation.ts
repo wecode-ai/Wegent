@@ -12,6 +12,7 @@ import type { ExternalKnowledgeSource } from '@/features/knowledge/externalKnowl
 import type { ExternalKnowledgeBase, ExternalKnowledgeScope } from '@/types/external-knowledge'
 
 export type KnowledgeSourceKey =
+  | 'all'
   | 'personal'
   | 'group'
   | 'organization'
@@ -37,7 +38,7 @@ type ExternalSourceKey = `external:${string}`
 type DingTalkSectionKey = 'dingtalk:docs' | 'dingtalk:wikispace'
 
 type KnowledgeBaseParent =
-  | { source: 'personal' | 'organization' }
+  | { source: 'all' | 'personal' | 'organization' }
   | { source: 'group'; group: string }
   | { source: ExternalSourceKey; scope: ExternalKnowledgeScope }
 
@@ -67,7 +68,7 @@ type NavigationAction =
 
 const INITIAL_NAVIGATION_STATE: NavigationState = {
   view: 'source',
-  source: 'personal',
+  source: 'all',
 }
 
 function isExternalKnowledgeBaseParent(
@@ -89,7 +90,7 @@ function getInternalKnowledgeBaseParent(state: NavigationState): KnowledgeBasePa
   }
 
   const source = getActiveSource(state)
-  return source === 'organization' ? { source } : { source: 'personal' }
+  return source === 'all' || source === 'organization' ? { source } : { source: 'personal' }
 }
 
 function getExternalKnowledgeBaseParent(

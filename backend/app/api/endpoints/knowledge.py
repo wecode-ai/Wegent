@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -70,6 +70,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseRetrievalProfileResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
+    KnowledgeCatalogResponse,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
@@ -90,6 +91,12 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.catalog import (
+    KnowledgeCatalogFilters,
+    KnowledgeCatalogSort,
+    KnowledgeCategory,
+    get_knowledge_catalog_response,
+)
 from app.services.knowledge.deletion_cleanup import (
     IndexCleanupConfirmationRequired,
 )
@@ -102,6 +109,7 @@ from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
     external_document_import_service,
 )
+from app.services.knowledge.namespace_utils import NamespaceLevel
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
@@ -254,7 +262,7 @@ def trigger_dingtalk_copy_sync(
     return DingtalkSyncQueuedResponse(task_id=task_id, status="queued")
 
 
-@router.get("", response_model=KnowledgeBaseListResponse)
+@router.get("", response_model=KnowledgeCatalogResponse | KnowledgeBaseListResponse)
 @trace_sync("list_knowledge_bases", "knowledge.api")
 def list_knowledge_bases(
     scope: str = Query(
@@ -276,6 +284,16 @@ def list_knowledge_bases(
         ge=0,
         description="Start offset for paginated knowledge base listing",
     ),
+    catalog: bool = False,
+    query: str | None = None,
+    category: KnowledgeCategory = "all",
+    include_code: bool = True,
+    space_level: NamespaceLevel | None = None,
+    space_namespace: str | None = None,
+    binding_group: str | None = None,
+    candidate_ids: Annotated[list[int] | None, Query(max_length=50)] = None,
+    sort_by: KnowledgeCatalogSort = "created",
+    ascending: bool = False,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -299,6 +317,27 @@ def list_knowledge_bases(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="group_name is required when scope is group",
+        )
+
+    if catalog:
+        return get_knowledge_catalog_response(
+            db,
+            current_user.id,
+            KnowledgeCatalogFilters(
+                scope=resource_scope,
+                group_name=group_name,
+                keyword=query,
+                category=category,
+                include_code=include_code,
+                space_level=space_level,
+                space_namespace=space_namespace,
+                binding_group=binding_group,
+                candidate_ids=tuple(candidate_ids or ()),
+                sort_by=sort_by,
+                ascending=ascending,
+                offset=offset,
+                limit=limit,
+            ),
         )
 
     # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)

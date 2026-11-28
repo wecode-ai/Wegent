@@ -3,23 +3,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Browser, Locator, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import JSZip from 'jszip'
 import { ADMIN_USER, REGULAR_USER } from '../config/test-users'
-import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 import { ApiClient, createApiClient } from '../utils/api-client'
 import { deleteDedicatedBotModel } from '../utils/cleanup-dedicated-bot-model'
 import { assertShellRecoveryPermission } from '../utils/shell-recovery-permission'
 import {
   assertCatalogSelectionIds,
   assertLeaderReloadOnReopen,
+  findCreatedTeam,
+  openQuickCreateDialog,
+  openUserPage,
+  readGroupBindings,
   readTeamDetail,
 } from '../utils/group-agent-editor'
 import { DataBuilders } from '../fixtures/data-builders'
 import type { User } from '../../src/types/api'
 import type { Group } from '../../src/types/group'
-
-const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
 
 interface TeamRecord {
   id: number
@@ -224,107 +225,6 @@ async function readLeaderBotPrompt(api: ApiClient, botId: number): Promise<strin
   const response = await api.get<{ system_prompt?: string }>(`/api/bots/${botId}`)
   expect(response.status, JSON.stringify(response.data)).toBe(200)
   return response.data?.system_prompt
-}
-
-async function openUserPage(browser: Browser, token: string): Promise<Page> {
-  const context = await browser.newContext({
-    baseURL: APP_BASE_URL,
-    storageState: buildStorageState(APP_BASE_URL, token, getJwtExpiryMs(token)),
-    viewport: { width: 1280, height: 720 },
-  })
-  // Permission tests start after onboarding, which otherwise takes keyboard focus.
-  await context.addInitScript(() => {
-    localStorage.setItem('user_onboarding_completed', 'true')
-  })
-  return context.newPage()
-}
-
-async function recordQuickCreateActivation(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const events: unknown[] = []
-    const elementIds = new WeakMap<Element, number>()
-    let nextElementId = 0
-    Reflect.set(window, '__wegentQuickCreateActivation', events)
-    const describe = (target: EventTarget | null) => {
-      if (!(target instanceof Element)) return null
-      if (!elementIds.has(target)) elementIds.set(target, ++nextElementId)
-      return {
-        elementId: elementIds.get(target),
-        tag: target.tagName,
-        testId: target.closest('[data-testid]')?.getAttribute('data-testid'),
-        connected: target.isConnected,
-      }
-    }
-    for (const type of ['focusin', 'focusout', 'keydown', 'keyup', 'click']) {
-      for (const capture of [true, false]) {
-        document.addEventListener(
-          type,
-          event => {
-            const key = event instanceof KeyboardEvent ? event.key : undefined
-            if (key && !['Enter', ' ', 'Tab', 'Escape'].includes(key)) return
-            events.push({
-              time: performance.now(),
-              type,
-              capture,
-              key,
-              prevented: event.defaultPrevented,
-              documentFocused: document.hasFocus(),
-              target: describe(event.target),
-              active: describe(document.activeElement),
-              trigger: describe(document.querySelector('[data-testid="quick-create-agent"]')),
-              stack: type === 'focusin' ? new Error().stack : undefined,
-            })
-            if (events.length > 100) events.shift()
-          },
-          capture
-        )
-      }
-    }
-  })
-}
-
-// The quick create dialog is the chat entry that renders the agent editor
-// without preloading any writable group list.
-async function openQuickCreateDialog(page: Page): Promise<Locator> {
-  await recordQuickCreateActivation(page)
-  await page.goto('/chat', { waitUntil: 'domcontentloaded' })
-  const trigger = page.getByTestId('quick-create-agent').first()
-  await expect(trigger).toBeVisible({ timeout: 30000 })
-  // The card animates continuously, so pointer clicks never settle; the native
-  // button is keyboard activatable.
-  await trigger.focus()
-  await trigger.press('Enter')
-  const dialog = page.getByTestId('team-edit-dialog')
-  try {
-    await expect(dialog).toBeVisible({ timeout: 15000 })
-  } finally {
-    const events = await page.evaluate(() => Reflect.get(window, '__wegentQuickCreateActivation'))
-    await test.info().attach('quick-create-activation', {
-      body: JSON.stringify(events, null, 2),
-      contentType: 'application/json',
-    })
-  }
-  return dialog
-}
-
-// Agents created from the chat entry are personal resources; the selected team
-// target only adds a group binding.
-async function findCreatedTeam(api: ApiClient, displayName: string) {
-  const response = await api.get<{
-    items: Array<{ id: number; name: string; displayName?: string; namespace: string }>
-  }>(`/api/teams?${new URLSearchParams({ scope: 'personal' })}`)
-  expect(response.status, JSON.stringify(response.data)).toBe(200)
-  return (response.data?.items ?? []).find(
-    team => team.displayName === displayName || team.name === displayName
-  )
-}
-
-async function readGroupBindings(api: ApiClient, teamId: number): Promise<string[]> {
-  const response = await api.get<{ group_names: string[] }>(
-    `/api/resource-library/agents/${teamId}/bindings`
-  )
-  expect(response.status, JSON.stringify(response.data)).toBe(200)
-  return response.data?.group_names ?? []
 }
 
 async function openPersonalAgentEditor(page: Page, teamId: number): Promise<Locator> {
@@ -588,14 +488,7 @@ test.describe('Agent share scope', () => {
       await expect(dialog.getByTestId('capability-scope-groups')).toBeVisible({ timeout: 15000 })
       await expect(dialog.locator('[data-testid^="capability-scope-group-"]')).toHaveCount(0)
 
-      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).focus()
-      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).press('Enter')
-      await expect(
-        page
-          .locator('[role="status"], [data-sonner-toast]')
-          .filter({ hasText: /Select a group|选择群组/ })
-          .first()
-      ).toBeVisible({ timeout: 15000 })
+      await expect(dialog.getByRole('button', { name: /^(Save|保存)$/ })).toBeDisabled()
 
       expect(await findCreatedTeam(fixture.reporterApi, agentDisplayName)).toBeUndefined()
     } finally {

@@ -33,7 +33,12 @@ import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
-import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
+import {
+  KnowledgeBaseMultiSelector,
+  KnowledgeBindingValidationError,
+} from './knowledge/KnowledgeBaseMultiSelector'
+import { useKnowledgeBindingValidation } from '../hooks/useKnowledgeBaseOptions'
+import { useUser } from '@/features/common/UserContext'
 
 import { Bot } from '@/types/api'
 import { botApis, CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/apis/bots'
@@ -200,6 +205,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
+  const knowledgeBindingNamespace =
+    editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default'
 
   const baseBot = useMemo(() => {
     if (editingBot) {
@@ -258,6 +265,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName])
+  const { user } = useUser()
+  const bindingGroup =
+    scope !== 'public' && knowledgeBindingNamespace !== 'default'
+      ? knowledgeBindingNamespace
+      : undefined
+  const knowledgeBinding = useKnowledgeBindingValidation(
+    defaultKnowledgeBaseRefs.map(item => item.id),
+    readOnly || isDifyAgent ? undefined : user?.id,
+    bindingGroup,
+    scope === 'public' || (scope === 'group' && !editingBot && !bindingGroup)
+  )
+  const invalidKnowledgeBindings = knowledgeBinding.blocksSave
   const mcpAgentType = useMemo(
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
@@ -723,6 +742,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Validate bot form data
   const validateBot = useCallback((): BotValidationResult => {
+    if (!isDifyAgent && invalidKnowledgeBindings) {
+      return { isValid: false, error: t('knowledge:picker.resolveBinding') }
+    }
     if (!botName.trim() || !agentName.trim()) {
       return { isValid: false, error: t('common:bot.errors.required') }
     }
@@ -808,6 +830,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return { isValid: true }
   }, [
     botName,
+    invalidKnowledgeBindings,
     agentName,
     isDifyAgent,
     agentConfig,
@@ -1250,7 +1273,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
               <Button
                 onClick={handleSave}
-                disabled={botSaving || targetGroupsLoading || targetGroupsError}
+                disabled={
+                  botSaving ||
+                  targetGroupsLoading ||
+                  targetGroupsError ||
+                  (!isDifyAgent && invalidKnowledgeBindings)
+                }
                 variant="primary"
                 data-testid="save-button"
               >
@@ -1788,20 +1816,24 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <KnowledgeBaseMultiSelector
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
+                      bindingValidation={knowledgeBinding}
                       disabled={readOnly}
                       allowedSources={
                         scope === 'public'
                           ? ['organization']
-                          : scope === 'group'
-                            ? groupName
-                              ? ['group', 'organization']
-                              : ['organization']
-                            : ['personal', 'group', 'organization']
+                          : knowledgeBindingNamespace !== 'default'
+                            ? ['group', 'organization']
+                            : scope === 'group' && !editingBot
+                              ? ['organization']
+                              : ['personal', 'group', 'organization']
                       }
                       allowedGroupNamespaces={
-                        scope === 'group' && groupName ? [groupName] : undefined
+                        scope !== 'public' && knowledgeBindingNamespace !== 'default'
+                          ? [knowledgeBindingNamespace]
+                          : undefined
                       }
                     />
+                    <KnowledgeBindingValidationError validation={knowledgeBinding} />
                   </div>
                 </div>
               )}

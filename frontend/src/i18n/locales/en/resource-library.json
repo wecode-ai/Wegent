@@ -326,6 +326,7 @@
       "retriever": "Configure knowledge retrieval services"
     },
     "scope_title": "Publishing scope",
+    "source_group": "Source team",
     "scope_description": "Choose who can see this capability. Multiple target teams can be selected.",
     "existing_scope_description": "Publishing to another scope creates a reference to the current capability. Source changes take effect in every scope immediately.",
     "scopes": {

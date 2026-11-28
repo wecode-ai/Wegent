@@ -19,16 +19,20 @@ import {
   resolveKbByVirtualPath,
 } from '@/utils/knowledgeUrl'
 import type { KnowledgeBase } from '@/types/knowledge'
+import { toKnowledgeBase } from '../navigation'
+import { useKnowledgeCatalog } from '../../useKnowledgeCatalog'
 
 interface UseKnowledgeUrlSyncParams {
   scopeKey?: string
+  catalogAccountId?: number
+  catalogRevision?: number
   initialKbNamespace?: string
   initialKbName?: string
   organizationKnowledgeBases: KnowledgeBase[]
   hasLoadError?: boolean
   allKnowledgeBases: KnowledgeBase[]
   isGroupsLoading: boolean
-  selectKb: (kb: KnowledgeBase) => void
+  selectKb: (kb: KnowledgeBase, fromCatalog?: boolean) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   selectSourceView: (sourceViewId: string) => void
@@ -37,6 +41,8 @@ interface UseKnowledgeUrlSyncParams {
 
 export function useKnowledgeUrlSync({
   scopeKey,
+  catalogAccountId,
+  catalogRevision,
   initialKbNamespace,
   initialKbName,
   allKnowledgeBases,
@@ -56,11 +62,15 @@ export function useKnowledgeUrlSync({
   const lastSyncedUrlRef = useRef<string | null>(null)
   const requestedKbId = searchParams.get('kb')
   const routeKey = JSON.stringify([scopeKey, pathname, requestedKbId])
-  const [lastResolved, setLastResolved] = useState<{ routeKey: string; id: number } | null>(null)
+  const [lastResolved, setLastResolved] = useState<{
+    routeKey: string
+    id: number
+    fromCatalog: boolean
+  } | null>(null)
   const retainedKbId = lastResolved?.routeKey === routeKey ? lastResolved.id : undefined
 
   const parsedKbUrl = useMemo(() => (pathname ? parseKbUrl(pathname) : null), [pathname])
-  const kbResolution = useMemo(
+  const groupedResolution = useMemo(
     () =>
       parsedKbUrl
         ? resolveKbByVirtualPath({
@@ -82,6 +92,44 @@ export function useKnowledgeUrlSync({
       hasLoadError,
     ]
   )
+  const catalogId = parsedKbUrl ? parseKnowledgeBaseId(requestedKbId) : null
+  const retainingGroupedDetail =
+    retainedKbId !== undefined &&
+    !lastResolved?.fromCatalog &&
+    (groupedResolution?.status === 'loading' || groupedResolution?.status === 'error')
+  const resolveViaCatalog =
+    catalogAccountId !== undefined &&
+    catalogId !== null &&
+    !retainingGroupedDetail &&
+    groupedResolution?.status !== 'resolved'
+  const catalog = useKnowledgeCatalog(
+    {
+      query: '',
+      category: 'all',
+      include_code: true,
+      space_level: parsedKbUrl?.type === 'organization' ? 'organization' : undefined,
+      space_namespace: parsedKbUrl?.namespace ?? undefined,
+      candidate_ids: catalogId === null ? undefined : [catalogId],
+    },
+    resolveViaCatalog ? catalogAccountId : undefined,
+    catalogRevision
+  )
+  const kbResolution = useMemo(() => {
+    if (!resolveViaCatalog) return groupedResolution
+    if (catalog.pending) return { status: 'loading' as const }
+    if (catalog.failed) return { status: 'error' as const }
+    const row = catalog.page?.items.find(item => item.id === catalogId)
+    return row
+      ? { status: 'resolved' as const, knowledgeBase: toKnowledgeBase(row) }
+      : { status: 'not-found' as const }
+  }, [
+    catalog.failed,
+    catalog.page,
+    catalog.pending,
+    catalogId,
+    groupedResolution,
+    resolveViaCatalog,
+  ])
 
   useEffect(() => {
     if (kbResolution?.status !== 'resolved' || !parsedKbUrl) return
@@ -96,7 +144,7 @@ export function useKnowledgeUrlSync({
   // Keep sidebar selection in sync with the current URL.
   // This handles initial load, client-side history updates, and browser back/forward.
   useEffect(() => {
-    if (isGroupsLoading) return
+    if (isGroupsLoading && !kbResolution) return
 
     // Exclude taskId-related params so that adding/removing taskId doesn't trigger re-sync
     // (which would call clearSelection and lose the current KB selection)
@@ -111,8 +159,13 @@ export function useKnowledgeUrlSync({
       const selectionKey = `${navUrlKey}:${kbResolution.status}:${kbResolution.status === 'resolved' ? kbResolution.knowledgeBase.id : ''}`
       if (lastSyncedUrlRef.current === selectionKey) return
       if (kbResolution.status === 'resolved') {
-        selectKb(kbResolution.knowledgeBase)
-        setLastResolved({ routeKey, id: kbResolution.knowledgeBase.id })
+        if (resolveViaCatalog) selectKb(kbResolution.knowledgeBase, true)
+        else selectKb(kbResolution.knowledgeBase)
+        setLastResolved({
+          routeKey,
+          id: kbResolution.knowledgeBase.id,
+          fromCatalog: resolveViaCatalog,
+        })
       } else if (kbResolution.status !== 'error' || retainedKbId === undefined) {
         clearSelection()
       }
@@ -151,6 +204,7 @@ export function useKnowledgeUrlSync({
     kbResolution,
     routeKey,
     retainedKbId,
+    resolveViaCatalog,
     pathname,
     searchParams,
     allKnowledgeBases,
@@ -203,7 +257,7 @@ export function useKnowledgeUrlSync({
   // detail page to avoid the full unmount-remount cycle that causes UI flickering.
   const navigateToKbViaHistory = useCallback(
     (
-      kb: { id: number; name: string; namespace: string },
+      kb: { id: number; name: string; namespace: string; group_type?: string },
       allKbsWithGroupInfo: Array<{
         id: number
         name: string
@@ -211,9 +265,9 @@ export function useKnowledgeUrlSync({
         group_type?: string
       }>
     ) => {
-      const isOrganization = allKbsWithGroupInfo.some(
-        k => k.id === kb.id && k.group_type === 'organization'
-      )
+      const isOrganization =
+        kb.group_type === 'organization' ||
+        allKbsWithGroupInfo.some(k => k.id === kb.id && k.group_type === 'organization')
       const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization, undefined, {
         knowledgeBaseId: kb.id,
       })
@@ -222,5 +276,12 @@ export function useKnowledgeUrlSync({
     []
   )
 
-  return { initialUrlSyncDone, kbResolution, retainedKbId, updateUrlParams, navigateToKbViaHistory }
+  return {
+    initialUrlSyncDone,
+    kbResolution,
+    retainedKbId,
+    retryKbResolution: resolveViaCatalog ? catalog.retry : undefined,
+    updateUrlParams,
+    navigateToKbViaHistory,
+  }
 }

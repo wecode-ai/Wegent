@@ -42,6 +42,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
+from app.services.knowledge.namespace_utils import NamespaceLevel
 from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
 from shared.knowledge_cleanup import ContentDeletionOutcome
@@ -1142,6 +1143,32 @@ class KnowledgeBaseListResponse(BaseModel):
     offset: int = 0
     has_more: bool = False
     items: list[KnowledgeBaseResponse]
+
+
+class KnowledgeCatalogItem(BaseModel):
+    """Display fields for a catalog row."""
+
+    id: int
+    name: str
+    description: str | None
+    user_id: int
+    namespace: str
+    namespace_level: NamespaceLevel
+    namespace_display_name: str | None
+    kb_type: KnowledgeBaseType
+    document_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeCatalogResponse(BaseModel):
+    total: int
+    returned_count: int
+    limit: int
+    offset: int
+    has_more: bool
+    items: list[KnowledgeCatalogItem]
+    space_counts: dict[str, int]
 
 
 # ============== Knowledge Document Schemas ==============

@@ -582,6 +582,33 @@ def knowledge_base_json_text(db: Session, path: str):
     return func.coalesce(value, "")
 
 
+def filter_knowledge_bases_for_agent_group(
+    db: Session,
+    query,
+    context: DirectAccessPermissionContext,
+    group_name: str,
+):
+    """Keep company libraries plus those belonging or shared to the source group."""
+    conditions = [Kind.namespace.in_(context.organization_names)]
+    if group_name in context.accessible_groups:
+        conditions.append(Kind.namespace == group_name)
+        namespace_id = (
+            db.query(Namespace.id)
+            .filter(Namespace.name == group_name, Namespace.is_active.is_(True))
+            .scalar()
+        )
+        if namespace_id is not None:
+            conditions.append(
+                _approved_member_query(db)
+                .filter(
+                    ResourceMember.entity_type == "namespace",
+                    ResourceMember.entity_id == str(namespace_id),
+                )
+                .exists()
+            )
+    return query.filter(or_(*conditions))
+
+
 def _build_personal_query(
     db: Session,
     base_query,

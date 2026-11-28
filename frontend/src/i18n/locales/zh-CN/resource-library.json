@@ -326,6 +326,7 @@
       "retriever": "配置知识检索服务"
     },
     "scope_title": "发布范围",
+    "source_group": "归属团队",
     "scope_description": "选择能力的可见范围；发布到团队时可以选择多个目标群组。",
     "existing_scope_description": "发布到其他范围时会创建对当前能力的引用；源能力修改后，各范围立即使用最新内容。",
     "scopes": {

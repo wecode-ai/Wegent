@@ -6,9 +6,10 @@ import userEvent from '@testing-library/user-event'
 import { KnowledgeDocumentPageDesktop } from '@/features/knowledge/document/components/KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
+import { createKnowledgeBase, getKnowledgeBase, getKnowledgeCatalogPage } from '@/apis/knowledge'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
+import { collectNavigationKnowledge } from '@/features/knowledge/document/navigation'
 import type {
   AllGroupedKnowledgeResponse,
   KnowledgeBase,
@@ -40,6 +41,7 @@ jest.mock('@/apis/client', () => ({
 jest.mock('@/apis/knowledge-base', () => ({ knowledgeBaseApi: { getAllGrouped: jest.fn() } }))
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  getKnowledgeCatalogPage: jest.fn(),
   getKnowledgeBaseRetrievalProfile: jest.fn(async () => ({ health: { status: 'unconfigured' } })),
   getMultimodalDefaultPrompts: jest.fn(async () => ({ enabled: false })),
   createKnowledgeBase: jest.fn(),
@@ -172,6 +174,25 @@ beforeEach(() => {
   jest
     .mocked(knowledgeBaseApi.getAllGrouped)
     .mockImplementation(async () => JSON.parse(JSON.stringify(data)))
+  jest.mocked(getKnowledgeCatalogPage).mockImplementation(async () => {
+    const items = collectNavigationKnowledge(data).map(item => ({
+      ...item,
+      namespace_level: item.namespace_level ?? ('group' as const),
+    }))
+    const spaceCounts: Record<string, number> = {}
+    for (const item of items) {
+      spaceCounts[item.namespace] = (spaceCounts[item.namespace] ?? 0) + 1
+    }
+    return {
+      items,
+      total: items.length,
+      returned_count: items.length,
+      limit: 50,
+      offset: 0,
+      has_more: false,
+      space_counts: spaceCounts,
+    }
+  })
   jest.mocked(getKnowledgeBase).mockResolvedValue(baseKb)
   jest.mocked(createKnowledgeBase).mockResolvedValue(baseKb)
   jest.mocked(codeWikiApi.create).mockResolvedValue({ id: 9, name: 'Repository' } as never)
@@ -329,7 +350,7 @@ it.each(['document', 'after-create'])(
       await user.click(document.getElementById('knowledge-summary-enabled')!)
       await user.click(screen.getByTestId('submit-create-kb'))
       await waitFor(() => expect(screen.queryByTestId('create-kb-dialog')).not.toBeInTheDocument())
-      await user.click(screen.getByTestId('more-kb-7'))
+      await user.click(await screen.findByTestId('more-kb-7'))
       await user.click(screen.getByTestId('permission-kb-7'))
     }
     await user.click(await screen.findByTestId('permission-add-collaborator'))

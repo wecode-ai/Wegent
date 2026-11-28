@@ -12,7 +12,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import client, { ApiError } from '@/apis/client'
 import { useTranslation } from '@/hooks/useTranslation'
-import { collectNavigationKnowledge, type NavigationKnowledgeBase } from '../navigation'
+import {
+  collectNavigationKnowledge,
+  toKnowledgeBase,
+  type NavigationKnowledgeBase,
+} from '../navigation'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
@@ -88,7 +92,7 @@ export interface UseKnowledgeSidebarReturn {
   selectedKb: KnowledgeBase | null
   detailRequest: { kbId: number; status: 'loading' | 'ready' | 'error' } | null
   retrySelectedKb: () => void
-  selectKb: (kb: KnowledgeBase) => void
+  selectKb: (kb: KnowledgeBase, fromCatalog?: boolean) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
   saveKnowledgeBaseSettings: typeof updateKnowledgeBase
   viewRefreshErrors: number[]
@@ -153,27 +157,6 @@ function saveRecentAccess(key: string, items: RecentAccessItem[]) {
     localStorage.setItem(key, JSON.stringify(items))
   } catch {
     // Ignore storage errors
-  }
-}
-
-/**
- * Convert KnowledgeBaseWithGroupInfo to KnowledgeBase
- */
-function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
-  return {
-    id: kb.id,
-    name: kb.name,
-    description: kb.description,
-    user_id: kb.user_id,
-    namespace: kb.namespace,
-    document_count: kb.document_count,
-    is_active: true,
-    summary_enabled: false,
-    kb_type: kb.kb_type || 'notebook',
-    max_calls_per_conversation: 10,
-    exempt_calls_before_check: 5,
-    created_at: kb.created_at,
-    updated_at: kb.updated_at,
   }
 }
 
@@ -280,6 +263,7 @@ export function useKnowledgeSidebar({
     status: 'loading' | 'ready' | 'error'
   } | null>(null)
   const detailVersion = useRef(0)
+  const detailTarget = useRef<{ kb: KnowledgeBase; fromCatalog: boolean } | null>(null)
 
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>('all')
@@ -290,6 +274,7 @@ export function useKnowledgeSidebar({
     savedViews.current = { revision: 0, byId: new Map() }
     setViewRefreshErrors([])
     latestSelectedKbIdRef.current = null
+    detailTarget.current = null
     setDetailRequest(null)
     detailVersion.current++
     setStateScope(scope)
@@ -323,11 +308,13 @@ export function useKnowledgeSidebar({
       )
       setHasLoaded(true)
       setListRevision(value => value + 1)
-      const ids = new Set(collectNavigationKnowledge(response).map(kb => kb.id))
-      if (latestSelectedKbIdRef.current !== null && !ids.has(latestSelectedKbIdRef.current))
-        latestSelectedKbIdRef.current = null
-      setSelectedKb(prev => (prev && ids.has(prev.id) ? prev : null))
-      setSelectedKbId(prev => (prev !== null && ids.has(prev) ? prev : null))
+      if (!detailTarget.current?.fromCatalog) {
+        const ids = new Set(collectNavigationKnowledge(response).map(kb => kb.id))
+        if (latestSelectedKbIdRef.current !== null && !ids.has(latestSelectedKbIdRef.current))
+          latestSelectedKbIdRef.current = null
+        setSelectedKb(prev => (prev && ids.has(prev.id) ? prev : null))
+        setSelectedKbId(prev => (prev !== null && ids.has(prev) ? prev : null))
+      }
     } catch (error) {
       if (current()) setLoadError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -393,7 +380,9 @@ export function useKnowledgeSidebar({
 
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
-      const row = allKnowledgeBasesWithGroupInfo.find(item => item.id === kb.id)
+      const row =
+        allKnowledgeBasesWithGroupInfo.find(item => item.id === kb.id) ??
+        ('namespace_level' in kb ? (kb as NavigationKnowledgeBase) : undefined)
       return {
         groupId: kb.namespace,
         groupName:
@@ -569,15 +558,16 @@ export function useKnowledgeSidebar({
 
   // Selection management
   const selectKb = useCallback(
-    (kb: KnowledgeBase) => {
+    (kb: KnowledgeBase, fromCatalog = false) => {
       // Record the intended selection before starting any async work
       if (
         latestSelectedKbIdRef.current === kb.id &&
         detailRequest?.kbId === kb.id &&
-        detailRequest.status === 'ready'
+        detailRequest.status !== 'error'
       )
         return
       const version = ++detailVersion.current
+      detailTarget.current = { kb, fromCatalog }
       setDetailRequest({ kbId: kb.id, status: 'loading' })
       latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
@@ -854,8 +844,10 @@ export function useKnowledgeSidebar({
     selectedKb,
     detailRequest,
     retrySelectedKb: () => {
-      const kb = allKnowledgeBases.find(item => item.id === detailRequest?.kbId)
-      if (kb) selectKb(kb)
+      const target = detailTarget.current
+      if (target && target.kb.id === detailRequest?.kbId) {
+        selectKb(selectedKb ?? target.kb, target.fromCatalog)
+      }
     },
     selectKb,
     syncKnowledgeBase,

@@ -44,20 +44,6 @@ class DirectNodeList:
     has_more: bool
 
 
-def get_document_counts(db, knowledge_base_ids: list[int]) -> dict[int, int]:
-    """Return total document counts for knowledge bases, including inactive docs."""
-    if not knowledge_base_ids:
-        return {}
-
-    rows = (
-        db.query(KnowledgeDocument.kind_id, func.count(KnowledgeDocument.id))
-        .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
-        .group_by(KnowledgeDocument.kind_id)
-        .all()
-    )
-    return {knowledge_base_id: count for knowledge_base_id, count in rows}
-
-
 def list_direct_nodes(
     db,
     knowledge_base_id: int,
