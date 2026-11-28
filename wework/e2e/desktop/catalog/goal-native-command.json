@@ -1,0 +1,13 @@
+{
+  "order": 149100,
+  "scenario": "./scenarios/goal-native-command.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 92100,
+      "shard": 1,
+      "position": 7100
+    }
+  },
+  "paths": ["executor/src/runtime_work/handler/notifications.rs", "executor/src/agents/codex.rs"]
+}
