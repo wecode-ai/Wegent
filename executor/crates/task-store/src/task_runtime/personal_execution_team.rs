@@ -180,7 +180,7 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
                     || v.as_object().is_some_and(|o| o.is_empty())))
         });
         if !(bot["id"].as_str().is_some_and(|s| !s.is_empty()) || bot["id"].is_i64())
-            || (mode != "pipeline" && !seen.insert(bot["id"].to_string()))
+            || (mode != "pipeline" && !seen.insert(&bot["id"]))
             || !matches!(bot["shell_type"].as_str(), Some("ClaudeCode" | "Codex"))
             || !fields.iter().all(|(key, value)| match key.as_str() {
                 "id" => true,
@@ -326,8 +326,8 @@ pub(super) fn replace_bot_grants(
     let grants = input["botGrants"].as_array().ok_or_else(invalid)?;
     let mut entries = std::collections::HashMap::new();
     for grant in grants {
-        let id = grant.get("id").ok_or_else(invalid)?.to_string();
-        if entries.insert(id, grant).is_some()
+        let id = grant.get("id").ok_or_else(invalid)?;
+        if entries.insert(id, (grant, false)).is_some()
             || !grant
                 .as_object()
                 .ok_or_else(invalid)?
@@ -342,10 +342,9 @@ pub(super) fn replace_bot_grants(
             return Err(invalid());
         }
     }
-    let mut used = HashSet::new();
     for bot in bots {
-        used.insert(bot["id"].to_string());
-        let grant = entries.get(&bot["id"].to_string()).ok_or_else(invalid)?;
+        let (grant, used) = entries.get_mut(&bot["id"]).ok_or_else(invalid)?;
+        *used = true;
         let fields = bot.as_object_mut().ok_or_else(invalid)?;
         for key in LOCAL_BOT_GRANTS {
             if let Some(v) = grant.get(key) {
@@ -356,7 +355,7 @@ pub(super) fn replace_bot_grants(
         }
         fields.insert("native_capability_scope".into(), json!("bot"));
     }
-    if used.len() != entries.len() {
+    if entries.values().any(|(_, used)| !used) {
         return Err(invalid());
     }
     definition["imported"] = json!(true);
@@ -417,7 +416,7 @@ pub(in crate::task_runtime::store) fn project_definition(
         .unwrap_or_default();
     let by_id: std::collections::HashMap<_, _> = project_bots
         .iter()
-        .map(|bot| (bot["id"].to_string(), bot))
+        .map(|bot| (&bot["id"], bot))
         .collect();
     let mut bots = source["bot"].clone();
     for bot in bots.as_array_mut().into_iter().flatten() {
@@ -461,7 +460,7 @@ pub(in crate::task_runtime::store) fn project_definition(
         // A solo project Agent owns its lead Bot's grants. Additional Bots can
         // only receive grants already belonging to their exact project Bot.
         let authorized = by_id
-            .get(&bot["id"].to_string())
+            .get(&bot["id"])
             .copied()
             .or(match project_bots {
                 [lead] if index == 0 => Some(lead),
