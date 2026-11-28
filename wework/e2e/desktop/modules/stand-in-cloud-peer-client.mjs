@@ -417,7 +417,8 @@ export function createStandInCloudPeerClient({
           localProfileBefore.lifecycle,
           'Stale stop confirmation must not stop the newly selected local device'
         )
-        await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
+        // Binding reconciliation can close the profile after the device is verified.
+        await control.command('clickIfPresent', testId('stand-in-primary-profile-close'))
         await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
 
         // 3. While @primary points to client 1's private localDevice, client 2 (simultaneously signed in)
