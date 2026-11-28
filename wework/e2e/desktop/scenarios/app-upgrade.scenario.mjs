@@ -825,7 +825,6 @@ export async function createDesktopScenario(options) {
         }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await goalContinuity.verifyResumed('rollback')
-        if (team) await team.rollback(restoreRequired)
         await auxiliaryHistory.verify('rollback')
         await send(`${PROMPT} continue after rollback`)
         await continuity.assertThread()
@@ -837,15 +836,14 @@ export async function createDesktopScenario(options) {
             historicalBackup,
           })
         }
+        let preservedDirectory
         if (restoreRequired) {
           const { readdir } = await import('node:fs/promises')
           const preserved = await readdir(join(root, 'preserved-data'))
           assert.equal(preserved.length, 1, 'Expected one preserved post-update data set')
+          preservedDirectory = join(root, 'preserved-data', preserved[0])
           const storage = JSON.parse(
-            await readFile(
-              join(root, 'preserved-data', preserved[0], 'renderer-local-storage.json'),
-              'utf8'
-            )
+            await readFile(join(preservedDirectory, 'renderer-local-storage.json'), 'utf8')
           )
           assert.equal(
             storage.entries[STORAGE_KEY],
@@ -853,6 +851,7 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
+        if (team) await team.rollback(preservedDirectory)
         if (checkpoint === 'app-rollback') {
           rollbackProtection = await verifyRollbackProtection({
             control,
@@ -877,7 +876,7 @@ export async function createDesktopScenario(options) {
             verifyCredentials: () => verifyCredentials('re-upgraded'),
             timeoutMs: workbenchReadyTimeoutMs,
           })
-          if (team) teamContinuity = await team.reupgrade()
+          if (team) teamContinuity = await team.reupgrade(restoreRequired)
           rollbackProtection.retryConfirmed = true
         }
       }

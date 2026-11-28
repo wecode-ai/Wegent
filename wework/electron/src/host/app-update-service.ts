@@ -48,6 +48,7 @@ export type AppUpdateController = Pick<
 export interface AppUpdateServiceOptions {
   store: ReleaseStore
   dataDirectory: string
+  executorHome: string
   currentVersion: string
   executable: string
   resources: string
@@ -564,7 +565,7 @@ export class AppUpdateService {
     const snapshot = await snapshotReleaseData(
       this.options.dataDirectory,
       store.root,
-      process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
+      this.options.executorHome
     )
     if (current.id.startsWith('installed-')) {
       const profileRoot = join(store.slot(current.id), `retained-profile-${randomUUID()}`)

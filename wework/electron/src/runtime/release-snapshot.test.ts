@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { snapshotReleaseData, restoreReleaseData } from './release-snapshot.js'
+import {
+  completeExecutorSnapshot,
+  restoreReleaseData,
+  snapshotReleaseData,
+} from './release-snapshot.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -37,6 +41,22 @@ test('restores managed data and preserves newer data without touching credential
   expect(
     await readFile(join(releases, 'preserved-data', snapshot, 'data/tasks.sqlite'), 'utf8')
   ).toBe('newer')
+})
+test('completes a legacy bridge snapshot from the default Executor Home before writes', async () => {
+  const { data, executor, releases } = await fixture()
+  const id = await snapshotReleaseData(data, releases)
+  await writeFile(
+    join(releases, 'snapshots', id, 'snapshot.json'),
+    JSON.stringify({ schemaVersion: 1, entries: ['app-preferences.json'] })
+  )
+  await completeExecutorSnapshot(releases, id, executor)
+  await writeFile(join(executor, 'data/tasks.sqlite'), 'newer')
+  await completeExecutorSnapshot(releases, id, executor)
+  await restoreReleaseData(data, releases, id, executor)
+  expect(await readFile(join(executor, 'data/tasks.sqlite'), 'utf8')).toBe('before')
+  expect(await readFile(join(releases, 'preserved-data', id, 'data/tasks.sqlite'), 'utf8')).toBe(
+    'newer'
+  )
 })
 test('refuses snapshots that would traverse a user repository', async () => {
   const { root, data, executor, releases } = await fixture()

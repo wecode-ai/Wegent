@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
   resolveWorkbenchCodexHome,
+  resolveWorkbenchExecutorHome,
   resolveWorkbenchPaths,
   resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
@@ -258,17 +259,18 @@ async function launchSelectedRelease(
   metadata: ReleaseMetadata,
   forwardedArguments: () => string[]
 ): Promise<void> {
+  const homeOptions = {
+    environment: process.env,
+    metadata,
+    homeDirectory: app.getPath('home'),
+  }
+  const executorHome = resolveWorkbenchExecutorHome(homeOptions)
   const activation = await store.activation()
   if (activation?.rollbackRequested) {
     // Confirmation was recorded before beginning this manual rollback. Resume
     // an interrupted restore even if the target's earlier healthy marker exists.
     if (activation.restoreRequired)
-      await restoreReleaseData(
-        dataDirectory,
-        root,
-        activation.snapshot,
-        process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
-      )
+      await restoreReleaseData(dataDirectory, root, activation.snapshot, executorHome)
     await store.rollback()
   } else if (
     activation &&
@@ -306,12 +308,7 @@ async function launchSelectedRelease(
               : 'Update recovery needs confirmation. Original data is preserved.'
           )
         }
-        await restoreReleaseData(
-          dataDirectory,
-          root,
-          activation.snapshot,
-          process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
-        )
+        await restoreReleaseData(dataDirectory, root, activation.snapshot, executorHome)
       }
       await store.rollback()
     }
@@ -319,15 +316,11 @@ async function launchSelectedRelease(
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
   try {
-    const homeOptions = {
-      environment: process.env,
-      metadata,
-      homeDirectory: app.getPath('home'),
-    }
     const paths = resolveWorkbenchPaths(homeOptions)
     await prepareReleaseAfterStop(store, active, dataDirectory, {
       workbenchRoot: paths.root,
       codexHome: resolveWorkbenchCodexHome(homeOptions),
+      executorHome,
     })
   } catch (error) {
     const pending = await store.activation()

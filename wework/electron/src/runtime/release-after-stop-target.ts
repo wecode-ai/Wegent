@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { ComponentUpdateManager } from './component-update-manager.js'
 import { migrateCodexProviderState } from './codex-provider-upgrade.js'
+import { completeExecutorSnapshot } from './release-snapshot.js'
 import {
   optionalText,
   ReleaseStore,
@@ -9,6 +10,7 @@ import {
   type DesktopRelease,
 } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { resolveWorkbenchExecutorHome } from './workbench-environment.js'
 
 interface StoppedRequest {
   protocol: number
@@ -18,13 +20,19 @@ interface StoppedRequest {
   dataDirectory: string
   codexHome: string
   workbenchRoot: string
+  executorHome?: string
 }
 
 /** Target-owned data work; do not start native runtimes or import main here. */
 export async function prepareStoppedReleaseData(
   requestFile: string,
   resources: string,
-  metadata: { version: string; weworkAfterStopPreparation?: unknown; weworkDataSchema?: number }
+  metadata: {
+    version: string
+    weworkAfterStopPreparation?: unknown
+    weworkDataSchema?: number
+    weworkExecutorNamespace?: string
+  }
 ): Promise<{ protocol: 1; token: string; releaseId: string; complete: true }> {
   const request: StoppedRequest = JSON.parse(await readFile(requestFile, 'utf8'))
   if (
@@ -32,6 +40,8 @@ export async function prepareStoppedReleaseData(
     metadata.weworkAfterStopPreparation !== 1 ||
     request.release.version !== metadata.version ||
     request.release.dataSchema !== metadata.weworkDataSchema ||
+    (request.executorHome !== undefined &&
+      (typeof request.executorHome !== 'string' || !isAbsolute(request.executorHome))) ||
     ![request.storeRoot, request.dataDirectory, request.codexHome, request.workbenchRoot].every(
       value => typeof value === 'string' && isAbsolute(value)
     )
@@ -58,6 +68,17 @@ export async function prepareStoppedReleaseData(
     throw new Error('Stopped-release preparation has no unstarted activation ownership')
   if (!(await sameReleasePath(resources, saved.resources)))
     throw new Error('Stopped-release preparation has no unstarted activation ownership')
+  if (activation.restoreRequired) {
+    const executorHome = resolveWorkbenchExecutorHome({
+      environment: {
+        WEGENT_WORKBENCH_HOME: request.workbenchRoot,
+        WEGENT_EXECUTOR_HOME: request.executorHome,
+      },
+      metadata,
+      homeDirectory: '',
+    })
+    await completeExecutorSnapshot(store.root, activation.snapshot, executorHome)
+  }
   const manager = new ComponentUpdateManager({
     resourcesRoot: resources,
     dataDirectory: store.slot(saved.id),

@@ -255,6 +255,8 @@ Background account-usage reads must wait for runtime proxy initialization. Tray 
 
 Compatible rollback switches directly. Incompatible rollback after the target opened data requires confirmation before snapshot restoration and preserves newer data separately. Failure before opening mutable data can return directly to the previous release. Snapshots cover registered migration-owned stores, including task SQLite/WAL/SHM, desktop preferences, renderer storage, and transcript-sync state. Never restore repositories, cloud records, or personal credentials. Register additional migrated stores together with restore coverage.
 
+Capture and restore the task database from the effective Executor Home. If an older bridge omitted the database in the default Workbench directory, the target completes the snapshot during stopped preparation. After incompatible rollback, re-upgrade uses the restored database and retains the previous target's writes in the rollback preservation directory.
+
 Plugin configuration changes invalidate preparation. Recheck before switching instead of repairing large installations after restart.
 
 Resolve only the active profile's root pointer before cloning, copying the physical directory while preserving internal dependency links. Copying the root link would let rollback preparation mutate the running release's profile. Pass the resolved source profile to older preparation entries as well, so packages with the old clone implementation still receive an isolated copy.

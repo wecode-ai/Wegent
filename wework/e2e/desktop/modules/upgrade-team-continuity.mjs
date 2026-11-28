@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from './executor-rpc.mjs'
 
 export async function assertPackagedTeamProtocol(resources, expected) {
@@ -69,7 +70,7 @@ export function createUpgradeTeamContinuity(control, timeoutMs) {
       delivery.id
     )
   }
-  return {
+  const continuity = {
     async seed() {
       project = await rpc('projects.create', { name: 'Upgrade Team continuity' })
       await rpc('projects.update', {
@@ -125,15 +126,32 @@ export function createUpgradeTeamContinuity(control, timeoutMs) {
       })
       await verifyDelivery()
     },
-    async rollback(restoreRequired) {
-      await verifyHistory(restoreRequired ? 'in_progress' : 'completed')
-      if (!restoreRequired) {
+    async rollback(preservedDirectory) {
+      await verifyHistory(preservedDirectory ? 'in_progress' : 'completed')
+      if (preservedDirectory) {
+        const db = new DatabaseSync(join(preservedDirectory, 'data/tasks.sqlite'), {
+          readOnly: true,
+        })
+        try {
+          const row = db.prepare(
+            'SELECT status, parent_id, current_delivery_id FROM loop_items WHERE id = ?'
+          )
+          assert.equal(row.get(history.id).status, 'completed')
+          const child = row.get(receipt.assignments[0].human_assignment_id)
+          assert.equal(child.parent_id, history.id)
+          assert.equal(child.current_delivery_id, delivery.id)
+        } finally {
+          db.close()
+        }
+      } else {
         const child = await read(receipt.assignments[0].human_assignment_id)
         assert.equal(child.parent_id, history.id)
         assert.equal(child.current_delivery_id, delivery.id)
       }
     },
-    async reupgrade() {
+    async reupgrade(restored) {
+      // Re-upgrade starts from the restored live database.
+      if (restored) await continuity.upgrade()
       await verifyHistory('completed')
       await verifyDelivery()
       assert.deepEqual(await coordinate('submit', submission), receipt)
@@ -147,4 +165,5 @@ export function createUpgradeTeamContinuity(control, timeoutMs) {
       }
     },
   }
+  return continuity
 }
